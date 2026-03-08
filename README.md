@@ -2,7 +2,7 @@
 
 > 仿佛读过、仿佛想过、仿佛写过。
 
-Claude Code 插件。把一堆 PDF 变成"我读过了"的底气。
+Claude Code 插件。把一堆 PDF 变成「我读过了」的底气。
 
 搜、下、拆、读、写，五步流水线。丢进去一本 800 页的 Handbook，出来的是逐章分析和全书综述——你只需要假装这些洞见是自己想出来的。
 
@@ -95,7 +95,7 @@ claude plugin add quasi --marketplace ramu-toolkit
 topic: "你的研究主题"
 preamble: >
   项目特定的分析指令
-  （比如"这是人文理论文本，不要找数据和样本量"）
+  （比如「这是人文理论文本，不要找数据和样本量」）
 ```
 
 这些值会注入 `analyze/prompts/text-analysis.md` 里的 `{topic}` 和 `{preamble}` 占位符。不同项目、不同学科立场，同一套流水线。
