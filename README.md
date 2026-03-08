@@ -1,81 +1,75 @@
 # quasi
 
-A Claude Code plugin for academic literature processing. Automates the full pipeline from discovery to synthesis: search, download, extract, analyze, and synthesize scholarly texts.
+> 仿佛读过、仿佛想过、仿佛写过。
 
-## What it does
+Claude Code 插件。把一堆 PDF 变成"我读过了"的底气。
 
-quasi turns a book or paper into structured, analyzable knowledge. Given an EPUB/PDF, it extracts chapters, runs each through a parameterized analysis template, and produces a synthesis with cross-references. It also chains citations to build reading corpora around a topic.
+搜、下、拆、读、写，五步流水线。丢进去一本 800 页的 Handbook，出来的是逐章分析和全书综述——你只需要假装这些洞见是自己想出来的。
 
-## Skills
+## 技能一览
 
-### Atomic skills — single operations
+### 原子技能——干一件事
 
-| Skill | Type | Description |
-|-------|------|-------------|
-| `search` | tool | Unified search across Google Books, OpenLibrary, OpenAlex, Anna's Archive, Unpaywall, Semantic Scholar, and Wayback Machine |
-| `download` | tool | File acquisition by MD5 (books) or DOI/URL (papers), with OA/Wayback cascade fallback |
-| `extract` | tool | Chapter-level text extraction from EPUB/PDF, with OCR support for scanned PDFs |
-| `analyze` | template | Structured analysis of a single text (chapter or paper) using parameterized prompt templates |
-| `synthesize` | template | Cross-text synthesis reports, aggregated reference lists, and knowledge base updates |
+| 技能 | 干什么 |
+|------|--------|
+| `search` | 跨 Google Books / OpenLibrary / OpenAlex / Anna's Archive / Unpaywall / Semantic Scholar / Wayback 搜书搜论文 |
+| `download` | 给 MD5 下书，给 DOI 下论文，OA → Wayback 逐级降级，总有一款适合你 |
+| `extract` | EPUB/PDF 拆成逐章纯文本，扫描件走 OCR |
+| `analyze` | 一章或一篇论文 → 结构化分析 Markdown，含理论贡献、核心论证、引用网络 |
+| `synthesize` | 多篇分析 → 跨文本综述 + 参考文献汇总 + 知识库更新 |
 
-### Composite skills — multi-step workflows
+### 复合技能——一条龙
 
-| Skill | Description |
-|-------|-------------|
-| `process-book` | EPUB/PDF → chapter extraction → per-chapter analysis → book-level synthesis |
-| `process-journal` | Journal scan report → batch download → per-paper analysis → synthesis |
-| `process-author` | Scholar discovery (up to 5 books + 10 papers) → acquire → analyze → author profile |
-| `citation-snowball` | Seed paper → citation chain expansion round by round → topic-focused corpus + synthesis |
+| 技能 | 流程 |
+|------|------|
+| `process-book` | PDF/EPUB → 拆章 → 逐章分析 → 全书综述 |
+| `process-journal` | 期刊扫描报告 → 批量下载 → 逐篇分析 → 综述 |
+| `process-author` | 发现代表作（至多 5 书 + 10 文） → 获取 → 分析 → 学者档案 |
+| `citation-snowball` | 种子论文 → 沿引用链逐轮扩展 → 主题语料库 + 综述 |
 
-Composite skills are subagent-driven: the main process dispatches coordinator agents that handle all internal orchestration, keeping the context window clean.
+复合技能由子代理驱动：主进程只管调度，coordinator 代理在独立上下文里干所有重活。你的 token 预算因此得以幸免。
 
-## Usage
+## 用法
 
-```
-# Process a book
+```bash
+# 处理一本书
 /quasi:process-book oxford-handbook-sociology-body
 
-# Search for papers by an author
+# 搜一个作者的论文
 /quasi:search --mode papers --author "Donna Haraway" --year_from 2000
 
-# Download a paper by DOI
+# 用 DOI 下一篇论文
 /quasi:download 10.1177/1357034X09337767
 
-# Build a citation corpus from a seed paper
-/quasi:citation-snowball posthuman-embodiment --seed 10.xxxx/xxxxx --topic "posthuman embodiment and digital technology"
+# 从种子论文开始滚雪球
+/quasi:citation-snowball posthuman-embodiment --seed 10.xxxx/xxxxx --topic "后人类具身化与数字技术"
 
-# Process a scholar's body of work
+# 系统性处理一位学者
 /quasi:process-author donna-haraway
 ```
 
-## Architecture
+## 结构
 
 ```
 quasi/
-├── .claude-plugin/          # Plugin manifest
+├── .claude-plugin/          # 插件清单
 ├── shared/
-│   └── output-format.md     # Frontmatter standards & naming conventions
+│   └── output-format.md     # Frontmatter 规范 & 命名约定
 └── skills/
-    ├── search/              # SKILL.md + scripts/search.py
-    ├── download/            # SKILL.md + scripts/download.py
-    ├── extract/             # SKILL.md + scripts/split_chapters.py, process_epub.py, ocr_pdf.sh
-    ├── analyze/             # SKILL.md + prompts/text-analysis.md, snowball-extra.md
-    ├── synthesize/          # SKILL.md + prompts/synthesis.md, kb-update.md + scripts/aggregate_refs.py
-    ├── process-book/        # SKILL.md (composite)
-    ├── process-journal/     # SKILL.md (composite)
-    ├── process-author/      # SKILL.md (composite)
-    └── citation-snowball/   # SKILL.md (composite)
+    ├── search/              # 搜索（多源聚合）
+    ├── download/            # 下载（MD5/DOI/URL）
+    ├── extract/             # 拆章（EPUB/PDF/OCR）
+    ├── analyze/             # 分析（prompt 模板驱动）
+    ├── synthesize/          # 综合（跨文本 + 知识库）
+    ├── process-book/        # 书籍全流程
+    ├── process-journal/     # 期刊全流程
+    ├── process-author/      # 学者全流程
+    └── citation-snowball/   # 引用链滚雪球
 ```
 
-## Installation
+## 安装
 
-As a Claude Code plugin from a [custom marketplace](https://docs.anthropic.com/en/docs/claude-code/plugins):
-
-```bash
-claude plugin add quasi --marketplace ramu-toolkit
-```
-
-Or register the repo as a local marketplace:
+注册为 Claude Code 自定义 marketplace：
 
 ```jsonc
 // ~/.claude/plugins/known_marketplaces.json
@@ -87,18 +81,24 @@ Or register the repo as a local marketplace:
 }
 ```
 
-## Configuration
+然后：
 
-Each project provides its own analysis parameters in its `CLAUDE.md`:
-
-```yaml
-topic: "your research topic"
-preamble: >
-  Project-specific instructions for the analysis template
-  (e.g., "This is a humanities text, focus on theoretical arguments...")
+```bash
+claude plugin add quasi --marketplace ramu-toolkit
 ```
 
-These are injected into the `{topic}` and `{preamble}` placeholders in `analyze/prompts/text-analysis.md`.
+## 配置
+
+每个项目在自己的 `CLAUDE.md` 里提供分析参数：
+
+```yaml
+topic: "你的研究主题"
+preamble: >
+  项目特定的分析指令
+  （比如"这是人文理论文本，不要找数据和样本量"）
+```
+
+这些值会注入 `analyze/prompts/text-analysis.md` 里的 `{topic}` 和 `{preamble}` 占位符。不同项目、不同学科立场，同一套流水线。
 
 ## License
 
