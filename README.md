@@ -128,7 +128,7 @@ claude plugin add quasi --marketplace ramu-toolkit
 每个项目在自己的 `CLAUDE.md` 里提供分析立场：
 
 ```yaml
-topic: "你���研究主题"
+topic: "你的研究主题"
 preamble: >
   项目特定的分析指令
   （比如「这是人文理论文本，不要找数据和样本量」）
