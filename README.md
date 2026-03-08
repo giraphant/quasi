@@ -89,10 +89,46 @@ claude plugin add quasi --marketplace ramu-toolkit
 
 ## 配置
 
-每个项目在自己的 `CLAUDE.md` 里提供分析参数：
+### 凭据
+
+搜和下需要两把钥匙，都不进 git。
+
+**Anna's Archive** — 下书用的 donator key：
+
+```jsonc
+// ~/.claude/config/anna-archive.json
+{
+  "donator_key": "你的key",
+  "mirrors": ["https://annas-archive.gl", "https://annas-archive.li"]
+}
+```
+
+没 key 也能搜，但下不了。AA 有每日下载配额，用完了脚本会自动停。
+
+**EZProxy** — 机构代理下付费论文用的 session cookie：
+
+```jsonc
+// skills/download/config/ezproxy.json（或 ~/.claude/config/ezproxy.json）
+{
+  "cookies": {
+    "ezproxy": "SESSION_VALUE_1",
+    "yewnoEzProxyn": "SESSION_VALUE_2"
+  },
+  "domain": ".your-institution.idm.oclc.org",
+  "login_url": "https://login.your-institution.idm.oclc.org/login?url="
+}
+```
+
+获取方式：浏览器登录 EZProxy → DevTools → Application → Cookies → 复制对应域下的 cookie。注意这东西过期极快（几分钟到几小时不等），过期后脚本会自动检测、保存进度、停下来骂你。
+
+论文下载的降级路径：OA → Sci-Hub → EZProxy → Wayback。没有 EZProxy cookie 也能用，只是少了一条路。
+
+### 分析参数
+
+每个项目在自己的 `CLAUDE.md` 里提供分析立场：
 
 ```yaml
-topic: "你的研究主题"
+topic: "你���研究主题"
 preamble: >
   项目特定的分析指令
   （比如「这是人文理论文本，不要找数据和样本量」）
