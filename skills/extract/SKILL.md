@@ -1,5 +1,5 @@
 ---
-name: extract
+name: quasi:extract
 type: tool
 description: >
   Extracts text from EPUB/PDF academic books into chapter-level plain text

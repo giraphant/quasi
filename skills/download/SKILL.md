@@ -1,5 +1,5 @@
 ---
-name: download
+name: quasi:download
 type: tool
 description: >
   Pure file acquisition — books (Anna's Archive by MD5) and papers

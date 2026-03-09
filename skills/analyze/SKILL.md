@@ -1,5 +1,5 @@
 ---
-name: analyze
+name: quasi:analyze
 type: template
 description: >
   Analyzes a single text (book chapter or paper) using parameterized prompt

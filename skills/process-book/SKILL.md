@@ -1,5 +1,5 @@
 ---
-name: process-book
+name: quasi:process-book
 type: workflow
 description: >
   Composite skill: processes a book from EPUB/PDF to structured summaries.

@@ -1,5 +1,5 @@
 ---
-name: synthesize
+name: quasi:synthesize
 type: tool
 description: >
   Generates cross-text synthesis reports, aggregated reference lists, and

@@ -1,5 +1,5 @@
 ---
-name: citation-snowball
+name: quasi:citation-snowball
 type: workflow
 description: >
   Composite skill: builds a topic-focused reading corpus by chaining citations

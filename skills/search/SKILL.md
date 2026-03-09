@@ -1,5 +1,5 @@
 ---
-name: search
+name: quasi:search
 type: tool
 description: >
   Unified search for books (Google Books/OpenLibrary/OpenAlex/Anna's Archive)

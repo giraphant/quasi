@@ -1,5 +1,5 @@
 ---
-name: process-journal
+name: quasi:process-journal
 type: workflow
 description: >
   Composite skill: acquires papers from a journal scan report, analyzes them, and

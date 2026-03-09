@@ -1,5 +1,5 @@
 ---
-name: process-author
+name: quasi:process-author
 type: workflow
 description: >
   Composite skill: discovers a scholar's representative works (up to 5 books +
