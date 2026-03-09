@@ -2,15 +2,15 @@
 name: quasi:process-journal
 type: workflow
 description: >
-  Composite skill: acquires papers from a journal scan report, analyzes them, and
-  synthesizes findings. Subagent-driven: main process only dispatches 3 coordinator
-  agents. Use when the user says "处理期刊", "journal scan".
+  Composite skill: end-to-end journal processing from OpenAlex fetch to synthesis.
+  Subagent-driven: main process dispatches 4 coordinator agents (scan, download, analyze, synthesize).
+  Use when the user says "处理期刊", "journal scan".
 argument-hint: "<journal-name> [--threshold <score>]"
 ---
 
 # Process Journal — 期刊处理（复合技能）
 
-从已有评分报告出发 → 获取全文 → 逐篇分析 → 综合报告。主进程只做 dispatcher。
+端到端流程：抓取期刊 → 评分 → 获取全文 → 逐篇分析 → 综合报告。主进程只做 dispatcher。
 
 ## 调用方式
 
@@ -18,27 +18,28 @@ argument-hint: "<journal-name> [--threshold <score>]"
 /quasi:process-journal {journal-name} [--threshold 7.0]
 ```
 
-`{journal-name}` 为 kebab-case（如 `british-journal-of-sociology`）。
+`{journal-name}` 为期刊名称（如 "Critical Inquiry"）或 kebab-case（如 `critical-inquiry`）。
 
 ## 前置条件
 
-1. **reeder 已配置**：期刊已添加、抓取、评分
-2. 评分报告已生成：`vault/journals/{journal-name}-scan.md`
+1. **CLAUDE.md §1.3 已配置**：包含 Research Interests
+2. **无需外部工具**：所有功能已集成
 
 ## 编排模式：子代理驱动
 
 **核心原则**：主进程只做 dispatcher，不做循环、不读分析产出、不管下载细节。所有重活交给 coordinator 子代理，每个 coordinator 有独立的上下文预算。
 
 ```
-主进程 (dispatcher, ~4 次工具调用)
+主进程 (dispatcher, ~5 次工具调用)
 │
-├─ Phase 1: SCAN（前置，用户通过 reeder 完成，不在本技能范围）
-├─ Phase 2: download-coordinator  [前台, 等待完成]
-├─ Phase 3: analyze-coordinator   [前台, 等待完成]
-└─ Phase 4: synthesis-agent       [前台, 等待完成]
+├─ Phase 1: scan-coordinator      [前台, 等待完成] - 抓取+评分+生成scan.md
+├─ Phase 2: download-coordinator  [前台, 等待完成] - 下载PDF
+├─ Phase 3: analyze-coordinator   [前台, 等待完成] - 分析论文
+└─ Phase 4: synthesis-agent       [前台, 等待完成] - 综合报告
 ```
 
 **主进程禁止做的事**：
+- 循环调用 fetch_papers.py 或评分（交给 scan-coordinator）
 - 循环调用 download.py（交给 download-coordinator）
 - 循环派发 analyze agents（交给 analyze-coordinator）
 - 读取分析产出 .md 文件（只用 Glob 检查数量）
@@ -47,9 +48,43 @@ argument-hint: "<journal-name> [--threshold <score>]"
 
 ---
 
-## Phase 1: SCAN（前置，通过 reeder）
+## Phase 1: SCAN（scan-coordinator）
 
-不在本技能范围。用户通过 reeder CLI 完成。产出 `vault/journals/{journal-name}-scan.md`。
+**调度方式**：1 个前台子代理（opus）
+
+**子代理 prompt 模板**：
+
+```
+你是期刊扫描协调代理。任务：抓取期刊论文 → 评分 → 生成报告。
+
+步骤：
+1. 抓取论文：
+   python3 skills/process-journal/scripts/fetch_papers.py \
+       --journal-name "{journal_name}" \
+       --days-back 3650 \
+       --output /tmp/{journal-name}-papers.json
+
+2. 读取 CLAUDE.md §1.3 获取 research_interests（### Research Interests 行）
+
+3. 对每篇论文启动后台评分子代理：
+   - 读取 skills/process-journal/prompts/score-single-paper.md
+   - 填入：paper 元数据 + research_interests
+   - 输出：/tmp/{journal-name}-scores/{paper_id}.json
+   - 检查已有评分，跳过已完成的论文
+
+4. 等待完成（Glob 检查 /tmp/{journal-name}-scores/*.json 数量）
+
+5. 生成报告：
+   python3 skills/process-journal/scripts/generate_scan_report.py \
+       --papers /tmp/{journal-name}-papers.json \
+       --scores /tmp/{journal-name}-scores/ \
+       --output vault/journals/{journal-name}-scan.md
+```
+
+**主进程收到**：scan.md 路径（确认成功）
+
+### 断点续跑
+`vault/journals/{journal-name}-scan.md` 存在 → 跳过 Phase 1。coordinator 内部也会跳过已有评分。
 
 ---
 
@@ -199,8 +234,9 @@ scan_path = f"vault/journals/{journal_name}-scan.md"
 topic = "技术、AI、媒介与具身化"
 preamble = "这是人文/理论类文本，不是实证研究。不要寻找"数据"、"样本量"或"因果推断"。聚焦于理论论证、概念贡献和学术对话。"
 
-# 1. 前置检查
-assert exists(scan_path), "请先通过 reeder 生成评分报告"
+# 1. SCAN [前台] - 如果 scan.md 不存在
+if not exists(scan_path):
+    Task(scan_coordinator_prompt, foreground=True)  # → scan.md
 
 # 2. ACQUIRE [前台]
 Task(download_coordinator_prompt, foreground=True)  # → 下载统计
@@ -220,7 +256,7 @@ print(f"Done: vault/journals/{journal_name}-synthesis.md")
 
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
-| Phase 1 | `vault/journals/{name}-scan.md` | 前置条件，必须存在 |
+| Phase 1 | `vault/journals/{name}-scan.md` | 存在则跳过 Phase 1 |
 | Phase 2 | `vault/journals/{name}/{doi-slug}.md` | 已有分析则跳过下载 |
 | Phase 3 | `vault/journals/{name}/{doi-slug}.md` | 存在则跳过该论文 |
 | Phase 4 | `vault/journals/{name}-synthesis.md` | 存在则跳过（`--force` 重生成） |
