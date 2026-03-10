@@ -537,6 +537,8 @@ def try_scihub_download(doi, output_path):
             pdf_url = match.group(1)
             if pdf_url.startswith("//"):
                 pdf_url = "https:" + pdf_url
+            elif pdf_url.startswith("/"):
+                pdf_url = mirror + pdf_url
 
             # Download the PDF
             pdf_req = urllib.request.Request(pdf_url, headers=HEADERS_BROWSER)
