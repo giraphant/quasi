@@ -73,7 +73,7 @@ def generate_report(merged: list[dict], journal_name: str) -> str:
     ]
 
     for p in tier1:
-        tags_str = json.dumps(p.get("tags", []))
+        tags_str = ", ".join(p.get("tags", []))
         lines.append(f"### {p['title']}")
         lines.append(f"- **Date**: {p['publication_date']} | **Score**: R={p['r']} Q={p['q']} I={p['i']} **Avg={p['overall_score']}**")
         lines.append(f"- **Tags**: {tags_str}")
