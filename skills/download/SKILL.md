@@ -33,29 +33,29 @@ description: >
 先用 `search.py books --source aa` 搜索获取 MD5，然后：
 
 ```bash
-python3 quasi/skills/download/scripts/download.py \
+python3 scripts/download.py \
     --md5 abc123def456 --filename poggi-durkheim
 
 # 指定格式和目录
-python3 quasi/skills/download/scripts/download.py \
+python3 scripts/download.py \
     --md5 abc123def456 --filename book-name -f epub -o sources/
 ```
 
 ### 按 DOI 下载论文（OA 级联）
 
 ```bash
-python3 quasi/skills/download/scripts/download.py \
+python3 scripts/download.py \
     --doi "10.1080/1600910X.2019.1641121"
 
 # 带 Wayback 重试
-python3 quasi/skills/download/scripts/download.py \
+python3 scripts/download.py \
     --doi "10.1145/2737856.2738018" --retry-wayback
 ```
 
 ### 按 URL 直接下载
 
 ```bash
-python3 quasi/skills/download/scripts/download.py \
+python3 scripts/download.py \
     --url "https://example.com/paper.pdf" --filename "author-2023"
 ```
 
@@ -63,11 +63,11 @@ python3 quasi/skills/download/scripts/download.py \
 
 ```bash
 # 下载 manifest 中所有 metadata_found 状态的论文
-python3 quasi/skills/download/scripts/download.py \
+python3 scripts/download.py \
     --manifest vault/journals/topic-slug/manifest.json --batch
 
 # 带 Wayback 重试
-python3 quasi/skills/download/scripts/download.py \
+python3 scripts/download.py \
     --manifest vault/journals/topic-slug/manifest.json --batch --retry-wayback
 ```
 

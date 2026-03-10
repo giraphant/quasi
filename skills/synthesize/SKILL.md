@@ -36,7 +36,7 @@ description: >
 ### 1. 参考文献聚合
 
 ```bash
-python3 quasi/skills/synthesize/scripts/aggregate_refs.py \
+python3 scripts/aggregate_refs.py \
     vault/journals/{topic-slug}/ \
     --output vault/journals/{topic-slug}-reading-list.md
 ```

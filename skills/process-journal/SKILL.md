@@ -103,7 +103,7 @@ argument-hint: "<journal-name> [--threshold <score>]"
 3. 对每个 DOI，检查 vault/journals/{journal-name}/{doi-slug}.md 是否已存在
    - 已存在 → 跳过（已分析过）
 4. 对每个需下载的 DOI：
-   python3 quasi/skills/download/scripts/download.py \
+   python3 ../download/scripts/download.py \
        --doi "{doi}" --output-dir /tmp/{journal-name}-pdfs/ --filename {doi-slug}
    - doi-slug 格式：将 DOI 中的 / 替换为 _（如 10.1111/1468-4446.12918 → 10_1111_1468-4446_12918）
    - 成功 → 记录 {doi: pdf_path}
@@ -179,7 +179,7 @@ argument-hint: "<journal-name> [--threshold <score>]"
 
 步骤：
 1. 聚合参考文献：
-   python3 quasi/skills/synthesize/scripts/aggregate_refs.py \
+   python3 ../synthesize/scripts/aggregate_refs.py \
        vault/journals/{journal-name}/ \
        --output vault/journals/{journal-name}-reading-list.md
 

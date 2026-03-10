@@ -48,11 +48,11 @@ argument-hint: "[book-name]"
 
 ```bash
 # EPUB
-python3 quasi/skills/extract/scripts/process_epub.py \
+python3 ../extract/scripts/process_epub.py \
     sources/{book-name}.epub processing/chapters/{book-name}/
 
 # PDF
-python3 quasi/skills/extract/scripts/split_chapters.py \
+python3 ../extract/scripts/split_chapters.py \
     sources/{book-name}.pdf --output-dir processing/chapters/{book-name}/
 ```
 
@@ -153,7 +153,7 @@ output_dir = determine_output_dir(book_name)  # 主进程根据书籍类型决�
 
 # 1. EXTRACT [前台, Bash]
 if not exists(f"{chapters_dir}/manifest.json"):
-    Bash(f"python3 quasi/skills/extract/scripts/process_epub.py {source_file} {chapters_dir}")
+    Bash(f"python3 ../extract/scripts/process_epub.py {source_file} {chapters_dir}")
     # 或 split_chapters.py for PDF
 
 # 2. BOOK-COORDINATOR [前台]

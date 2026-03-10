@@ -53,9 +53,9 @@ argument-hint: "{author-name}"
 
 步骤：
 1. 搜索书籍候选池：
-   python3 quasi/skills/search/scripts/search.py books --author "{Full Name}" --limit 20
+   python3 ../search/scripts/search.py books --author "{Full Name}" --limit 20
 2. 搜索论文候选池：
-   python3 quasi/skills/search/scripts/search.py papers --author "{Full Name}" --limit 30
+   python3 ../search/scripts/search.py papers --author "{Full Name}" --limit 30
 3. 按「引用量 × 与"{topic}"相关性」筛选：
    - 5 本最重要的书（附选择理由）
    - 10 篇最重要的论文（附选择理由）
@@ -102,14 +102,14 @@ manifest 结构见下方。status 统一为 "discovered"。
 读取 vault/authors/{author-name}/manifest.json。
 
 书籍下载流程（对每本 status="discovered" 的书）：
-1. python3 quasi/skills/search/scripts/search.py books --source aa "{title}" --author "{author}" --limit 5
+1. python3 ../search/scripts/search.py books --source aa "{title}" --author "{author}" --limit 5
 2. 从结果中找到匹配的 MD5
-3. python3 quasi/skills/download/scripts/download.py --md5 {md5} --filename {book-slug} -o sources/
+3. python3 ../download/scripts/download.py --md5 {md5} --filename {book-slug} -o sources/
 4. 成功 → 更新 manifest: status="acquired", md5="{md5}"
 5. 失败 → status="failed"
 
 论文下载流程（对每篇 status="discovered" 的论文）：
-1. python3 quasi/skills/download/scripts/download.py --doi "{doi}" --output-dir vault/authors/{author-name}/papers/ --filename {doi-slug}
+1. python3 ../download/scripts/download.py --doi "{doi}" --output-dir vault/authors/{author-name}/papers/ --filename {doi-slug}
 2. 成功 → status="acquired", file="vault/authors/{author-name}/papers/{slug}.pdf"
 3. 失败 → status="failed"
 
@@ -143,10 +143,10 @@ manifest 中 `status` 为 `acquired` 或 `failed` 的条目 → 跳过。coordin
 
 步骤 1 — 提取章节：
   # EPUB
-  python3 quasi/skills/extract/scripts/process_epub.py \
+  python3 ../extract/scripts/process_epub.py \
       sources/{book-slug}.epub processing/chapters/{book-slug}/
   # 或 PDF
-  python3 quasi/skills/extract/scripts/split_chapters.py \
+  python3 ../extract/scripts/split_chapters.py \
       sources/{book-slug}.pdf --output-dir processing/chapters/{book-slug}/
 
 步骤 2 — 筛选章节：

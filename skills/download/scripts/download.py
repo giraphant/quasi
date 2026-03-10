@@ -39,7 +39,7 @@ import requests
 
 # --- Config ---
 
-_CONFIG_DIR = Path(__file__).resolve().parents[4] / ".claude" / "config"
+_CONFIG_DIR = Path.home() / ".claude" / "config"
 _SKILL_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = _CONFIG_DIR / "anna-archive.json"
 # EZProxy: skill-local first, .claude/config fallback

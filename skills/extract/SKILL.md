@@ -29,7 +29,7 @@ description: >
 ### EPUB 提取
 
 ```bash
-python3 quasi/skills/extract/scripts/process_epub.py \
+python3 scripts/process_epub.py \
     sources/{book-name}.epub \
     processing/chapters/{book-name}/
 ```
@@ -42,7 +42,7 @@ python3 quasi/skills/extract/scripts/process_epub.py \
 
 ```bash
 # 自动拆分（基于 TOC 或页面分析）
-python3 quasi/skills/extract/scripts/split_chapters.py \
+python3 scripts/split_chapters.py \
     sources/{book-name}.pdf \
     --output-dir processing/chapters/{book-name}/
 

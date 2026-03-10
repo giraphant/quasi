@@ -76,7 +76,7 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
 
 2. 获取种子论文 PDF：
    - 如果 seed 是 DOI：
-     python3 quasi/skills/download/scripts/download.py \
+     python3 ../download/scripts/download.py \
        --doi "{doi}" --output-dir /tmp/{topic-slug}-pdfs/ --filename seed
    - 如果 seed 是本地 PDF 路径：直接使用
 
@@ -106,7 +106,7 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
    - 提取的引用：round=1, status="discovered"
 
 6. 对新发现的引用批量查元数据：
-   python3 quasi/skills/search/scripts/search.py metadata \
+   python3 ../search/scripts/search.py metadata \
      --manifest vault/journals/{topic-slug}/manifest.json --all
 
 7. 报告：种子论文标题、提取到 N 条引用、manifest 路径。
@@ -142,12 +142,12 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
 
 1. SEARCH — 查元数据：
    读取 manifest.json，找到本轮 (round={round_num}, status="discovered") 的条目。
-   python3 quasi/skills/search/scripts/search.py metadata \
+   python3 ../search/scripts/search.py metadata \
      --manifest vault/journals/{topic-slug}/manifest.json --all
    更新 manifest 中的 doi, oa_url, abstract 等字段。
 
 2. ACQUIRE — 下载 PDF：
-   python3 quasi/skills/download/scripts/download.py \
+   python3 ../download/scripts/download.py \
      --manifest vault/journals/{topic-slug}/manifest.json --batch --retry-wayback
    成功 → status="acquired"；失败 → status="failed"。
    每次下载后更新 manifest。
@@ -185,7 +185,7 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
 
 6. METADATA — 对新引用查元数据：
    如果有新引用：
-   python3 quasi/skills/search/scripts/search.py metadata \
+   python3 ../search/scripts/search.py metadata \
      --manifest vault/journals/{topic-slug}/manifest.json --all
 
 7. 更新 manifest：rounds_completed = {round_num}

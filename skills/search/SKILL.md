@@ -41,34 +41,34 @@ description: >
 
 ```bash
 # 主题搜索（Google Books + OpenLibrary + OpenAlex）
-python3 quasi/skills/search/scripts/search.py books "body studies" --limit 20
+python3 scripts/search.py books "body studies" --limit 20
 
 # 作者搜索
-python3 quasi/skills/search/scripts/search.py books --author "Katherine Hayles" --limit 10
+python3 scripts/search.py books --author "Katherine Hayles" --limit 10
 
 # 限定数据源
-python3 quasi/skills/search/scripts/search.py books --title "handbook body" --source google
+python3 scripts/search.py books --title "handbook body" --source google
 
 # 限定年份
-python3 quasi/skills/search/scripts/search.py books \
+python3 scripts/search.py books \
     --subject "digital media" --author "Hansen" --year-from 2000 --limit 15
 
 # JSON 输出
-python3 quasi/skills/search/scripts/search.py books "body studies" --json
+python3 scripts/search.py books "body studies" --json
 
 # 输出到文件
-python3 quasi/skills/search/scripts/search.py books "body studies" -o results.md
+python3 scripts/search.py books "body studies" -o results.md
 ```
 
 ### 搜索书籍（Anna's Archive — 文件搜索）
 
 ```bash
 # 基础搜索
-python3 quasi/skills/search/scripts/search.py books \
+python3 scripts/search.py books \
     "Durkheim social morphology" --source aa
 
 # 限定语言和格式
-python3 quasi/skills/search/scripts/search.py books \
+python3 scripts/search.py books \
     "Seasonal Variations Eskimo" --source aa --lang en --format epub
 
 # 搜索结果含 MD5 → 传给 download.py --md5 下载
@@ -78,35 +78,35 @@ python3 quasi/skills/search/scripts/search.py books \
 
 ```bash
 # 按作者搜索论文，默认按引用量降序
-python3 quasi/skills/search/scripts/search.py papers --author "Donna Haraway" --limit 30
+python3 scripts/search.py papers --author "Donna Haraway" --limit 30
 
 # 限定起始年份
-python3 quasi/skills/search/scripts/search.py papers --author "Donna Haraway" --year-from 2010
+python3 scripts/search.py papers --author "Donna Haraway" --year-from 2010
 
 # JSON 输出
-python3 quasi/skills/search/scripts/search.py papers --author "Donna Haraway" --limit 10 --json
+python3 scripts/search.py papers --author "Donna Haraway" --limit 10 --json
 
 # 输出到文件
-python3 quasi/skills/search/scripts/search.py papers --author "Donna Haraway" -o results.md
+python3 scripts/search.py papers --author "Donna Haraway" -o results.md
 ```
 
 ### 搜索论文元数据
 
 ```bash
 # 按 DOI 查询
-python3 quasi/skills/search/scripts/search.py metadata \
+python3 scripts/search.py metadata \
     --doi "10.1080/1600910X.2019.1641121"
 
 # 按标题+作者查询
-python3 quasi/skills/search/scripts/search.py metadata \
+python3 scripts/search.py metadata \
     --title "Space syntax theory" --author "Liebst"
 
 # 批量查询 manifest 中所有 discovered 论文
-python3 quasi/skills/search/scripts/search.py metadata \
+python3 scripts/search.py metadata \
     --manifest vault/journals/topic-slug/manifest.json --all
 
 # 单篇更新 manifest
-python3 quasi/skills/search/scripts/search.py metadata \
+python3 scripts/search.py metadata \
     --doi "10.xxx/yyy" --manifest manifest.json --key "author-2023"
 ```
 

@@ -50,7 +50,7 @@ HEADERS = {"User-Agent": "BTS-Research/1.0 (mailto:research@example.com)"}
 DELAY = 0.35
 
 # --- Anna's Archive config ---
-AA_CONFIG_PATH = Path(__file__).resolve().parents[4] / ".claude" / "config" / "anna-archive.json"
+AA_CONFIG_PATH = Path.home() / ".claude" / "config" / "anna-archive.json"
 AA_DEFAULT_MIRRORS = [
     "https://annas-archive.gl",
     "https://annas-archive.li",
