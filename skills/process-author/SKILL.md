@@ -9,6 +9,8 @@ description: >
 argument-hint: "{author-name}"
 ---
 
+> **路径约定**：本技能引用其他技能的脚本时，基于系统提供的 base directory 拼接。例如 `../search/scripts/X.py` → `python3 {base_directory}/../search/scripts/X.py`。
+
 # Process Author — 作者处理（复合技能）
 
 系统性处理一位核心学者的代表作，生成作者级综合文档。
@@ -159,7 +161,7 @@ manifest 中 `status` 为 `acquired` 或 `failed` 的条目 → 跳过。coordin
   - subagent_type: "general-purpose"
   - model: "opus"
   - run_in_background: true
-  - prompt: 读取 quasi/skills/analyze/prompts/text-analysis.md 模板，
+  - prompt: 读取 ../analyze/prompts/text-analysis.md 模板，
     选用 A 类（书籍章节）元数据格式，根据模板中的占位符填入相应值，
     生成分析写入 vault/monographs/{book-slug}/ch{NN}-{title-slug}.md。
     值来源：
@@ -200,7 +202,7 @@ manifest 中 `status` 为 `acquired` 或 `failed` 的条目 → 跳过。coordin
 - subagent_type: "general-purpose"
 - model: "opus"
 - run_in_background: true
-- prompt: 读取 quasi/skills/analyze/prompts/text-analysis.md 模板，
+- prompt: 读取 ../analyze/prompts/text-analysis.md 模板，
   选用 B 类（论文）元数据格式，根据模板中的占位符填入相应值，
   生成分析写入 vault/authors/{author-name}/papers/{slug}.md。
   值来源：

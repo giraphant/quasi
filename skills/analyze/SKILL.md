@@ -7,6 +7,8 @@ description: >
   individual chapters or papers, or when another composite skill needs analysis.
 ---
 
+> **路径约定**：本技能所有 `prompts/X.md` 路径相对于系统提供的 base directory。读取时拼接为 `{base_directory}/prompts/X.md`。
+
 # Analyze — 单文本分析
 
 对单个文本（书籍章节或论文）进行结构化分析，输出统一格式的 .md 文件。
@@ -45,7 +47,7 @@ Task tool:
   model: "opus"
   run_in_background: true
   prompt: |
-    读取 quasi/skills/analyze/prompts/text-analysis.md 模板，
+    读取 prompts/text-analysis.md 模板，
     选用「{A 或 B}」元数据格式，根据模板中的占位符填入相应值，
     生成分析写入 {output_path}。
     值来源：

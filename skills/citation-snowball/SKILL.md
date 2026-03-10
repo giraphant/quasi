@@ -12,6 +12,8 @@ description: >
 argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
 ---
 
+> **路径约定**：本技能引用其他技能的脚本时，基于系统提供的 base directory 拼接。例如 `../search/scripts/X.py` → `python3 {base_directory}/../search/scripts/X.py`。
+
 # Citation Snowball — 引用滚雪球（复合技能）
 
 从种子论文出发，沿引用链逐轮扩展主题相关文献，直到饱和。
@@ -85,14 +87,14 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
    - subagent_type: "general-purpose"
    - model: "opus"
    - run_in_background: false（前台，等待完成）
-   - prompt: 读取 quasi/skills/analyze/prompts/text-analysis.md 模板，
+   - prompt: 读取 ../analyze/prompts/text-analysis.md 模板，
      选用 B 类（论文）元数据格式，根据模板中的占位符填入相应值，
      生成分析写入 vault/journals/{topic-slug}/{seed-key}.md。
      值来源：
      - preamble/topic: 从 CLAUDE.md §1.3 获取
      - 论文元数据 (title, author, year, doi, source): 从种子论文 PDF 或用户输入获取
      - input_instruction: 读取 {pdf_path}
-     - extra_sections: 读取 quasi/skills/analyze/prompts/snowball-extra.md，
+     - extra_sections: 读取 ../analyze/prompts/snowball-extra.md，
        将 {{topic}} 替换为 "{topic}"
 
 4. 从分析产出中提取引用：
@@ -160,14 +162,14 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
    - subagent_type: "general-purpose"
    - model: "opus"
    - run_in_background: true
-   - prompt: 读取 quasi/skills/analyze/prompts/text-analysis.md 模板，
+   - prompt: 读取 ../analyze/prompts/text-analysis.md 模板，
      选用 B 类（论文）元数据格式，根据模板中的占位符填入相应值，
      生成分析写入 vault/journals/{topic-slug}/{key}.md。
      值来源：
      - preamble/topic: 从 CLAUDE.md §1.3 获取
      - 论文元数据 (title, author, year, doi, source): 从 manifest 获取
      - input_instruction: 读取 {pdf_path}
-     - extra_sections: 读取 quasi/skills/analyze/prompts/snowball-extra.md，
+     - extra_sections: 读取 ../analyze/prompts/snowball-extra.md，
        将 {{topic}} 替换为 "{topic}"
 
 4. POLL — 等待分析完成：

@@ -8,6 +8,8 @@ description: >
 argument-hint: "<journal-name> [--threshold <score>]"
 ---
 
+> **路径约定**：本技能引用其他技能的脚本时，基于系统提供的 base directory 拼接。例如 `../download/scripts/X.py` → `python3 {base_directory}/../download/scripts/X.py`。
+
 # Process Journal — 期刊处理（复合技能）
 
 端到端流程：抓取期刊 → 评分 → 获取全文 → 逐篇分析 → 综合报告。主进程只做 dispatcher。
@@ -145,7 +147,7 @@ argument-hint: "<journal-name> [--threshold <score>]"
    - model: "opus"
    - run_in_background: true
    - prompt: |
-       读取 quasi/skills/analyze/prompts/text-analysis.md 模板，
+       读取 ../analyze/prompts/text-analysis.md 模板，
        选用 B 类（期刊论文）元数据格式，根据模板中的占位符填入相应值，
        生成分析写入 vault/journals/{journal-name}/{doi-slug}.md。
        值来源：

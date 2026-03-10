@@ -8,6 +8,8 @@ description: >
   another skill needs to acquire a file.
 ---
 
+> **路径约定**：本技能所有 `scripts/X.py` 路径相对于系统提供的 base directory。执行时拼接为 `python3 {base_directory}/scripts/X.py`。
+
 # Download — 纯获取
 
 接受已解析的标识符（MD5/DOI/URL），下载学术文件。不做搜索，搜索用 search 技能。
@@ -107,7 +109,7 @@ AA 需要 donator key，存放在 `.claude/config/anna-archive.json`（已 gitig
 
 付费期刊下载需要 EZProxy cookie。配置文件位于技能文件夹内：
 
-`quasi/skills/download/config/ezproxy.json`（已 gitignore）：
+`config/ezproxy.json`（已 gitignore）：
 
 单 cookie 格式：
 ```json

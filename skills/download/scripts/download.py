@@ -20,7 +20,7 @@ Usage:
 Config (AA only): .claude/config/anna-archive.json
     {"donator_key": "YOUR_KEY", "mirrors": ["https://annas-archive.gs", ...]}
 
-Config (EZproxy): quasi/skills/download/config/ezproxy.json (or .claude/config/ezproxy.json)
+Config (EZproxy): config/ezproxy.json (skill-local) or ~/.claude/config/ezproxy.json (global)
     {"cookie": "VALUE", "cookie_name": "ezproxy", "domain": "...", "login_url": "...", ...}
 """
 

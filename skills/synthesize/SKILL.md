@@ -8,6 +8,8 @@ description: >
   "生成报告", "更新知识库", "update KB".
 ---
 
+> **路径约定**：本技能所有 `scripts/X.py` 路径相对于系统提供的 base directory。执行时拼接为 `python3 {base_directory}/scripts/X.py`。
+
 # Synthesize — 综合报告 + 知识库更新
 
 从多篇分析结果生成跨文本综合报告、参考文献聚合列表，以及知识库更新。
@@ -75,7 +77,7 @@ Task tool:
   subagent_type: "general-purpose"
   model: "opus"
   prompt: |
-    读取 quasi/skills/synthesize/prompts/kb-update.md 模板，填入以下参数：
+    读取 prompts/kb-update.md 模板，填入以下参数：
     - topic: "{topic}"
     - source_name: "{来源名称}"
     - analysis_dir: "{分析目录}"

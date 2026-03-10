@@ -9,6 +9,8 @@ description: >
 argument-hint: "[book-name]"
 ---
 
+> **路径约定**：本技能引用其他技能的脚本时，基于系统提供的 base directory 拼接。例如 `../extract/scripts/X.py` → `python3 {base_directory}/../extract/scripts/X.py`。
+
 # Process Book — 书籍处理（复合技能）
 
 从 EPUB/PDF 到结构化摘要的完整流程。子代理驱动架构。
@@ -100,7 +102,7 @@ book-coordinator 独立完成全部工作：读取 manifest → 筛选章节 →
   - subagent_type: "general-purpose"
   - model: "opus"
   - run_in_background: true
-  - prompt: 读取 quasi/skills/analyze/prompts/text-analysis.md 模板，
+  - prompt: 读取 ../analyze/prompts/text-analysis.md 模板，
     选用 A 类（书籍章节）元数据格式，根据模板中的占位符填入相应值，
     生成分析写入 {output_dir}/ch{NN}-{title-slug}.md。
     值来源：

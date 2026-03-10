@@ -7,6 +7,8 @@ description: >
   the user says "搜索", "search", "查找文献", or when another skill needs metadata.
 ---
 
+> **路径约定**：本技能所有 `scripts/X.py` 路径相对于系统提供的 base directory。执行时拼接为 `python3 {base_directory}/scripts/X.py`。
+
 # Search — 统一搜索
 
 搜索学术书籍（多源含 AA）和论文元数据（OpenAlex/Unpaywall/S2）。

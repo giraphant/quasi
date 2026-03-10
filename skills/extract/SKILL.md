@@ -7,6 +7,8 @@ description: >
   "提取章节", "拆分", "extract chapters".
 ---
 
+> **路径约定**：本技能所有 `scripts/X.py` 路径相对于系统提供的 base directory。执行时拼接为 `python3 {base_directory}/scripts/X.py`。
+
 # Extract — 文本提取
 
 从 EPUB/PDF 提取章节级纯文本，为 analyze 技能准备输入。
@@ -47,7 +49,7 @@ python3 scripts/split_chapters.py \
     --output-dir processing/chapters/{book-name}/
 
 # OCR（扫描版 PDF）
-bash quasi/skills/extract/scripts/ocr_pdf.sh \
+bash scripts/ocr_pdf.sh \
     sources/{book-name}.pdf \
     sources/{book-name}-ocr.pdf
 ```
