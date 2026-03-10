@@ -142,7 +142,7 @@ argument-hint: "<journal-name> [--threshold <score>]"
 1. 用 Glob 扫描 /tmp/{journal-name}-pdfs/*.pdf，获取所有待分析 PDF 列表
 2. 对每个 PDF，检查 vault/journals/{journal-name}/{doi-slug}.md 是否已存在
    - 已存在 → 跳过
-3. 对每个需分析的 PDF，启动 1 个后台子代理（Task tool）：
+3. 对每个需分析的 PDF，使用 Agent tool 启动 1 个后台子代理（不要用 claude -p Bash 命令）：
    - subagent_type: "general-purpose"
    - model: "opus"
    - run_in_background: true
