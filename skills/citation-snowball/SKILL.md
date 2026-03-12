@@ -27,35 +27,28 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
 ## ⚠ 架构约束
 
 **Agent 工具不支持嵌套**：由 Agent 工具派发的子代理没有 Agent 工具。因此：
-- seed-coordinator 和 round-coordinator **自己顺序完成分析工作**（不尝试派发子代理）
+- seed-coordinator **自己完成种子论文分析**（仅 1 篇，无需并行）
+- 每轮扩展的分析**由主进程直接用 Agent 工具并行派发**（不经 coordinator）
 
-## 编排模式：子代理驱动（round-coordinator）
+## 编排模式：子代理 + 主进程直接调度混合
 
-**核心原则**：主进程只做 dispatcher + 循环判断，不做搜索、不做下载、不派发分析代理、不读分析产出。所有重活交给 coordinator 子代理，每个 coordinator 有独立的上下文预算。
+**核心原则**：搜索/下载/引用提取交给 coordinator（不需并行），分析由主进程直接派发（需要并行）。
 
 ```
-主进程 (dispatcher, ~3+R 次工具调用, R = 轮数)
+主进程 (dispatcher)
 │
-├─ seed-coordinator           [前台, opus]
-│   └─ Download seed → analyze(opus) → extract citations → create manifest
+├─ Phase 0: seed-coordinator              [前台] - 下载+分析(自己做1篇)+提取引用+创建manifest
 │
-├─ round-coordinator ×R       [前台, opus, 逐轮串行]
-│   ├─ metadata search → download → dispatch analyze agents(opus, 后台) → Glob-poll
-│   ├─ Read analysis .md → extract citations from snowball-extra section → deduplicate
-│   └─ Add new refs to manifest (round+1, discovered) → return new_refs_count
+├─ Phase 1-N: 每轮
+│   ├─ round-prep-coordinator             [前台] - 查元数据+下载PDF → 报告acquired列表
+│   ├─ 主进程派发 N 个分析代理             [后台, 分批]
+│   ├─ 监控代理                           [前台, 等待分析完成]
+│   ├─ citation-extractor                 [前台] - 读分析→提取引用→更新manifest
+│   └─ 主进程检查 new_refs_count == 0 ? 停止 : 下一轮
 │
-├─ (主进程检查: new_refs_count == 0 ? 停止 : 下一轮)
-│
-└─ synthesis-agent            [前台, opus]
+└─ synthesis-agent                        [前台]
     └─ Read all analysis .md → generate synthesis report + reading list
 ```
-
-**主进程禁止做的事**：
-- 调用 search.py / download.py（交给 seed/round-coordinator）
-- 循环派发 analyze agents（交给 round-coordinator）
-- 读取分析产出 .md 文件（只用 Glob 检查数量；round-coordinator 内部读取并提取引用）
-- 手动解析引用、去重、更新 manifest 条目（coordinator 自己处理）
-- 直接执行 snowball-extra 模板的引用提取逻辑（coordinator 内部完成）
 
 ---
 
@@ -122,27 +115,20 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
 
 ---
 
-## Phase 1-N: EXPAND（round-coordinator ×R）
+## Phase 1-N: EXPAND（每轮 3 步：prep → 分析 → 提取）
 
-**调度方式**：每轮 1 个前台子代理（opus），串行执行。主进程逐轮启动，根据返回的 `new_refs_count` 决定是否继续。
+**调度方式**：每轮由主进程协调 3 个步骤。主进程逐轮执行，根据 `new_refs_count` 决定是否继续。
 
-**子代理 prompt 模板**（每轮一份，由主进程填入当前轮号）：
+### 步骤 A: round-prep-coordinator（前台子代理）
 
 ```
-你是引用滚雪球第 {round_num} 轮协调代理。任务：处理本轮所有待处理论文，
-分析后提取新引用，更新 manifest。
+你是引用滚雪球第 {round_num} 轮准备代理。任务：查元数据并下载本轮论文。
 
 参数：
-- topic_slug: {topic-slug}
-- topic: {topic}
-- preamble: {preamble}
-- round_num: {round_num}
 - manifest_path: vault/journals/{topic-slug}/manifest.json
-- output_dir: vault/journals/{topic-slug}
 - pdf_dir: /tmp/{topic-slug}-pdfs
 
 步骤：
-
 1. SEARCH — 查元数据：
    读取 manifest.json，找到本轮 (round={round_num}, status="discovered") 的条目。
    python3 ../search/scripts/search.py metadata \
@@ -155,49 +141,50 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
    成功 → status="acquired"；失败 → status="failed"。
    每次下载后更新 manifest。
 
-3. ANALYZE — 并行分析：
-   ⚠ 只分析 status="acquired"（有完整PDF）的论文，禁止分析仅有摘要或下载失败的论文。
+3. 报告：N 篇 acquired、M 篇 failed，列出 acquired 论文的 {key: pdf_path} 映射。
+```
 
-   对每篇 status="acquired" 的本轮论文，自己顺序完成分析（不派发子代理）：
-   - 检查 vault/journals/{topic-slug}/{key}.md 是否已存在（跳过已完成）
+### 步骤 B: 主进程派发分析代理
+
+⚠ 只分析 status="acquired"（有完整PDF）的论文。
+
+主进程步骤：
+1. 读取 manifest，提取本轮 status="acquired" 的论文列表
+2. 用 Glob 检查 vault/journals/{topic-slug}/{key}.md，排除已分析的
+3. 对每篇需分析的论文，派发 1 个后台分析代理（分批 ≤5）：
    - 读取 ../analyze/prompts/text-analysis.md 模板
-   - 选用 B 类（论文）元数据格式，根据模板中的占位符填入相应值
-   - 读取 PDF：{pdf_path}
-   - 生成分析写入 vault/journals/{topic-slug}/{key}.md
-   - 值来源：
-     - preamble/topic: 从 CLAUDE.md §1.3 获取
-     - 论文元数据 (title, author, year, doi, source): 从 manifest 获取
-     - input_instruction: 读取 {pdf_path}
-     - extra_sections: 读取 ../analyze/prompts/snowball-extra.md，
-       将 {{topic}} 替换为 "{topic}"
+   - 选用 B 类（论文）元数据格式
+   - 值来源：preamble/topic 从 CLAUDE.md §1.3，论文元数据从 manifest
+   - input_instruction: 读取 {pdf_path}
+   - extra_sections: 读取 ../analyze/prompts/snowball-extra.md，将 {{topic}} 替换为 "{topic}"
+   - 写入 vault/journals/{topic-slug}/{key}.md
+4. 派发 1 个前台"监控"代理：Glob 轮询 .md 数量，全部完成后报告
 
-4. EXTRACT — 提取新引用：
-   对每篇本轮完成分析的 .md 文件：
+### 步骤 C: citation-extractor（前台子代理）
+
+```
+你是引用提取代理。任务：从本轮分析产出中提取新引用，更新 manifest。
+
+步骤：
+1. 读取 manifest，找到本轮 status="acquired" 的论文
+2. 对每篇论文，读取 vault/journals/{topic-slug}/{key}.md：
    a) 读取「直接相关的{topic}引用文献」段落
    b) 解析 Author, Year, Title, DOI
    c) 与 manifest 已有论文去重（按 author+year+title 归一化）
    d) 新引用加入 manifest：round={round_num+1}, status="discovered",
       cited_by=[当前论文 key]
    e) 更新当前论文：status="refs_extracted", new_refs_found={count}
-
-6. METADATA — 对新引用查元数据：
-   如果有新引用：
+3. 对新引用查元数据：
    python3 ../search/scripts/search.py metadata \
      --manifest vault/journals/{topic-slug}/manifest.json --all
-
-7. 更新 manifest：rounds_completed = {round_num}
-
-8. 报告（必须包含以下字段供主进程解析）：
-   - round: {round_num}
-   - papers_analyzed: N
-   - new_refs_count: M
-   - total_papers: K
+4. 更新 manifest：rounds_completed = {round_num}
+5. 报告：new_refs_count = M
 ```
 
-**主进程收到**：`new_refs_count`（新发现引用数）。`new_refs_count == 0` → 饱和，跳到 SYNTHESIZE。
+**主进程收到**：`new_refs_count`。`== 0` → 饱和，跳到 SYNTHESIZE。
 
 ### 断点续跑
-manifest 中 `rounds_completed >= N` → 跳过第 N 轮及之前。round-coordinator 内部也跳过已有 analysis .md 的论文。
+manifest 中 `rounds_completed >= N` → 跳过第 N 轮及之前。主进程自动排除已有 .md 的论文。
 
 ---
 
@@ -287,35 +274,44 @@ MAX_ROUNDS = 5
 
 # Phase 0: SEED [前台]
 if not exists(manifest_path):
-    result = Task(seed_coordinator_prompt, foreground=True, model="opus")
+    Agent(seed_coordinator_prompt, foreground=True, model="opus")
     # → manifest.json created, new_refs_count returned
 
-# Phase 1-N: EXPAND [前台, 逐轮串行]
+# Phase 1-N: EXPAND [逐轮, 每轮 3 步]
 manifest = read_json(manifest_path)
 start_round = manifest["rounds_completed"] + 1
 
 for round_num in range(start_round, start_round + MAX_ROUNDS):
-    # 检查是否还有 discovered 条目
     discovered = [p for p in manifest["papers"].values()
                   if p["round"] == round_num and p["status"] == "discovered"]
     if len(discovered) == 0:
         break  # 饱和
 
-    result = Task(
-        round_coordinator_prompt(round_num=round_num),
-        foreground=True,  # 前台，等待完成
-        model="opus"
-    )
-    # → result 包含 new_refs_count
+    # A. round-prep: 查元数据 + 下载
+    Agent(round_prep_prompt(round_num), foreground=True, model="opus")
+
+    # B. 主进程派发分析代理
+    manifest = read_json(manifest_path)
+    acquired = [p for p in manifest["papers"].values()
+                if p["round"] == round_num and p["status"] == "acquired"]
+    existing = Glob(f"vault/journals/{topic_slug}/*.md")
+    to_analyze = [p for p in acquired if p["key"] + ".md" not in existing]
+
+    for batch in chunks(to_analyze, 5):
+        for p in batch:
+            Agent(analyze_prompt(p), background=True, model="opus")
+    Agent(monitor_prompt(expected=len(to_analyze)), foreground=True, model="opus")
+
+    # C. citation-extractor: 提取引用 + 更新 manifest
+    result = Agent(citation_extractor_prompt(round_num), foreground=True, model="opus")
 
     new_refs_count = parse_result(result, "new_refs_count")
     if new_refs_count == 0:
         break  # 饱和
-
-    manifest = read_json(manifest_path)  # 刷新
+    manifest = read_json(manifest_path)
 
 # Phase FINAL: SYNTHESIZE [前台]
-Task(synthesis_agent_prompt, foreground=True, model="opus")
+Agent(synthesis_agent_prompt, foreground=True, model="opus")
 
 # 报告完成
 print(f"Done: {rounds} rounds, {total} papers, synthesis + reading-list generated")
@@ -384,12 +380,13 @@ vault/journals/{topic-slug}-reading-list.md <- 阅读清单
 
 ## 核心原则
 
-1. **主进程只做 dispatcher + 循环判断**：~3+R 次工具调用（R=轮数），不做搜索/下载/分析
-2. **每个 round-coordinator 有独立上下文**：一轮的全部工作（搜索+下载+分析+引用提取）封装在一个 coordinator 里，互不污染
-3. **每篇论文 1 个分析代理**，`model: "opus"`
-4. **主进程不读分析产出**：只看 manifest + Glob 检查文件数量；round-coordinator 内部读取 .md 提取引用
-5. **manifest.json 是唯一状态源**：coordinator 直接读写
-6. **饱和即停**：`new_refs_count == 0` 时停止扩展
-7. **topic filter 严格**：只收录核心主题文献（snowball-extra 模板要求"标题/内容明确讨论 {topic}"）
-8. **从 CLAUDE.md §1.3 获取 preamble/topic 参数**
-9. **所有下载用 Python 脚本**：不手动 curl/wget
+1. **seed-coordinator 自己完成种子分析**：仅 1 篇，无需并行（Agent 嵌套不可用）
+2. **每轮分析由主进程直接派发**：每篇 1 个 Agent，`model: "opus"`，`run_in_background: true`
+3. **每轮 3 步**：round-prep（搜索+下载）→ 主进程派发分析 + 监控 → citation-extractor（提取引用）
+4. **监控代理处理轮询**：主进程不做循环，委托前台监控代理 Glob 检查
+5. **分批派发**：每批 ≤5 个分析代理，连续发出不等待
+6. **manifest.json 是唯一状态源**：coordinator 直接读写
+7. **饱和即停**：`new_refs_count == 0` 时停止扩展
+8. **topic filter 严格**：只收录核心主题文献（snowball-extra 模板要求"标题/内容明确讨论 {topic}"）
+9. **从 CLAUDE.md §1.3 获取 preamble/topic 参数**
+10. **所有下载用 Python 脚本**：不手动 curl/wget

@@ -26,29 +26,27 @@ argument-hint: "{author-name}"
 ## ⚠ 架构约束
 
 **Agent 工具不支持嵌套**：由 Agent 工具派发的子代理没有 Agent 工具。因此：
-- Phase 3 的 book-coordinator **自己顺序完成章节分析**（不尝试派发子代理）
-- Phase 4 的 paper-coordinator **自己顺序完成论文分析**（不尝试派发子代理）
+- Phase 1/2 的 coordinator **自己完成所有工作**（不尝试派发子代理）
+- Phase 3/4 的分析**由主进程直接用 Agent 工具并行派发**（不经 coordinator）
 
-## 编排模式：子代理驱动
-
-**核心原则**：主进程只做 dispatcher，不做循环、不读分析产出、不管 manifest 细节。所有重活交给 coordinator 子代理，每个 coordinator 有独立的上下文预算。
+## 编排模式：子代理 + 主进程直接调度混合
 
 ```
-主进程 (dispatcher, ≤10 次工具调用)
+主进程 (dispatcher)
 │
-├─ Phase 1: discover-agent        [前台, 等待完成]
-├─ Phase 2: download-coordinator  [前台, 等待完成]
-├─ Phase 3: book-coordinator ×N   [后台, 并行]
-├─ Phase 4: paper-coordinator     [后台, 与 Phase 3 并行]
-├─ (轮询等待 Phase 3+4 完成)
-└─ Phase 5: profile-agent         [前台, 等待完成]
+├─ Phase 1: discover-agent              [前台] - 搜索+筛选+生成manifest（自己完成）
+├─ Phase 2: download-coordinator        [前台] - 下载书籍+论文（自己完成）
+├─ Phase 3: PROCESS BOOKS（主进程直接调度）
+│   ├─ 对每本书: Bash extract
+│   ├─ 读 manifest + 筛选章节
+│   ├─ 派发 N 个章节分析代理             [后台, 分批]
+│   └─ 派发"监控+概览"代理              [前台, 等待完成]
+├─ Phase 4: PROCESS PAPERS（主进程直接调度）
+│   ├─ 从 manifest 提取待分析论文列表
+│   ├─ 派发 M 个论文分析代理             [后台, 分批]
+│   └─ 派发"监控"代理                   [前台, 等待完成]
+└─ Phase 5: profile-agent              [前台, 等待完成]
 ```
-
-**主进程禁止做的事**：
-- 循环调用 download.py（交给 download-coordinator）
-- 循环派发 analyze agents（交给 book/paper-coordinator）
-- 读取分析产出 .md 文件（只用 Glob 检查数量）
-- 手动更新 manifest 状态（coordinator 自己更新）
 
 ## Phase 1: DISCOVER（discover-agent）
 
@@ -133,94 +131,57 @@ manifest 中 `status` 为 `acquired` 或 `failed` 的条目 → 跳过。coordin
 
 ---
 
-## Phase 3: PROCESS BOOKS（book-coordinator ×N）
+## Phase 3: PROCESS BOOKS（主进程直接调度）
 
-**调度方式**：每本 `acquired` 书启动 1 个后台子代理（opus），最多 5 个并行
+**调度方式**：主进程对每本 `acquired` 书执行 extract → 筛选 → 派发 N 个分析代理（后台）+ 监控+概览代理（前台）
 
-**子代理 prompt 模板**（每本书一份）：
+**主进程步骤**：
 
-```
-你是书籍处理协调代理。任务：处理一本学术专著的完整流程。
-
-书籍信息：
-- 标题: {book_title}
-- slug: {book-slug}
-- 源文件: sources/{book-slug}.{epub|pdf}
-- 章节输出: processing/chapters/{book-slug}/
-- 分析输出: vault/monographs/{book-slug}/
-
-步骤 1 — 提取章节：
-  # EPUB
-  python3 ../extract/scripts/process_epub.py \
-      sources/{book-slug}.epub processing/chapters/{book-slug}/
-  # 或 PDF
-  python3 ../extract/scripts/split_chapters.py \
-      sources/{book-slug}.pdf --output-dir processing/chapters/{book-slug}/
-
-步骤 2 — 筛选章节：
-  读取 processing/chapters/{book-slug}/ 下的 manifest.json 或文件列表。
-  根据主题"{topic}"评估每章相关性，跳过纯方法论/索引/前言等低相关章节。
-  记录选中章节及理由。
-
-步骤 3 — 逐章分析（自己顺序完成，不派发子代理）：
-  对每个选中章节，检查 vault/monographs/{book-slug}/ch{NN}-*.md 是否已存在（跳过已完成）。
-  对每个未完成章节：
-  - 读取 ../analyze/prompts/text-analysis.md 模板
-  - 选用 A 类（书籍章节）元数据格式，根据模板中的占位符填入相应值
-  - 读取章节文本：processing/chapters/{book-slug}/{chapter_file}
-  - 生成分析写入 vault/monographs/{book-slug}/ch{NN}-{title-slug}.md
-  - 值来源：
-    - preamble/topic: 从 CLAUDE.md §1.3 获取
-    - 书籍元数据 (book_title 等): 上方书籍信息
-    - 章节元数据 (ch_num, chapter_title, author): 从章节文本推断
-    - input_instruction: 读取 processing/chapters/{book-slug}/{chapter_file}
-    - extra_sections: ""
-
-步骤 4 — 生成概览：
-  读取所有 ch*.md，生成 vault/monographs/{book-slug}/00-overview.md。
-  概览应包含：全书核心论点、章节间逻辑、关键概念表、与"{topic}"的关联。
-```
-
-**主进程收到**：无（后台运行，通过 Glob 检查 00-overview.md 是否存在来确认完成）
+1. 读取 manifest，找到所有 status="acquired" 的书
+2. 对每本书，跳过已有 `vault/monographs/{book-slug}/00-overview.md` 的
+3. 对每本未完成的书：
+   a. **提取章节**（Bash）：
+      ```
+      python3 ../extract/scripts/process_epub.py sources/{book-slug}.epub processing/chapters/{book-slug}/
+      # 或 PDF:
+      python3 ../extract/scripts/split_chapters.py sources/{book-slug}.pdf --output-dir processing/chapters/{book-slug}/
+      ```
+   b. **筛选章节**（主进程）：读取 manifest.json，根据"{topic}"评估相关性，排除已有分析
+   c. **派发章节分析代理**（后台，分批 ≤5）：
+      每个代理 prompt：
+      - 读取 ../analyze/prompts/text-analysis.md 模板
+      - 选用 A 类（书籍章节）元数据格式
+      - 值来源：preamble/topic 从 CLAUDE.md §1.3，书籍元数据从 manifest
+      - input_instruction: 读取 processing/chapters/{book-slug}/{chapter_file}
+      - 写入 vault/monographs/{book-slug}/ch{NN}-{title-slug}.md
+   d. **派发"监控+概览"代理**（前台，阻塞等待）：
+      - Glob 轮询 vault/monographs/{book-slug}/ch*.md 数量
+      - 全部完成后读取所有 ch*.md，生成 00-overview.md
 
 ### 断点续跑
 `vault/monographs/{book-slug}/00-overview.md` 存在 → 跳过该书。
 
 ---
 
-## Phase 4: PROCESS PAPERS（paper-coordinator）
+## Phase 4: PROCESS PAPERS（主进程直接调度）
 
-**调度方式**：1 个后台子代理（opus），与 Phase 3 并行启动
+**调度方式**：主进程从 manifest 提取待分析论文 → 派发 M 个分析代理（后台）+ 监控代理（前台）
 
-**子代理 prompt 模板**：
+**主进程步骤**：
 
-```
-你是论文处理协调代理。任务：分析 manifest 中所有已获取的论文。
-
-读取 vault/authors/{author-name}/manifest.json，找到 papers 中 status="acquired" 的条目。
-
-逐篇分析（自己顺序完成，不派发子代理）：
-对每篇 status="acquired" 的论文，检查 vault/authors/{author-name}/papers/{slug}.md 是否已存在（跳过已完成）。
-对每篇未完成的论文：
-- 读取 ../analyze/prompts/text-analysis.md 模板
-- 选用 B 类（论文）元数据格式，根据模板中的占位符填入相应值
-- 读取 PDF：{pdf_path}
-- 生成分析写入 vault/authors/{author-name}/papers/{slug}.md
-- 值来源：
-  - preamble/topic: 从 CLAUDE.md §1.3 获取
-  - 论文元数据 (title, author, year, doi, source): 从 manifest 获取
-  - input_instruction: 读取 {pdf_path}
-  - extra_sections: ""
-
-对 status="abstract_only" 的论文：
-  在 input_instruction 中传入摘要文本（从 manifest 的 abstract 字段获取），
-  标注"基于摘要的分析，非全文"。
-```
-
-**主进程收到**：无（后台运行，通过 Glob 检查 .md 数量确认完成）
+1. 读取 manifest，找到 papers 中 status="acquired" 的条目
+2. 用 Glob 检查 vault/authors/{author-name}/papers/{slug}.md，排除已分析的
+3. 对每篇需分析的论文，派发 1 个后台分析代理（分批 ≤5）：
+   - 读取 ../analyze/prompts/text-analysis.md 模板
+   - 选用 B 类（论文）元数据格式
+   - 值来源：preamble/topic 从 CLAUDE.md §1.3，论文元数据从 manifest
+   - input_instruction: 读取 {pdf_path}
+   - 写入 vault/authors/{author-name}/papers/{slug}.md
+4. 对 status="abstract_only" 的论文：input_instruction 传入摘要文本，标注"基于摘要的分析"
+5. 派发 1 个前台"监控"代理：Glob 轮询 papers/*.md 数量，全部完成后报告
 
 ### 断点续跑
-`vault/authors/{author-name}/papers/{doi-slug}.md` 存在 → 跳过该论文。coordinator 自动处理。
+`vault/authors/{author-name}/papers/{doi-slug}.md` 存在 → 主进程自动排除。
 
 ---
 
@@ -290,35 +251,39 @@ preamble = "这是人文/理论类文本..."
 
 # 1. DISCOVER [前台]
 if not exists(manifest_path):
-    Task(discover_agent_prompt, foreground=True)  # → manifest.json
+    Agent(discover_agent_prompt, foreground=True, model="opus")  # → manifest.json
 
 # 2. ACQUIRE [前台]
 manifest = read(manifest_path)
 if any(status == "discovered" in manifest):
-    Task(download_coordinator_prompt, foreground=True)  # → 更新 manifest
+    Agent(download_coordinator_prompt, foreground=True, model="opus")  # → 更新 manifest
 
-# 3+4. PROCESS [后台, 并行]
+# 3. PROCESS BOOKS [主进程直接调度]
 manifest = read(manifest_path)  # 刷新
-book_agents = []
 for book in manifest.books where status == "acquired":
-    if not exists(f"vault/monographs/{book.slug}/00-overview.md"):
-        agent = Task(book_coordinator_prompt(book), background=True)
-        book_agents.append(agent)
+    if exists(f"vault/monographs/{book.slug}/00-overview.md"):
+        continue  # 跳过已完成
+    Bash(f"python3 ../extract/scripts/... {book.source} processing/chapters/{book.slug}/")
+    chapters = filter_relevant(Read(f"processing/chapters/{book.slug}/manifest.json"))
+    existing = Glob(f"vault/monographs/{book.slug}/ch*.md")
+    to_analyze = chapters - existing
+    for batch in chunks(to_analyze, 5):
+        for ch in batch:
+            Agent(analyze_chapter_prompt(ch), background=True, model="opus")
+    Agent(monitor_overview_prompt(book), foreground=True, model="opus")  # 阻塞等待
 
-paper_agent = None
-if any papers need processing:
-    paper_agent = Task(paper_coordinator_prompt, background=True)
-
-# 等待完成 (Glob 轮询, 不用 TaskOutput)
-expected_overviews = len(book_agents)
-expected_papers = count(acquired papers without .md)
-while not all_done:
-    overview_count = len(Glob("vault/monographs/*/00-overview.md"))  # 过滤相关的
-    paper_md_count = len(Glob("vault/authors/{name}/papers/*.md"))
-    sleep(60)
+# 4. PROCESS PAPERS [主进程直接调度]
+manifest = read(manifest_path)
+papers = [p for p in manifest.papers if p.status == "acquired"]
+existing = Glob(f"vault/authors/{author_name}/papers/*.md")
+to_analyze = papers - existing
+for batch in chunks(to_analyze, 5):
+    for p in batch:
+        Agent(analyze_paper_prompt(p), background=True, model="opus")
+Agent(monitor_prompt(expected=len(to_analyze)+len(existing)), foreground=True, model="opus")
 
 # 5. SYNTHESIS [前台]
-Task(profile_agent_prompt, foreground=True)  # → profile.md
+Agent(profile_agent_prompt, foreground=True, model="opus")  # → profile.md
 
 # 6. 报告完成
 print("Done: N books, M papers, profile.md")
@@ -352,10 +317,10 @@ vault/authors/{author-name}/           ← 作者级
 
 ## 核心原则
 
-1. **主进程只做 dispatcher**：≤10 次工具调用，不做循环
-2. **每个 coordinator 有独立上下文**：互不污染
-3. **每章/每篇 1 个分析代理**，`model: "opus"`
-4. **book-coordinator 并行**：5 本书同时处理
+1. **Phase 1/2 coordinator 自己完成所有工作**：不尝试派发子代理（Agent 嵌套不可用）
+2. **Phase 3/4 由主进程直接派发分析代理**：每章/每篇 1 个 Agent，`model: "opus"`，`run_in_background: true`
+3. **监控代理处理轮询和概览**：主进程不做循环，委托前台监控代理 Glob 检查
+4. **分批派发**：每批 ≤5 个分析代理，连续发出不等待
 5. **完成检查用 Glob**：不用 TaskOutput（避免导入子代理 transcript）
 6. **manifest 是唯一状态源**：coordinator 直接读写
 7. **从 CLAUDE.md §1.3 获取 preamble/topic 参数**
