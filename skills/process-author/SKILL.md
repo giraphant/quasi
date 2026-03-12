@@ -23,6 +23,12 @@ argument-hint: "{author-name}"
 
 `{author-name}` 为 kebab-case（如 `donna-haraway`）。
 
+## ⚠ 架构约束
+
+**Agent 工具不支持嵌套**：由 Agent 工具派发的子代理没有 Agent 工具。因此：
+- Phase 3 的 book-coordinator **自己顺序完成章节分析**（不尝试派发子代理）
+- Phase 4 的 paper-coordinator **自己顺序完成论文分析**（不尝试派发子代理）
+
 ## 编排模式：子代理驱动
 
 **核心原则**：主进程只做 dispatcher，不做循环、不读分析产出、不管 manifest 细节。所有重活交给 coordinator 子代理，每个 coordinator 有独立的上下文预算。
@@ -156,27 +162,22 @@ manifest 中 `status` 为 `acquired` 或 `failed` 的条目 → 跳过。coordin
   根据主题"{topic}"评估每章相关性，跳过纯方法论/索引/前言等低相关章节。
   记录选中章节及理由。
 
-步骤 3 — 并行分析：
-  对每个选中章节，启动 1 个后台子代理（Task tool）：
-  - subagent_type: "general-purpose"
-  - model: "opus"
-  - run_in_background: true
-  - prompt: 读取 ../analyze/prompts/text-analysis.md 模板，
-    选用 A 类（书籍章节）元数据格式，根据模板中的占位符填入相应值，
-    生成分析写入 vault/monographs/{book-slug}/ch{NN}-{title-slug}.md。
-    值来源：
+步骤 3 — 逐章分析（自己顺序完成，不派发子代理）：
+  对每个选中章节，检查 vault/monographs/{book-slug}/ch{NN}-*.md 是否已存在（跳过已完成）。
+  对每个未完成章节：
+  - 读取 ../analyze/prompts/text-analysis.md 模板
+  - 选用 A 类（书籍章节）元数据格式，根据模板中的占位符填入相应值
+  - 读取章节文本：processing/chapters/{book-slug}/{chapter_file}
+  - 生成分析写入 vault/monographs/{book-slug}/ch{NN}-{title-slug}.md
+  - 值来源：
     - preamble/topic: 从 CLAUDE.md §1.3 获取
     - 书籍元数据 (book_title 等): 上方书籍信息
     - 章节元数据 (ch_num, chapter_title, author): 从章节文本推断
     - input_instruction: 读取 processing/chapters/{book-slug}/{chapter_file}
     - extra_sections: ""
 
-步骤 4 — 等待完成：
-  用 Glob 检查 vault/monographs/{book-slug}/ch*.md 数量是否等于选中章节数。
-  每 30 秒检查一次，直到全部完成。
-
-步骤 5 — 生成概览：
-  启动 1 个前台子代理（opus），读取所有 ch*.md，生成 vault/monographs/{book-slug}/00-overview.md。
+步骤 4 — 生成概览：
+  读取所有 ch*.md，生成 vault/monographs/{book-slug}/00-overview.md。
   概览应包含：全书核心论点、章节间逻辑、关键概念表、与"{topic}"的关联。
 ```
 
@@ -198,14 +199,14 @@ manifest 中 `status` 为 `acquired` 或 `failed` 的条目 → 跳过。coordin
 
 读取 vault/authors/{author-name}/manifest.json，找到 papers 中 status="acquired" 的条目。
 
-对每篇论文，启动 1 个后台子代理（Task tool）：
-- subagent_type: "general-purpose"
-- model: "opus"
-- run_in_background: true
-- prompt: 读取 ../analyze/prompts/text-analysis.md 模板，
-  选用 B 类（论文）元数据格式，根据模板中的占位符填入相应值，
-  生成分析写入 vault/authors/{author-name}/papers/{slug}.md。
-  值来源：
+逐篇分析（自己顺序完成，不派发子代理）：
+对每篇 status="acquired" 的论文，检查 vault/authors/{author-name}/papers/{slug}.md 是否已存在（跳过已完成）。
+对每篇未完成的论文：
+- 读取 ../analyze/prompts/text-analysis.md 模板
+- 选用 B 类（论文）元数据格式，根据模板中的占位符填入相应值
+- 读取 PDF：{pdf_path}
+- 生成分析写入 vault/authors/{author-name}/papers/{slug}.md
+- 值来源：
   - preamble/topic: 从 CLAUDE.md §1.3 获取
   - 论文元数据 (title, author, year, doi, source): 从 manifest 获取
   - input_instruction: 读取 {pdf_path}
@@ -214,9 +215,6 @@ manifest 中 `status` 为 `acquired` 或 `failed` 的条目 → 跳过。coordin
 对 status="abstract_only" 的论文：
   在 input_instruction 中传入摘要文本（从 manifest 的 abstract 字段获取），
   标注"基于摘要的分析，非全文"。
-
-用 Glob 检查 vault/authors/{author-name}/papers/*.md 数量是否等于应处理的论文数。
-每 30 秒检查一次，直到全部完成。
 ```
 
 **主进程收到**：无（后台运行，通过 Glob 检查 .md 数量确认完成）

@@ -24,6 +24,11 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
 /quasi:citation-snowball {topic-slug} --seed {doi} --topic "{description}"
 ```
 
+## ⚠ 架构约束
+
+**Agent 工具不支持嵌套**：由 Agent 工具派发的子代理没有 Agent 工具。因此：
+- seed-coordinator 和 round-coordinator **自己顺序完成分析工作**（不尝试派发子代理）
+
 ## 编排模式：子代理驱动（round-coordinator）
 
 **核心原则**：主进程只做 dispatcher + 循环判断，不做搜索、不做下载、不派发分析代理、不读分析产出。所有重活交给 coordinator 子代理，每个 coordinator 有独立的上下文预算。
@@ -82,20 +87,16 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
        --doi "{doi}" --output-dir /tmp/{topic-slug}-pdfs/ --filename seed
    - 如果 seed 是本地 PDF 路径：直接使用
 
-3. 分析种子论文（嵌套 Task 子代理, 前台, opus）：
-   使用 Task tool 启动 1 个前台子代理：
-   - subagent_type: "general-purpose"
-   - model: "opus"
-   - run_in_background: false（前台，等待完成）
-   - prompt: 读取 ../analyze/prompts/text-analysis.md 模板，
-     选用 B 类（论文）元数据格式，根据模板中的占位符填入相应值，
-     生成分析写入 vault/journals/{topic-slug}/{seed-key}.md。
-     值来源：
-     - preamble/topic: 从 CLAUDE.md §1.3 获取
-     - 论文元数据 (title, author, year, doi, source): 从种子论文 PDF 或用户输入获取
-     - input_instruction: 读取 {pdf_path}
-     - extra_sections: 读取 ../analyze/prompts/snowball-extra.md，
-       将 {{topic}} 替换为 "{topic}"
+3. 分析种子论文（自己直接完成，不派发子代理）：
+   读取 ../analyze/prompts/text-analysis.md 模板，
+   选用 B 类（论文）元数据格式，根据模板中的占位符填入相应值，
+   读取种子论文 PDF，生成分析写入 vault/journals/{topic-slug}/{seed-key}.md。
+   值来源：
+   - preamble/topic: 从 CLAUDE.md §1.3 获取
+   - 论文元数据 (title, author, year, doi, source): 从种子论文 PDF 或用户输入获取
+   - input_instruction: 读取 {pdf_path}
+   - extra_sections: 读取 ../analyze/prompts/snowball-extra.md，
+     将 {{topic}} 替换为 "{topic}"
 
 4. 从分析产出中提取引用：
    读取 vault/journals/{topic-slug}/{seed-key}.md 的
@@ -157,26 +158,20 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
 3. ANALYZE — 并行分析：
    ⚠ 只分析 status="acquired"（有完整PDF）的论文，禁止分析仅有摘要或下载失败的论文。
 
-   对每篇 status="acquired" 的本轮论文，
-   启动 1 个后台子代理（Task tool）：
-   - subagent_type: "general-purpose"
-   - model: "opus"
-   - run_in_background: true
-   - prompt: 读取 ../analyze/prompts/text-analysis.md 模板，
-     选用 B 类（论文）元数据格式，根据模板中的占位符填入相应值，
-     生成分析写入 vault/journals/{topic-slug}/{key}.md。
-     值来源：
+   对每篇 status="acquired" 的本轮论文，自己顺序完成分析（不派发子代理）：
+   - 检查 vault/journals/{topic-slug}/{key}.md 是否已存在（跳过已完成）
+   - 读取 ../analyze/prompts/text-analysis.md 模板
+   - 选用 B 类（论文）元数据格式，根据模板中的占位符填入相应值
+   - 读取 PDF：{pdf_path}
+   - 生成分析写入 vault/journals/{topic-slug}/{key}.md
+   - 值来源：
      - preamble/topic: 从 CLAUDE.md §1.3 获取
      - 论文元数据 (title, author, year, doi, source): 从 manifest 获取
      - input_instruction: 读取 {pdf_path}
      - extra_sections: 读取 ../analyze/prompts/snowball-extra.md，
        将 {{topic}} 替换为 "{topic}"
 
-4. POLL — 等待分析完成：
-   用 Glob 检查 vault/journals/{topic-slug}/{key}.md 数量是否等于
-   本轮应分析的论文数。每 30 秒检查一次，直到全部完成。
-
-5. EXTRACT — 提取新引用：
+4. EXTRACT — 提取新引用：
    对每篇本轮完成分析的 .md 文件：
    a) 读取「直接相关的{topic}引用文献」段落
    b) 解析 Author, Year, Title, DOI

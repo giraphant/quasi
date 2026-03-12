@@ -27,26 +27,23 @@ argument-hint: "<journal-name> [--threshold <score>]"
 1. **CLAUDE.md §1.3 已配置**：包含 Research Interests
 2. **无需外部工具**：所有功能已集成
 
-## 编排模式：子代理驱动
+## ⚠ 架构约束
 
-**核心原则**：主进程只做 dispatcher，不做循环、不读分析产出、不管下载细节。所有重活交给 coordinator 子代理，每个 coordinator 有独立的上下文预算。
+**Agent 工具不支持嵌套**：由 Agent 工具派发的子代理没有 Agent 工具。因此：
+- Phase 1/2 的 coordinator **自己完成所有工作**（不尝试派发子代理）
+- Phase 3 的分析**由主进程直接用 Agent 工具并行派发**（不经 coordinator）
+
+## 编排模式：子代理 + 主进程直接调度混合
 
 ```
-主进程 (dispatcher, ~5 次工具调用)
+主进程 (dispatcher)
 │
-├─ Phase 1: scan-coordinator      [前台, 等待完成] - 抓取+评分+生成scan.md
-├─ Phase 2: download-coordinator  [前台, 等待完成] - 下载PDF
-├─ Phase 3: analyze-coordinator   [前台, 等待完成] - 分析论文
-└─ Phase 4: synthesis-agent       [前台, 等待完成] - 综合报告
+├─ Phase 1: scan-coordinator       [前台] - 抓取+评分+生成scan.md（自己完成）
+├─ Phase 2: download-coordinator   [前台] - 下载PDF（自己完成）
+├─ Phase 3: 主进程读 scan.md + Glob PDFs → 派发 N 个分析代理 [后台]
+│           → 派发"监控"代理 [前台, 等待完成]
+└─ Phase 4: synthesis-agent        [前台] - 综合报告
 ```
-
-**主进程禁止做的事**：
-- 循环调用 fetch_papers.py 或评分（交给 scan-coordinator）
-- 循环调用 download.py（交给 download-coordinator）
-- 循环派发 analyze agents（交给 analyze-coordinator）
-- 读取分析产出 .md 文件（只用 Glob 检查数量）
-- 解析 scan.md 提取 DOI 列表（coordinator 自己读取和解析）
-- 手动构造 analyze prompt（coordinator 按模板派发）
 
 ---
 
@@ -68,15 +65,13 @@ argument-hint: "<journal-name> [--threshold <score>]"
 
 2. 读取 CLAUDE.md §1.3 获取 research_interests（### Research Interests 行）
 
-3. 对每篇论文启动后台评分子代理：
+3. 逐篇评分（自己完成，不派发子代理）：
    - 读取 skills/process-journal/prompts/score-single-paper.md
-   - 填入：paper 元数据 + research_interests
+   - 对每篇论文：填入 paper 元数据 + research_interests，生成评分
    - 输出：/tmp/{journal-name}-scores/{paper_id}.json
    - 检查已有评分，跳过已完成的论文
 
-4. 等待完成（Glob 检查 /tmp/{journal-name}-scores/*.json 数量）
-
-5. 生成报告：
+4. 生成报告：
    python3 skills/process-journal/scripts/generate_scan_report.py \
        --papers /tmp/{journal-name}-papers.json \
        --scores /tmp/{journal-name}-scores/ \
@@ -122,51 +117,39 @@ argument-hint: "<journal-name> [--threshold <score>]"
 
 ---
 
-## Phase 3: ANALYZE（analyze-coordinator）
+## Phase 3: ANALYZE（主进程直接调度）
 
-**调度方式**：1 个前台子代理（opus）
-
-**子代理 prompt 模板**：
-
-```
-你是论文分析协调代理。任务：对所有已下载的期刊论文启动并行分析。
+**调度方式**：主进程读 scan.md + Glob PDFs → 派发 N 个分析代理（后台）+ 1 个监控代理（前台）
 
 ⚠ 硬约束：
 - 只分析已成功下载PDF的论文 — 禁止对仅有摘要或下载失败的论文生成分析
 - 必须检查 PDF 文件实际存在于 /tmp/{journal-name}-pdfs/ 才能启动分析
-- 如果 PDF 不存在，跳过该论文，不要自行生成内容
 
-期刊全名：{Journal Full Name}（从 scan.md 标题或首行提取，用于 B 类模板的 source_name）
+**主进程步骤**：
 
-步骤：
-1. 用 Glob 扫描 /tmp/{journal-name}-pdfs/*.pdf，获取所有待分析 PDF 列表
-2. 对每个 PDF，检查 vault/journals/{journal-name}/{doi-slug}.md 是否已存在
-   - 已存在 → 跳过
-3. 对每个需分析的 PDF，使用 Agent tool 启动 1 个后台子代理（不要用 claude -p Bash 命令）：
+1. 读取 vault/journals/{journal-name}-scan.md，提取所有高分论文元数据
+2. 用 Glob 扫描 /tmp/{journal-name}-pdfs/*.pdf，获取已下载 PDF 列表
+3. 用 Glob 检查 vault/journals/{journal-name}/{doi-slug}.md，排除已分析的
+4. 对每篇需分析的论文，用 Agent 工具派发 1 个后台分析代理：
    - subagent_type: "general-purpose"
    - model: "opus"
    - run_in_background: true
-   - prompt: |
-       读取 ../analyze/prompts/text-analysis.md 模板，
-       选用 B 类（期刊论文）元数据格式，根据模板中的占位符填入相应值，
-       生成分析写入 vault/journals/{journal-name}/{doi-slug}.md。
-       值来源：
-       - preamble/topic: 从 CLAUDE.md §1.3 获取
-       - 论文元数据 (title, author, year, doi, source): 从 scan.md 提取
-       - input_instruction: "读取 {pdf_path}"
-       - extra_sections: ""
-
-4. 等待完成：
-   用 Glob 检查 vault/journals/{journal-name}/*.md 数量。
-   每 30 秒检查一次，直到全部完成（数量 = 已有 + 新分析）。
-
-5. 完成后报告：N 篇分析完成、M 篇跳过。
-```
-
-**主进程收到**：分析完成统计
+   - prompt: 读取 ../analyze/prompts/text-analysis.md 模板，
+     选用 B 类（期刊论文）元数据格式，根据模板中的占位符填入相应值，
+     生成分析写入 vault/journals/{journal-name}/{doi-slug}.md。
+     值来源：
+     - preamble/topic: 从 CLAUDE.md §1.3 获取
+     - 论文元数据 (title, author, year, doi, source): 从 scan.md 提取
+     - input_instruction: "读取 {pdf_path}"
+     - extra_sections: ""
+5. 分批派发（每批 ≤5），连续发出不等待
+6. 派发 1 个前台"监控"代理（opus），阻塞等待：
+   - 用 Glob 检查 vault/journals/{journal-name}/*.md 数量
+   - 每 60 秒检查一次，直到全部完成
+   - 完成后报告：N 篇分析完成、M 篇跳过
 
 ### 断点续跑
-`vault/journals/{journal-name}/{doi-slug}.md` 存在 → 跳过。coordinator 自动处理。
+`vault/journals/{journal-name}/{doi-slug}.md` 存在 → 主进程自动排除。
 
 ---
 
@@ -238,17 +221,26 @@ preamble = "这是人文/理论类文本，不是实证研究。不要寻找"数
 
 # 1. SCAN [前台] - 如果 scan.md 不存在
 if not exists(scan_path):
-    Task(scan_coordinator_prompt, foreground=True)  # → scan.md
+    Agent(scan_coordinator_prompt, foreground=True, model="opus")  # → scan.md
 
 # 2. ACQUIRE [前台]
-Task(download_coordinator_prompt, foreground=True)  # → 下载统计
+Agent(download_coordinator_prompt, foreground=True, model="opus")  # → 下载统计
 
-# 3. ANALYZE [前台]
-Task(analyze_coordinator_prompt, foreground=True)  # → 分析完成统计
+# 3. ANALYZE [主进程直接调度]
+scan_data = Read(scan_path)  # 提取高分论文元数据
+pdfs = Glob("/tmp/{journal_name}-pdfs/*.pdf")
+existing = Glob(f"vault/journals/{journal_name}/*.md")
+to_analyze = filter(pdfs, existing)
+
+for batch in chunks(to_analyze, 5):
+    for paper in batch:
+        Agent(analyze_prompt(paper), background=True, model="opus")
+
+Agent(monitor_prompt(expected=len(to_analyze)+len(existing)), foreground=True, model="opus")
 
 # 4. SYNTHESIZE [前台]
 if not exists(f"vault/journals/{journal_name}-synthesis.md"):
-    Task(synthesis_agent_prompt, foreground=True)  # → synthesis.md
+    Agent(synthesis_agent_prompt, foreground=True, model="opus")  # → synthesis.md
 
 # 5. 报告完成
 print(f"Done: vault/journals/{journal_name}-synthesis.md")
@@ -279,9 +271,10 @@ vault/journals/
 
 ## 核心原则
 
-1. **主进程只做 dispatcher**：~4 次工具调用，不做循环
-2. **每个 coordinator 有独立上下文**：互不污染
-3. **每篇论文 1 个分析代理**，`model: "opus"`
+1. **Phase 1/2 coordinator 自己完成所有工作**：不尝试派发子代理（Agent 嵌套不可用）
+2. **Phase 3 由主进程直接派发分析代理**：每篇 1 个 Agent，`model: "opus"`，`run_in_background: true`
+3. **监控代理处理轮询**：主进程不做循环，委托前台监控代理 Glob 检查
 4. **完成检查用 Glob**：不用 TaskOutput（避免导入子代理 transcript）
-5. **scan.md 是输入源**：coordinator 自己读取和解析
+5. **scan.md 是输入源**：Phase 1 coordinator 和主进程都从中读取
 6. **从 CLAUDE.md §1.3 获取 preamble/topic 参数**
+7. **分批派发**：每批 ≤5 个分析代理，连续发出不等待
