@@ -60,28 +60,127 @@ argument-hint: "[book-name]"
 
 ---
 
-## Step 1: 提取章节（extract）
+## Step 1: 提取章节（子代理驱动）
 
-**调度方式**：主进程直接执行 Bash 命令（1 次工具调用）
+**调度方式**：主进程派发提取代理 + 验证代理（不直接执行脚本）
 
-```bash
-# EPUB
-python3 ../extract/scripts/process_epub.py \
-    sources/{book-name}.epub processing/chapters/{book-name}/
+### Step 1a: 断点检查
 
-# PDF（默认 toc-level 1）
-python3 ../extract/scripts/split_chapters.py \
-    sources/{book-name}.pdf --output-dir processing/chapters/{book-name}/
+`processing/chapters/{book-name}/manifest.json` 存在 → 跳到 Step 1c（验证）。
+
+### Step 1b: 提取代理 (Sonnet, 前台)
+
+提取代理负责：读取 PDF TOC → 决策提取模式 → 运行脚本 → 碎片化自修。
+
+**子代理 prompt 模板**：
+
+```
+你是章节提取代理。任务：从学术书籍中提取章节级纯文本。
+
+文件信息：
+- 源文件: {source_file}
+- 格式: {format} (epub/pdf)
+- 输出目录: {chapters_dir}
+- 脚本路径: {script_base}/process_epub.py, {script_base}/split_chapters.py
+
+{repair_section}
+
+执行步骤：
+
+如果格式是 EPUB：
+  1. 直接运行: python3 {script_base}/process_epub.py {source_file} {chapters_dir}
+  2. 检查输出，报告结果
+
+如果格式是 PDF：
+  1. 用 Read 工具读取 PDF 前 8 页，找到目录（TOC）页
+  2. 判断 PDF 结构：
+     - 目录清晰、章节边界明确 → 用自动模式
+     - 目录模糊、脚注密集、结构复杂 → 构造 --chapters JSON 用手动模式
+  3. 运行提取:
+     自动模式: python3 {script_base}/split_chapters.py {source_file} --output-dir {chapters_dir} --max-chapters 150
+     手动模式: python3 {script_base}/split_chapters.py {source_file} --output-dir {chapters_dir} --chapters '<JSON>'
+     --chapters JSON 格式: [{"title": "...", "start": 页码, "end": 页码}, ...]
+  4. 检查输出：如果章节数 >100，说明碎片化。从 TOC 构造 --chapters JSON，用手动模式重跑
+  5. 如果提取脚本无输出或报错，检查是否为扫描版 PDF（无可选文本），报告需要 OCR
+
+如果存在手动 manifest（manifest.json 中有 chapters 和 start_page/end_page 字段）：
+  注意：manifest 使用 start_page/end_page 键名，但 --chapters 参数需要 start/end 键名
+  需要做映射：start_page → start, end_page → end
+  使用映射后的页码范围，以手动模式运行 split_chapters.py
+
+输出格式（最后一条消息必须包含）：
+EXTRACT_RESULT:
+- status: success | partial | failed
+- chapter_count: N
+- method: auto | manual | epub
+- notes: ...
 ```
 
-**⚠ TOC level**：Handbook 类 PDF 的目录通常 level 1 = Part、level 2 = Chapter。默认切分可能把整个 Part 合为一个文件。**如果产出文件数远少于预期章节数，用 `--toc-level 2` 重新切分**。
+修复模式下 `{repair_section}` 替换为：
+```
+这是修复模式。上一轮验证发现以下问题：
+{problem_list}
 
-**⚠ PDF 碎片化**：脚注密集的人文类 PDF 可能过度切分（>100 片段）。替代方案：
-- 手动检查切分结果，删除碎片保留完整章节
-- 或跳过提取，让分析代理直接读 PDF 指定页范围
+请根据问题类型决定：
+- 个别章节有问题 → 用 --pages 和 --title 参数重新提取指定章节
+- 大面积问题 → 全量重跑（删除输出目录后重新提取）
+```
+
+**主进程收到**：EXTRACT_RESULT 摘要（几行文字，无文件内容）
+
+### Step 1c: 验证代理 (Haiku, 前台)
+
+验证代理负责：读取每个 txt 头尾 100 行 → 结构校验 → 报告 pass/fail。
+
+**注意**：即使 manifest 已存在（断点续跑），也必须运行验证。
+
+**子代理 prompt 模板**：
+
+```
+你是章节验证代理。任务：检查提取的章节文本质量。
+
+目录: {chapters_dir}
+Manifest: {chapters_dir}/manifest.json
+
+执行步骤：
+
+1. 读取 manifest.json，记录章节列表和总数
+2. 用 Glob 列出 {chapters_dir}/*.txt，确认文件数与 manifest 一致
+3. 对每个 txt 文件：
+   - 用 Read 读取前 100 行（offset=0, limit=100）
+   - 对于尾部：先用 Bash 运行 wc -l 获取行数，再用 Read 读取最后 100 行
+   - 如果文件不足 200 行，直接一次读完整个文件即可
+   - 检查：
+     a) 开头是否有章节起始标志（标题、章节号、作者名等）
+     b) 结尾是否自然结束（不是句子截断）
+     c) 内容是否可读（非乱码、非二进制）
+     d) 文件是否非空且有合理长度（>50 词）
+4. 碎片化检查：如果总章节数 >100，标记为碎片化问题
+5. 汇总问题
+
+输出格式（最后一条消息必须包含）：
+VERIFY_RESULT:
+- status: pass | fail
+- total_chapters: N
+- problems: [
+    {file: "filename.txt", issue: "description"},
+    ...
+  ]
+
+如果没有问题，problems 为空列表，status 为 pass。
+```
+
+**主进程收到**：VERIFY_RESULT 摘要（pass/fail + 问题列表）
+
+### Step 1d: 修复循环（最多 2 轮）
+
+如果验证失败：
+1. 派发提取代理（Sonnet），prompt 中附上问题列表（修复模式）
+2. 再派发验证代理（Haiku）
+3. 最多重复 2 轮。仍失败则报告用户，需人工介入。
 
 ### 断点续跑
-`processing/chapters/{book-name}/manifest.json` 存在 → 跳过 Step 1。
+`processing/chapters/{book-name}/manifest.json` 存在 → 跳过提取（Step 1b），但仍执行验证（Step 1c）。
 
 ---
 
