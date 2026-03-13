@@ -350,31 +350,50 @@ VERIFY_RESULT:
 
 # 0. 确定参数
 book_name = parse_args()  # kebab-case
-source_file = find("sources/{book_name}.epub|.pdf")
+source_file = find("sources/{book_name}.epub") or find("sources/{book_name}.pdf")
+format = "epub" if source_file.endswith(".epub") else "pdf"
 chapters_dir = f"processing/chapters/{book_name}/"
+# output_dir 由书籍类型决定：
+#   - Handbook/编著 → vault/handbooks/{book_name}/
+#   - 单一作者专著 → vault/monographs/{book_name}/
 output_dir = determine_output_dir(book_name)
-#   Handbook/编著 → vault/handbooks/{book_name}/
-#   单一作者专著 → vault/monographs/{book_name}/
 
-# 1. EXTRACT [Bash, 前台]
+# 1. EXTRACT（子代理驱动）
+# 1a. 断点检查
 if not exists(f"{chapters_dir}/manifest.json"):
-    Bash("python3 ../extract/scripts/... {source_file} {chapters_dir}")
+    # 1b. 提取代理 (Sonnet, 前台)
+    Agent(extract_prompt.format(...), model="sonnet", foreground=True)
 
-# 2. SELECT [主进程, 轻量]
-manifest = Read(f"{chapters_dir}/manifest.json")
-existing = Glob(f"{output_dir}/ch*.md")
-selected = filter_relevant(manifest) - already_done(existing)
-# → 向用户报告选中列表，等待确认
+# 1c. 验证代理 (Haiku, 前台) — 即使断点续跑也必须验证
+verify_result = Agent(verify_prompt.format(...), model="haiku", foreground=True)
 
-# 3. DISPATCH [Agent × N, 后台, 分批]
-for batch in chunks(selected, 5):
-    for ch in batch:
-        Agent(
-            description=f"Analyze ch{ch.num} {ch.short_title}",
-            model="opus",
-            run_in_background=True,
-            prompt=analyze_prompt(ch)  # 只含元数据+路径，不含章节内容
-        )
+# 1d. 修复循环（最多 2 轮）
+retries = 0
+while verify_result.status == "fail" and retries < 2:
+    Agent(extract_fix_prompt.format(problems=verify_result.problems),
+          model="sonnet", foreground=True)
+    verify_result = Agent(verify_prompt.format(...), model="haiku", foreground=True)
+    retries += 1
+
+if verify_result.status == "fail":
+    report_to_user("提取经过 2 轮修复仍有问题，需要人工检查")
+    return
+
+# 2. BOOK-COORDINATOR [前台]
+if not exists(f"{output_dir}/00-overview.md"):
+    coordinator_result = Agent(book_coordinator_prompt, model="opus", foreground=True)
+
+    # Step 2 反馈：coordinator 报告章节质量问题（最多 1 轮修复）
+    if coordinator_result.has_chapter_problems:
+        Agent(extract_fix_prompt.format(problems=coordinator_result.problems),
+              model="sonnet", foreground=True)
+        Agent(verify_prompt.format(...), model="haiku", foreground=True)
+        # 重新派发 coordinator（断点续跑，只处理未完成的章节）
+        Agent(book_coordinator_prompt, model="opus", foreground=True)
+
+# 3. KB UPDATE [前台, 可选]
+if user_requests_kb_update:
+    Agent(kb_update_prompt, model="opus", foreground=True)
 
 # 4. MONITOR + OVERVIEW [Agent × 1, 前台]
 Agent(
@@ -400,11 +419,13 @@ print(f"Done: {total} chapters analyzed, overview generated")
 
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
-| Step 1 | `processing/chapters/{book-name}/manifest.json` | 存在则跳过提取 |
-| Step 2 | — | 主进程自动 Glob 排除已完成章节 |
-| Step 3 (逐章) | `{output_dir}/ch{NN}-*.md` | 已存在的不派发 |
-| Step 4 | `{output_dir}/00-overview.md` | 存在则跳过监控+概览 |
-| Step 5 | — | 用户手动决定 |
+| Step 1b (提取) | `processing/chapters/{book-name}/manifest.json` | 存在则跳过提取 |
+| Step 1c (验证) | 不跳过 | 即使 manifest 已存在也必须验证 |
+| Step 1d (修复) | 验证通过 | 通过则跳过修复 |
+| Step 2 (整体) | `{output_dir}/00-overview.md` | 存在则跳过整个 coordinator |
+| Step 2 (逐章) | `{output_dir}/ch{NN}-*.md` | 存在则跳过该章分析（coordinator 内部检查） |
+| Step 2 反馈 | coordinator 报告问题 | 仅在 coordinator 报告质量问题时执行 |
+| Step 3 | — | 用户手动决定 |
 
 ## 目录结构
 
@@ -427,10 +448,13 @@ vault/monographs/{book-name}/           <- 单一作者专著
 
 ## 核心原则
 
-1. **主进程直接调度**：不用 coordinator（因 Agent 嵌套不可用）
-2. **上下文最优**：主进程只处理元数据，轮询+概览委托给监控代理
-3. **每章 1 个 Agent**，`model: "opus"`，`run_in_background: true`
-4. **分批派发**：每批 ≤5 个，连续发出不等待
-5. **完成检查用 Glob**：不用 TaskOutput（避免导入子代理 transcript）
-6. **从 CLAUDE.md §1.3 获取 preamble/topic 参数**
-7. **分析代理自读模板和章节**：主进程只传路径和元数据
+1. **主进程只做 dispatcher**：~3-6 次工具调用，不读取任何文件内容
+2. **提取由子代理完成**：提取代理 (Sonnet) 负责智能提取 + 碎片化自修，验证代理 (Haiku) 负责质量校验
+3. **两层防线**：提取代理自修碎片化，验证代理兜底检查
+4. **有限重试**：修复最多 2 轮，超过则报告用户
+5. **断点续跑时仍验证**：即使 manifest 已存在，也运行验证代理确保质量
+6. **book-coordinator 有独立上下文**：章节筛选、分析派发、轮询、概览生成全在 coordinator 内完成
+7. **coordinator 可反馈章节质量问题**：主进程根据反馈派修复代理，最多 1 轮
+8. **每章 1 个分析代理**，`model: "opus"`，由 coordinator 并行启动
+9. **完成检查用 Glob**：不用 TaskOutput（避免导入子代理 transcript）
+10. **正确的模型选型**：Sonnet/Haiku 做结构性任务，Opus 做分析性任务
