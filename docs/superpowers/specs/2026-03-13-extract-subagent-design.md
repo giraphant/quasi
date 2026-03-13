@@ -105,7 +105,7 @@ EXTRACT_RESULT:
      - 目录清晰、章节边界明确 → 用自动模式
      - 目录模糊、脚注密集、结构复杂 → 构造 --chapters JSON 用手动模式
   3. 运行提取:
-     自动模式: python3 {script_base}/split_chapters.py {source_file} --output-dir {chapters_dir}
+     自动模式: python3 {script_base}/split_chapters.py {source_file} --output-dir {chapters_dir} --max-chapters 150
      手动模式: python3 {script_base}/split_chapters.py {source_file} --output-dir {chapters_dir} --chapters '<JSON>'
   4. 检查输出：如果章节数 >100，说明碎片化。从 TOC 构造 --chapters JSON，用手动模式重跑
   5. 如果提取脚本无输出或报错，检查是否为扫描版 PDF（无可选文本），报告需要 OCR
