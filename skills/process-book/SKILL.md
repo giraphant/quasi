@@ -195,7 +195,70 @@ VERIFY_RESULT:
 3. 用 Glob 检查 `{output_dir}/ch{NN}-*.md` 是否已存在（断点续跑），从待分析列表中移除已完成的
 4. 向用户报告选中章节列表和已跳过的章节，**等待确认后继续**
 
-**上下文开销**：1 次 Read（manifest）+ 1 次 Glob（已有产出）+ 文本输出。
+**子代理 prompt 模板**：
+
+```
+你是书籍处理协调代理。任务：协调一本学术书籍的章节分析和概览生成。
+
+书籍信息：
+- book-name: {book-name}
+- book_title: {book_title}
+- editors: {editors}（如无编者则填作者）
+- publisher: {publisher}
+- year: {year}
+- book_short_name: {book_short_name}（用于 frontmatter 的简称）
+- 章节目录: processing/chapters/{book-name}/
+- 分析输出: {output_dir}/（由主进程确定，见下方说明）
+
+步骤 1 — 筛选章节：
+  读取 processing/chapters/{book-name}/manifest.json（或用 Glob 列出 *.txt 文件）。
+  根据主题"技术、AI、媒介与具身化"评估每章相关性。
+  跳过纯索引/致谢/封面等无分析价值的章节。
+  记录选中章节及理由。
+
+步骤 2 — 并行分析：
+  对每个选中章节，检查 {output_dir}/ch{NN}-{title-slug}.md 是否已存在（断点续跑）。
+  对不存在的，启动 1 个后台子代理（Agent tool）：
+  - subagent_type: "general-purpose"
+  - model: "opus"
+  - run_in_background: true
+  - prompt: 读取 ../analyze/prompts/text-analysis.md 模板，
+    选用 A 类（书籍章节）元数据格式，根据模板中的占位符填入相应值，
+    生成分析写入 {output_dir}/ch{NN}-{title-slug}.md。
+    值来源：
+    - preamble/topic: 从 CLAUDE.md §1.3 获取
+    - 书籍元数据 (book_title, editors, publisher, year, book_short_name): 上方书籍信息
+    - 章节元数据 (ch_num, chapter_title, author): 从 manifest 或章节文本推断
+    - input_instruction: 读取 processing/chapters/{book-name}/{chapter_file}
+    - extra_sections: ""
+
+步骤 3 — 等待完成：
+  用 Glob 检查 {output_dir}/ch*.md 数量是否等于选中章节数。
+  每 30 秒检查一次，直到全部完成。
+
+步骤 4 — 生成概览：
+  启动 1 个前台子代理（opus），读取 {output_dir}/ 下所有 ch*.md，
+  生成 {output_dir}/00-overview.md。
+  概览应包含：全书核心论点、章节间逻辑、关键概念表、与"技术、AI、媒介与具身化"的关联。
+
+步骤 5 — 章节质量监控：
+  在分析过程中，如果发现某章节文本有明显质量问题（截断、乱码、空白过多），
+  在完成报告中列出问题章节。
+
+完成后报告格式（最后一条消息必须包含）：
+- chapters_analyzed: N
+- overview: generated | skipped
+- chapter_problems: [
+    {file: "ch05_xxx.txt", issue: "text appears truncated at page boundary"},
+    ...
+  ]
+  如果无质量问题，chapter_problems 为空列表。
+```
+
+**主进程收到**：完成报告（N 章分析 + 概览状态）
+
+### 断点续跑
+`{output_dir}/00-overview.md` 存在 → 跳过 Step 2。
 
 ---
 
