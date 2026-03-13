@@ -3,7 +3,8 @@ name: quasi:process-book
 type: workflow
 description: >
   Composite skill: processes a book from EPUB/PDF to structured summaries.
-  Main process dispatches extract + N parallel analysis agents + monitor/overview agent.
+  Subagent-driven: main process dispatches extract agent (Sonnet) + verify agent (Haiku)
+  for chapter extraction, then book-coordinator (Opus) for analysis.
   Use when the user says "处理这本书", "跑一下这本handbook", "总结这本".
 argument-hint: "[book-name]"
 ---
@@ -37,14 +38,25 @@ argument-hint: "[book-name]"
 - **轮询和概览委托给"监控+概览"代理**——在子代理上下文里完成，不污染主进程
 
 ```
-主进程 (dispatcher, 轻量)
+主进程 (dispatcher, ~3-6 次工具调用，0 次读取文件内容)
 │
-├─ Step 1: extract (Bash)                         [前台]
-├─ Step 2: 读 manifest + 筛选章节 + 确认          [主进程, ~2 次工具调用]
-├─ Step 3: 派发 N 个分析代理 (Agent ×N)           [后台, 分批]
-├─ Step 4: 派发"监控+概览"代理 (Agent ×1)         [前台, 阻塞等待]
-└─ Step 5: kb-update (可选)                       [前台]
+├─ Step 1: 提取章节（子代理驱动）
+│   ├─ 1a. 断点检查: manifest.json 存在 → 跳到 1c
+│   ├─ 1b. 提取代理 (Sonnet, 前台)
+│   ├─ 1c. 验证代理 (Haiku, 前台)
+│   └─ 1d. [验证失败] 提取代理修复 + 再验证，最多 2 轮
+├─ Step 2: book-coordinator (Opus, 前台)
+│   └─ coordinator 发现章节质量问题 → 报告主进程 → 主进程派提取代理修复
+└─ Step 3: kb-update-agent (可选, 前台)
 ```
+
+**主进程禁止做的事**：
+- 读取 manifest.json 内容或筛选章节（交给 book-coordinator）
+- 循环派发 analyze agents（交给 book-coordinator）
+- 读取分析产出 .md 文件（只用 Glob 检查数量）
+- 手动生成概览（交给 book-coordinator 内的 overview 子代理）
+- 对 manifest 做任何判断逻辑（coordinator 自己决策）
+- 读取 PDF/txt 文件内容（全部交给提取代理和验证代理）
 
 ---
 
