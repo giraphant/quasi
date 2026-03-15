@@ -20,6 +20,11 @@ argument-hint: "{author-name}"
 
 `{author-name}` 为 kebab-case（如 `donna-haraway`）。
 
+## ⚠ 硬约束
+
+- **禁止用 TaskOutput 检查后台 agent**：会报 "No task found"，导致卡住
+- **必须用 Glob 轮询输出文件**来判断完成
+
 ## 编排架构
 
 ```

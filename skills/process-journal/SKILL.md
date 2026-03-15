@@ -18,6 +18,12 @@ argument-hint: "<journal-name> [--threshold <score>]"
 /quasi:process-journal {journal-name} [--threshold 7.0]
 ```
 
+## ⚠ 硬约束
+
+- **禁止用 TaskOutput 检查后台 agent**：会报 "No task found"，导致卡住
+- **必须用 Glob 轮询输出文件**来判断完成
+- 后台 agent 完成时会自动通知，但 Glob 是唯一可靠的兜底
+
 ## 编排架构
 
 ```

@@ -20,6 +20,12 @@ argument-hint: "[book-name]"
 
 `{book-name}` 为 kebab-case。源文件应在 `sources/{book-name}.epub` 或 `.pdf`。
 
+## ⚠ 硬约束
+
+- **禁止用 TaskOutput 检查后台 agent**：TaskOutput 会报 "No task found"，导致卡住
+- **必须用 Glob 轮询输出文件**：检查 `{output_dir}/ch*.md` 数量来判断完成
+- 后台 agent 完成时会自动通知，但如果错过通知，Glob 是唯一可靠的检查方式
+
 ## 编排架构
 
 ```

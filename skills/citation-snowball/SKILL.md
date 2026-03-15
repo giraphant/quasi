@@ -18,6 +18,11 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
 /quasi:citation-snowball {topic-slug} --seed {doi} --topic "{description}"
 ```
 
+## ⚠ 硬约束
+
+- **禁止用 TaskOutput 检查后台 agent**：会报 "No task found"，导致卡住
+- **必须用 Glob 轮询输出文件**来判断完成
+
 ## 编排架构
 
 ```
