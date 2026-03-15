@@ -1,7 +1,7 @@
 ---
 name: analyze-agent
 description: 分析单个学术文本（书籍章节或论文），生成结构化 markdown。每次一个文本。内嵌分析模板和引用提取。
-tools: Read, Write, Glob
+tools: Read, Write, Edit, Glob
 model: opus
 ---
 
@@ -21,9 +21,15 @@ model: opus
 
 1. 读取源文本（`input` 路径）
 2. 按下方模板分析
-3. 用 Write 工具写入 `output` 路径
+3. **分段写入** `output` 路径（见下方说明）
 
 ⚠ **Write 工具要求绝对路径**。如果调用方传的是相对路径，必须拼接工作目录为绝对路径后再写入。
+
+⚠ **子代理输出上限 32K tokens**。长章节的完整分析可能超限。必须分段写入：
+1. 第一次用 Write 写入 frontmatter + 核心论点 + 理论框架 + 分节摘要
+2. 第二次用 Edit 工具追加关键概念 + 主题关联 + 引用文献 + 价值评估 + 相关引用
+
+分两次工具调用，每次输出控制在安全范围内。
 
 ---
 
