@@ -13,6 +13,8 @@ model: opus
 - `book_title`: 书名
 - `topic`: 研究主题（从 CLAUDE.md §1.3 获取）
 
+⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
+
 ## 执行步骤
 
 1. 用 Glob 列出 `{output_dir}/ch*.md` 所有章节分析文件。

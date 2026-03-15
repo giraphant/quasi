@@ -16,6 +16,8 @@ model: opus
 - `papers_dir`: 论文分析目录（如 `vault/authors/{author_name}/papers/`）
 - `output_path`: 输出路径（如 `vault/authors/{author_name}/profile.md`）
 
+⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
+
 ## 执行步骤
 
 1. 读取所有书籍概览文件（`00-overview.md`）。

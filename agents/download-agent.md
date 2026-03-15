@@ -22,6 +22,8 @@ model: sonnet
 - 按 DOI 下载: `python3 scripts/download/download.py --doi "{doi}" --output-dir {output_dir} --filename {slug}`
 - manifest 批量: `python3 scripts/download/download.py --manifest {manifest_path} --batch --retry-wayback`
 
+⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
+
 ## 执行
 
 1. 读取输入（manifest/scan.md），确定待下载列表

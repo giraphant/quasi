@@ -18,6 +18,8 @@ model: opus
 - 搜书: `python3 scripts/search/search.py books --author "{full_name}" --limit 20`
 - 搜论文: `python3 scripts/search/search.py papers --author "{full_name}" --limit 30`
 
+⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
+
 ## 执行
 
 1. 搜索书籍和论文候选池

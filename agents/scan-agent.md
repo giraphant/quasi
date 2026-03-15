@@ -13,6 +13,8 @@ model: opus
 - `journal_full_name`: 期刊全名
 - `output_path`: 报告输出路径
 
+⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
+
 ## 执行
 
 1. 抓取论文：

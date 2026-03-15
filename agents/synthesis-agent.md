@@ -21,6 +21,8 @@ kb-update 模式额外参数：
 - `kb_path`: 知识库路径
 - `dimensions`: 关注维度
 
+⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
+
 ## 执行
 
 ### synthesis 模式
