@@ -2,9 +2,9 @@
 name: quasi:process-book
 type: workflow
 description: >
-  Composite skill: processes a book from EPUB/PDF to structured summaries.
+  Use when the user says "处理这本书", "跑一下这本handbook", "总结这本",
+  or wants to process an EPUB/PDF book into structured chapter summaries.
   Flat agent dispatch: extract-agent, analyze-agent ×N, overview-agent.
-  Use when the user says "处理这本书", "跑一下这本handbook", "总结这本".
 argument-hint: "[book-name]"
 ---
 
@@ -25,6 +25,11 @@ argument-hint: "[book-name]"
 - **禁止用 TaskOutput 检查后台 agent**：TaskOutput 会报 "No task found"，导致卡住
 - **必须用 Glob 轮询输出文件**：检查 `{output_dir}/ch*.md` 数量来判断完成
 - 后台 agent 完成时会自动通知，但如果错过通知，Glob 是唯一可靠的检查方式
+- **每个文本独立 dispatch 一个 analyze-agent**：禁止把多章合并到一个 agent 调用中。一章 = 一个 Agent() 调用。
+- **Dispatcher context 卫生**：
+  - Glob 轮询只关注完成数 vs 总数，不要逐一列举文件名
+  - 后台 agent 完成通知是冗余信息，收到后不需要额外处理
+  - 每个阶段完成后不要回顾前序输出，关键状态已在磁盘上
 
 ## 编排架构
 

@@ -1,6 +1,6 @@
 ---
 name: profile-agent
-description: 作者综合代理：读取所有书籍概览和论文分析，生成作者级学术档案 profile.md。用于 process-author Phase 5。
+description: 读取所有书籍概览和论文分析，生成作者级学术档案 profile.md。由 process-author Phase 5 前台调用。
 tools: Read, Write, Glob
 model: opus
 ---
@@ -16,9 +16,9 @@ model: opus
 - `papers_dir`: 论文分析目录（如 `vault/authors/{author_name}/papers/`）
 - `output_path`: 输出路径（如 `vault/authors/{author_name}/profile.md`）
 
-⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
+## 执行流程
 
-## 执行步骤
+⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
 
 1. 读取所有书籍概览文件（`00-overview.md`）。
 2. 用 Glob 列出 `{papers_dir}/*.md`，逐一读取论文分析。
@@ -58,4 +58,16 @@ source:
 
 ## 可引用观点
 （综述写作时可直接使用的关键论述，含页码/章节出处）
+```
+
+## 输出协议
+
+最后一条消息**必须**包含：
+
+```
+PROFILE_RESULT:
+- books_covered: N
+- papers_covered: M
+- output: {output_path}
+- status: success | error
 ```

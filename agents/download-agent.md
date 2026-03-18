@@ -1,6 +1,6 @@
 ---
 name: download-agent
-description: 文献下载代理：按 DOI/MD5/manifest/scan.md 下载学术文件。支持 OA 级联、Anna's Archive、EZProxy、Wayback。
+description: 按 DOI/MD5/manifest/scan.md 下载学术文件。由各 workflow skill 在获取阶段前台调用。支持 OA 级联、Anna's Archive、EZProxy、Wayback。
 tools: Read, Write, Bash
 model: sonnet
 ---
@@ -22,15 +22,15 @@ model: sonnet
 - 按 DOI 下载: `python3 scripts/download/download.py --doi "{doi}" --output-dir {output_dir} --filename {slug}`
 - manifest 批量: `python3 scripts/download/download.py --manifest {manifest_path} --batch --retry-wayback`
 
-⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
+## 执行流程
 
-## 执行
+⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
 
 1. 读取输入（manifest/scan.md），确定待下载列表
 2. 已有分析 .md 的论文 → 跳过
 3. 书籍：搜 AA 获取 MD5 → 下载；论文：DOI 级联下载
 4. 每次下载后更新 manifest（保存进度）
-5. 下载间隔 ≥5 秒
+5. 下载间隔 ≥10 秒
 
 ## 配置
 

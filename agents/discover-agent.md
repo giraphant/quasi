@@ -1,6 +1,6 @@
 ---
 name: discover-agent
-description: 学术文献发现：为指定作者搜索最重要的书籍和论文，生成 manifest.json。
+description: 为指定作者搜索最重要的书籍和论文，生成 manifest.json。由 process-author Phase 1 前台调用。
 tools: Read, Write, Bash
 model: opus
 ---
@@ -18,9 +18,9 @@ model: opus
 - 搜书: `python3 scripts/search/search.py books --author "{full_name}" --limit 20`
 - 搜论文: `python3 scripts/search/search.py papers --author "{full_name}" --limit 30`
 
-⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
+## 执行流程
 
-## 执行
+⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
 
 1. 搜索书籍和论文候选池
 2. 按「引用量 × 与 {topic} 相关性」筛选：5 本书 + 10 篇论文（附理由）
@@ -38,4 +38,16 @@ model: opus
     {"title": "...", "doi": "...", "year": 2023, "citations": 1234, "oa_url": null, "status": "discovered", "reason": "..."}
   ]
 }
+```
+
+## 输出协议
+
+最后一条消息**必须**包含：
+
+```
+DISCOVER_RESULT:
+- books_found: N
+- papers_found: M
+- output: {manifest_path}
+- status: success | error
 ```

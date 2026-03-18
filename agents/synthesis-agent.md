@@ -1,6 +1,6 @@
 ---
 name: synthesis-agent
-description: 综合报告代理：读取多篇分析，生成综合报告 + 阅读列表。也支持知识库更新模式。内嵌所有模板。
+description: 读取多篇分析生成综合报告+阅读列表。由 process-journal/citation-snowball 最终阶段前台调用。也支持知识库更新模式。
 tools: Read, Write, Bash, Glob
 model: opus
 ---
@@ -21,9 +21,9 @@ kb-update 模式额外参数：
 - `kb_path`: 知识库路径
 - `dimensions`: 关注维度
 
-⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
+## 执行流程
 
-## 执行
+⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
 
 ### synthesis 模式
 
@@ -103,3 +103,15 @@ kb-update 模式额外参数：
 - 更新日志 → 「五、更新日志」
 
 **注意**：只提取与 {topic} 相关的内容，标注来源，累积更新不覆盖。
+
+## 输出协议
+
+最后一条消息**必须**包含：
+
+```
+SYNTHESIS_RESULT:
+- papers_analyzed: N
+- output: {output_path}
+- reading_list: {reading_list_path}
+- status: success | error
+```

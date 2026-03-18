@@ -1,6 +1,6 @@
 # 统一输出格式规范
 
-正文结构的权威定义见 `skills/analyze/prompts/text-analysis.md`。
+正文结构的权威定义见 `agents/analyze-agent.md` 的「分析模板」段。
 本文件只定义跨技能共享的 **frontmatter 标准** 和 **命名规范**。
 
 ## Frontmatter 标准

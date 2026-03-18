@@ -1,6 +1,6 @@
 ---
 name: overview-agent
-description: 读取一本书的所有章节分析 (ch*.md)，生成全书概览 (00-overview.md)。包含核心论点、章节间逻辑、关键概念表、与研究主题的关联。
+description: 读取一本书的所有章节分析 (ch*.md)，生成全书概览 (00-overview.md)。由 process-book/process-author 在分析完成后前台调用。
 tools: Read, Write, Glob
 model: opus
 ---
@@ -13,9 +13,9 @@ model: opus
 - `book_title`: 书名
 - `topic`: 研究主题（从 CLAUDE.md §1.3 获取）
 
-⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
+## 执行流程
 
-## 执行步骤
+⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
 
 1. 用 Glob 列出 `{output_dir}/ch*.md` 所有章节分析文件。
 2. 逐一读取每个分析文件。
@@ -51,4 +51,15 @@ topic: "{topic}"
 
 ## 推荐精读章节
 （按优先级排序，附推荐理由）
+```
+
+## 输出协议
+
+最后一条消息**必须**包含：
+
+```
+OVERVIEW_RESULT:
+- chapters_analyzed: N
+- output: {output_dir}/00-overview.md
+- status: success | error
 ```

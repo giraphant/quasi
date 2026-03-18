@@ -2,9 +2,9 @@
 name: quasi:process-author
 type: workflow
 description: >
-  Composite skill: discovers a scholar's representative works (up to 5 books +
-  10 papers), acquires, analyzes, and synthesizes into an author-level profile.
-  Use when the user says "处理作者", "process author", "跑一下这个学者".
+  Use when the user says "处理作者", "process author", "跑一下这个学者",
+  or wants to systematically process a scholar's representative works into a profile.
+  Flat agent dispatch: discover, download, extract, analyze ×N, overview, profile.
 argument-hint: "{author-name}"
 ---
 
@@ -24,6 +24,11 @@ argument-hint: "{author-name}"
 
 - **禁止用 TaskOutput 检查后台 agent**：会报 "No task found"，导致卡住
 - **必须用 Glob 轮询输出文件**来判断完成
+- **每个文本独立 dispatch 一个 analyze-agent**：禁止把多章/多篇论文合并到一个 agent 调用中。一个文本 = 一个 Agent() 调用。
+- **Dispatcher context 卫生**：
+  - Glob 轮询只关注完成数 vs 总数，不要逐一列举文件名
+  - 后台 agent 完成通知是冗余信息，收到后不需要额外处理
+  - 每个阶段完成后不要回顾前序输出，关键状态已在磁盘上
 
 ## 编排架构
 
@@ -118,3 +123,20 @@ if not exists(f"vault/authors/{author_name}/profile.md"):
 | Phase 3c | `00-overview.md` | 存在则跳过该书 |
 | Phase 4 | `{doi}.md` | 存在则跳过 |
 | Phase 5 | `profile.md` | 存在则跳过 |
+
+## 目录结构
+
+```
+vault/authors/{author-name}/
+├── manifest.json
+├── profile.md
+└── papers/
+    └── {slug}.md
+vault/monographs/{book-slug}/
+├── 00-overview.md
+└── ch{NN}-{title}.md
+processing/chapters/{book-slug}/
+├── manifest.json
+└── *.txt
+sources/{book-slug}.*
+```

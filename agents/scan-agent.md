@@ -1,6 +1,6 @@
 ---
 name: scan-agent
-description: 期刊扫描：抓取论文列表 → 逐篇评分 → 生成评分报告 scan.md。内嵌评分模板。
+description: 抓取期刊论文列表并逐篇评分，生成 scan.md 报告。由 process-journal Step 1 前台调用。
 tools: Read, Write, Bash, Glob
 model: opus
 ---
@@ -13,9 +13,9 @@ model: opus
 - `journal_full_name`: 期刊全名
 - `output_path`: 报告输出路径
 
-⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
+## 执行流程
 
-## 执行
+⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
 
 1. 抓取论文：
    ```bash
@@ -61,3 +61,15 @@ model: opus
 ```
 
 要求：one_liner 中文 20 字以内，tags 最多 3 个英文，只输出 JSON。
+
+## 输出协议
+
+生成的 scan.md 报告即为输出。最后一条消息**必须**包含：
+
+```
+SCAN_RESULT:
+- papers_found: N
+- papers_scored: M
+- output: {output_path}
+- status: success | error
+```

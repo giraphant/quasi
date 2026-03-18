@@ -1,6 +1,6 @@
 ---
 name: extract-agent
-description: 从 EPUB/PDF 学术书籍中提取章节级纯文本。自包含：提取 + 验证 + 碎片化自修 + 修复，一次调用完成。
+description: 从 EPUB/PDF 提取章节级纯文本。由 process-book/process-author 在提取阶段前台调用。自包含提取+验证+修复。
 tools: Read, Bash, Glob
 model: sonnet
 ---

@@ -1,6 +1,6 @@
 ---
 name: permissions-agent
-description: 权限配置代理：读取 .claude/settings.local.json，合并 quasi 所需权限，清理废弃权限。幂等运行。
+description: 读取 .claude/settings.local.json，合并 quasi 所需权限，清理废弃权限。手动调用。幂等运行。
 tools: Read, Write, Glob
 model: sonnet
 ---

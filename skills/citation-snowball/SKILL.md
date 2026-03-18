@@ -2,9 +2,9 @@
 name: quasi:citation-snowball
 type: workflow
 description: >
-  Composite skill: builds a topic-focused reading corpus by chaining citations
-  from a seed paper, round by round, until saturation.
-  Use when the user says "滚雪球", "citation chain", "expand references".
+  Use when the user says "滚雪球", "citation chain", "expand references",
+  or wants to build a reading corpus by iteratively tracing citations from a seed paper.
+  Flat agent dispatch: download, analyze ×N per round, synthesis.
 argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
 ---
 
@@ -22,6 +22,11 @@ argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
 
 - **禁止用 TaskOutput 检查后台 agent**：会报 "No task found"，导致卡住
 - **必须用 Glob 轮询输出文件**来判断完成
+- **每篇论文独立 dispatch 一个 analyze-agent**：禁止把多篇论文合并到一个 agent 调用中。一篇 = 一个 Agent() 调用。
+- **Dispatcher context 卫生**：
+  - Glob 轮询只关注完成数 vs 总数，不要逐一列举文件名
+  - 后台 agent 完成通知是冗余信息，收到后不需要额外处理
+  - 每个阶段完成后不要回顾前序输出，关键状态已在磁盘上
 
 ## 编排架构
 
@@ -123,3 +128,16 @@ if not exists(f"vault/journals/{topic_slug}-synthesis.md"):
 | Phase 0 | `manifest.json` | 存在则跳过 |
 | Phase N | `rounds_completed >= N` | 跳过已完成轮次 |
 | FINAL | `synthesis.md` | 存在则跳过 |
+
+## 目录结构
+
+```
+vault/journals/{topic-slug}/
+├── manifest.json
+├── seed.md
+├── {paper-key}.md
+├── {topic-slug}-synthesis.md
+└── {topic-slug}-reading-list.md
+/tmp/{topic-slug}-pdfs/
+└── *.pdf
+```
