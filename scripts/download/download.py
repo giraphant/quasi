@@ -64,7 +64,7 @@ HEADERS_BROWSER = {
 
 HEADERS_API = {"User-Agent": "BTS-Research/1.0 (mailto:research@example.com)"}
 
-DELAY = 5  # Human-like pacing to avoid EZProxy rate limits
+DELAY = 10  # Rate limit: minimum 10s between downloads
 
 
 class EZProxyCookieExpired(Exception):
