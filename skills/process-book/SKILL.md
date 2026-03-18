@@ -1,11 +1,8 @@
 ---
 name: quasi:process-book
-type: workflow
 description: >
   Use when the user says "处理这本书", "跑一下这本handbook", "总结这本",
   or wants to process an EPUB/PDF book into structured chapter summaries.
-  Flat agent dispatch: extract-agent, analyze-agent ×N, overview-agent.
-argument-hint: "[book-name]"
 ---
 
 # Process Book — 书籍处理

@@ -1,11 +1,8 @@
 ---
 name: quasi:citation-snowball
-type: workflow
 description: >
   Use when the user says "滚雪球", "citation chain", "expand references",
   or wants to build a reading corpus by iteratively tracing citations from a seed paper.
-  Flat agent dispatch: download, analyze ×N per round, synthesis.
-argument-hint: "<topic-slug> --seed <doi-or-pdf> --topic \"<description>\""
 ---
 
 # Citation Snowball — 引用滚雪球

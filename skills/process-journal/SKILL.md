@@ -1,11 +1,8 @@
 ---
 name: quasi:process-journal
-type: workflow
 description: >
   Use when the user says "处理期刊", "journal scan", or wants to scan,
   download, and analyze a journal issue end-to-end.
-  Flat agent dispatch: scan-agent, download-agent, analyze-agent ×N, synthesis-agent.
-argument-hint: "<journal-name> [--threshold <score>]"
 ---
 
 # Process Journal — 期刊处理

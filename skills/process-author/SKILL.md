@@ -1,11 +1,8 @@
 ---
 name: quasi:process-author
-type: workflow
 description: >
   Use when the user says "处理作者", "process author", "跑一下这个学者",
   or wants to systematically process a scholar's representative works into a profile.
-  Flat agent dispatch: discover, download, extract, analyze ×N, overview, profile.
-argument-hint: "{author-name}"
 ---
 
 # Process Author — 作者处理
