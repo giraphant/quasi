@@ -20,8 +20,8 @@ Usage:
 Config (AA only): .claude/config/anna-archive.json
     {"donator_key": "YOUR_KEY", "mirrors": ["https://annas-archive.gs", ...]}
 
-Config (EZproxy): config/ezproxy.json (skill-local) or ~/.claude/config/ezproxy.json (global)
-    {"cookie": "VALUE", "cookie_name": "ezproxy", "domain": "...", "login_url": "...", ...}
+Config (EZproxy): config/ezproxy.json (project root)
+    {"cookies": {"ezproxy": "VAL1", "yewnoEzProxyn": "VAL2"}, "domain": "...", "login_url": "..."}
 """
 
 import argparse
@@ -41,11 +41,11 @@ import requests
 # --- Config ---
 
 _CONFIG_DIR = Path.home() / ".claude" / "config"
-_SKILL_DIR = Path(__file__).resolve().parents[1]
+_PROJECT_DIR = Path(__file__).resolve().parents[2]  # quasi/
+_PROJECT_CONFIG = _PROJECT_DIR / "config"
 CONFIG_PATH = _CONFIG_DIR / "anna-archive.json"
-# EZProxy: skill-local first, .claude/config fallback
-_EZPROXY_LOCAL = _SKILL_DIR / "config" / "ezproxy.json"
-_EZPROXY_GLOBAL = _CONFIG_DIR / "ezproxy.json"
+# EZProxy: project-local only
+_EZPROXY_PATH = _PROJECT_CONFIG / "ezproxy.json"
 
 DEFAULT_AA_MIRRORS = [
     "https://annas-archive.gl",
@@ -79,13 +79,12 @@ class AAQuotaExhausted(Exception):
 
 
 def load_ezproxy_config():
-    """Load EZProxy cookie config. Skill-local first, .claude/config fallback."""
-    for path in (_EZPROXY_LOCAL, _EZPROXY_GLOBAL):
-        if path.exists():
-            with open(path) as f:
-                config = json.load(f)
-            if (config.get("cookie") or config.get("cookies")) and config.get("domain"):
-                return config
+    """Load EZProxy cookie config from project config/ezproxy.json."""
+    if _EZPROXY_PATH.exists():
+        with open(_EZPROXY_PATH) as f:
+            config = json.load(f)
+        if (config.get("cookie") or config.get("cookies")) and config.get("domain"):
+            return config
     return None
 
 
@@ -270,10 +269,10 @@ def try_ezproxy_download(doi, output_path):
     if final_url.startswith(login_url.rstrip("?").rsplit("/", 1)[0]):
         lower_html = landing_html[:2000].lower()
         if b"shibboleth" in lower_html or (b"login" in lower_html and b"password" in lower_html):
-            raise EZProxyCookieExpired(f"EZProxy cookie expired. Update: {_EZPROXY_LOCAL}")
+            raise EZProxyCookieExpired(f"EZProxy cookie expired. Update: {_EZPROXY_PATH}")
         # Stayed on login page but no explicit auth form — still expired
         if len(resp.history) == 0:
-            raise EZProxyCookieExpired(f"EZProxy cookie not accepted. Update: {_EZPROXY_LOCAL}")
+            raise EZProxyCookieExpired(f"EZProxy cookie not accepted. Update: {_EZPROXY_PATH}")
 
     if resp.status_code != 200:
         print(f"  EZProxy: HTTP {resp.status_code}", file=sys.stderr)
@@ -746,7 +745,7 @@ def download_pdf_from_url(url, output_path, timeout=60):
                     or b"ezproxy" in lower_data or b"shibboleth" in lower_data
                 ):
                     raise EZProxyCookieExpired(
-                        f"EZProxy cookie expired. Update: {_EZPROXY_LOCAL}"
+                        f"EZProxy cookie expired. Update: {_EZPROXY_PATH}"
                     )
                 print(f"  SKIP not-a-pdf ({len(data)} bytes)", file=sys.stderr)
                 return False
@@ -1076,7 +1075,7 @@ def main():
     except EZProxyCookieExpired as e:
         print(f"\n*** EZPROXY COOKIE EXPIRED ***", file=sys.stderr)
         print(f"  {e}", file=sys.stderr)
-        print(f"  Update cookie in: {_EZPROXY_LOCAL}", file=sys.stderr)
+        print(f"  Update cookie in: {_EZPROXY_PATH}", file=sys.stderr)
         print(f"  Login URL: https://login.eux.idm.oclc.org/login", file=sys.stderr)
         print(f"  Stop all paper downloads until cookie is refreshed.", file=sys.stderr)
         sys.exit(3)
