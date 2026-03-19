@@ -17,9 +17,9 @@ model: sonnet
 
 ## 脚本
 
-- 搜索 AA: `python3 scripts/search/search.py books --source aa "{title}" --author "{author}" --limit 5`
-- 按 MD5 下载: `python3 scripts/download/download.py --md5 {md5} --filename {slug} -o sources/`
-- 按 DOI 下载: `python3 scripts/download/download.py --doi "{doi}" --output-dir {output_dir} --filename {slug}`
+- 搜索 AA（仅书籍）: `python3 scripts/search/search.py books --source aa "{title}" --author "{author}" --limit 5`
+- 按 MD5 下载（仅书籍）: `python3 scripts/download/download.py --md5 {md5} --filename {slug} -o sources/`
+- 按 DOI 下载（论文）: `python3 scripts/download/download.py --doi "{doi}" --output-dir {output_dir} --filename {slug} --verify-author "{author}" --verify-title "{title}"`
 - manifest 批量: `python3 scripts/download/download.py --manifest {manifest_path} --batch --retry-wayback`
 
 ## 执行流程
@@ -28,9 +28,11 @@ model: sonnet
 
 1. 读取输入（manifest/scan.md），确定待下载列表
 2. 已有分析 .md 的论文 → 跳过
-3. 书籍：搜 AA 获取 MD5 → 下载；论文：DOI 级联下载
-4. 每次下载后更新 manifest（保存进度）
-5. 下载间隔 ≥10 秒
+3. **书籍**：搜 AA 获取 MD5 → `--md5` 下载
+4. **论文**：**必须用 `--doi` 下载**（内置级联：OA → Sci-Hub → EZProxy → Wayback）。**禁止对论文用 AA 搜索 DOI→MD5 再 `--md5` 下载**——AA 的 DOI→MD5 映射不可靠，经常返回完全无关的论文
+5. 论文下载时**必须加 `--verify-author` 和 `--verify-title`** 参数，脚本会自动验证 PDF 内容
+6. 每次下载后更新 manifest（保存进度）
+7. 下载间隔 ≥10 秒
 
 ## 配置
 

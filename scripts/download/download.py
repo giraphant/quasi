@@ -28,6 +28,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -118,6 +119,98 @@ def _is_pdf_data(data):
     return data[:5] == b"%PDF-" or (
         len(data) > 50000 and b"<html" not in data[:1000].lower()
     )
+
+
+def _extract_pdf_text(pdf_path, max_pages=2):
+    """Extract text from first pages of a PDF for verification.
+
+    Tries pdftotext first, falls back to raw byte search.
+    Returns lowercase text string.
+    """
+    # Try pdftotext (poppler)
+    try:
+        result = subprocess.run(
+            ["pdftotext", "-l", str(max_pages), pdf_path, "-"],
+            capture_output=True, timeout=15,
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout.decode("utf-8", errors="ignore").lower()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Fallback: search raw PDF bytes for readable text
+    try:
+        with open(pdf_path, "rb") as f:
+            raw = f.read(200_000)  # First ~200KB
+        # PDF text is often in parenthesized strings or between BT/ET blocks
+        text = raw.decode("latin-1", errors="ignore").lower()
+        return text
+    except OSError:
+        return ""
+
+
+def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
+                       min_keyword_matches=2):
+    """Verify downloaded PDF matches expected paper.
+
+    Extracts text from first 2 pages and checks for author surname
+    and title keywords. Returns True if content matches, False otherwise.
+    """
+    if not expected_author and not expected_title:
+        return True  # Nothing to verify
+
+    text = _extract_pdf_text(pdf_path)
+    if not text:
+        print(f"  Verify: could not extract text, skipping check", file=sys.stderr)
+        return True  # Can't verify, assume OK
+
+    matches = 0
+    needed = min_keyword_matches
+
+    # Check author surname
+    if expected_author:
+        # Extract surname (last word, or first word if Asian name)
+        author_lower = expected_author.lower().strip()
+        # Try full author string and individual words
+        if author_lower in text:
+            matches += 2  # Strong signal
+            print(f"  Verify: author '{expected_author}' found", file=sys.stderr)
+        else:
+            # Try surname only (last word for Western names)
+            parts = author_lower.split()
+            surname = parts[-1] if parts else author_lower
+            if len(surname) >= 3 and surname in text:
+                matches += 1
+                print(f"  Verify: surname '{surname}' found", file=sys.stderr)
+            else:
+                print(f"  Verify: author '{expected_author}' NOT found", file=sys.stderr)
+
+    # Check title keywords
+    if expected_title:
+        title_lower = expected_title.lower()
+        # Extract meaningful words (skip short/common ones)
+        stop_words = {
+            "the", "a", "an", "of", "in", "on", "and", "or", "for", "to",
+            "is", "are", "was", "with", "from", "by", "at", "as", "its",
+            "this", "that", "how", "what", "why", "new", "between",
+        }
+        words = [w for w in re.findall(r'[a-z]{3,}', title_lower)
+                 if w not in stop_words]
+
+        found_words = [w for w in words if w in text]
+        if found_words:
+            matches += len(found_words)
+            print(f"  Verify: title words found: {found_words[:5]}", file=sys.stderr)
+        else:
+            print(f"  Verify: no title keywords found in PDF", file=sys.stderr)
+
+    if matches >= needed:
+        print(f"  Verify: PASS ({matches} matches)", file=sys.stderr)
+        return True
+    else:
+        print(f"  Verify: FAIL ({matches}/{needed} matches) — wrong paper?",
+              file=sys.stderr)
+        return False
 
 
 def _build_ezproxy_session(config):
@@ -387,11 +480,15 @@ def _try_libgen_download(md5, dest):
     return False
 
 
-def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf"):
+def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
+                     verify_author=None, verify_title=None):
     """Download a file from AA by MD5. Returns file path or None.
 
     Flow: AA Fast API (default) → AA Fast API (path/domain rotation) → LibGen.li
     Raises AAQuotaExhausted if daily download quota is exhausted.
+
+    If verify_author/verify_title provided, checks content after download.
+    Returns None (and deletes file) if content doesn't match.
     """
     config = load_aa_config()
     if not config:
@@ -412,6 +509,18 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf"):
         print(f"  File already exists: {dest}", file=sys.stderr)
         return dest
 
+    def _aa_verify(path):
+        """Post-download verification for AA. Returns True if OK."""
+        if not verify_author and not verify_title:
+            return True
+        if verify_pdf_content(path, verify_author, verify_title):
+            return True
+        print(f"  AA verify: content mismatch, wrong file from AA",
+              file=sys.stderr)
+        if os.path.exists(path):
+            os.remove(path)
+        return False
+
     print(f"  MD5: {md5}", file=sys.stderr)
     key = config["donator_key"]
 
@@ -424,7 +533,11 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf"):
         if _stream_download(dl_url, dest, headers=HEADERS_BROWSER):
             size_mb = os.path.getsize(dest) / (1024 * 1024)
             print(f"  Done! {size_mb:.1f} MB -> {dest}", file=sys.stderr)
-            return dest
+            if _aa_verify(dest):
+                return dest
+            else:
+                print(f"  AA content mismatch — file deleted", file=sys.stderr)
+                return None  # Don't try other AA sources for same wrong MD5
         if os.path.exists(dest):
             os.remove(dest)
         print(f"  Default download failed, trying alternate sources...", file=sys.stderr)
@@ -441,14 +554,20 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf"):
         if _stream_download(dl_url, dest, headers=HEADERS_BROWSER):
             size_mb = os.path.getsize(dest) / (1024 * 1024)
             print(f"  Done! {size_mb:.1f} MB -> {dest}", file=sys.stderr)
-            return dest
+            if _aa_verify(dest):
+                return dest
+            else:
+                print(f"  AA content mismatch — file deleted", file=sys.stderr)
+                return None  # Same MD5 = same wrong file
         if os.path.exists(dest):
             os.remove(dest)
 
     # --- Stage 3: LibGen.li fallback (no key needed) ---
     print(f"  AA exhausted all options, trying LibGen...", file=sys.stderr)
     if _try_libgen_download(md5, dest):
-        return dest
+        if _aa_verify(dest):
+            return dest
+        return None
 
     print(f"  All sources failed for MD5 {md5}", file=sys.stderr)
     return None
@@ -639,10 +758,13 @@ def download_pdf_from_url(url, output_path, timeout=60):
 
 
 def download_paper(doi=None, url=None, output_dir="sources", filename=None,
-                   retry_wayback=True):
+                   retry_wayback=True, verify_author=None, verify_title=None):
     """Download a paper PDF by DOI or URL. Returns file path or None.
 
     Cascade: direct URL → OA (Unpaywall/OpenAlex/S2) → Sci-Hub → EZProxy → Wayback
+
+    If verify_author/verify_title are provided, each downloaded PDF is checked
+    for content match. Mismatches are deleted and the cascade continues.
     """
     if filename:
         safe_name = filename
@@ -658,10 +780,22 @@ def download_paper(doi=None, url=None, output_dir="sources", filename=None,
         print(f"  EXISTS {dest}", file=sys.stderr)
         return dest
 
+    def _verify_and_accept(path, source_name):
+        """Verify downloaded file. Returns True if accepted, False if rejected."""
+        if not verify_author and not verify_title:
+            return True
+        if verify_pdf_content(path, verify_author, verify_title):
+            return True
+        print(f"  {source_name}: content mismatch, deleting and trying next source",
+              file=sys.stderr)
+        if os.path.exists(path):
+            os.remove(path)
+        return False
+
     # 1. Direct URL
     if url:
         print(f"  Direct URL: {url[:80]}", file=sys.stderr)
-        if download_pdf_from_url(url, dest):
+        if download_pdf_from_url(url, dest) and _verify_and_accept(dest, "Direct"):
             return dest
         time.sleep(0.5)
 
@@ -671,14 +805,14 @@ def download_paper(doi=None, url=None, output_dir="sources", filename=None,
         oa_url = find_oa_url(doi)
         if oa_url:
             print(f"  OA: {oa_url[:80]}", file=sys.stderr)
-            if download_pdf_from_url(oa_url, dest):
+            if download_pdf_from_url(oa_url, dest) and _verify_and_accept(dest, "OA"):
                 return dest
             time.sleep(0.5)
 
     # 3. Sci-Hub
     if doi:
         print(f"  Trying Sci-Hub for {doi}...", file=sys.stderr)
-        if try_scihub_download(doi, dest):
+        if try_scihub_download(doi, dest) and _verify_and_accept(dest, "Sci-Hub"):
             return dest
         time.sleep(0.5)
 
@@ -686,7 +820,7 @@ def download_paper(doi=None, url=None, output_dir="sources", filename=None,
     if doi:
         print(f"  Trying EZProxy for {doi}...", file=sys.stderr)
         try:
-            if try_ezproxy_download(doi, dest):
+            if try_ezproxy_download(doi, dest) and _verify_and_accept(dest, "EZProxy"):
                 return dest
         except EZProxyCookieExpired:
             print(f"  EZProxy cookie expired, skipping to Wayback...", file=sys.stderr)
@@ -698,7 +832,7 @@ def download_paper(doi=None, url=None, output_dir="sources", filename=None,
         wb_url = find_wayback_url(doi)
         if wb_url:
             print(f"  WB: {wb_url[:80]}", file=sys.stderr)
-            if download_pdf_from_url(wb_url, dest, timeout=90):
+            if download_pdf_from_url(wb_url, dest, timeout=90) and _verify_and_accept(dest, "Wayback"):
                 return dest
 
     print(f"  Could not download paper", file=sys.stderr)
@@ -729,6 +863,10 @@ def batch_download_manifest(manifest_path, retry_wayback=False):
     for key, paper in to_process:
         doi = paper.get("doi", "")
         title = paper.get("title", key)
+        # Extract author for verification (first author surname)
+        authors = paper.get("authors", [])
+        verify_author = authors[0] if authors else None
+        verify_title = title if title != key else None
         print(f"\n[{key}] {title[:60]}", file=sys.stderr)
 
         safe_key = key.replace("/", "_").replace(".", "_").replace(" ", "_")
@@ -743,12 +881,23 @@ def batch_download_manifest(manifest_path, retry_wayback=False):
 
         success = False
 
+        def _batch_verify(path, source):
+            """Verify and return True if content matches, else delete."""
+            if not verify_pdf_content(path, verify_author, verify_title):
+                print(f"  {source}: content mismatch, deleting", file=sys.stderr)
+                if os.path.exists(path):
+                    os.remove(path)
+                return False
+            return True
+
         try:
             # 1. Try OA URL from manifest
             oa_url = paper.get("oa_url")
             if oa_url:
                 print(f"  OA: {oa_url[:80]}", file=sys.stderr)
                 success = download_pdf_from_url(oa_url, pdf_path)
+                if success and not _batch_verify(pdf_path, "OA"):
+                    success = False
                 time.sleep(0.5)
 
             # 2. Try finding new OA
@@ -758,19 +907,26 @@ def batch_download_manifest(manifest_path, retry_wayback=False):
                     print(f"  New OA: {new_oa_url[:80]}", file=sys.stderr)
                     success = download_pdf_from_url(new_oa_url, pdf_path)
                     if success:
-                        paper["oa_url"] = new_oa_url
+                        if _batch_verify(pdf_path, "New OA"):
+                            paper["oa_url"] = new_oa_url
+                        else:
+                            success = False
                     time.sleep(0.5)
 
             # 3. Try Sci-Hub
             if not success and doi:
                 print(f"  Trying Sci-Hub for {doi}...", file=sys.stderr)
                 success = try_scihub_download(doi, pdf_path)
+                if success and not _batch_verify(pdf_path, "Sci-Hub"):
+                    success = False
                 time.sleep(0.5)
 
             # 4. Try EZProxy
             if not success and doi:
                 print(f"  Trying EZProxy for {doi}...", file=sys.stderr)
                 success = try_ezproxy_download(doi, pdf_path)
+                if success and not _batch_verify(pdf_path, "EZProxy"):
+                    success = False
                 time.sleep(0.5)
 
             # 5. Try Wayback
@@ -783,7 +939,10 @@ def batch_download_manifest(manifest_path, retry_wayback=False):
                     print(f"  WB: {wb_url[:80]}", file=sys.stderr)
                     success = download_pdf_from_url(wb_url, pdf_path, timeout=90)
                     if success:
-                        paper["wayback_url"] = wb_url
+                        if _batch_verify(pdf_path, "Wayback"):
+                            paper["wayback_url"] = wb_url
+                        else:
+                            success = False
                     time.sleep(0.5)
 
         except EZProxyCookieExpired as e:
@@ -876,6 +1035,8 @@ def main():
     parser.add_argument("--format", "-f", default="pdf", help="File format (default: pdf)")
     parser.add_argument("--batch", action="store_true", help="Batch download all metadata_found in manifest")
     parser.add_argument("--retry-wayback", action="store_true", help="Re-check Wayback for papers")
+    parser.add_argument("--verify-author", help="Expected author name (for post-download verification)")
+    parser.add_argument("--verify-title", help="Expected title (for post-download verification)")
 
     args = parser.parse_args()
 
@@ -887,6 +1048,8 @@ def main():
             result = download_from_aa(
                 md5=args.md5, output_dir=args.output_dir,
                 filename=args.filename, fmt=args.format,
+                verify_author=args.verify_author,
+                verify_title=args.verify_title,
             )
             if result:
                 print(result)
@@ -896,6 +1059,8 @@ def main():
             result = download_paper(
                 doi=args.doi, url=args.url, output_dir=args.output_dir,
                 filename=args.filename, retry_wayback=args.retry_wayback,
+                verify_author=args.verify_author,
+                verify_title=args.verify_title,
             )
             if result:
                 print(result)
