@@ -106,7 +106,8 @@ claude plugin add quasi --marketplace ramu-toolkit
 
 ```json
 {
-  "cookies": {"ezproxy": "SESSION_VALUE_1", "yewnoEzProxyn": "SESSION_VALUE_2"},
+  "cookie": "SESSION_VALUE",
+  "cookie_name": "yewnoEzProxy",
   "domain": ".your-institution.idm.oclc.org",
   "login_url": "https://login.your-institution.idm.oclc.org/login?url="
 }

@@ -46,20 +46,17 @@ AA donator key 位于 `config/anna-archive.json`（gitignored）。
 
 ```json
 {
-  "cookies": {
-    "ezproxy": "新的ezproxy值",
-    "yewnoEzProxyn": "新的yewnoEzProxyn值"
-  },
+  "cookie": "新的cookie值",
+  "cookie_name": "yewnoEzProxy",
   "domain": ".eux.idm.oclc.org",
   "login_url": "https://login.eux.idm.oclc.org/login?url="
 }
 ```
 
 ⚠ **注意事项**：
-- **必须用 `cookies` dict 格式**（两个 cookie），不要用单 `cookie`/`cookie_name` 格式
-- cookie name 固定为 `ezproxy` 和 `yewnoEzProxyn`，**不要修改 key 名称**
-- `domain` 和 `login_url` 不变，只替换 cookie 值
-- 获取方式：浏览器登录 EZProxy → DevTools → Application → Cookies → 复制对应值
+- cookie name 固定为 `yewnoEzProxy`，**不要改名**（不是 `ezproxy`，不是 `yewnoEzProxyn`）
+- `domain` 和 `login_url` 不变，只替换 `cookie` 值
+- 获取方式：浏览器登录 EZProxy → DevTools → Application → Cookies → 复制 `yewnoEzProxy` 的值
 
 ## 输出协议
 

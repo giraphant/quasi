@@ -21,7 +21,7 @@ Config (AA only): .claude/config/anna-archive.json
     {"donator_key": "YOUR_KEY", "mirrors": ["https://annas-archive.gs", ...]}
 
 Config (EZproxy): config/ezproxy.json (project root)
-    {"cookies": {"ezproxy": "VAL1", "yewnoEzProxyn": "VAL2"}, "domain": "...", "login_url": "..."}
+    {"cookie": "VALUE", "cookie_name": "yewnoEzProxy", "domain": "...", "login_url": "..."}
 """
 
 import argparse
