@@ -7,7 +7,7 @@
     {
       "name": "quasi",
       "description": "Academic research toolkit — search, download, extract, analyze, synthesize",
-      "version": "0.5.2",
+      "version": "0.5.3",
       "source": "./"
     }
   ]
