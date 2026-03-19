@@ -22,6 +22,11 @@ model: sonnet
 - 按 DOI 下载（论文）: `python3 scripts/download/download.py --doi "{doi}" --output-dir {output_dir} --filename {slug} --verify-author "{author}" --verify-title "{title}"`
 - manifest 批量: `python3 scripts/download/download.py --manifest {manifest_path} --batch --retry-wayback`
 
+## 约束
+
+- **禁止 `python3 -c`**：所有下载操作必须通过上述脚本命令执行。禁止用 `python3 -c "..."` 写 inline 代码代替脚本调用。如果现有脚本不支持某个操作，报错说明缺失功能，不要自行编写替代代码。
+- **禁止 `requests`/`curl` 直接下载**：不要绕过脚本自己发 HTTP 请求下载 PDF。
+
 ## 执行流程
 
 ⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
