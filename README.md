@@ -91,14 +91,14 @@ claude plugin add quasi --marketplace ramu-toolkit
 
 ## 配置
 
-凭据放在 `config/` 目录下（gitignored）：
+凭据放在项目根目录的 `config/` 下（gitignored）：
 
 **Anna's Archive** — `config/anna-archive.json`：
 
 ```json
 {
   "donator_key": "你的key",
-  "mirrors": ["https://annas-archive.gl", "https://annas-archive.li"]
+  "mirrors": ["https://annas-archive.gl", "https://annas-archive.pk", "https://annas-archive.gd"]
 }
 ```
 

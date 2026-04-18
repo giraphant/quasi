@@ -41,11 +41,11 @@ model: sonnet
 
 ## 配置
 
-AA donator key 位于 `config/anna-archive.json`（gitignored）。
+AA donator key 位于项目根目录的 `config/anna-archive.json`（gitignored）。
 
 ### EZProxy Cookie 更新
 
-配置文件：`config/ezproxy.json`（项目根目录，gitignored）。
+配置文件：项目根目录的 `config/ezproxy.json`（gitignored）。
 
 当脚本报 `EZPROXY COOKIE EXPIRED` 时，需要用户从浏览器获取新 cookie 值，然后**严格按以下模板**写入：
 

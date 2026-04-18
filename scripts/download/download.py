@@ -17,8 +17,8 @@ Usage:
     # Batch: download all metadata_found papers in a manifest
     python3 download.py --manifest manifest.json --batch
 
-Config (AA only): .claude/config/anna-archive.json
-    {"donator_key": "YOUR_KEY", "mirrors": ["https://annas-archive.gs", ...]}
+Config (AA only): config/anna-archive.json (project root)
+    {"donator_key": "YOUR_KEY", "mirrors": ["https://annas-archive.gl", ...]}
 
 Config (EZproxy): config/ezproxy.json (project root)
     {"cookie": "VALUE", "cookie_name": "yewnoEzProxy", "domain": "...", "login_url": "..."}
@@ -40,16 +40,16 @@ import requests
 
 # --- Config ---
 
-_CONFIG_DIR = Path.home() / ".claude" / "config"
 _PROJECT_DIR = Path(__file__).resolve().parents[2]  # quasi/
 _PROJECT_CONFIG = _PROJECT_DIR / "config"
-CONFIG_PATH = _CONFIG_DIR / "anna-archive.json"
-# EZProxy: project-local only
+CONFIG_PATH = _PROJECT_CONFIG / "anna-archive.json"
+# Credentials are project-local only.
 _EZPROXY_PATH = _PROJECT_CONFIG / "ezproxy.json"
 
 DEFAULT_AA_MIRRORS = [
     "https://annas-archive.gl",
-    "https://annas-archive.li",
+    "https://annas-archive.pk",
+    "https://annas-archive.gd",
 ]
 
 HEADERS_BROWSER = {
@@ -79,7 +79,7 @@ class AAQuotaExhausted(Exception):
 
 
 def load_ezproxy_config():
-    """Load EZProxy cookie config from project config/ezproxy.json."""
+    """Load EZProxy cookie config from project-root config/ezproxy.json."""
     if _EZPROXY_PATH.exists():
         with open(_EZPROXY_PATH) as f:
             config = json.load(f)
