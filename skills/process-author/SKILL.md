@@ -79,9 +79,11 @@ for book in acquired_books:
     all_chapters.extend(book_manifest.chapters)
 
 for ch in all_chapters:
+    # slot: "01".."99" 真章 / "00a" 前言 / "99a" 后记 / "01b" 章间插曲
+    # chapter_label: 由 slot + title 推导的人类可读标签（"第3章" / "前言" / "后记" / "第2章（附）"）
     if not exists(ch.output_path):
         Agent("quasi:analyze-agent", background=True,
-              prompt=f"type: A, book_title: ..., ch_num: ..., "
+              prompt=f"type: A, book_title: ..., slot: {ch.slot}, chapter_label: ..., "
                      f"input: ..., output: ..., topic: ...")
 
 while not all_done:

@@ -56,16 +56,22 @@ if not exists(f"{chapters_dir}/manifest.json"):
 
 # 2. 读取章节清单（全部章节，不筛选）
 manifest = Read(f"{chapters_dir}/manifest.json")
-selected = manifest.chapters
+selected = manifest.chapters   # 每项含 slot, title, filename, word_count
 output_dir = "vault/handbooks/" or "vault/monographs/" + book_name
 
 # 3. 并行分析
+# slot 格式："01".."99" 真章节 / "00a".."00z" 前言 / "99a".."99z" 后记 / "{N}b".."{N}z" 章间插曲
+# 根据 slot 推导人类可读的 chapter_label 传给 analyze-agent：
+#   slot 纯数字 N       → chapter_label = f"第{int(slot)}章"
+#   slot 以 "00" 开头   → chapter_label = "前言"（或根据 title：Foreword/Preface/Introduction）
+#   slot 以 "99" 开头   → chapter_label = "后记"（或根据 title：Afterword/Epilogue/Appendix）
+#   slot 形如 "{N}{x}" → chapter_label = f"第{N}章（附）"
 for ch in selected:
-    if not exists(f"{output_dir}/ch{ch.num:02d}-{ch.slug}.md"):
+    if not exists(f"{output_dir}/ch{ch.slot}-{ch.slug}.md"):
         Agent("quasi:analyze-agent", background=True,
-              prompt=f"type: A, book_title: ..., ch_num: {ch.num}, "
-                     f"input: {chapters_dir}/{ch.file}, "
-                     f"output: {output_dir}/ch{ch.num:02d}-{ch.slug}.md, topic: ...")
+              prompt=f"type: A, book_title: ..., slot: {ch.slot}, chapter_label: {chapter_label}, "
+                     f"input: {chapters_dir}/{ch.filename}, "
+                     f"output: {output_dir}/ch{ch.slot}-{ch.slug}.md, topic: ...")
 
 while Glob(f"{output_dir}/ch*.md").count < len(selected):
     sleep(30)
@@ -83,7 +89,7 @@ print(f"Done: {len(selected)} chapters, overview generated")
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
 | Step 1 | `{chapters_dir}/manifest.json` | 存在则跳过 |
-| Step 3 | `ch{NN}-*.md` | 存在则跳过该章 |
+| Step 3 | `ch{slot}-*.md` | 存在则跳过该章 |
 | Step 4 | `00-overview.md` | 存在则跳过 |
 
 ## 目录结构
@@ -95,7 +101,7 @@ processing/chapters/{book-name}/
 └── *.txt
 vault/handbooks/{book-name}/     ← 或 vault/monographs/
 ├── 00-overview.md
-└── ch{NN}-{title}.md
+└── ch{slot}-{title}.md        ← slot 见 manifest.json（"01".."99"/"00a"/"99a"/...）
 ```
 
 output_dir 规则：Handbook/编著 → `handbooks/`，专著 → `monographs/`

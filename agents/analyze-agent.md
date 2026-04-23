@@ -14,7 +14,9 @@ model: opus
 - `output`: 输出 .md 路径
 - `topic`: 研究主题
 - `preamble`: 分析立场（从 CLAUDE.md §1.3 获取）
-- A 类额外参数：book_title, editors, publisher, year, ch_num, chapter_title
+- A 类额外参数：book_title, editors, publisher, year, slot, chapter_label, chapter_title
+  - `slot`: 章节标识符字符串（"01".."99" 真章 / "00a" 前言 / "99a" 后记 / "01b" 章间插曲）
+  - `chapter_label`: 人类可读的章节标签（"第3章" / "前言" / "后记" / "第2章（附）"）
 - B 类额外参数：title, author, year, doi, source_name
 
 ## 执行流程
@@ -43,17 +45,17 @@ type: chapter-summary
 rating:
 themes: []
 author: "[编] {editors}"
-title: "第{ch_num}章 {中文标题}"
+title: "{chapter_label} {中文标题}"
 year: {year}
 source: "{book_title}"
 relevance: {1-3}
-chapter: {ch_num}
+slot: "{slot}"
 ---
 ```
 
 标题区：
 ```
-# 第{ch_num}章 {中文标题}
+# {chapter_label} {中文标题}
 
 **英文原标题**：{English Title}
 **作者**：{Author Name(s)}

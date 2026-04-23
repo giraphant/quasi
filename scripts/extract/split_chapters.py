@@ -29,6 +29,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+from toc_utils import is_skip, assign_slots, make_filename
+
 try:
     import fitz  # PyMuPDF
 except ImportError:
@@ -142,21 +145,34 @@ def find_chapter_boundaries(pages: list[tuple[int, str]], patterns: list[str]) -
     return chapters
 
 
+def filter_and_assign(chapters: list[dict]) -> tuple[list[dict], list[dict]]:
+    """
+    Apply SKIP filter and slot assignment. Returns (kept, skipped).
+    Each kept chapter gains a 'slot' key.
+    """
+    kept = []
+    skipped = []
+    for ch in chapters:
+        if is_skip(ch['title']):
+            skipped.append({'title': ch['title'], 'reason': 'non_content'})
+        else:
+            kept.append(ch)
+    assign_slots(kept)
+    return kept, skipped
+
+
 def save_chapters(chapters: list[dict], output_dir: Path) -> list[Path]:
-    """Save each chapter to a separate file."""
+    """Save each chapter to a separate file. Chapters must already have 'slot'."""
     output_dir.mkdir(parents=True, exist_ok=True)
     created_files = []
 
-    for i, chapter in enumerate(chapters, start=1):
-        title = chapter['title']
-        safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
-        safe_title = re.sub(r'\s+', '_', safe_title)
-        filename = f"{i:02d}_{safe_title}.txt"
+    for ch in chapters:
+        filename = make_filename(ch['slot'], ch['title'])
         filepath = output_dir / filename
 
-        content = f"# {chapter['title']}\n\n"
-        content += f"[Starting page: {chapter['start_page']}]\n\n"
-        content += '\n'.join(chapter['content'])
+        content = f"# {ch['title']}\n\n"
+        content += f"[Starting page: {ch['start_page']}]\n\n"
+        content += '\n'.join(ch['content'])
 
         filepath.write_text(content, encoding='utf-8')
         created_files.append(filepath)
@@ -165,7 +181,8 @@ def save_chapters(chapters: list[dict], output_dir: Path) -> list[Path]:
     return created_files
 
 
-def create_manifest(chapters: list[dict], output_dir: Path, pdf_name: str, method: str):
+def create_manifest(chapters: list[dict], skipped: list[dict],
+                    output_dir: Path, pdf_name: str, method: str):
     """Create a manifest file listing all chapters."""
     manifest_path = output_dir / "manifest.json"
     manifest = {
@@ -174,13 +191,14 @@ def create_manifest(chapters: list[dict], output_dir: Path, pdf_name: str, metho
         'total_chapters': len(chapters),
         'chapters': [
             {
-                'number': i,
+                'slot': ch['slot'],
                 'title': ch['title'],
                 'start_page': ch['start_page'],
-                'file': f"{i:02d}_{re.sub(r'[^\\w\\s-]', '', ch['title'])[:50].replace(' ', '_')}.txt"
+                'file': make_filename(ch['slot'], ch['title']),
             }
-            for i, ch in enumerate(chapters, start=1)
-        ]
+            for ch in chapters
+        ],
+        'skipped': skipped,
     }
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     print(f"Created manifest: {manifest_path}")
@@ -237,8 +255,9 @@ def main():
         chapters = [ch for ch in chapters
                     if len('\n'.join(ch['content'])) >= args.min_chapter_length]
         print(f"Extracted {len(chapters)} chapters")
+        chapters, skipped = filter_and_assign(chapters)
         save_chapters(chapters, output_dir)
-        create_manifest(chapters, output_dir, pdf_path.name, 'manual')
+        create_manifest(chapters, skipped, output_dir, pdf_path.name, 'manual')
         print("\nDone!")
         return
 
@@ -306,8 +325,9 @@ def main():
         sys.exit(1)
 
     print(f"\nFinal: {len(chapters)} chapters via {method_used}")
+    chapters, skipped = filter_and_assign(chapters)
     save_chapters(chapters, output_dir)
-    create_manifest(chapters, output_dir, pdf_path.name, method_used)
+    create_manifest(chapters, skipped, output_dir, pdf_path.name, method_used)
     print("\nDone! Chapter files are ready for processing.")
 
 
