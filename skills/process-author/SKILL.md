@@ -35,7 +35,7 @@ description: >
 ├─ Phase 2: download-agent (sonnet, 前台) → 下载
 ├─ Phase 3: 书籍处理
 │   ├─ 逐本: extract-agent (sonnet, 前台)
-│   ├─ 主进程: 读 manifest → 筛选章节
+│   ├─ 主进程: 读 manifest → 全部章节
 │   ├─ analyze-agent ×N (opus, 后台, 跨书并行)
 │   ├─ Glob 轮询
 │   └─ 逐本: overview-agent (opus, 前台)
@@ -70,13 +70,13 @@ for book in manifest.books where status == "acquired":
         Agent("quasi:extract-agent", foreground=True,
               prompt=f"source_file: sources/{book.slug}.*, chapters_dir: {chapters_dir}")
 
-# 3b. 筛选 + 跨书并行分析
+# 3b. 跨书并行分析（每本书全部章节，不筛选）
 all_chapters = []
 for book in acquired_books:
     if exists(f"vault/monographs/{book.slug}/00-overview.md"):
         continue
     book_manifest = Read(f"processing/chapters/{book.slug}/manifest.json")
-    all_chapters.extend(filter_by_topic(book_manifest))
+    all_chapters.extend(book_manifest.chapters)
 
 for ch in all_chapters:
     if not exists(ch.output_path):

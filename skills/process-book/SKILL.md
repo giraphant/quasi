@@ -54,9 +54,9 @@ if not exists(f"{chapters_dir}/manifest.json"):
     if result.status == "failed":
         report("需人工检查"); return
 
-# 2. 筛选章节
+# 2. 读取章节清单（全部章节，不筛选）
 manifest = Read(f"{chapters_dir}/manifest.json")
-selected = filter_by_topic(manifest, topic)
+selected = manifest.chapters
 output_dir = "vault/handbooks/" or "vault/monographs/" + book_name
 
 # 3. 并行分析
