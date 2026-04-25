@@ -42,10 +42,17 @@ description: >
 ## 执行流程
 
 ```python
-# 0. 读参数
-book_name = parse_args()
+# 0. 确定规范 slug
+book_name = parse_args()                    # 用户输入，可能不完整
 source_file = Glob("sources/{book_name}.epub|.pdf")
-chapters_dir = f"processing/chapters/{book_name}/"
+
+# 从源文件中确认书籍的作者（姓氏）、简短标题、出版年份
+# 方法不限：读首页/版权页、查 EPUB 元数据、翻目录、用 search.py 搜索等
+# 构造规范 slug: {author_surname}-{short_title}-{year}（全小写 kebab-case）
+# 示例: "shew-against-technoableism-2023"
+# 如果 slug 与 book_name 不同，后续所有路径使用 slug
+book_slug = derive_slug(source_file)        # 伪代码，agent 自行实现
+chapters_dir = f"processing/chapters/{book_slug}/"
 
 # 1. EXTRACT（一次调用完成提取+验证+修复）
 if not exists(f"{chapters_dir}/manifest.json"):
@@ -57,7 +64,7 @@ if not exists(f"{chapters_dir}/manifest.json"):
 # 2. 读取章节清单（全部章节，不筛选）
 manifest = Read(f"{chapters_dir}/manifest.json")
 selected = manifest.chapters   # 每项含 slot, title, filename, word_count
-output_dir = "vault/handbooks/" or "vault/monographs/" + book_name
+output_dir = "vault/handbooks/" or "vault/monographs/" + book_slug
 
 # 3. 并行分析
 # slot 格式："01".."99" 真章节 / "00a".."00z" 前言 / "99a".."99z" 后记 / "{N}b".."{N}z" 章间插曲
@@ -95,13 +102,13 @@ print(f"Done: {len(selected)} chapters, overview generated")
 ## 目录结构
 
 ```
-sources/{book-name}.epub|.pdf
-processing/chapters/{book-name}/
+sources/{book-name}.epub|.pdf          ← 用户输入的原始文件名
+processing/chapters/{book-slug}/       ← 规范 slug: {author}-{title}-{year}
 ├── manifest.json
 └── *.txt
-vault/handbooks/{book-name}/     ← 或 vault/monographs/
+vault/handbooks/{book-slug}/           ← 或 vault/monographs/
 ├── 00-overview.md
-└── ch{slot}-{title}.md        ← slot 见 manifest.json（"01".."99"/"00a"/"99a"/...）
+└── ch{slot}-{title}.md                ← slot 见 manifest.json（"01".."99"/"00a"/"99a"/...）
 ```
 
 output_dir 规则：Handbook/编著 → `handbooks/`，专著 → `monographs/`
