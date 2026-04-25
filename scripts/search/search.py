@@ -433,7 +433,218 @@ def search_aa(query: str, fmt: str = "pdf", lang: str = None,
 
 
 # ============================================================
-# Paper metadata search (OpenAlex, Unpaywall, Semantic Scholar)
+# DOI validation + Crossref
+# ============================================================
+
+def validate_doi(doi: str, timeout: int = 10) -> bool:
+    """Check if a DOI resolves. Returns True if doi.org returns non-404."""
+    url = f"https://doi.org/{doi}"
+    try:
+        req = urllib.request.Request(url, method="HEAD",
+                                     headers={"User-Agent": HEADERS["User-Agent"]})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status < 400
+    except urllib.error.HTTPError as e:
+        return e.code != 404
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return True  # network error — don't reject, treat as unvalidated
+
+
+def query_crossref_doi(doi: str) -> dict | None:
+    """Lookup metadata by DOI via Crossref (the canonical DOI registry)."""
+    url = f"https://api.crossref.org/works/{doi}?mailto=research@example.com"
+    data = _get_json(url)
+    if not data or "message" not in data:
+        return None
+    m = data["message"]
+    titles = m.get("title", [])
+    title = titles[0] if titles else ""
+    authors = ", ".join(
+        f"{a.get('given', '')} {a.get('family', '')}".strip()
+        for a in m.get("author", [])
+    )
+    year = None
+    for date_field in ("published", "published-print", "published-online"):
+        parts = m.get(date_field, {}).get("date-parts", [[]])
+        if parts and parts[0] and parts[0][0]:
+            year = parts[0][0]
+            break
+    container = m.get("container-title", [])
+    journal = container[0] if container else ""
+    return {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "doi": m.get("DOI", doi),
+        "cited_by_count": m.get("is-referenced-by-count", 0),
+        "journal": journal,
+        "oa_url": None,
+        "abstract": None,
+    }
+
+
+def query_crossref_title(title: str, author: str = None) -> dict | None:
+    """Search Crossref by title (+ optional author). Returns best match or None."""
+    params = {"query.bibliographic": title, "rows": "3",
+              "mailto": "research@example.com"}
+    if author:
+        params["query.author"] = author
+    url = f"https://api.crossref.org/works?{urllib.parse.urlencode(params)}"
+    data = _get_json(url)
+    if not data or "message" not in data:
+        return None
+    items = data["message"].get("items", [])
+    if not items:
+        return None
+    m = items[0]
+    titles = m.get("title", [])
+    found_title = titles[0] if titles else ""
+    if title and found_title:
+        t1 = title.lower().strip()
+        t2 = found_title.lower().strip()
+        if t1[:30] not in t2 and t2[:30] not in t1:
+            return None
+    authors_str = ", ".join(
+        f"{a.get('given', '')} {a.get('family', '')}".strip()
+        for a in m.get("author", [])
+    )
+    year = None
+    for date_field in ("published", "published-print", "published-online"):
+        parts = m.get(date_field, {}).get("date-parts", [[]])
+        if parts and parts[0] and parts[0][0]:
+            year = parts[0][0]
+            break
+    container = m.get("container-title", [])
+    journal = container[0] if container else ""
+    return {
+        "title": found_title,
+        "authors": authors_str,
+        "year": year,
+        "doi": m.get("DOI", ""),
+        "cited_by_count": m.get("is-referenced-by-count", 0),
+        "journal": journal,
+        "oa_url": None,
+        "abstract": None,
+    }
+
+
+def search_crossref_author_papers(author: str, limit: int = 30) -> dict:
+    """Search papers by author via Crossref, sorted by citation count."""
+    surname = author.strip().split()[-1].lower() if author.strip() else ""
+    params = {
+        "query.author": author,
+        "sort": "relevance",
+        "rows": str(min(limit * 5, 200)),
+        "filter": "type:journal-article,type:book-chapter",
+        "mailto": "research@example.com",
+    }
+    url = f"https://api.crossref.org/works?{urllib.parse.urlencode(params)}"
+    try:
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError) as e:
+        return {"success": False, "error": str(e), "results": []}
+
+    items = data.get("message", {}).get("items", [])
+    results = []
+    for m in items:
+        cr_authors = m.get("author", [])
+        if surname and not any(surname in (a.get("family") or "").lower() for a in cr_authors):
+            continue
+        titles = m.get("title", [])
+        title = titles[0] if titles else ""
+        if not title:
+            continue
+        authors = [f"{a.get('given', '')} {a.get('family', '')}".strip()
+                   for a in cr_authors[:5]]
+        doi = m.get("DOI", "")
+        year = None
+        for date_field in ("published", "published-print", "published-online"):
+            parts = m.get(date_field, {}).get("date-parts", [[]])
+            if parts and parts[0] and parts[0][0]:
+                year = parts[0][0]
+                break
+        container = m.get("container-title", [])
+        journal = container[0] if container else ""
+        results.append({
+            "title": title,
+            "authors": authors,
+            "year": year,
+            "doi": doi,
+            "cited_by_count": m.get("is-referenced-by-count", 0),
+            "type": m.get("type", ""),
+            "oa_url": "",
+            "abstract": None,
+            "source": journal,
+        })
+        if len(results) >= limit:
+            break
+    return {"success": True, "count": len(results), "results": results}
+
+
+def validate_manifest_dois(manifest_path: str):
+    """Validate DOIs in manifest; attempt Crossref recovery for invalid/missing ones."""
+    with open(manifest_path, "r") as f:
+        manifest = json.load(f)
+
+    papers = manifest.get("papers", [])
+    stats = {"valid": 0, "invalid_cleared": 0, "recovered": 0, "no_doi": 0}
+
+    for i, paper in enumerate(papers):
+        title = paper.get("title", "")
+        doi = paper.get("doi")
+        status = paper.get("status", "")
+        label = f"[{i+1}/{len(papers)}] {title[:50]}"
+
+        if not doi:
+            print(f"{label}: no DOI, trying Crossref title search...", file=sys.stderr)
+            cr = query_crossref_title(title, paper.get("authors", "").split(",")[0].strip() if paper.get("authors") else None)
+            if cr and cr.get("doi"):
+                paper["doi"] = cr["doi"]
+                if not paper.get("year") and cr.get("year"):
+                    paper["year"] = cr["year"]
+                if not paper.get("citations") and cr.get("cited_by_count"):
+                    paper["citations"] = cr["cited_by_count"]
+                print(f"  → recovered DOI: {cr['doi']}", file=sys.stderr)
+                stats["recovered"] += 1
+            else:
+                stats["no_doi"] += 1
+                print(f"  → no DOI found", file=sys.stderr)
+            time.sleep(DELAY)
+            continue
+
+        print(f"{label}: validating {doi}...", file=sys.stderr)
+        if validate_doi(doi):
+            stats["valid"] += 1
+            print(f"  → valid", file=sys.stderr)
+        else:
+            print(f"  → INVALID, clearing DOI. Trying Crossref title search...", file=sys.stderr)
+            paper["doi"] = None
+            cr = query_crossref_title(title)
+            if cr and cr.get("doi"):
+                paper["doi"] = cr["doi"]
+                if not paper.get("year") and cr.get("year"):
+                    paper["year"] = cr["year"]
+                print(f"  → recovered DOI: {cr['doi']}", file=sys.stderr)
+                stats["recovered"] += 1
+            else:
+                stats["invalid_cleared"] += 1
+                print(f"  → no replacement found", file=sys.stderr)
+        time.sleep(DELAY)
+
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+    print(f"\nValidation complete: {stats['valid']} valid, "
+          f"{stats['recovered']} recovered, "
+          f"{stats['invalid_cleared']} cleared, "
+          f"{stats['no_doi']} without DOI", file=sys.stderr)
+    return stats
+
+
+# ============================================================
+# Paper metadata search (OpenAlex, Crossref, Unpaywall, Semantic Scholar)
 # ============================================================
 
 def query_openalex_doi(doi: str) -> dict | None:
@@ -561,6 +772,19 @@ def search_paper_metadata(doi: str = None, title: str = None, author: str = None
             if v and k in result:
                 result[k] = v
 
+    # 1b. Crossref (canonical DOI registry, strong humanities coverage)
+    cr_data = None
+    if doi and not oa_data:
+        cr_data = query_crossref_doi(doi)
+        time.sleep(DELAY)
+    if not cr_data and title and not result.get("doi"):
+        cr_data = query_crossref_title(title, author)
+        time.sleep(DELAY)
+    if cr_data:
+        for k, v in cr_data.items():
+            if v and k in result and not result[k]:
+                result[k] = v
+
     # 2. Unpaywall
     if doi and not result["oa_url"]:
         unpaywall_url = query_unpaywall(doi)
@@ -648,12 +872,11 @@ def batch_search_manifest(manifest_path: str):
 # Author papers search (OpenAlex)
 # ============================================================
 
-def search_author_papers(author: str, limit: int = 30,
-                         year_from: Optional[int] = None,
-                         sort: str = "cited_by_count:desc") -> dict:
+def _search_openalex_author_papers(author: str, limit: int = 30,
+                                    year_from: Optional[int] = None,
+                                    sort: str = "cited_by_count:desc") -> dict:
     """Search papers by author via OpenAlex, sorted by citations."""
     filters = [f"raw_author_name.search:{urllib.parse.quote(author)}"]
-    # Exclude books — we only want articles/chapters
     filters.append("type:article|review|book-chapter")
     if year_from:
         filters.append(f"from_publication_date:{year_from}-01-01")
@@ -691,6 +914,77 @@ def search_author_papers(author: str, limit: int = 30,
         return {"success": True, "count": len(results), "results": results}
     except Exception as e:
         return {"success": False, "error": str(e), "results": []}
+
+
+def _merge_paper_results(*source_results: dict) -> list:
+    """Merge results from multiple sources, deduplicate by DOI or title."""
+    seen_dois = {}
+    seen_titles = {}
+    merged = []
+
+    for sr in source_results:
+        if not sr.get("success"):
+            continue
+        for paper in sr.get("results", []):
+            doi = (paper.get("doi") or "").strip()
+            title_key = (paper.get("title") or "").lower().strip()[:60]
+
+            if doi and doi in seen_dois:
+                existing = seen_dois[doi]
+                if paper.get("cited_by_count", 0) > existing.get("cited_by_count", 0):
+                    existing["cited_by_count"] = paper["cited_by_count"]
+                if not existing.get("oa_url") and paper.get("oa_url"):
+                    existing["oa_url"] = paper["oa_url"]
+                continue
+
+            if title_key and title_key in seen_titles:
+                existing = seen_titles[title_key]
+                if not existing.get("doi") and doi:
+                    existing["doi"] = doi
+                if paper.get("cited_by_count", 0) > existing.get("cited_by_count", 0):
+                    existing["cited_by_count"] = paper["cited_by_count"]
+                if not existing.get("oa_url") and paper.get("oa_url"):
+                    existing["oa_url"] = paper["oa_url"]
+                continue
+
+            if doi:
+                seen_dois[doi] = paper
+            if title_key:
+                seen_titles[title_key] = paper
+            merged.append(paper)
+
+    merged.sort(key=lambda p: p.get("cited_by_count", 0), reverse=True)
+    return merged
+
+
+def search_author_papers(author: str, limit: int = 30,
+                         year_from: Optional[int] = None,
+                         sort: str = "cited_by_count:desc",
+                         sources: Optional[list] = None) -> dict:
+    """Search papers by author across multiple sources, merged and deduplicated."""
+    if sources is None:
+        sources = ["openalex", "crossref"]
+
+    source_results = []
+
+    if "openalex" in sources:
+        print(f"  Searching OpenAlex for {author}...", file=sys.stderr)
+        oa_result = _search_openalex_author_papers(author, limit, year_from, sort)
+        source_results.append(oa_result)
+        oa_count = oa_result.get("count", 0) if oa_result.get("success") else 0
+        print(f"  OpenAlex: {oa_count} results", file=sys.stderr)
+
+    if "crossref" in sources:
+        print(f"  Searching Crossref for {author}...", file=sys.stderr)
+        cr_result = search_crossref_author_papers(author, limit)
+        source_results.append(cr_result)
+        cr_count = cr_result.get("count", 0) if cr_result.get("success") else 0
+        print(f"  Crossref: {cr_count} results", file=sys.stderr)
+
+    merged = _merge_paper_results(*source_results)[:limit]
+    print(f"  Merged: {len(merged)} unique results", file=sys.stderr)
+
+    return {"success": True, "count": len(merged), "results": merged}
 
 
 # ============================================================
@@ -818,8 +1112,15 @@ def main():
     papers_parser.add_argument("--year-from", type=int, default=None, help="Min year")
     papers_parser.add_argument("--sort", default="cited_by_count:desc",
                                help="Sort order (default: cited_by_count:desc)")
+    papers_parser.add_argument("--sources", default="openalex,crossref",
+                               help="Comma-separated sources (default: openalex,crossref)")
     papers_parser.add_argument("-o", "--output", help="Output file path")
     papers_parser.add_argument("--json", action="store_true", help="JSON output")
+
+    # Validate subcommand
+    validate_parser = subparsers.add_parser("validate", help="Validate DOIs in manifest")
+    validate_parser.add_argument("--manifest", help="Manifest file path")
+    validate_parser.add_argument("--doi", help="Validate a single DOI")
 
     args = parser.parse_args()
 
@@ -884,9 +1185,11 @@ def main():
             meta_parser.error("Need --doi/--title, or --manifest with --all")
 
     elif args.mode == "papers":
+        sources = [s.strip() for s in args.sources.split(",")]
         result = search_author_papers(
             author=args.author, limit=args.limit,
             year_from=args.year_from, sort=args.sort,
+            sources=sources,
         )
         if not result.get("success"):
             print(f"Error: {result.get('error', 'Unknown')}", file=sys.stderr)
@@ -905,6 +1208,17 @@ def main():
             print(output)
 
         print(f"\nTotal: {result.get('count', 0)} results", file=sys.stderr)
+
+    elif args.mode == "validate":
+        if args.doi:
+            valid = validate_doi(args.doi)
+            status = "VALID" if valid else "INVALID"
+            print(f"DOI {args.doi}: {status}")
+            sys.exit(0 if valid else 1)
+        elif args.manifest:
+            validate_manifest_dois(args.manifest)
+        else:
+            validate_parser.error("Need --doi or --manifest")
 
     else:
         parser.print_help()

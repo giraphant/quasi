@@ -17,14 +17,42 @@ model: opus
 
 - 搜书: `python3 scripts/search/search.py books --author "{full_name}" --limit 20`
 - 搜论文: `python3 scripts/search/search.py papers --author "{full_name}" --limit 30`
+- 验证 DOI: `python3 scripts/search/search.py validate --manifest {manifest_path}`
 
 ## 执行流程
 
 ⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
 
-1. 搜索书籍和论文候选池
+1. 搜索书籍和论文候选池（论文搜索自动查询 OpenAlex + Crossref 双源并合并去重）
 2. 按「引用量 × 与 {topic} 相关性」筛选：5 本书 + 10 篇论文（附理由）
 3. 写入 `vault/authors/{author_name}/manifest.json`
+4. 验证 DOI: `python3 scripts/search/search.py validate --manifest {manifest_path}`
+   该命令会自动：验证已有 DOI → 清除无效 DOI → 用 Crossref 标题搜索补回缺失 DOI
+
+## ⚠ 严格约束
+
+- **只能从搜索结果表格中选择论文**。不得从记忆中添加搜索结果里没有的论文。
+- 如果你确信某篇重要论文未出现在搜索结果中，可以加入 manifest，但必须：
+  - `status` 设为 `"unverified"`
+  - `doi`、`year`、`citations` 字段**留空（null）**——不得从记忆中填写
+  - 步骤 4 的 validate 命令会尝试通过 Crossref 标题搜索补全这些字段
+- DOI 格式必须来自搜索结果原文，不得自行编写或修改 DOI。
+
+## 备选搜索（仅当搜索结果严重不足时）
+
+如果步骤 1 的搜索结果不足（<5 篇论文），且 `dokobot` 可用：
+
+```bash
+which dokobot >/dev/null 2>&1 && echo "DOKO_AVAILABLE" || echo "DOKO_NOT_AVAILABLE"
+```
+
+若可用，可搜 Google Scholar 补充候选池：
+
+```bash
+dokobot doko read "https://scholar.google.com/scholar?q=author:{encoded_name}+{encoded_topic}" --local --screens 3
+```
+
+从返回文本中提取论文标题和链接，加入 manifest 时同样遵循 `unverified` 规则。
 
 ## manifest 格式
 

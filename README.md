@@ -115,6 +115,15 @@ claude plugin add quasi --marketplace ramu-toolkit
 
 获取方式：浏览器登录 EZProxy → DevTools → Cookies → 复制。过期极快，过期后脚本自动停。
 
+**Dokobot**（可选）— Google Scholar 兜底搜索：
+
+```bash
+npm install -g @dokobot/cli
+dokobot install-bridge
+```
+
+需要 Chrome 浏览器 + Dokobot 扩展。仅在 API 搜索结果不足时由 discover-agent 自动调用。不可用时自动跳过，不影响核心功能。
+
 ### 分析参数
 
 项目 `CLAUDE.md` 提供分析立场：
