@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Align historical `sources/` filenames to existing `vault/monographs/{slug}` directory names without renaming any monograph directories.
+**Goal:** Align historical `sources/` filenames to existing `vault/books/{slug}` directory names without renaming any book directories.
 
-**Architecture:** Add a one-off maintenance script that scans a library root, builds a conservative rename plan from existing `vault/monographs`, `vault/authors/*/manifest.json`, `processing/chapters`, and `sources`, and only applies high-confidence renames. Keep the logic pure and testable; the CLI should default to dry-run and emit a machine-readable report before any rename is applied.
+**Architecture:** Add a one-off maintenance script that scans a library root, builds a conservative rename plan from existing `vault/books`, `processing/authors/*/manifest.json`, `processing/chapters`, and `sources`, and only applies high-confidence renames. Keep the logic pure and testable; the CLI should default to dry-run and emit a machine-readable report before any rename is applied.
 
 **Tech Stack:** Python 3 standard library (`argparse`, `json`, `pathlib`, `tempfile`, `shutil`), existing repo test stack (`unittest`).
 
@@ -48,7 +48,7 @@ class AlignBookSourcesTests(unittest.TestCase):
     def test_exact_slug_match_is_reported_as_aligned(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "vault" / "monographs" / "chen-work-pray-code-2022").mkdir(parents=True)
+            (root / "vault" / "books" / "chen-work-pray-code-2022").mkdir(parents=True)
             (root / "sources").mkdir(parents=True)
             (root / "sources" / "chen-work-pray-code-2022.pdf").write_bytes(b"pdf")
 
@@ -66,12 +66,12 @@ class AlignBookSourcesTests(unittest.TestCase):
     def test_manifest_source_path_can_drive_high_confidence_rename(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "vault" / "monographs" / "shew-against-technoableism-2023").mkdir(parents=True)
-            (root / "vault" / "authors" / "ashley-shew").mkdir(parents=True)
+            (root / "vault" / "books" / "shew-against-technoableism-2023").mkdir(parents=True)
+            (root / "processing" / "authors" / "ashley-shew").mkdir(parents=True)
             (root / "sources").mkdir(parents=True)
             old_file = root / "sources" / "against-technoableism.epub"
             old_file.write_bytes(b"epub")
-            (root / "vault" / "authors" / "ashley-shew" / "manifest.json").write_text(
+            (root / "processing" / "authors" / "ashley-shew" / "manifest.json").write_text(
                 '''{
   "books": [
     {
@@ -99,7 +99,7 @@ class AlignBookSourcesTests(unittest.TestCase):
     def test_existing_target_file_blocks_automatic_rename(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "vault" / "monographs" / "shew-against-technoableism-2023").mkdir(parents=True)
+            (root / "vault" / "books" / "shew-against-technoableism-2023").mkdir(parents=True)
             (root / "sources").mkdir(parents=True)
             (root / "sources" / "against-technoableism.epub").write_bytes(b"old")
             (root / "sources" / "shew-against-technoableism-2023.epub").write_bytes(b"new")
@@ -137,11 +137,11 @@ def _rel(path: Path, root: Path) -> str:
     return path.relative_to(root).as_posix()
 
 
-def collect_monograph_slugs(root: Path) -> list[str]:
-    monographs_dir = root / "vault" / "monographs"
-    if not monographs_dir.exists():
+def collect_book_slugs(root: Path) -> list[str]:
+    books_dir = root / "vault" / "books"
+    if not books_dir.exists():
         return []
-    return sorted(p.name for p in monographs_dir.iterdir() if p.is_dir())
+    return sorted(p.name for p in books_dir.iterdir() if p.is_dir())
 
 
 def collect_source_files(root: Path) -> dict[str, list[Path]]:
@@ -156,7 +156,7 @@ def collect_source_files(root: Path) -> dict[str, list[Path]]:
 
 def collect_manifest_source_hints(root: Path) -> dict[str, list[str]]:
     hints: dict[str, list[str]] = {}
-    for manifest_path in sorted((root / "vault" / "authors").glob("*/manifest.json")):
+    for manifest_path in sorted((root / "processing" / "authors").glob("*/manifest.json")):
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         for book in data.get("books", []):
             slug = book.get("slug")
@@ -173,7 +173,7 @@ def build_alignment_report(root: Path) -> dict:
     renamed = []
     needs_review = []
 
-    for slug in collect_monograph_slugs(root):
+    for slug in collect_book_slugs(root):
         exact = source_by_stem.get(slug, [])
         if len(exact) == 1:
             aligned.append({"slug": slug, "source": _rel(exact[0], root)})
@@ -244,7 +244,7 @@ git commit -m "feat: add historical source alignment planner"
     def test_front_text_match_can_confirm_old_source_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "vault" / "monographs" / "chen-work-pray-code-2022").mkdir(parents=True)
+            (root / "vault" / "books" / "chen-work-pray-code-2022").mkdir(parents=True)
             (root / "sources").mkdir(parents=True)
             (root / "sources" / "work-pray-code.pdf").write_bytes(b"pdf")
 
@@ -267,7 +267,7 @@ git commit -m "feat: add historical source alignment planner"
     def test_weak_front_text_stays_in_needs_review(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "vault" / "monographs" / "book-one-2020").mkdir(parents=True)
+            (root / "vault" / "books" / "book-one-2020").mkdir(parents=True)
             (root / "sources").mkdir(parents=True)
             (root / "sources" / "unknown-book.pdf").write_bytes(b"pdf")
 
@@ -344,7 +344,7 @@ def build_alignment_report(root: Path) -> dict:
     renamed = []
     needs_review = []
 
-    for slug in collect_monograph_slugs(root):
+    for slug in collect_book_slugs(root):
         exact = source_by_stem.get(slug, [])
         if len(exact) == 1:
             aligned.append({"slug": slug, "source": _rel(exact[0], root)})
@@ -434,12 +434,12 @@ git commit -m "feat: add front-text confirmation for source alignment"
     def test_apply_report_renames_only_high_confidence_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "vault" / "monographs" / "chen-work-pray-code-2022").mkdir(parents=True)
-            (root / "vault" / "authors" / "julie-chen").mkdir(parents=True)
+            (root / "vault" / "books" / "chen-work-pray-code-2022").mkdir(parents=True)
+            (root / "processing" / "authors" / "julie-chen").mkdir(parents=True)
             (root / "sources").mkdir(parents=True)
             old_file = root / "sources" / "work-pray-code.pdf"
             old_file.write_bytes(b"pdf")
-            (root / "vault" / "authors" / "julie-chen" / "manifest.json").write_text(
+            (root / "processing" / "authors" / "julie-chen" / "manifest.json").write_text(
                 '''{"books":[{"slug":"chen-work-pray-code-2022","source":"sources/work-pray-code.pdf"}]}''',
                 encoding="utf-8",
             )
@@ -454,7 +454,7 @@ git commit -m "feat: add front-text confirmation for source alignment"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             report_path = root / "report.json"
-            (root / "vault" / "monographs" / "book-one-2020").mkdir(parents=True)
+            (root / "vault" / "books" / "book-one-2020").mkdir(parents=True)
             (root / "sources").mkdir(parents=True)
             (root / "sources" / "book-one-2020.pdf").write_bytes(b"pdf")
 
@@ -489,7 +489,7 @@ def apply_alignment_report(root: Path, report: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Align historical sources filenames to existing monograph slugs",
+        description="Align historical sources filenames to existing book slugs",
     )
     parser.add_argument("--library-root", required=True)
     parser.add_argument("--report", help="Write JSON report to this path")
@@ -554,11 +554,11 @@ Expected: A small sample of high-confidence renames with reasons like `manifest_
 - [ ] **Step 3: Apply only after manual confirmation of the report**
 
 Run: `python3 scripts/maintenance/align_book_sources.py --library-root ../bts --report /tmp/bts-source-alignment-report.json --apply`
-Expected: Only the files listed in `renamed` are renamed; no monograph directories are touched.
+Expected: Only the files listed in `renamed` are renamed; no book directories are touched.
 
 - [ ] **Step 4: Verify post-apply consistency**
 
-Run: `comm -23 <(find ../bts/vault/monographs -mindepth 1 -maxdepth 1 -type d | sed 's#^.*/##' | sort) <(find ../bts/sources -maxdepth 1 -type f | sed 's#^.*/##' | sed 's/\.[^.]*$//' | sort) | sed -n '1,50p'`
+Run: `comm -23 <(find ../bts/vault/books -mindepth 1 -maxdepth 1 -type d | sed 's#^.*/##' | sort) <(find ../bts/sources -maxdepth 1 -type f | sed 's#^.*/##' | sed 's/\.[^.]*$//' | sort) | sed -n '1,50p'`
 Expected: The unmatched set is smaller than before and mainly contains intentional review cases, not obvious old-name drift.
 
 - [ ] **Step 5: Commit only the script/test work, not external library data**

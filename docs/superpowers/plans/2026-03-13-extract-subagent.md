@@ -278,10 +278,8 @@ book_name = parse_args()  # kebab-case
 source_file = find("sources/{book_name}.epub") or find("sources/{book_name}.pdf")
 format = "epub" if source_file.endswith(".epub") else "pdf"
 chapters_dir = f"processing/chapters/{book_name}/"
-# output_dir 由书籍类型决定：
-#   - Handbook/编著 → vault/handbooks/{book_name}/
-#   - 单一作者专著 → vault/monographs/{book_name}/
-output_dir = determine_output_dir(book_name)
+# output_dir 统一落到 vault/books/（含原 monographs + handbooks，bts 已合并）
+output_dir = f"vault/books/{book_name}/"
 
 # 1. EXTRACT（子代理驱动）
 # 1a. 断点检查

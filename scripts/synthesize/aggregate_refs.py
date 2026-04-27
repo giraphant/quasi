@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""Aggregate cited works across journal article analyses.
+"""Aggregate cited works across analysis directories.
 
-Reads all per-article analysis markdown files from a journal directory,
+Reads all per-article analysis markdown files from an analysis directory,
 extracts the "核心引用文献" (cited works) section, counts citation frequency
 across articles, and generates a ranked reading list.
 
 Usage:
-    python3 aggregate_refs.py <journal-dir> [--output <output-file>] [--min-count <N>]
+    python3 aggregate_refs.py <analysis-dir> [--output <output-file>] [--min-count <N>]
 
-Example:
+Examples:
+    # process-journal: 期刊扫描产出
     python3 aggregate_refs.py vault/journals/critical-inquiry/ \
         --output vault/journals/critical-inquiry-reading-list.md
+
+    # citation-snowball: 主题语料库产出
+    python3 aggregate_refs.py vault/topics/posthuman-embodiment/ \
+        --output vault/topics/posthuman-embodiment-reading-list.md
 """
 
 import argparse

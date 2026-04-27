@@ -4,17 +4,17 @@
 
 quasi 当前把书籍目录名的决定拆散在多个阶段里，尤其是 `skills/process-book/SKILL.md` 里存在“`derive_slug(source_file)`，agent 自行实现”这样的自由推导点。这导致两个问题：
 
-1. 新流程中，弱模型容易把 `sources/`、`processing/chapters/`、`vault/monographs/` 的 slug 算成不同名字。
-2. 历史库里已经形成了一批稳定的 `vault/monographs/{slug}` 目录，但 `sources/` 中仍有未对齐的旧文件名。
+1. 新流程中，弱模型容易把 `sources/`、`processing/chapters/`、`vault/books/` 的 slug 算成不同名字。
+2. 历史库里已经形成了一批稳定的 `vault/books/{slug}` 目录，但 `sources/` 中仍有未对齐的旧文件名。
 
 这两个问题相关，但不是同一个问题。设计上必须拆成两条独立线路：
 
-1. **A 线：历史残留整理** — 以已有 monograph 目录名为准，反向对齐历史 `sources/` 文件名。
+1. **A 线：历史残留整理** — 以已有 book 目录名为准，反向对齐历史 `sources/` 文件名。
 2. **B 线：插件未来优化** — 让未来新增书籍在下载阶段就完成 slug 定稿，避免再产生新的错位。
 
 ## Goals
 
-1. 对历史库，保留既有 `vault/monographs/{slug}` 目录名不变。
+1. 对历史库，保留既有 `vault/books/{slug}` 目录名不变。
 2. 对未来流程，消除分析阶段再次推导 slug 的自由度。
 3. 保持 slug 格式统一为 `{author-surname}-{short-title}-{year}`。
 4. 允许下载阶段根据文件内容纠偏 `title`、`year`、`slug`，但纠偏只发生一次。
@@ -22,7 +22,7 @@ quasi 当前把书籍目录名的决定拆散在多个阶段里，尤其是 `ski
 
 ## Non-Goals
 
-1. 不批量重命名历史 `vault/monographs/` 目录。
+1. 不批量重命名历史 `vault/books/` 目录。
 2. 不把历史库清洗逻辑塞进日常 workflow。
 3. 不引入新的不可变 `book_id` 体系。
 4. 不依赖 PDF metadata 作为书籍身份的判断依据。
@@ -46,15 +46,15 @@ quasi 当前把书籍目录名的决定拆散在多个阶段里，尤其是 `ski
 
 ### Purpose
 
-将历史库中已有的 `vault/monographs/{slug}` 视为既有规范，反向修正历史 `sources/` 文件名，使同一本书在源文件层和分析目录层尽量一致。
+将历史库中已有的 `vault/books/{slug}` 视为既有规范，反向修正历史 `sources/` 文件名，使同一本书在源文件层和分析目录层尽量一致。
 
 ### Canonical Source Of Truth
 
-对 A 线而言，canonical 名称来自现有 `vault/monographs/{slug}` 目录名，而不是来自 `sources/` 文件名，也不是来自新的 discover 结果。
+对 A 线而言，canonical 名称来自现有 `vault/books/{slug}` 目录名，而不是来自 `sources/` 文件名，也不是来自新的 discover 结果。
 
 ### Workflow
 
-1. 扫描 `vault/monographs/*`，收集所有 canonical slug。
+1. 扫描 `vault/books/*`，收集所有 canonical slug。
 2. 扫描 `sources/*`，建立现有源文件 stem 到实际路径的索引。
 3. 对已经存在同名 `sources/{slug}.pdf|epub` 的书，标记为 `aligned`。
 4. 对未对齐项，优先使用强证据反向确认：
@@ -70,10 +70,10 @@ quasi 当前把书籍目录名的决定拆散在多个阶段里，尤其是 `ski
 
 ### Safety Rules
 
-1. 绝不改已有 `vault/monographs/{slug}` 目录名。
+1. 绝不改已有 `vault/books/{slug}` 目录名。
 2. 绝不覆盖已存在的 `sources/{slug}.*`。
-3. 一个 source 文件匹配多个 monograph 时，不自动改名。
-4. 一个 monograph 对应多个 source 文件时，不自动删文件，只报告冲突。
+3. 一个 source 文件匹配多个 vault/books/ 目录时，不自动改名。
+4. 一个 book 目录对应多个 source 文件时，不自动删文件，只报告冲突。
 5. A 线是库清洗任务，不属于 quasi 正常 workflow 的隐式步骤。
 
 ## Track B: Future Plugin Workflow
@@ -246,11 +246,11 @@ manifest 中书籍条目的语义调整为：
 1. A 线与 B 线分开推进，不互相阻塞。
 2. A 线作为一次性历史数据整理任务执行。
 3. B 线作为 quasi 主流程优化进入日常使用。
-4. 在 B 线完成后，新下载数据不应再产生 `sources/` 与 `vault/monographs/` 命名漂移。
+4. 在 B 线完成后，新下载数据不应再产生 `sources/` 与 `vault/books/` 命名漂移。
 
 ## Out Of Scope
 
-1. 用新规则反向改写所有历史 monograph 目录名。
+1. 用新规则反向改写所有历史 book 目录名。
 2. 自动区分不同 edition 的独立知识库身份。
 3. 引入额外的数据库或全局 ID 体系。
 4. 依赖 PDF metadata 做书籍身份裁定。

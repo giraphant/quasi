@@ -25,7 +25,7 @@ model: opus
 
 1. 搜索书籍和论文候选池（论文搜索自动查询 OpenAlex + Crossref 双源并合并去重）
 2. 按「引用量 × 与 {topic} 相关性」筛选：5 本书 + 10 篇论文（附理由）
-3. 写入 `vault/authors/{author_name}/manifest.json`
+3. 写入 `processing/authors/{author_name}/manifest.json`（manifest 是采集状态机，归 processing/，与 vault 知识对象分层）
 4. 验证 DOI: `python3 scripts/search/search.py validate --manifest {manifest_path}`
    该命令会自动：验证已有 DOI → 清除无效 DOI → 用 Crossref 标题搜索补回缺失 DOI
 

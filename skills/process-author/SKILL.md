@@ -47,7 +47,7 @@ description: >
 
 ```python
 author_name, full_name = parse_args()
-manifest_path = f"vault/authors/{author_name}/manifest.json"
+manifest_path = f"processing/authors/{author_name}/manifest.json"
 
 # 1. DISCOVER
 if not exists(manifest_path):
@@ -73,7 +73,7 @@ for book in manifest.books where status == "acquired":
 # 3b. 跨书并行分析（每本书全部章节，不筛选）
 all_chapters = []
 for book in acquired_books:
-    if exists(f"vault/monographs/{book.slug}/00-overview.md"):
+    if exists(f"vault/books/{book.slug}/00-overview.md"):
         continue
     book_manifest = Read(f"processing/chapters/{book.slug}/manifest.json")
     all_chapters.extend(book_manifest.chapters)
@@ -91,24 +91,32 @@ while not all_done:
 
 # 3c. 逐本概览
 for book in acquired_books:
-    if not exists(f"vault/monographs/{book.slug}/00-overview.md"):
+    if not exists(f"vault/books/{book.slug}/00-overview.md"):
         Agent("quasi:overview-agent", foreground=True,
-              prompt=f"output_dir: vault/monographs/{book.slug}/, book_title: ..., topic: ...")
+              prompt=f"output_dir: vault/books/{book.slug}/, book_title: ..., topic: ...")
 
 # 4. PROCESS PAPERS
+# paper.slug 必须形如 {author-surname}-{title}-{year}（全局唯一）
+# 所有论文产出均落到扁平 vault/papers/，与全库共享 slug 命名空间
 for paper in manifest.papers where status == "acquired":
-    if not exists(paper_analysis_path):
+    output_path = f"vault/papers/{paper.slug}.md"
+    if not exists(output_path):
         Agent("quasi:analyze-agent", background=True,
-              prompt=f"type: B, title: ..., doi: ..., input: ..., output: ..., topic: ...")
+              prompt=f"type: B, title: ..., doi: ..., input: ..., "
+                     f"output: {output_path}, topic: ...")
 
 while not all_papers_done:
     sleep(30)
 
 # 5. SYNTHESIS
-if not exists(f"vault/authors/{author_name}/profile.md"):
+profile_path = f"vault/authors/{author_name}.md"
+if not exists(profile_path):
+    paper_paths = [f"vault/papers/{p.slug}.md" for p in manifest.papers if status == "acquired"]
+    book_overview_paths = [f"vault/books/{b.slug}/00-overview.md" for b in acquired_books]
     Agent("quasi:profile-agent", foreground=True,
           prompt=f"author_name: {author_name}, full_name: {full_name}, topic: ..., "
-                 f"book_overview_paths: [...], papers_dir: vault/authors/{author_name}/papers/")
+                 f"output_path: {profile_path}, "
+                 f"book_overview_paths: {book_overview_paths}, paper_paths: {paper_paths}")
 ```
 
 ## 断点续跑
@@ -120,18 +128,17 @@ if not exists(f"vault/authors/{author_name}/profile.md"):
 | Phase 3a | `{chapters_dir}/manifest.json` | 存在则跳过提取 |
 | Phase 3b | `ch{NN}-*.md` | 存在则跳过该章 |
 | Phase 3c | `00-overview.md` | 存在则跳过该书 |
-| Phase 4 | `{doi}.md` | 存在则跳过 |
-| Phase 5 | `profile.md` | 存在则跳过 |
+| Phase 4 | `vault/papers/{paper.slug}.md` | 存在则跳过 |
+| Phase 5 | `vault/authors/{author-name}.md` | 存在则跳过 |
 
 ## 目录结构
 
 ```
-vault/authors/{author-name}/
-├── manifest.json
-├── profile.md
-└── papers/
-    └── {slug}.md
-vault/monographs/{book-slug}/
+processing/authors/{author-name}/
+└── manifest.json                    ← 采集状态机 + curation reason
+vault/authors/{author-name}.md       ← 单文件 profile（扁平）
+vault/papers/{paper-slug}.md         ← 该作者所有论文分析（与全库扁平共享）
+vault/books/{book-slug}/             ← 该作者所有书的逐章分析
 ├── 00-overview.md
 └── ch{NN}-{title}.md
 processing/chapters/{book-slug}/
@@ -139,3 +146,5 @@ processing/chapters/{book-slug}/
 └── *.txt
 sources/{book-slug}.*
 ```
+
+paper.slug 与 book.slug 均为 `{author-surname}-{title}-{year}`，全库唯一。

@@ -69,6 +69,23 @@ quasi/
     └── output-format.md     # Frontmatter 规范
 ```
 
+## 产出落点（在调用方仓库内）
+
+quasi 写入的目录约定与 bts 仓库结构对齐（合并 monographs+handbooks 后的扁平规范）：
+
+| 类型 | 落点 | 写入者 |
+|------|------|--------|
+| 书的逐章分析 + 全书综述 | `vault/books/{book-slug}/` | process-book / process-author |
+| 论文分析（全库扁平） | `vault/papers/{paper-slug}.md` | process-author Phase 4 |
+| 作者档案（单文件） | `vault/authors/{author-slug}.md` | process-author Phase 5 |
+| 期刊扫描 + 综述 | `vault/journals/{journal}-scan.md`、`vault/journals/{journal}/` | process-journal |
+| 主题语料库（引用滚雪球） | `vault/topics/{topic-slug}/` | citation-snowball |
+| 采集状态机（manifest） | `processing/authors/{slug}/manifest.json` | discover-agent |
+| 章节提取中间产物 | `processing/chapters/{book-slug}/` | extract-agent |
+| 原始 PDF/EPUB | `sources/{book-slug}.{epub,pdf}` | download-agent |
+
+slug 统一为 `{author-surname}-{short-title}-{year}`，全库唯一。
+
 ## 安装
 
 注册为 Claude Code 自定义 marketplace：

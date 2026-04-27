@@ -12,17 +12,17 @@ model: opus
 - `author_name`: 作者 slug
 - `full_name`: 作者全名
 - `topic`: 研究主题
-- `book_overview_paths`: 所有已处理书籍概览文件路径列表
-- `papers_dir`: 论文分析目录（如 `vault/authors/{author_name}/papers/`）
-- `output_path`: 输出路径（如 `vault/authors/{author_name}/profile.md`）
+- `book_overview_paths`: 所有已处理书籍概览文件路径列表（`vault/books/{slug}/00-overview.md`）
+- `paper_paths`: 该作者所有论文分析文件路径列表（`vault/papers/{author-title-year}.md`，由调用方从 manifest 派生）
+- `output_path`: 输出路径（如 `vault/authors/{author_name}.md`，单文件 profile）
 
 ## 执行流程
 
 ⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
 
 1. 读取所有书籍概览文件（`00-overview.md`）。
-2. 用 Glob 列出 `{papers_dir}/*.md`，逐一读取论文分析。
-3. 综合所有材料，生成 `{output_path}`。
+2. 逐一读取 `paper_paths` 中列出的论文分析文件（不再 Glob——论文已在全库扁平 vault/papers/ 中，必须显式按调用方提供的路径列表读取）。
+3. 综合所有材料，生成 `{output_path}`（单文件 profile：`vault/authors/{slug}.md`）。
 
 ## 输出格式
 

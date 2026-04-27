@@ -424,12 +424,11 @@ vault/journals/{journal-name}/
 ## 目录结构
 
 \```
-vault/authors/{author-name}/
-├── manifest.json
-├── profile.md
-└── papers/
-    └── {slug}.md
-vault/monographs/{book-slug}/
+processing/authors/{author-name}/
+└── manifest.json
+vault/authors/{author-name}.md           ← 单文件 profile（扁平）
+vault/papers/{paper-slug}.md             ← 全库扁平论文分析
+vault/books/{book-slug}/
 ├── 00-overview.md
 └── ch{NN}-{title}.md
 processing/chapters/{book-slug}/

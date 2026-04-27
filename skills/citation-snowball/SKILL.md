@@ -46,7 +46,7 @@ description: >
 
 ```python
 topic_slug, seed, topic_desc = parse_args()
-manifest_path = f"vault/journals/{topic_slug}/manifest.json"
+manifest_path = f"vault/topics/{topic_slug}/manifest.json"
 MAX_ROUNDS = 5
 
 # Phase 0: SEED
@@ -56,9 +56,9 @@ if not exists(manifest_path):
 
     Agent("quasi:analyze-agent", foreground=True,
           prompt=f"type: B, input: /tmp/{topic_slug}-pdfs/seed.pdf, "
-                 f"output: vault/journals/{topic_slug}/seed.md, topic: {topic_desc}")
+                 f"output: vault/topics/{topic_slug}/seed.md, topic: {topic_desc}")
 
-    analysis = Read(f"vault/journals/{topic_slug}/seed.md")
+    analysis = Read(f"vault/topics/{topic_slug}/seed.md")
     citations = parse_citation_section(analysis)
     create_manifest(manifest_path, seed, citations)
     Bash(f"python3 scripts/search/search.py metadata --manifest {manifest_path} --all")
@@ -78,14 +78,14 @@ for round_num in range(manifest["rounds_completed"] + 1, MAX_ROUNDS + 1):
     for paper in acquired:
         Agent("quasi:analyze-agent", background=True,
               prompt=f"type: B, input: {paper.pdf_path}, "
-                     f"output: vault/journals/{topic_slug}/{paper.key}.md, topic: {topic_desc}")
+                     f"output: vault/topics/{topic_slug}/{paper.key}.md, topic: {topic_desc}")
 
     while not all_analyzed:
         sleep(30)
 
     new_refs = 0
     for paper in acquired:
-        refs = parse_citation_section(Read(f"vault/journals/{topic_slug}/{paper.key}.md"))
+        refs = parse_citation_section(Read(f"vault/topics/{topic_slug}/{paper.key}.md"))
         new_refs += deduplicate_and_add(manifest, refs, round_num + 1)
     manifest["rounds_completed"] = round_num
     write_json(manifest_path, manifest)
@@ -93,12 +93,12 @@ for round_num in range(manifest["rounds_completed"] + 1, MAX_ROUNDS + 1):
         break
 
 # FINAL
-if not exists(f"vault/journals/{topic_slug}-synthesis.md"):
+if not exists(f"vault/topics/{topic_slug}-synthesis.md"):
     Agent("quasi:synthesis-agent", foreground=True,
           prompt=f"source_name: {topic_desc}, "
-                 f"analysis_dir: vault/journals/{topic_slug}/, "
-                 f"output_path: vault/journals/{topic_slug}-synthesis.md, "
-                 f"reading_list_path: vault/journals/{topic_slug}-reading-list.md, topic: ...")
+                 f"analysis_dir: vault/topics/{topic_slug}/, "
+                 f"output_path: vault/topics/{topic_slug}-synthesis.md, "
+                 f"reading_list_path: vault/topics/{topic_slug}-reading-list.md, topic: ...")
 ```
 
 ## Manifest 格式
@@ -129,12 +129,14 @@ if not exists(f"vault/journals/{topic_slug}-synthesis.md"):
 ## 目录结构
 
 ```
-vault/journals/{topic-slug}/
+vault/topics/{topic-slug}/
 ├── manifest.json
 ├── seed.md
-├── {paper-key}.md
-├── {topic-slug}-synthesis.md
-└── {topic-slug}-reading-list.md
+└── {paper-key}.md
+vault/topics/{topic-slug}-synthesis.md     ← 主题综述（与目录同级）
+vault/topics/{topic-slug}-reading-list.md  ← 阅读清单
 /tmp/{topic-slug}-pdfs/
 └── *.pdf
 ```
+
+注：`vault/topics/` 是 bts 中「按主题汇集的专题文献集」的归宿，与 `vault/journals/`（process-journal 的真实期刊扫描产出）严格分层，不混用。

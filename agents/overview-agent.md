@@ -9,7 +9,7 @@ model: opus
 
 ## 输入参数（由调用方在 prompt 中提供）
 
-- `output_dir`: 分析产出目录（如 `vault/handbooks/xxx/` 或 `vault/monographs/xxx/`）
+- `output_dir`: 分析产出目录（如 `vault/books/xxx/`）
 - `book_title`: 书名
 - `topic`: 研究主题（从 CLAUDE.md §1.3 获取）
 

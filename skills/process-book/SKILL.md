@@ -64,7 +64,7 @@ if not exists(f"{chapters_dir}/manifest.json"):
 # 2. 读取章节清单（全部章节，不筛选）
 manifest = Read(f"{chapters_dir}/manifest.json")
 selected = manifest.chapters   # 每项含 slot, title, filename, word_count
-output_dir = "vault/handbooks/" or "vault/monographs/" + book_slug
+output_dir = f"vault/books/{book_slug}"
 
 # 3. 并行分析
 # slot 格式："01".."99" 真章节 / "00a".."00z" 前言 / "99a".."99z" 后记 / "{N}b".."{N}z" 章间插曲
@@ -106,9 +106,7 @@ sources/{book-name}.epub|.pdf          ← 用户输入的原始文件名
 processing/chapters/{book-slug}/       ← 规范 slug: {author}-{title}-{year}
 ├── manifest.json
 └── *.txt
-vault/handbooks/{book-slug}/           ← 或 vault/monographs/
+vault/books/{book-slug}/               ← 含原 monographs 与 handbooks，统一归位
 ├── 00-overview.md
 └── ch{slot}-{title}.md                ← slot 见 manifest.json（"01".."99"/"00a"/"99a"/...）
 ```
-
-output_dir 规则：Handbook/编著 → `handbooks/`，专著 → `monographs/`
