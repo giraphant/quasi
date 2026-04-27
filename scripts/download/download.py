@@ -972,6 +972,51 @@ def batch_download_manifest(manifest_path, retry_wayback=False):
 # Utilities
 # ============================================================
 
+def _normalize_book_title(title):
+    """Normalize a book title for loose identity matching."""
+    text = (title or "").lower().strip()
+    text = re.sub(r"\(.*?edition.*?\)", "", text)
+    text = re.split(r"[:\-\u2014]", text, maxsplit=1)[0]
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _author_surname(author):
+    """Return a stable lowercase surname-like token for an author."""
+    parts = re.findall(r"[a-zA-Z]+", (author or "").lower())
+    return parts[-1] if parts else "unknown"
+
+
+def build_book_slug(author, title, year):
+    """Build a canonical book slug in author-title-year format."""
+    short_title = _normalize_book_title(title)
+    words = short_title.split()[:4]
+    return slugify(f"{_author_surname(author)}-{' '.join(words)}-{year}")
+
+
+def is_same_book(expected_author, expected_title, actual_author, actual_title):
+    """Check whether two book descriptions refer to the same book."""
+    if _author_surname(expected_author) != _author_surname(actual_author):
+        return False
+
+    expected = _normalize_book_title(expected_title)
+    actual = _normalize_book_title(actual_title)
+    return bool(expected and actual and (expected in actual or actual in expected))
+
+
+def finalize_book_identity(manifest_book, actual_author, actual_title, actual_year):
+    """Return the corrected canonical book identity for a downloaded file."""
+    final_year = actual_year or manifest_book.get("year")
+    final_title = actual_title or manifest_book.get("title")
+    final_author = actual_author or manifest_book.get("author")
+    return {
+        **manifest_book,
+        "title": final_title,
+        "year": final_year,
+        "slug": build_book_slug(final_author, final_title, final_year),
+    }
+
+
 def slugify(text):
     """Convert text to kebab-case filename."""
     text = text.lower().strip()
