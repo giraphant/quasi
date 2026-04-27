@@ -31,6 +31,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -974,16 +975,21 @@ def batch_download_manifest(manifest_path, retry_wayback=False):
 
 def _normalize_book_title(title):
     """Normalize a book title for loose identity matching."""
-    text = (title or "").lower().strip()
+    text = (title or "").replace("–", " - ").replace("—", " - ")
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = text.lower().strip()
     text = re.sub(r"\(.*?edition.*?\)", "", text)
-    text = re.split(r"[:\-\u2014]", text, maxsplit=1)[0]
+    text = re.split(r"\s*:\s*|\s+[\-\u2013\u2014]\s+", text, maxsplit=1)[0]
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
 def _author_surname(author):
     """Return a stable lowercase surname-like token for an author."""
-    parts = re.findall(r"[a-zA-Z]+", (author or "").lower())
+    normalized = unicodedata.normalize("NFKD", author or "")
+    normalized = normalized.encode("ascii", "ignore").decode("ascii")
+    parts = re.findall(r"[a-zA-Z]+", normalized.lower())
     return parts[-1] if parts else "unknown"
 
 
@@ -991,7 +997,11 @@ def build_book_slug(author, title, year):
     """Build a canonical book slug in author-title-year format."""
     short_title = _normalize_book_title(title)
     words = short_title.split()[:4]
-    return slugify(f"{_author_surname(author)}-{' '.join(words)}-{year}")
+    year_suffix = f"-{year}"
+    base = slugify(f"{_author_surname(author)}-{' '.join(words)}")
+    max_base_length = max(1, 80 - len(year_suffix))
+    base = base[:max_base_length].rstrip("-")
+    return f"{base}{year_suffix}"
 
 
 def is_same_book(expected_author, expected_title, actual_author, actual_title):
@@ -1011,6 +1021,7 @@ def finalize_book_identity(manifest_book, actual_author, actual_title, actual_ye
     final_author = actual_author or manifest_book.get("author")
     return {
         **manifest_book,
+        "author": final_author,
         "title": final_title,
         "year": final_year,
         "slug": build_book_slug(final_author, final_title, final_year),

@@ -64,3 +64,55 @@ class DownloadBookIdentityTests(unittest.TestCase):
         )
         self.assertEqual(final["slug"], "shew-against-technoableism-2023")
         self.assertEqual(final["year"], 2023)
+
+    def test_build_book_slug_preserves_hyphenated_main_title(self):
+        slug = self.download.build_book_slug(
+            author="Jane Smith",
+            title="Post-Truth",
+            year=2021,
+        )
+        self.assertEqual(slug, "smith-post-truth-2021")
+
+    def test_is_same_book_handles_diacritics(self):
+        self.assertTrue(
+            self.download.is_same_book(
+                expected_author="García Márquez",
+                expected_title="One Hundred Years of Solitude",
+                actual_author="Garcia Marquez",
+                actual_title="One Hundred Years of Solitude",
+            )
+        )
+
+    def test_build_book_slug_retains_year_for_long_titles(self):
+        slug = self.download.build_book_slug(
+            author="Alex Example",
+            title=(
+                "Hyperdimensionality Hyperconnectivity Hypercomputationality "
+                "Hypermaterialization: Bodies, Senses, and Computational Modernity"
+            ),
+            year=2024,
+        )
+        self.assertTrue(slug.endswith("-2024"))
+
+    def test_build_book_slug_strips_em_dash_subtitle(self):
+        slug = self.download.build_book_slug(
+            author="Jane Smith",
+            title="Signal Traffic — Critical Studies of Media Infrastructures",
+            year=2019,
+        )
+        self.assertEqual(slug, "smith-signal-traffic-2019")
+
+    def test_finalize_book_identity_updates_author_field(self):
+        final = self.download.finalize_book_identity(
+            manifest_book={
+                "author": "A. Shew",
+                "title": "Against Technoableism",
+                "year": 2022,
+                "slug": "shew-against-technoableism-2022",
+            },
+            actual_author="Ashley Shew",
+            actual_title="Against Technoableism: Rethinking Who Needs Improvement",
+            actual_year=2023,
+        )
+        self.assertEqual(final["author"], "Ashley Shew")
+        self.assertEqual(final["slug"], "shew-against-technoableism-2023")
