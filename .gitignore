@@ -3,3 +3,4 @@ config/*.json
 .claude/settings.local.json
 __pycache__/
 *.pyc
+.worktrees/
