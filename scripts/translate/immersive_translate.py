@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
+import tempfile
 import time
 from getpass import getpass
 from pathlib import Path
@@ -44,6 +46,8 @@ DEFAULT_SETTINGS = {
     "custom_system_prompt": "",
     "layout_model": "version_3",
 }
+
+TOC_PAGE_SIDES = {"original", "translated"}
 
 
 class TranslationError(RuntimeError):
@@ -177,6 +181,167 @@ def build_output_paths(
         "dual_tmp": dual_tmp,
         "final_pdf": final_pdf,
     }
+
+
+def _coerce_positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float) and value.is_integer():
+        int_value = int(value)
+        return int_value if int_value > 0 else None
+    if isinstance(value, str):
+        match = re.search(r"\d+", value)
+        if match:
+            int_value = int(match.group(0))
+            return int_value if int_value > 0 else None
+    return None
+
+
+def normalize_toc_entries(raw_entries: list[Any]) -> list[list[int | str]]:
+    """Normalize PyMuPDF/Tocify-style entries into PyMuPDF set_toc rows."""
+    normalized: list[list[int | str]] = []
+    previous_level = 0
+    base_level: int | None = None
+
+    for item in raw_entries:
+        level: int | None = None
+        title: str | None = None
+        page: int | None = None
+
+        if isinstance(item, (list, tuple)) and len(item) >= 3:
+            level = _coerce_positive_int(item[0])
+            title = str(item[1]).strip()
+            page = _coerce_positive_int(item[2])
+        elif isinstance(item, dict):
+            title = str(item.get("title") or item.get("name") or "").strip()
+            level = _coerce_positive_int(item.get("level") or item.get("depth") or 1)
+            page = _coerce_positive_int(
+                item.get("page")
+                or item.get("to")
+                or item.get("start")
+                or item.get("start_page")
+                or item.get("page_num")
+            )
+
+        if not level or not title or not page:
+            continue
+
+        if base_level is None:
+            base_level = level
+
+        adjusted_level = max(1, level - base_level + 1)
+        if previous_level and adjusted_level > previous_level + 1:
+            adjusted_level = previous_level + 1
+
+        normalized.append([adjusted_level, title, page])
+        previous_level = adjusted_level
+
+    return normalized
+
+
+def load_toc_json(toc_json: Path) -> list[list[int | str]]:
+    try:
+        with toc_json.expanduser().open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TranslationError(f"Failed to read TOC JSON from {toc_json}: {exc}") from exc
+
+    raw_entries = data.get("chapters") if isinstance(data, dict) else data
+    if not isinstance(raw_entries, list):
+        raise TranslationError(f"TOC JSON must be a list or contain a chapters list: {toc_json}")
+
+    return normalize_toc_entries(raw_entries)
+
+
+def extract_source_toc(source_pdf: Path) -> list[list[int | str]]:
+    try:
+        doc = pymupdf.open(str(source_pdf))
+        raw_toc = doc.get_toc(simple=True)
+        doc.close()
+    except Exception as exc:  # PyMuPDF raises several document-specific errors
+        raise TranslationError(f"Failed to read source PDF TOC from {source_pdf}: {exc}") from exc
+
+    return normalize_toc_entries(raw_toc)
+
+
+def map_toc_to_split_pages(
+    toc_entries: list[list[int | str]],
+    *,
+    output_page_count: int,
+    page_side: str = "original",
+) -> list[list[int | str]]:
+    if page_side not in TOC_PAGE_SIDES:
+        raise TranslationError(f"Invalid TOC page side: {page_side}")
+
+    mapped: list[list[int | str]] = []
+    for level, title, source_page in toc_entries:
+        source_page_int = int(source_page)
+        target_page = (source_page_int - 1) * 2 + (2 if page_side == "translated" else 1)
+        target_page = min(max(1, target_page), output_page_count)
+        mapped.append([int(level), str(title), target_page])
+    return mapped
+
+
+def write_pdf_toc(pdf_path: Path, toc_entries: list[list[int | str]]) -> int:
+    if not toc_entries:
+        return 0
+
+    tmp_path: Path | None = None
+    doc: pymupdf.Document | None = None
+    try:
+        doc = pymupdf.open(str(pdf_path))
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{pdf_path.stem}.",
+            suffix=".toc.tmp.pdf",
+            dir=str(pdf_path.parent),
+            delete=False,
+        ) as handle:
+            tmp_path = Path(handle.name)
+
+        doc.set_toc(toc_entries)
+        doc.save(str(tmp_path), garbage=3, deflate=True)
+        doc.close()
+        doc = None
+        tmp_path.replace(pdf_path)
+    except Exception as exc:
+        if doc is not None:
+            doc.close()
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+        raise TranslationError(f"Failed to write PDF TOC to {pdf_path}: {exc}") from exc
+
+    return len(toc_entries)
+
+
+def add_toc_to_split_pdf(
+    *,
+    source_pdf: Path,
+    split_pdf: Path,
+    toc_json: Path | None = None,
+    fallback_toc_json: Path | None = None,
+    page_side: str = "original",
+) -> int:
+    toc_entries = load_toc_json(toc_json) if toc_json else extract_source_toc(source_pdf)
+    if not toc_entries and fallback_toc_json is not None and fallback_toc_json.exists():
+        toc_entries = load_toc_json(fallback_toc_json)
+    if not toc_entries:
+        return 0
+
+    try:
+        doc = pymupdf.open(str(split_pdf))
+        output_page_count = len(doc)
+        doc.close()
+    except Exception as exc:
+        raise TranslationError(f"Failed to inspect split PDF {split_pdf}: {exc}") from exc
+
+    mapped_toc = map_toc_to_split_pages(
+        toc_entries,
+        output_page_count=output_page_count,
+        page_side=page_side,
+    )
+    return write_pdf_toc(split_pdf, mapped_toc)
 
 
 def split_dual_pdf(
@@ -389,6 +554,8 @@ def translate_slug(
     prompt_for_auth: bool = False,
     poll_interval: int = 10,
     max_polls: int = 180,
+    toc_json: Path | None = None,
+    toc_page_side: str = "original",
 ) -> dict[str, Any]:
     settings = load_settings_from_disk(config_path, prompt_for_auth=prompt_for_auth)
     if target_language:
@@ -422,6 +589,14 @@ def translate_slug(
     )
     download_outputs(client, pdf_id, outputs)
     split_dual_pdf(outputs["dual_tmp"], outputs["final_pdf"])
+    chapter_manifest = project_root / "processing" / "chapters" / slug / "manifest.json"
+    toc_entries = add_toc_to_split_pdf(
+        source_pdf=source_pdf,
+        split_pdf=outputs["final_pdf"],
+        toc_json=toc_json,
+        fallback_toc_json=chapter_manifest,
+        page_side=toc_page_side,
+    )
     outputs["dual_tmp"].unlink(missing_ok=True)
 
     return {
@@ -429,6 +604,7 @@ def translate_slug(
         "source_pdf": source_pdf,
         "pdf_id": pdf_id,
         "final_pdf": outputs["final_pdf"],
+        "toc_entries": toc_entries,
     }
 
 
@@ -469,6 +645,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=180,
         help="Maximum polling attempts before timing out",
     )
+    parser.add_argument(
+        "--toc-json",
+        type=Path,
+        help="Optional Tocify-style JSON list with title/level/page entries",
+    )
+    parser.add_argument(
+        "--toc-page-side",
+        choices=sorted(TOC_PAGE_SIDES),
+        default="original",
+        help="Which split page each bookmark should target",
+    )
     return parser
 
 
@@ -484,6 +671,8 @@ def main(argv: list[str] | None = None) -> int:
             prompt_for_auth=args.prompt_for_auth,
             poll_interval=args.poll_interval,
             max_polls=args.max_polls,
+            toc_json=args.toc_json,
+            toc_page_side=args.toc_page_side,
         )
     except AmbiguousSourceError as exc:
         print(str(exc), file=sys.stderr)
@@ -503,6 +692,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"- source_pdf: {result['source_pdf']}")
     print(f"- pdf_id: {result['pdf_id']}")
     print(f"- final_pdf: {result['final_pdf']}")
+    print(f"- toc_entries: {result['toc_entries']}")
     return 0
 
 

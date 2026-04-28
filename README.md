@@ -154,7 +154,7 @@ claude plugin add quasi --marketplace ramu-toolkit
 }
 ```
 
-可通过 `translate-agent` 或 `python3 scripts/translate/immersive_translate.py {slug}` 使用。输出单文件 `processing/translations/{slug}-{lang}.pdf`（split 双语版，原页与译页交替）。如需单独的译文版本，可后续从 split PDF 抽奇/偶数页生成。
+可通过 `translate-agent` 或 `python3 scripts/translate/immersive_translate.py {slug}` 使用。输出单文件 `processing/translations/{slug}-{lang}.pdf`（split 双语版，原页与译页交替），并自动写入 PDF 目录/bookmarks：优先沿用源 PDF 内置 outline；若源 PDF 无 outline，则尝试使用 `processing/chapters/{slug}/manifest.json`；也可用 `--toc-json` 传入 Tocify 风格的 `[{title, level, page}]` 目录 JSON。默认目录跳到原文页，`--toc-page-side translated` 可改为跳到译文页。
 
 如果某个授权码对应的服务区域不同，可按需覆盖 `api_base_url`；其余字段保持不变即可。
 

@@ -40,7 +40,7 @@ class ImmersiveTranslateTests(unittest.TestCase):
 
         self.assertEqual(settings["auth_key"], "secret")
         self.assertEqual(settings["target_language"], "zh-CN")
-        self.assertEqual(settings["translate_model"], "kimi+qwen")
+        self.assertEqual(settings["translate_model"], "gemini-1")
         self.assertEqual(settings["layout_model"], "version_3")
         self.assertEqual(settings["dual_mode"], "lort")
         self.assertTrue(settings["rich_text_translate"])
@@ -55,7 +55,7 @@ class ImmersiveTranslateTests(unittest.TestCase):
             exact = sources / "sample-slug.pdf"
             exact.write_bytes(b"%PDF-1.7")
 
-            resolved = module.resolve_source_pdf("sample-slug", repo_root=root)
+            resolved = module.resolve_source_pdf("sample-slug", project_root=root)
 
         self.assertEqual(resolved, exact)
 
@@ -73,7 +73,7 @@ class ImmersiveTranslateTests(unittest.TestCase):
             second.write_bytes(b"%PDF-1.7")
 
             with self.assertRaises(module.AmbiguousSourceError) as ctx:
-                module.resolve_source_pdf("paper-slug", repo_root=root)
+                module.resolve_source_pdf("paper-slug", project_root=root)
 
         self.assertEqual(
             sorted(ctx.exception.candidates),
@@ -88,13 +88,13 @@ class ImmersiveTranslateTests(unittest.TestCase):
             outputs = module.build_output_paths(
                 slug="sample-slug",
                 target_language="zh-CN",
-                repo_root=root,
+                project_root=root,
             )
 
-        self.assertEqual(outputs["output_dir"], root / "processing" / "translations" / "sample-slug")
-        self.assertEqual(outputs["dual_pdf"].name, "sample-slug_zh-CN_dual.pdf")
-        self.assertEqual(outputs["translation_pdf"].name, "sample-slug_zh-CN_translation.pdf")
-        self.assertEqual(outputs["split_pdf"].name, "sample-slug_zh-CN_split.pdf")
+        self.assertEqual(outputs["output_dir"], root / "processing" / "translations")
+        self.assertEqual(outputs["final_pdf"], root / "processing" / "translations" / "sample-slug-zh.pdf")
+        self.assertEqual(outputs["dual_tmp"].name, ".sample-slug-zh.dual.tmp.pdf")
+        self.assertEqual(outputs["dual_tmp"].parent, outputs["output_dir"])
 
     def test_poll_until_complete_allows_non_error_in_progress_statuses(self):
         module = self.load_module()
@@ -181,6 +181,144 @@ class ImmersiveTranslateTests(unittest.TestCase):
             self.assertEqual(len(out), 4)
             self.assertAlmostEqual(out[0].rect.width, 400, delta=1)
             self.assertAlmostEqual(out[1].rect.width, 400, delta=1)
+            out.close()
+
+    def test_add_toc_to_split_pdf_maps_source_outline_to_original_pages(self):
+        module = self.load_module()
+        import pymupdf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_path = root / "source.pdf"
+            split_path = root / "split.pdf"
+
+            source = pymupdf.open()
+            for _ in range(3):
+                source.new_page(width=400, height=600)
+            source.set_toc([
+                [1, "Chapter 1", 1],
+                [2, "Section 1.1", 2],
+                [1, "Chapter 2", 3],
+            ])
+            source.save(str(source_path))
+            source.close()
+
+            split = pymupdf.open()
+            for _ in range(6):
+                split.new_page(width=400, height=600)
+            split.save(str(split_path))
+            split.close()
+
+            count = module.add_toc_to_split_pdf(source_pdf=source_path, split_pdf=split_path)
+
+            self.assertEqual(count, 3)
+            out = pymupdf.open(str(split_path))
+            self.assertEqual(
+                out.get_toc(simple=True),
+                [
+                    [1, "Chapter 1", 1],
+                    [2, "Section 1.1", 3],
+                    [1, "Chapter 2", 5],
+                ],
+            )
+            out.close()
+
+    def test_add_toc_to_split_pdf_accepts_tocify_style_json(self):
+        module = self.load_module()
+        import json
+        import pymupdf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_path = root / "source.pdf"
+            split_path = root / "split.pdf"
+            toc_path = root / "toc.json"
+
+            source = pymupdf.open()
+            source.new_page(width=400, height=600)
+            source.save(str(source_path))
+            source.close()
+
+            split = pymupdf.open()
+            for _ in range(4):
+                split.new_page(width=400, height=600)
+            split.save(str(split_path))
+            split.close()
+
+            toc_path.write_text(
+                json.dumps([
+                    {"title": "Intro", "level": 1, "page": 1},
+                    {"title": "Methods", "level": 1, "page": 2},
+                ]),
+                encoding="utf-8",
+            )
+
+            count = module.add_toc_to_split_pdf(
+                source_pdf=source_path,
+                split_pdf=split_path,
+                toc_json=toc_path,
+                page_side="translated",
+            )
+
+            self.assertEqual(count, 2)
+            out = pymupdf.open(str(split_path))
+            self.assertEqual(
+                out.get_toc(simple=True),
+                [
+                    [1, "Intro", 2],
+                    [1, "Methods", 4],
+                ],
+            )
+            out.close()
+
+    def test_add_toc_to_split_pdf_uses_fallback_manifest_when_source_has_no_outline(self):
+        module = self.load_module()
+        import json
+        import pymupdf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_path = root / "source.pdf"
+            split_path = root / "split.pdf"
+            manifest_path = root / "manifest.json"
+
+            source = pymupdf.open()
+            source.new_page(width=400, height=600)
+            source.new_page(width=400, height=600)
+            source.save(str(source_path))
+            source.close()
+
+            split = pymupdf.open()
+            for _ in range(4):
+                split.new_page(width=400, height=600)
+            split.save(str(split_path))
+            split.close()
+
+            manifest_path.write_text(
+                json.dumps({
+                    "chapters": [
+                        {"title": "Frontmatter", "start_page": 1},
+                        {"title": "Chapter 1", "start_page": 2},
+                    ],
+                }),
+                encoding="utf-8",
+            )
+
+            count = module.add_toc_to_split_pdf(
+                source_pdf=source_path,
+                split_pdf=split_path,
+                fallback_toc_json=manifest_path,
+            )
+
+            self.assertEqual(count, 2)
+            out = pymupdf.open(str(split_path))
+            self.assertEqual(
+                out.get_toc(simple=True),
+                [
+                    [1, "Frontmatter", 1],
+                    [1, "Chapter 1", 3],
+                ],
+            )
             out.close()
 
 

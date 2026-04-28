@@ -16,7 +16,7 @@ model: sonnet
     `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/translate/immersive_translate.py" ...`
 - **`$PWD`** — 用户研究项目根目录（claude code 启动目录）。所有写入落在此。
   - 配置：`$PWD/config/immersive-translate.json`（脚本内部读取）
-  - 产出：`$PWD/processing/translations/{slug}-{lang}.pdf`（单文件，扁平存放；脚本自动创建写入）
+  - 产出：`$PWD/processing/translations/{slug}-{lang}.pdf`（单文件，扁平存放；脚本自动创建写入，自动带 PDF 目录/bookmarks）
   - 源 PDF：脚本按 slug 在 `$PWD/sources/{slug}.pdf` 自动定位
 
 凡涉及 Immersive Translate API 的所有交互（key 验证、上传、轮询、下载）唯一通道是 `immersive_translate.py`。auth_key 唯一传递方式是写入 `$PWD/config/immersive-translate.json`。
@@ -28,6 +28,8 @@ model: sonnet
 - `slug`: Quasi 对象 slug。脚本据此定位 `$PWD/sources/{slug}.pdf`。
 - `source_file`:（可选）源 PDF 的绝对路径。跨项目使用或 slug 解析模糊时提供。
 - `target_language`:（可选）目标语言，默认使用 config 值。
+- `toc_json`:（可选）Tocify 风格目录 JSON，格式为 `[{ "title": "...", "level": 1, "page": 12 }]`；源 PDF 无内置 outline 且无章节 manifest 时使用。
+- `toc_page_side`:（可选）`original` 或 `translated`，控制目录跳到 split PDF 中的原文页还是译文页；默认 `original`。
 
 ## 执行流程
 
@@ -40,8 +42,9 @@ model: sonnet
        --source-file {source_file_abs}
    ```
    指定目标语言追加 `--target-language {target_language}`。跨项目时 `--source-file` 必须为绝对路径。脚本默认输出 split 双语版（左右页拆分），不再产出 dual / translation-only 两个冗余文件。
-5. 若脚本报 source ambiguous：读出候选路径，向用户确认一次后用 `--source-file` 重跑。
-6. 脚本成功，按输出协议返回路径。
+5. 目录写入由脚本自动处理：优先复制源 PDF 内置 outline；若没有，则使用 `$PWD/processing/chapters/{slug}/manifest.json`；若调用方提供 `toc_json`，追加 `--toc-json {toc_json_abs}`。需要让目录跳到译文页时追加 `--toc-page-side translated`。
+6. 若脚本报 source ambiguous：读出候选路径，向用户确认一次后用 `--source-file` 重跑。
+7. 脚本成功，按输出协议返回路径。
 
 ## 配置模板
 
@@ -74,4 +77,5 @@ TRANSLATE_AGENT_RESULT:
 - slug: {slug}
 - status: success | error
 - final_pdf: {path | -}
+- toc_entries: {number | -}
 ```
