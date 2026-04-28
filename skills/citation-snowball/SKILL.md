@@ -61,7 +61,7 @@ if not exists(manifest_path):
     analysis = Read(f"vault/topics/{topic_slug}/seed.md")
     citations = parse_citation_section(analysis)
     create_manifest(manifest_path, seed, citations)
-    Bash(f"python3 scripts/search/search.py metadata --manifest {manifest_path} --all")
+    Bash(f'python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/search/search.py" metadata --manifest {manifest_path} --all')
 
 # Phase 1-N: EXPAND
 manifest = read_json(manifest_path)
@@ -70,7 +70,7 @@ for round_num in range(manifest["rounds_completed"] + 1, MAX_ROUNDS + 1):
     if not discovered:
         break
 
-    Bash(f"python3 scripts/search/search.py metadata --manifest {manifest_path} --all")
+    Bash(f'python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/search/search.py" metadata --manifest {manifest_path} --all')
     Agent("quasi:download-agent", foreground=True,
           prompt=f"manifest_path: {manifest_path}, mode: papers")
 

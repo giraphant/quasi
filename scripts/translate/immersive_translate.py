@@ -25,9 +25,9 @@ import pymupdf
 import requests
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = REPO_ROOT / "config" / "immersive-translate.json"
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "processing" / "translations"
+PROJECT_ROOT = Path.cwd()  # caller's research project root
+CONFIG_PATH = PROJECT_ROOT / "config" / "immersive-translate.json"
+DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "processing" / "translations"
 
 DEFAULT_SETTINGS = {
     "auth_key": "",
@@ -123,7 +123,7 @@ def load_settings_from_disk(
 def resolve_source_pdf(
     slug: str,
     *,
-    repo_root: Path = REPO_ROOT,
+    project_root: Path = PROJECT_ROOT,
     explicit_source: Path | None = None,
 ) -> Path:
     if explicit_source is not None:
@@ -134,11 +134,11 @@ def resolve_source_pdf(
             raise SourceNotFoundError(f"Source file is not a PDF: {source}")
         return source
 
-    exact = repo_root / "sources" / f"{slug}.pdf"
+    exact = project_root / "sources" / f"{slug}.pdf"
     if exact.exists():
         return exact
 
-    epub_candidate = repo_root / "sources" / f"{slug}.epub"
+    epub_candidate = project_root / "sources" / f"{slug}.epub"
     if epub_candidate.exists():
         raise SourceNotFoundError(
             f"Found EPUB but no PDF for '{slug}'. Convert or supply a PDF path explicitly.",
@@ -147,7 +147,7 @@ def resolve_source_pdf(
     candidates = sorted(
         {
             path.resolve()
-            for path in repo_root.glob(f"processing/**/{slug}.pdf")
+            for path in project_root.glob(f"processing/**/{slug}.pdf")
             if path.is_file()
         },
     )
@@ -165,9 +165,9 @@ def build_output_paths(
     *,
     slug: str,
     target_language: str,
-    repo_root: Path = REPO_ROOT,
+    project_root: Path = PROJECT_ROOT,
 ) -> dict[str, Path]:
-    output_dir = repo_root / "processing" / "translations" / slug
+    output_dir = project_root / "processing" / "translations" / slug
     return {
         "output_dir": output_dir,
         "dual_pdf": output_dir / f"{slug}_{target_language}_dual.pdf",
@@ -384,7 +384,7 @@ def translate_slug(
     source_file: Path | None = None,
     config_path: Path = CONFIG_PATH,
     target_language: str | None = None,
-    repo_root: Path = REPO_ROOT,
+    project_root: Path = PROJECT_ROOT,
     prompt_for_auth: bool = False,
     poll_interval: int = 10,
     max_polls: int = 180,
@@ -394,11 +394,11 @@ def translate_slug(
     if target_language:
         settings["target_language"] = target_language
 
-    source_pdf = resolve_source_pdf(slug, repo_root=repo_root, explicit_source=source_file)
+    source_pdf = resolve_source_pdf(slug, project_root=project_root, explicit_source=source_file)
     outputs = build_output_paths(
         slug=slug,
         target_language=str(settings["target_language"]),
-        repo_root=repo_root,
+        project_root=project_root,
     )
 
     client = ImmersiveTranslateClient(settings)

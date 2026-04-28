@@ -7,7 +7,18 @@ model: opus
 
 你是期刊扫描代理。抓取论文 → 评分 → 生成报告。
 
-## 输入参数（调用方在 prompt 中提供）
+## 路径契约
+
+- **`$CLAUDE_PLUGIN_ROOT/quasi/`** — quasi 工具体（只读）。脚本调用唯一形式：
+  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/journal/<file>.py" ...`
+- **`$PWD`** — 用户研究项目根目录。`output_path` 由调用方提供，相对路径按 `$PWD` 拼为绝对路径再使用。
+- 中间产物（论文 JSON、评分 JSON）落 `/tmp/` 即可，不污染项目目录。
+
+Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
+
+## 输入参数
+
+由调用方在 prompt 中提供：
 
 - `journal_name`: kebab-case
 - `journal_full_name`: 期刊全名
@@ -15,24 +26,22 @@ model: opus
 
 ## 执行流程
 
-⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
-
 1. 抓取论文：
    ```bash
-   python3 scripts/journal/fetch_papers.py \
+   python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/journal/fetch_papers.py" \
        --journal-name "{journal_full_name}" --days-back 3650 \
        --output /tmp/{journal_name}-papers.json
    ```
 
-2. 读取 CLAUDE.md §1.3 获取 research_interests。
+2. 读取 CLAUDE.md §1.3 获取 `research_interests`。
 
 3. 读取 `/tmp/{journal_name}-papers.json`，对每篇论文按下方模板评分。
-   已有评分（`/tmp/{journal_name}-scores/{paper_id}.json`）则跳过。
-   评分写入 `/tmp/{journal_name}-scores/{paper_id}.json`。
+   - 已有评分（`/tmp/{journal_name}-scores/{paper_id}.json`）则跳过
+   - 评分写入 `/tmp/{journal_name}-scores/{paper_id}.json`
 
 4. 生成报告：
    ```bash
-   python3 scripts/journal/generate_scan_report.py \
+   python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/journal/generate_scan_report.py" \
        --papers /tmp/{journal_name}-papers.json \
        --scores /tmp/{journal_name}-scores/ \
        --output {output_path}

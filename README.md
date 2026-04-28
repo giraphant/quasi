@@ -111,7 +111,7 @@ claude plugin add quasi --marketplace ramu-toolkit
 
 ## 配置
 
-凭据放在项目根目录的 `config/` 下（gitignored）：
+凭据放在**调用 quasi 的研究项目根目录**下的 `config/`（gitignored）。脚本通过当前工作目录（`$PWD`）解析配置——你在哪个项目里启动 claude，凭据就在那个项目的 `config/` 里。**不是放在 quasi 自身安装目录下**，每个研究项目互相独立。
 
 **Anna's Archive** — `config/anna-archive.json`：
 

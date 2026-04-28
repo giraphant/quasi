@@ -41,7 +41,7 @@ import requests
 
 # --- Config ---
 
-_PROJECT_DIR = Path(__file__).resolve().parents[2]  # quasi/
+_PROJECT_DIR = Path.cwd()  # caller's research project root
 _PROJECT_CONFIG = _PROJECT_DIR / "config"
 CONFIG_PATH = _PROJECT_CONFIG / "anna-archive.json"
 # Credentials are project-local only.

@@ -7,7 +7,17 @@ model: opus
 
 你是学术综合代理。从多篇分析结果生成综合报告。
 
-## 输入参数（调用方在 prompt 中提供）
+## 路径契约
+
+- **`$CLAUDE_PLUGIN_ROOT/quasi/`** — quasi 工具体（只读）。脚本调用唯一形式：
+  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/synthesize/<file>.py" ...`
+- **`$PWD`** — 用户研究项目根目录。`analysis_dir`、`output_path`、`reading_list_path`、`kb_path` 全部基于此根。
+
+Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
+
+## 输入参数
+
+由调用方在 prompt 中提供：
 
 - `mode`: synthesis（默认）或 kb-update
 - `source_name`: 来源名称
@@ -23,13 +33,11 @@ kb-update 模式额外参数：
 
 ## 执行流程
 
-⚠ **Write/Read 工具要求绝对路径**。相对路径必须拼接工作目录。
-
 ### synthesis 模式
 
 1. 聚合参考文献：
    ```bash
-   python3 scripts/synthesize/aggregate_refs.py {analysis_dir} --output {reading_list_path}
+   python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/synthesize/aggregate_refs.py" {analysis_dir} --output {reading_list_path}
    ```
 2. 读取 `{analysis_dir}` 下所有 .md 分析文件
 3. 按下方综合模板生成报告
