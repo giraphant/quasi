@@ -24,6 +24,7 @@ Claude Code 插件。把一堆 PDF 变成「我读过了」的底气。
 | `extract-agent` | sonnet | EPUB/PDF → 章节文本（含验证+碎片化自修） |
 | `analyze-agent` | opus | 单章/单篇 → 结构化分析（内嵌分析模板） |
 | `overview-agent` | opus | 全书概览 |
+| `translate-agent` | sonnet | 按 slug 定位本地 PDF → 调用沉浸式翻译 Zotero API → 输出双语/译文 PDF |
 | `scan-agent` | opus | 期刊抓取 + 评分（内嵌评分模板） |
 | `download-agent` | sonnet | DOI/MD5/批量下载 |
 | `discover-agent` | opus | 作者文献发现 |
@@ -55,6 +56,7 @@ quasi/
 │   └── synthesis-agent.md   # 综合报告 (opus)
 ├── scripts/                 # Python 工具（被 agent 调用）
 │   ├── extract/             # process_epub.py, split_chapters.py, ocr_pdf.sh
+│   ├── translate/           # immersive_translate.py
 │   ├── search/              # search.py
 │   ├── download/            # download.py
 │   ├── journal/             # fetch_papers.py, generate_scan_report.py
@@ -83,6 +85,7 @@ quasi 写入的目录约定与 bts 仓库结构对齐（合并 monographs+handbo
 | 采集状态机（manifest） | `processing/authors/{slug}/manifest.json` | discover-agent |
 | 章节提取中间产物 | `processing/chapters/{book-slug}/` | extract-agent |
 | 原始 PDF/EPUB | `sources/{book-slug}.{epub,pdf}` | download-agent |
+| PDF 翻译中间产物 | `processing/translations/{slug}/` | translate-agent |
 
 slug 统一为 `{author-surname}-{short-title}-{year}`，全库唯一。
 
@@ -131,6 +134,29 @@ claude plugin add quasi --marketplace ramu-toolkit
 ```
 
 获取方式：浏览器登录 EZProxy → DevTools → Cookies → 复制。过期极快，过期后脚本自动停。
+
+**Immersive Translate** — `config/immersive-translate.json`：
+
+```json
+{
+  "auth_key": "你的 Zotero 授权码",
+  "api_base_url": "https://api2.immersivetranslate.com/zotero",
+  "target_language": "zh-CN",
+  "translate_model": "kimi+qwen",
+  "enhance_compatibility": false,
+  "ocr_workaround": "auto",
+  "auto_extract_glossary": false,
+  "rich_text_translate": true,
+  "primary_font_family": "none",
+  "dual_mode": "lort",
+  "custom_system_prompt": "",
+  "layout_model": "version_3"
+}
+```
+
+可通过 `translate-agent` 或 `python3 scripts/translate/immersive_translate.py {slug}` 使用。默认输出到 `processing/translations/{slug}/`，包含双语版与译文版 PDF。
+
+如果某个授权码对应的服务区域不同，可按需覆盖 `api_base_url`；其余字段保持不变即可。
 
 **Dokobot**（可选）— Google Scholar 兜底搜索：
 
