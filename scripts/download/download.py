@@ -121,7 +121,7 @@ def _is_pdf_data(data):
     )
 
 
-def _extract_pdf_text(pdf_path, max_pages=2):
+def _extract_pdf_text(pdf_path, max_pages=2, allow_raw_fallback=True):
     """Extract text from first pages of a PDF for verification.
 
     Tries pdftotext first, falls back to raw byte search.
@@ -138,6 +138,9 @@ def _extract_pdf_text(pdf_path, max_pages=2):
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
+    if not allow_raw_fallback:
+        return ""
+
     # Fallback: search raw PDF bytes for readable text
     try:
         with open(pdf_path, "rb") as f:
@@ -147,6 +150,111 @@ def _extract_pdf_text(pdf_path, max_pages=2):
         return text
     except OSError:
         return ""
+
+
+def _extract_epub_text(epub_path, max_items=3):
+    """Extract front text from an EPUB for lightweight book verification."""
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    try:
+        texts = []
+        with zipfile.ZipFile(epub_path) as zf:
+            container = ET.fromstring(zf.read("META-INF/container.xml"))
+            rootfile = container.find(
+                ".//{urn:oasis:names:tc:opendocument:xmlns:container}rootfile"
+            )
+            if rootfile is None:
+                return ""
+
+            opf_path = rootfile.attrib.get("full-path")
+            if not opf_path:
+                return ""
+
+            opf_dir = Path(opf_path).parent
+            opf = ET.fromstring(zf.read(opf_path))
+            ns = {"opf": "http://www.idpf.org/2007/opf"}
+            manifest = {
+                item.attrib["id"]: item.attrib.get("href", "")
+                for item in opf.findall("opf:manifest/opf:item", ns)
+            }
+            spine = [
+                itemref.attrib.get("idref", "")
+                for itemref in opf.findall("opf:spine/opf:itemref", ns)
+            ]
+
+            for item_id in spine:
+                href = manifest.get(item_id)
+                if not href:
+                    continue
+                item_path = (opf_dir / href).as_posix()
+                if not item_path.endswith((".xhtml", ".html", ".htm")):
+                    continue
+                data = zf.read(item_path).decode("utf-8", errors="ignore")
+                text = re.sub(r"<[^>]+>", " ", data)
+                texts.append(text)
+                if len(texts) >= max_items:
+                    break
+        return " ".join(texts).lower()
+    except (OSError, KeyError, ET.ParseError, zipfile.BadZipFile):
+        return ""
+
+
+def _guess_year(text):
+    """Guess a publication year from extracted front text."""
+    matches = re.findall(r"\b(?:19|20)\d{2}\b", text or "")
+    return int(matches[0]) if matches else None
+
+
+def _title_keywords(title):
+    """Return meaningful normalized title words for evidence checks."""
+    return [word for word in _normalize_book_title(title).split() if len(word) >= 4]
+
+
+def _text_mentions_author(text, expected_author):
+    """Check whether extracted text contains the expected author surname."""
+    surname = _author_surname(expected_author)
+    if not surname:
+        return False
+    return re.search(rf"\b{re.escape(surname)}\b", (text or "").lower()) is not None
+
+
+def _text_mentions_title(text, expected_title):
+    """Check whether extracted text contains enough expected title words."""
+    lowered = (text or "").lower()
+    keywords = _title_keywords(expected_title)
+    if not keywords:
+        return False
+    hits = sum(1 for word in keywords if word in lowered)
+    required_hits = min(len(keywords), max(1, min(3, len(keywords))))
+    return hits >= required_hits
+
+
+def verify_book_file(path, expected_author, expected_title):
+    """Verify a downloaded book file using front-text evidence only."""
+    file_path = Path(path)
+    suffix = file_path.suffix.lower()
+    if suffix == ".pdf":
+        text = _extract_pdf_text(str(file_path), max_pages=4, allow_raw_fallback=False)
+    elif suffix == ".epub":
+        text = _extract_epub_text(file_path)
+    else:
+        return {"status": "needs_review", "reason": "unsupported_format"}
+
+    if not text or len(text.strip()) < 40:
+        return {"status": "needs_review", "reason": "weak_evidence"}
+    if not _text_mentions_author(text, expected_author):
+        return {"status": "mismatch", "reason": "author_not_found"}
+    if not _text_mentions_title(text, expected_title):
+        return {"status": "mismatch", "reason": "title_not_found"}
+
+    return {
+        "status": "match",
+        "author": expected_author,
+        "title": expected_title,
+        "year": _guess_year(text),
+        "evidence": text[:500],
+    }
 
 
 def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
