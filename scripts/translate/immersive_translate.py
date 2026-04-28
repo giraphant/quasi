@@ -34,7 +34,7 @@ DEFAULT_SETTINGS = {
     "auth_key": "",
     "api_base_url": "https://api2.immersivetranslate.com/zotero",
     "target_language": "zh-CN",
-    "translate_model": "kimi+qwen",
+    "translate_model": "gemini-1",
     "enhance_compatibility": False,
     "ocr_workaround": "auto",
     "auto_extract_glossary": False,

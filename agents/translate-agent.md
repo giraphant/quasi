@@ -51,7 +51,7 @@ model: sonnet
 {
   "auth_key": "用户提供的授权码",
   "target_language": "zh-CN",
-  "translate_model": "kimi+qwen",
+  "translate_model": "gemini-1",
   "enhance_compatibility": false,
   "ocr_workaround": "auto",
   "auto_extract_glossary": false,
