@@ -94,6 +94,7 @@ class ImmersiveTranslateTests(unittest.TestCase):
         self.assertEqual(outputs["output_dir"], root / "processing" / "translations" / "sample-slug")
         self.assertEqual(outputs["dual_pdf"].name, "sample-slug_zh-CN_dual.pdf")
         self.assertEqual(outputs["translation_pdf"].name, "sample-slug_zh-CN_translation.pdf")
+        self.assertEqual(outputs["split_pdf"].name, "sample-slug_zh-CN_split.pdf")
 
     def test_poll_until_complete_allows_non_error_in_progress_statuses(self):
         module = self.load_module()
@@ -101,7 +102,7 @@ class ImmersiveTranslateTests(unittest.TestCase):
         class FakeClient:
             def __init__(self):
                 self.responses = [
-                    {"status": "queued", "overall_progress": 0},
+                    {"status": "", "overall_progress": 50},
                     {"status": "ok", "overall_progress": 100},
                 ]
 
@@ -119,6 +120,24 @@ class ImmersiveTranslateTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["overall_progress"], 100)
 
+    def test_poll_until_complete_treats_unknown_status_as_failure(self):
+        module = self.load_module()
+
+        class FakeClient:
+            def get_translate_status(self, pdf_id):
+                return {"status": "quota_exceeded", "overall_progress": 0, "message": "quota exceeded"}
+
+        with mock.patch.object(module.time, "sleep"):
+            with self.assertRaises(module.TranslationError) as ctx:
+                module.poll_until_complete(
+                    FakeClient(),
+                    "pdf-123",
+                    interval_seconds=0,
+                    max_polls=2,
+                )
+
+        self.assertIn("quota exceeded", str(ctx.exception))
+
     def test_upload_pdf_wraps_requests_errors(self):
         module = self.load_module()
         client = module.ImmersiveTranslateClient(module.load_settings({"auth_key": "secret"}))
@@ -134,6 +153,35 @@ class ImmersiveTranslateTests(unittest.TestCase):
             ):
                 with self.assertRaises(module.TranslationError):
                     client.upload_pdf("https://example.com/upload", pdf_path)
+
+
+    def test_split_dual_pdf_doubles_page_count(self):
+        module = self.load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src_path = root / "dual.pdf"
+            dst_path = root / "split.pdf"
+
+            # Build a minimal 2-page dual PDF via pymupdf
+            import pymupdf
+            doc = pymupdf.open()
+            for _ in range(2):
+                page = doc.new_page(width=800, height=600)
+                page.insert_text(pymupdf.Point(50, 50), "left side")
+                page.insert_text(pymupdf.Point(450, 50), "right side")
+            doc.save(str(src_path))
+            doc.close()
+
+            result = module.split_dual_pdf(src_path, dst_path)
+
+            self.assertEqual(result, dst_path)
+            self.assertTrue(dst_path.exists())
+
+            out = pymupdf.open(str(dst_path))
+            self.assertEqual(len(out), 4)
+            self.assertAlmostEqual(out[0].rect.width, 400, delta=1)
+            self.assertAlmostEqual(out[1].rect.width, 400, delta=1)
+            out.close()
 
 
 if __name__ == "__main__":

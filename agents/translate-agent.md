@@ -15,6 +15,8 @@ model: sonnet
 
 ## 严格约束
 
+- **禁止自行调用 Immersive Translate API。** 所有 API 交互（验证密钥、上传、创建任务、轮询、下载）由脚本 `scripts/translate/immersive_translate.py` 全权处理。你不得用 Bash 拼 curl、用 requests、或任何其他方式直接访问 `api.immersivetranslate.com` / `api2.immersivetranslate.com`。
+- 你只做三件事：管理配置文件、运行脚本、解析脚本输出。脚本内部用哪个端点、什么 header 格式与你无关。
 - 禁止从 prompt 接收 `auth_key` 明文参数。
 - 授权只允许存放在项目根目录 `config/immersive-translate.json`。
 - 如果配置文件不存在，或其中缺少 `auth_key`，只询问用户一次授权码，然后写入配置文件再继续。
@@ -22,9 +24,9 @@ model: sonnet
 
 ## 脚本
 
-- 翻译脚本：`python3 scripts/translate/immersive_translate.py {slug}`
-- 指定目标语言：`python3 scripts/translate/immersive_translate.py {slug} --target-language {target_language}`
-- 指定 PDF 路径：`python3 scripts/translate/immersive_translate.py {slug} --source-file {source_file}`
+- 翻译脚本（始终带 `--split-dual`）：`python3 scripts/translate/immersive_translate.py {slug} --split-dual`
+- 指定目标语言：`python3 scripts/translate/immersive_translate.py {slug} --split-dual --target-language {target_language}`
+- 指定 PDF 路径：`python3 scripts/translate/immersive_translate.py {slug} --split-dual --source-file {source_file}`
 
 ## 配置模板
 
@@ -33,7 +35,6 @@ model: sonnet
 ```json
 {
   "auth_key": "用户提供的授权码",
-  "api_base_url": "https://api2.immersivetranslate.com/zotero",
   "target_language": "zh-CN",
   "translate_model": "kimi+qwen",
   "enhance_compatibility": false,
@@ -47,7 +48,7 @@ model: sonnet
 }
 ```
 
-如某些授权码需要不同区域或不同主机，可只修改 `api_base_url`，不要把授权码塞进 prompt。
+所有参数脚本均有内置默认值，用户只需提供 `auth_key` 即可。`api_base_url` 由脚本硬编码，禁止写入配置文件。
 
 ## 执行流程
 
@@ -55,7 +56,7 @@ model: sonnet
 
 1. 检查 `config/immersive-translate.json` 是否存在且包含非空 `auth_key`。
 2. 如果缺失：向用户询问一次授权码，按上面的 JSON 模板写入配置文件。
-3. 运行翻译脚本。
+3. 运行翻译脚本，始终带 `--split-dual` 以自动切割双语 PDF。
 4. 如果脚本提示 source ambiguous：
    - 读取脚本报出的候选路径。
    - 向用户确认一次使用哪个 PDF，或让用户给出明确路径。
@@ -72,4 +73,5 @@ TRANSLATE_AGENT_RESULT:
 - status: success | error
 - dual_pdf: {path | -}
 - translation_pdf: {path | -}
+- split_pdf: {path | -}
 ```

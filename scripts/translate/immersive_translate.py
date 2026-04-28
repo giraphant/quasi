@@ -21,6 +21,7 @@ from getpass import getpass
 from pathlib import Path
 from typing import Any
 
+import pymupdf
 import requests
 
 
@@ -42,8 +43,6 @@ DEFAULT_SETTINGS = {
     "custom_system_prompt": "",
     "layout_model": "version_3",
 }
-
-TERMINAL_ERROR_STATUSES = {"failed", "error", "cancelled", "canceled"}
 
 
 class TranslationError(RuntimeError):
@@ -173,7 +172,43 @@ def build_output_paths(
         "output_dir": output_dir,
         "dual_pdf": output_dir / f"{slug}_{target_language}_dual.pdf",
         "translation_pdf": output_dir / f"{slug}_{target_language}_translation.pdf",
+        "split_pdf": output_dir / f"{slug}_{target_language}_split.pdf",
     }
+
+
+def split_dual_pdf(
+    src_path: Path,
+    dst_path: Path,
+    *,
+    split_point: float | None = None,
+) -> Path:
+    """Split each page of a dual-language PDF at its horizontal midpoint.
+
+    The Immersive Translate dual PDF places the original and translated pages
+    side-by-side on a single wide page.  This function cuts each page in half
+    so the output has 2× the pages: left-half then right-half for every
+    original page.
+    """
+    src = pymupdf.open(str(src_path))
+    dst = pymupdf.open()
+
+    for page_num in range(len(src)):
+        page = src[page_num]
+        rect = page.rect
+        mid_x = split_point if split_point is not None else (rect.width / 2)
+
+        left_clip = pymupdf.Rect(0, 0, mid_x, rect.height)
+        left_page = dst.new_page(width=mid_x, height=rect.height)
+        left_page.show_pdf_page(left_page.rect, src, page_num, clip=left_clip)
+
+        right_clip = pymupdf.Rect(mid_x, 0, rect.width, rect.height)
+        right_page = dst.new_page(width=rect.width - mid_x, height=rect.height)
+        right_page.show_pdf_page(right_page.rect, src, page_num, clip=right_clip)
+
+    dst.save(str(dst_path))
+    dst.close()
+    src.close()
+    return dst_path
 
 
 class ImmersiveTranslateClient:
@@ -235,6 +270,9 @@ class ImmersiveTranslateClient:
                     return data.get("data", data)
                 return data
             except (requests.RequestException, ValueError) as exc:
+                # Match the official Zotero plugin: never retry 4xx client errors
+                if isinstance(exc, requests.HTTPError) and exc.response is not None and 400 <= exc.response.status_code < 500:
+                    raise TranslationError(str(exc)) from exc
                 if attempt >= retries:
                     raise TranslationError(str(exc)) from exc
                 attempt += 1
@@ -310,7 +348,8 @@ def poll_until_complete(
         status_value = str(status.get("status") or "").lower()
         if status_value == "ok" and status.get("overall_progress") == 100:
             return status
-        if status_value in TERMINAL_ERROR_STATUSES:
+        # Any non-empty, non-"ok" status is a terminal failure (matches the official Zotero plugin)
+        if status_value and status_value != "ok":
             message = status.get("message") or status.get("status")
             raise TranslationError(f"Translation failed for {pdf_id}: {message}")
         time.sleep(interval_seconds)
@@ -349,6 +388,7 @@ def translate_slug(
     prompt_for_auth: bool = False,
     poll_interval: int = 10,
     max_polls: int = 180,
+    split_dual: bool = False,
 ) -> dict[str, Any]:
     settings = load_settings_from_disk(config_path, prompt_for_auth=prompt_for_auth)
     if target_language:
@@ -381,6 +421,9 @@ def translate_slug(
         max_polls=max_polls,
     )
     download_outputs(client, pdf_id, outputs)
+
+    if split_dual:
+        split_dual_pdf(outputs["dual_pdf"], outputs["split_pdf"])
 
     return {
         "slug": slug,
@@ -427,6 +470,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=180,
         help="Maximum polling attempts before timing out",
     )
+    parser.add_argument(
+        "--split-dual",
+        action="store_true",
+        help="Split the dual PDF into single-language pages after translation",
+    )
     return parser
 
 
@@ -442,6 +490,7 @@ def main(argv: list[str] | None = None) -> int:
             prompt_for_auth=args.prompt_for_auth,
             poll_interval=args.poll_interval,
             max_polls=args.max_polls,
+            split_dual=args.split_dual,
         )
     except AmbiguousSourceError as exc:
         print(str(exc), file=sys.stderr)
@@ -462,6 +511,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"- pdf_id: {result['pdf_id']}")
     print(f"- dual_pdf: {result['dual_pdf']}")
     print(f"- translation_pdf: {result['translation_pdf']}")
+    print(f"- split_pdf: {result['split_pdf']}")
     return 0
 
 
