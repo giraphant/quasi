@@ -1,7 +1,7 @@
 ---
 name: analyze-agent
 description: 分析单个学术文本（书籍章节或论文），生成结构化 markdown。由 workflow skill 的并行调度触发，每次只处理一个文本。
-tools: Read, Write, Edit, Glob
+tools: Read, Write, Edit, Glob, Bash
 model: opus
 ---
 
@@ -13,7 +13,7 @@ model: opus
   - `input` 路径（源文本）：绝对路径或相对 `$PWD`，由调用方提供
   - `output` 路径（分析 md）：绝对路径或相对 `$PWD`，写入位置一般为 `$PWD/vault/books/{slug}/` 或 `$PWD/vault/papers/`
 - Write 工具要求绝对路径。调用方若传相对路径，必须先按 `$PWD` 拼为绝对路径再写入。
-- 本 agent 不调用任何脚本，因此与 `$CLAUDE_PLUGIN_ROOT` 无交互。
+- 本 agent 通过 Bash 调用系统命令 `pdftotext` 把 PDF 输入转为 txt（详见执行流程 Step 1），不调用 quasi 仓库下的任何脚本，因此与 `$CLAUDE_PLUGIN_ROOT` 无交互。
 
 ## 输入参数
 
@@ -31,11 +31,27 @@ model: opus
 
 ## 执行流程
 
-1. Read 源文本（`input` 路径）
-2. 按下方模板分析
-3. 分段写入 `output` 路径
+### Step 1: 读取源文本（依 `input` 后缀分支）
 
-子代理输出上限 32K tokens。长文本分析可能超限：先用 Write 写入开头部分，剩余用 Edit 追加。按需分段，不要试图一次写完。
+- **`.txt`**：直接 Read。
+- **`.pdf`**：先用 pdftotext 提取为 txt，再 Read：
+  ```bash
+  pdftotext "{input}" "/tmp/{basename}.txt"
+  ```
+  Read 该 txt 后做以下检查，**任意一项失败即报错退出**：
+  - 文件存在且非空
+  - 内容长度 ≥ 500 字符
+  - 含可读正文（不是单纯的 PDF 元数据 / 乱码 / 仅页眉页脚）
+
+  失败时直接走"输出协议"返回 `status: error`，notes 写"PDF 文本提取失败（疑似图像/扫描版），需 OCR 或人工处理：{input}"。**不得继续 Step 2，不得凭训练数据知识补完。**
+
+### Step 2: 按下方模板分析
+
+⚠ 内容真实性约束：分析的每一段（核心论点、分节摘要、关键概念、引用文献等）唯一来源是 Step 1 实际读到的 txt 文本。Step 1 失败 → 返回 error 退出，绝不用训练数据里的论文知识"脑补"出一份分析。
+
+### Step 3: 分段写入 `output`
+
+子代理输出上限 32K tokens。长文本分析可能超限：先用 Write 写入开头，剩余用 Edit 追加。按需分段，不要试图一次写完。
 
 ---
 
@@ -181,4 +197,5 @@ ANALYZE_RESULT:
 - output: {output 路径}
 - type: A | B
 - status: success | error
+- notes: {错误原因，仅在 status: error 时填写}
 ```

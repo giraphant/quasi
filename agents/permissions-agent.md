@@ -67,6 +67,7 @@ model: sonnet
 - `Bash(python3:*)`
 - `Bash(python:*)`
 - `Bash(ebook-convert:*)`
+- `Bash(pdftotext:*)`
 - `Bash(gh:*)`
 
 ### 已废弃 (`deprecated`)
