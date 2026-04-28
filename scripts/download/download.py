@@ -1136,6 +1136,57 @@ def finalize_book_identity(manifest_book, actual_author, actual_title, actual_ye
     }
 
 
+def finalize_downloaded_book(manifest_path, book_index, downloaded_path, expected_author):
+    """Verify a downloaded book file, rename to canonical slug, and rewrite manifest in place.
+
+    On verify match: derives final canonical identity, renames the source file
+    to {final_slug}{suffix}, sets status="acquired", writes manifest.
+    On verify miss: records the verification status on the book and writes manifest;
+    leaves the source file untouched.
+    Returns the (possibly updated) book entry.
+    """
+    manifest_file = Path(manifest_path)
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    book = manifest["books"][book_index]
+
+    verification = verify_book_file(
+        Path(downloaded_path),
+        expected_author=expected_author,
+        expected_title=book["title"],
+    )
+
+    def _save():
+        manifest_file.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+    if verification["status"] != "match":
+        book["status"] = verification["status"]
+        if "reason" in verification:
+            book["verification_reason"] = verification["reason"]
+        _save()
+        return book
+
+    final = finalize_book_identity(
+        manifest_book=book,
+        actual_author=verification.get("author"),
+        actual_title=verification.get("title"),
+        actual_year=verification.get("year"),
+    )
+
+    src = Path(downloaded_path)
+    new_path = src.with_name(f"{final['slug']}{src.suffix}")
+    if new_path != src and not new_path.exists():
+        src.rename(new_path)
+
+    final["source"] = str(new_path)
+    final["status"] = "acquired"
+    manifest["books"][book_index] = final
+    _save()
+    return final
+
+
 def slugify(text):
     """Convert text to kebab-case filename."""
     text = text.lower().strip()

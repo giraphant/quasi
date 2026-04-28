@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import tempfile
 import unittest
 import zipfile
@@ -203,3 +204,134 @@ class DownloadBookIdentityTests(unittest.TestCase):
             text = self.download._extract_epub_text(epub_path)
 
         self.assertTrue(text.strip().startswith(" against technoableism ashley shew 2023".strip()))
+
+    # ------------------------------------------------------------------
+    # finalize_downloaded_book — manifest-aware finalization
+    # ------------------------------------------------------------------
+
+    def _write_manifest(self, manifest_path, books):
+        manifest_path.write_text(
+            json.dumps({"books": books}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def test_finalize_downloaded_book_updates_manifest_and_renames_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = root / "manifest.json"
+            sources_dir = root / "sources"
+            sources_dir.mkdir()
+            old_path = sources_dir / "against-technoableism.epub"
+            old_path.write_bytes(b"epub")
+            self._write_manifest(manifest_path, [{
+                "title": "Against Technoableism",
+                "year": 2022,
+                "slug": "shew-against-technoableism-2022",
+                "status": "discovered",
+                "source": str(old_path),
+            }])
+
+            with mock.patch.object(self.download, "verify_book_file", return_value={
+                "status": "match",
+                "author": "Ashley Shew",
+                "title": "Against Technoableism: Rethinking Who Needs Improvement",
+                "year": 2023,
+            }):
+                final = self.download.finalize_downloaded_book(
+                    manifest_path=manifest_path,
+                    book_index=0,
+                    downloaded_path=old_path,
+                    expected_author="Ashley Shew",
+                )
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(final["slug"], "shew-against-technoableism-2023")
+            self.assertEqual(final["status"], "acquired")
+            self.assertEqual(manifest["books"][0]["slug"], "shew-against-technoableism-2023")
+            self.assertEqual(manifest["books"][0]["year"], 2023)
+            self.assertTrue((sources_dir / "shew-against-technoableism-2023.epub").exists())
+            self.assertFalse(old_path.exists())
+            self.assertEqual(manifest["books"][0]["source"], str(sources_dir / "shew-against-technoableism-2023.epub"))
+
+    def test_finalize_downloaded_book_keeps_source_when_slug_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = root / "manifest.json"
+            sources_dir = root / "sources"
+            sources_dir.mkdir()
+            kept_path = sources_dir / "shew-against-technoableism-2023.epub"
+            kept_path.write_bytes(b"epub")
+            self._write_manifest(manifest_path, [{
+                "title": "Against Technoableism",
+                "year": 2023,
+                "slug": "shew-against-technoableism-2023",
+                "status": "discovered",
+                "source": str(kept_path),
+            }])
+
+            with mock.patch.object(self.download, "verify_book_file", return_value={
+                "status": "match",
+                "author": "Ashley Shew",
+                "title": "Against Technoableism",
+                "year": 2023,
+            }):
+                final = self.download.finalize_downloaded_book(
+                    manifest_path=manifest_path,
+                    book_index=0,
+                    downloaded_path=kept_path,
+                    expected_author="Ashley Shew",
+                )
+
+            self.assertEqual(final["slug"], "shew-against-technoableism-2023")
+            self.assertEqual(final["status"], "acquired")
+            self.assertTrue(kept_path.exists())
+
+    def test_finalize_downloaded_book_records_status_when_verification_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = root / "manifest.json"
+            sources_dir = root / "sources"
+            sources_dir.mkdir()
+            old_path = sources_dir / "against-technoableism.epub"
+            old_path.write_bytes(b"epub")
+            self._write_manifest(manifest_path, [{
+                "title": "Against Technoableism",
+                "year": 2022,
+                "slug": "shew-against-technoableism-2022",
+                "status": "discovered",
+                "source": str(old_path),
+            }])
+
+            with mock.patch.object(self.download, "verify_book_file", return_value={
+                "status": "needs_review",
+                "reason": "weak_evidence",
+            }):
+                result = self.download.finalize_downloaded_book(
+                    manifest_path=manifest_path,
+                    book_index=0,
+                    downloaded_path=old_path,
+                    expected_author="Ashley Shew",
+                )
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(result["status"], "needs_review")
+            self.assertEqual(manifest["books"][0]["status"], "needs_review")
+            self.assertEqual(manifest["books"][0]["slug"], "shew-against-technoableism-2022")
+            self.assertTrue(old_path.exists())
+
+    def test_candidate_slug_is_corrected_once_before_process_book_uses_it(self):
+        manifest_book = {
+            "title": "Work Pray Code",
+            "year": 2021,
+            "slug": "chen-work-pray-code-2021",
+            "status": "discovered",
+        }
+        final = self.download.finalize_book_identity(
+            manifest_book=manifest_book,
+            actual_author="Carolyn Chen",
+            actual_title="Work Pray Code: When Work Becomes Religion in Silicon Valley",
+            actual_year=2022,
+        )
+        self.assertEqual(final["slug"], "chen-work-pray-code-2022")
+        self.assertEqual(final["title"], "Work Pray Code: When Work Becomes Religion in Silicon Valley")
+        self.assertEqual(final["year"], 2022)
