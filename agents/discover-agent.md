@@ -100,6 +100,17 @@ python3 scripts/search/search.py validate --manifest {manifest_path}
 }
 ```
 
+### books[].slug 字段格式
+
+形如 `{author-surname}-{short-title}-{year}`，全小写 kebab-case。短标题取主标题（冒号或破折号前的部分）头 3-4 个有意义的词。
+
+示例：
+- `shew-against-technoableism-2023`
+- `chen-work-pray-code-2022`
+- `nelson-social-life-of-dna-2016`
+
+discover 阶段写入的 slug 是候选 canonical 值。download-agent 下载到文件后会读首页内容做一次校正：若实际 author / title / year 与候选有出入，会调用 `finalize_downloaded_book` 重算 slug 并重命名 source 文件、回写 manifest。所以 discover 这一步只需按上面格式拼即可，不必为「万一作者名拼错」预留余地。
+
 ## 输出协议
 
 最后一条消息**必须**包含：

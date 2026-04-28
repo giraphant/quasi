@@ -42,16 +42,16 @@ description: >
 ## 执行流程
 
 ```python
-# 0. 确定规范 slug
-book_name = parse_args()                    # 用户输入，可能不完整
-source_file = Glob("sources/{book_name}.epub|.pdf")
-
-# 从源文件中确认书籍的作者（姓氏）、简短标题、出版年份
-# 方法不限：读首页/版权页、查 EPUB 元数据、翻目录、用 search.py 搜索等
-# 构造规范 slug: {author_surname}-{short_title}-{year}（全小写 kebab-case）
-# 示例: "shew-against-technoableism-2023"
-# 如果 slug 与 book_name 不同，后续所有路径使用 slug
-book_slug = derive_slug(source_file)        # 伪代码，agent 自行实现
+# 0. 使用已定稿 slug
+# 输入约定：book_slug 必须是 canonical 格式 {author-surname}-{short-title}-{year}
+# - 通过 process-author 调用：上游 download-agent 已 finalize，slug 在 manifest 中定稿
+# - 用户直接调用：用户给定的 book_slug 即视为 canonical，sources/ 文件名应同名
+# 本 skill 不再重新派生 slug，所有路径直接基于 book_slug。
+book_slug = parse_args()
+source_file = Glob(f"sources/{book_slug}.epub") or Glob(f"sources/{book_slug}.pdf")
+if not source_file:
+    report(f"sources/{book_slug}.{{epub,pdf}} 不存在；先用 process-author 或 download-agent 拿到定稿 slug")
+    return
 chapters_dir = f"processing/chapters/{book_slug}/"
 
 # 1. EXTRACT（一次调用完成提取+验证+修复）

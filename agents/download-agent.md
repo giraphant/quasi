@@ -19,6 +19,7 @@ model: sonnet
 
 - 搜索 AA（仅书籍）: `python3 scripts/search/search.py books --source aa "{title}" --author "{author}" --limit 5`
 - 按 MD5 下载（仅书籍）: `python3 scripts/download/download.py --md5 {md5} --filename {slug} -o sources/`
+- 书籍下载后定稿: `python3 scripts/download/download.py --finalize-book --manifest {manifest_path} --book-index {N} --downloaded-path sources/{slug}.{ext} --expected-author "{full_name}"`
 - 按 DOI 下载（论文）: `python3 scripts/download/download.py --doi "{doi}" --output-dir {output_dir} --filename {slug} --verify-author "{author}" --verify-title "{title}"`
 - manifest 批量: `python3 scripts/download/download.py --manifest {manifest_path} --batch --retry-wayback`
 
@@ -33,11 +34,16 @@ model: sonnet
 
 1. 读取输入（manifest/scan.md），确定待下载列表
 2. 已有分析 .md 的论文 → 跳过
-3. **书籍**：搜 AA 获取 MD5 → `--md5` 下载
-4. **论文**：**必须用 `--doi` 下载**（内置级联：OA → Sci-Hub → EZProxy → Wayback）。**禁止对论文用 AA 搜索 DOI→MD5 再 `--md5` 下载**——AA 的 DOI→MD5 映射不可靠，经常返回完全无关的论文
-5. 论文下载时**必须加 `--verify-author` 和 `--verify-title`** 参数，脚本会自动验证 PDF 内容
-6. 每次下载后更新 manifest（保存进度）
-7. 下载间隔 ≥10 秒
+3. **书籍**：搜 AA 获取 MD5 → `--md5` 下载到 `sources/{candidate_slug}.{ext}`，文件名用 manifest 里 discover-agent 写的 candidate slug
+4. **书籍下载后必须 finalize**：紧接着调一次 `--finalize-book --manifest {manifest_path} --book-index {N} --downloaded-path sources/{candidate_slug}.{ext} --expected-author "{full_name}"`。该命令会：
+   - 读首页内容验真（`verify_book_file`）
+   - 校正 title/year，重算 canonical slug，把 source 文件重命名为 `{final_slug}.{ext}`
+   - 回写 manifest：title / year / slug / source / status
+   - 验真不通过时仅记录 status (`needs_review` / `mismatch`)，不重命名
+5. **论文**：**必须用 `--doi` 下载**（内置级联：OA → Sci-Hub → EZProxy → Wayback）。**禁止对论文用 AA 搜索 DOI→MD5 再 `--md5` 下载**——AA 的 DOI→MD5 映射不可靠，经常返回完全无关的论文
+6. 论文下载时**必须加 `--verify-author` 和 `--verify-title`** 参数，脚本会自动验证 PDF 内容
+7. 每次下载后更新 manifest（保存进度）
+8. 下载间隔 ≥10 秒
 
 ## 配置
 

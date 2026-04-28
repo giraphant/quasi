@@ -61,6 +61,9 @@ if any(status == "discovered"):
           prompt=f"manifest_path: {manifest_path}, mode: both")
 
 # 3. PROCESS BOOKS
+# Phase 2 结束时 download-agent 已对每本书调用 --finalize-book，manifest 中
+# books[*].slug 与 sources/{slug}.{ext} 均已是 canonical。Phase 3 起所有路径
+# 直接复用 book.slug，不再重新派生。
 manifest = read_json(manifest_path)
 
 # 3a. 逐本提取（extract-agent 自含验证+修复）

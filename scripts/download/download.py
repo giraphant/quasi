@@ -1252,11 +1252,32 @@ def main():
     parser.add_argument("--verify-author", help="Expected author name (for post-download verification)")
     parser.add_argument("--verify-title", help="Expected title (for post-download verification)")
 
+    # Post-download book finalization (separate mode)
+    parser.add_argument("--finalize-book", action="store_true",
+                        help="Verify a downloaded book against manifest, rename to canonical slug, rewrite manifest")
+    parser.add_argument("--book-index", type=int, help="Index into manifest['books'] for --finalize-book")
+    parser.add_argument("--downloaded-path", help="Path to the file just downloaded (for --finalize-book)")
+    parser.add_argument("--expected-author", help="Expected author full name (for --finalize-book)")
+
     args = parser.parse_args()
 
     # Route to appropriate handler
     try:
-        if args.manifest and args.batch:
+        if args.finalize_book:
+            missing = [n for n, v in [("--manifest", args.manifest),
+                                       ("--book-index", args.book_index),
+                                       ("--downloaded-path", args.downloaded_path),
+                                       ("--expected-author", args.expected_author)] if v is None]
+            if missing:
+                parser.error(f"--finalize-book requires {', '.join(missing)}")
+            result = finalize_downloaded_book(
+                manifest_path=args.manifest,
+                book_index=args.book_index,
+                downloaded_path=args.downloaded_path,
+                expected_author=args.expected_author,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif args.manifest and args.batch:
             batch_download_manifest(args.manifest, retry_wayback=args.retry_wayback)
         elif args.md5:
             result = download_from_aa(
