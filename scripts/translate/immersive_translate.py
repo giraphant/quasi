@@ -8,7 +8,8 @@ This script intentionally mirrors the Zotero plugin's request flow:
 3. Upload the local PDF.
 4. Create a translation task.
 5. Poll the task until completion.
-6. Download bilingual and translation-only PDFs into processing/.
+6. Download the dual PDF, split it page-by-page, and write a single
+   side-by-side bilingual PDF to processing/translations/{slug}-{lang}.pdf.
 """
 
 from __future__ import annotations
@@ -167,12 +168,14 @@ def build_output_paths(
     target_language: str,
     project_root: Path = PROJECT_ROOT,
 ) -> dict[str, Path]:
-    output_dir = project_root / "processing" / "translations" / slug
+    lang_short = target_language.split("-", 1)[0].lower()
+    output_dir = project_root / "processing" / "translations"
+    final_pdf = output_dir / f"{slug}-{lang_short}.pdf"
+    dual_tmp = output_dir / f".{slug}-{lang_short}.dual.tmp.pdf"
     return {
         "output_dir": output_dir,
-        "dual_pdf": output_dir / f"{slug}_{target_language}_dual.pdf",
-        "translation_pdf": output_dir / f"{slug}_{target_language}_translation.pdf",
-        "split_pdf": output_dir / f"{slug}_{target_language}_split.pdf",
+        "dual_tmp": dual_tmp,
+        "final_pdf": final_pdf,
     }
 
 
@@ -363,17 +366,15 @@ def download_outputs(
 ) -> dict[str, Path]:
     result = client.get_translate_result(pdf_id)
     dual_url = result.get("translationDualPdfOssUrl")
-    translation_url = result.get("translationOnlyPdfOssUrl")
-    if not dual_url or not translation_url:
-        raise TranslationError(f"Missing result URLs for translation task {pdf_id}")
+    if not dual_url:
+        raise TranslationError(f"Missing dual PDF URL for translation task {pdf_id}")
 
     try:
         outputs["output_dir"].mkdir(parents=True, exist_ok=True)
-        outputs["dual_pdf"].write_bytes(client.download_binary(dual_url))
-        outputs["translation_pdf"].write_bytes(client.download_binary(translation_url))
+        outputs["dual_tmp"].write_bytes(client.download_binary(dual_url))
     except OSError as exc:
         raise TranslationError(
-            f"Failed to write translated PDFs into {outputs['output_dir']}: {exc}",
+            f"Failed to write dual PDF to {outputs['dual_tmp']}: {exc}",
         ) from exc
     return outputs
 
@@ -388,7 +389,6 @@ def translate_slug(
     prompt_for_auth: bool = False,
     poll_interval: int = 10,
     max_polls: int = 180,
-    split_dual: bool = False,
 ) -> dict[str, Any]:
     settings = load_settings_from_disk(config_path, prompt_for_auth=prompt_for_auth)
     if target_language:
@@ -421,15 +421,14 @@ def translate_slug(
         max_polls=max_polls,
     )
     download_outputs(client, pdf_id, outputs)
-
-    if split_dual:
-        split_dual_pdf(outputs["dual_pdf"], outputs["split_pdf"])
+    split_dual_pdf(outputs["dual_tmp"], outputs["final_pdf"])
+    outputs["dual_tmp"].unlink(missing_ok=True)
 
     return {
         "slug": slug,
         "source_pdf": source_pdf,
         "pdf_id": pdf_id,
-        **outputs,
+        "final_pdf": outputs["final_pdf"],
     }
 
 
@@ -470,11 +469,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=180,
         help="Maximum polling attempts before timing out",
     )
-    parser.add_argument(
-        "--split-dual",
-        action="store_true",
-        help="Split the dual PDF into single-language pages after translation",
-    )
     return parser
 
 
@@ -490,7 +484,6 @@ def main(argv: list[str] | None = None) -> int:
             prompt_for_auth=args.prompt_for_auth,
             poll_interval=args.poll_interval,
             max_polls=args.max_polls,
-            split_dual=args.split_dual,
         )
     except AmbiguousSourceError as exc:
         print(str(exc), file=sys.stderr)
@@ -509,9 +502,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"- slug: {result['slug']}")
     print(f"- source_pdf: {result['source_pdf']}")
     print(f"- pdf_id: {result['pdf_id']}")
-    print(f"- dual_pdf: {result['dual_pdf']}")
-    print(f"- translation_pdf: {result['translation_pdf']}")
-    print(f"- split_pdf: {result['split_pdf']}")
+    print(f"- final_pdf: {result['final_pdf']}")
     return 0
 
 

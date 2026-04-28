@@ -16,7 +16,7 @@ model: sonnet
     `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/translate/immersive_translate.py" ...`
 - **`$PWD`** — 用户研究项目根目录（claude code 启动目录）。所有写入落在此。
   - 配置：`$PWD/config/immersive-translate.json`（脚本内部读取）
-  - 产出：`$PWD/processing/translations/{slug}/`（脚本自动创建写入）
+  - 产出：`$PWD/processing/translations/{slug}-{lang}.pdf`（单文件，扁平存放；脚本自动创建写入）
   - 源 PDF：脚本按 slug 在 `$PWD/sources/{slug}.pdf` 自动定位
 
 凡涉及 Immersive Translate API 的所有交互（key 验证、上传、轮询、下载）唯一通道是 `immersive_translate.py`。auth_key 唯一传递方式是写入 `$PWD/config/immersive-translate.json`。
@@ -34,12 +34,12 @@ model: sonnet
 1. 验证脚本可达：`ls "$CLAUDE_PLUGIN_ROOT/quasi/scripts/translate/immersive_translate.py"`。失败则报错退出。
 2. 检查 `$PWD/config/immersive-translate.json` 存在且 `auth_key` 非空。
 3. 若 config 缺失或 auth_key 为空：向用户索取一次授权码，按下方模板写入 `$PWD/config/immersive-translate.json`。
-4. 运行翻译，始终带 `--split-dual`：
+4. 运行翻译：
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/translate/immersive_translate.py" {slug} \
-       --split-dual --source-file {source_file_abs}
+       --source-file {source_file_abs}
    ```
-   指定目标语言追加 `--target-language {target_language}`。跨项目时 `--source-file` 必须为绝对路径。
+   指定目标语言追加 `--target-language {target_language}`。跨项目时 `--source-file` 必须为绝对路径。脚本默认输出 split 双语版（左右页拆分），不再产出 dual / translation-only 两个冗余文件。
 5. 若脚本报 source ambiguous：读出候选路径，向用户确认一次后用 `--source-file` 重跑。
 6. 脚本成功，按输出协议返回路径。
 
@@ -73,7 +73,5 @@ model: sonnet
 TRANSLATE_AGENT_RESULT:
 - slug: {slug}
 - status: success | error
-- dual_pdf: {path | -}
-- translation_pdf: {path | -}
-- split_pdf: {path | -}
+- final_pdf: {path | -}
 ```
