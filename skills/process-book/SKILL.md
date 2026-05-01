@@ -12,10 +12,11 @@ description: >
 ## 调用方式
 
 ```
-/quasi:process-book {book-name}
+/quasi:process-book {book-slug}
 ```
 
-`{book-name}` 为 kebab-case。源文件应在 `sources/{book-name}.epub` 或 `.pdf`。
+`{book-slug}` 必须是 canonical 格式：`{author-surname}-{short-title}-{year}`。
+源文件应在 `sources/{book-slug}.epub` 或 `.pdf`。
 
 ## ⚠ 硬约束
 
@@ -102,7 +103,7 @@ print(f"Done: {len(selected)} chapters, overview generated")
 ## 目录结构
 
 ```
-sources/{book-name}.epub|.pdf          ← 用户输入的原始文件名
+sources/{book-slug}.epub|.pdf          ← canonical slug 对应的源文件
 processing/chapters/{book-slug}/       ← 规范 slug: {author}-{title}-{year}
 ├── manifest.json
 └── *.txt

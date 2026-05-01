@@ -25,6 +25,7 @@ Claude Code 插件。把一堆 PDF 变成「我读过了」的底气。
 | `analyze-agent` | opus | 单章/单篇 → 结构化分析（内嵌分析模板） |
 | `overview-agent` | opus | 全书概览 |
 | `translate-agent` | sonnet | 按 slug 定位本地 PDF → 调用沉浸式翻译 Zotero API → 输出 split 双语 PDF |
+| `permissions-agent` | sonnet | 同步目标项目 `.claude/settings.json` / `.claude/settings.local.json` 的 quasi 标准权限（手动调用） |
 | `scan-agent` | opus | 期刊抓取 + 评分（内嵌评分模板） |
 | `download-agent` | sonnet | DOI/MD5/批量下载 |
 | `discover-agent` | opus | 作者文献发现 |
@@ -34,11 +35,13 @@ Claude Code 插件。把一堆 PDF 变成「我读过了」的底气。
 ## 用法
 
 ```bash
-/quasi:process-book oxford-handbook-sociology-body
+/quasi:process-book shew-against-technoableism-2023
 /quasi:process-journal critical-inquiry --threshold 7.0
 /quasi:citation-snowball posthuman-embodiment --seed 10.xxxx/xxxxx --topic "后人类具身化与数字技术"
 /quasi:process-author donna-haraway
 ```
+
+`process-book` 的参数现在直接使用 canonical book slug：`{author-surname}-{short-title}-{year}`。
 
 ## 结构
 
@@ -49,13 +52,15 @@ quasi/
 │   ├── extract-agent.md     # 提取+验证+修复 (sonnet)
 │   ├── analyze-agent.md     # 分析，内嵌模板 (opus)
 │   ├── overview-agent.md    # 书籍概览 (opus)
+│   ├── translate-agent.md   # PDF 翻译 (sonnet)
+│   ├── permissions-agent.md # 权限同步 (sonnet, 手动调用)
 │   ├── scan-agent.md        # 期刊扫描+评分 (opus)
 │   ├── download-agent.md    # 下载 (sonnet)
 │   ├── discover-agent.md    # 文献发现 (opus)
 │   ├── profile-agent.md     # 作者档案 (opus)
 │   └── synthesis-agent.md   # 综合报告 (opus)
 ├── scripts/                 # Python 工具（被 agent 调用）
-│   ├── extract/             # process_epub.py, split_chapters.py, ocr_pdf.sh
+│   ├── extract/             # process_epub.py, split_chapters.py, ocr_pdf.sh, toc_utils.py
 │   ├── translate/           # immersive_translate.py
 │   ├── search/              # search.py
 │   ├── download/            # download.py
@@ -67,8 +72,6 @@ quasi/
 │   ├── process-journal/
 │   ├── process-author/
 │   └── citation-snowball/
-└── shared/
-    └── output-format.md     # Frontmatter 规范
 ```
 
 ## 产出落点（在调用方仓库内）
@@ -108,6 +111,14 @@ slug 统一为 `{author-surname}-{short-title}-{year}`，全库唯一。
 ```bash
 claude plugin add quasi --marketplace ramu-toolkit
 ```
+
+首次把 quasi 接到一个研究项目时，可手动调用 `permissions-agent`，把 quasi 需要的共享权限同步到该项目的 `.claude/settings.json`，并清理 `.claude/settings.local.json` 里已经迁移过去的公共权限条目。
+
+### 系统依赖
+
+- `python3`
+- `pdftotext`（`analyze-agent` 读取 PDF 时必需）
+- `ebook-convert`（处理 EPUB / 某些 PDF 提取流程时需要）
 
 ## 配置
 

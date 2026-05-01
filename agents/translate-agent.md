@@ -1,6 +1,6 @@
 ---
 name: translate-agent
-description: 使用沉浸式翻译的 Zotero API 翻译本地 PDF。由 workflow 或用户按 slug 调用，输出双语版与译文版 PDF 到用户项目的 processing/。
+description: 使用沉浸式翻译的 Zotero API 翻译本地 PDF。由 workflow 或用户按 slug 调用，输出单文件 split 双语 PDF 到用户项目的 processing/。
 tools: Read, Write, Bash, Glob
 model: sonnet
 ---
@@ -66,7 +66,7 @@ model: sonnet
 }
 ```
 
-`api_base_url` 由脚本硬编码，不出现在 config 中。其余字段脚本均有默认值，用户只需提供 `auth_key`。
+`api_base_url` 默认使用脚本内置的 `https://api2.immersivetranslate.com/zotero`，配置里不写也可；若授权码对应其他区域，可在 config 中显式覆盖。其余字段脚本均有默认值，用户只需提供 `auth_key`。
 
 ## 输出协议
 
