@@ -29,9 +29,13 @@ model: opus
 
 ## 执行流程
 
-1. 读取所有书籍概览（`book_overview_paths` 中列出的 `00-overview.md`）
-2. 逐一读取 `paper_paths` 中列出的论文分析文件（不再 Glob——论文已在全库扁平 `vault/papers/` 中，必须显式按调用方提供的路径列表读取）
+1. **读书籍（概览 + 逐章）**——对 `book_overview_paths` 中的每本书：
+   a. 读取 `00-overview.md`
+   b. 用 Glob 在同目录下匹配 `ch*.md`，逐一读取所有章节分析
+2. 逐一读取 `paper_paths` 中列出的论文分析文件
 3. 综合所有材料，生成 `{output_path}`（单文件 profile：`vault/authors/{slug}.md`）
+
+步骤 1 的目的：书籍概览是压缩过的全书总结，信息密度远低于逐章分析。只读 overview 会导致书的内容在 profile 中被论文稀释。逐章读取后，书籍在 agent 心中的分量才能与其实际重要性匹配。
 
 ## 链接规则
 
