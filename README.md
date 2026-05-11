@@ -2,193 +2,80 @@
 
 > 仿佛读过、仿佛想过、仿佛写过。
 
-Claude Code 插件。把一堆 PDF 变成「我读过了」的底气。
+Claude Code 知识库插件，打造完整「氛围阅读」流水线，帮助快速理解特定作者、书籍、刊物甚至脉络。大概可能完全没有作用，但书皮学爱好者自会领悟其间真谛。
 
-搜、下、拆、读、写，五步流水线。丢进去一本 800 页的 Handbook，出来的是逐章分析和全书综述——你只需要假装这些洞见是自己想出来的。
+## 项目架构
 
-## 工作流
+插件组织的核心逻辑是以尽可能扁平的结构来实现复杂任务的自动运作。核心资源包括以下三种：
 
-| 技能 | 流程 |
+- skills — 工作流编排
+- agents — 自包含代理
+- scripts — 脚本工具包
+
+### 技能/工作流
+
+| 技能 | 功能 |
 |------|------|
-| `process-book` | PDF/EPUB → 拆章 → 逐章分析 → 全书综述 |
-| `process-journal` | 期刊扫描报告 → 批量下载 → 逐篇分析 → 综述 |
-| `process-author` | 发现代表作（至多 5 书 + 10 文） → 获取 → 分析 → 学者档案 |
-| `citation-snowball` | 种子论文 → 沿引用链逐轮扩展 → 主题语料库 + 综述 |
+| `process-book` | 自动下载图书，逐章摘要并综述 |
+| `process-journal` | 全量扫描期刊，逐篇分析并综述 |
+| `process-author` | 获取代表作品，生成该学者档案 |
+| `citation-snowball` | 文献滚雪球，快速把握研究脉络 |
 
-## Agent
+### 执行/子代理
 
-工作流由主进程扁平调度 agent 执行。每个 agent 自包含完整逻辑（含模板、验证、修复），调用时只传参数。
+按流水线阶段排列:发现 → 获取 → 提取 → 分析 → 综合 → 工具。
 
 | Agent | 模型 | 职责 |
 |-------|------|------|
-| `extract-agent` | sonnet | EPUB/PDF → 章节文本（含验证+碎片化自修） |
-| `analyze-agent` | opus | 单章/单篇 → 结构化分析（内嵌分析模板） |
+| `discover-agent` | opus | 文献发现 |
+| `scan-agent` | opus | 期刊扫描 |
+| `download-agent` | sonnet | 文献下载 |
+| `extract-agent` | sonnet | 文献提取 |
+| `analyze-agent` | opus | 文献分析 |
 | `overview-agent` | opus | 全书概览 |
-| `translate-agent` | sonnet | 按 slug 定位本地 PDF → 调用沉浸式翻译 Zotero API → 输出 split 双语 PDF |
-| `permissions-agent` | sonnet | 同步目标项目 `.claude/settings.json` / `.claude/settings.local.json` 的 quasi 标准权限（手动调用） |
-| `scan-agent` | opus | 期刊抓取 + 评分（内嵌评分模板） |
-| `download-agent` | sonnet | DOI/MD5/批量下载 |
-| `discover-agent` | opus | 作者文献发现 |
-| `profile-agent` | opus | 作者综合档案 |
-| `synthesis-agent` | opus | 综合报告 + 知识库更新 |
+| `profile-agent` | opus | 生成作者档案 |
+| `synthesis-agent` | opus | 生成综合报告 |
+| `translate-agent` | sonnet | 双语翻译 |
+| `setup-agent` | sonnet | 项目配置 |
 
-## 用法
+## 文库结构
 
-```bash
-/quasi:process-book shew-against-technoableism-2023
-/quasi:process-journal critical-inquiry --threshold 7.0
-/quasi:citation-snowball posthuman-embodiment --seed 10.xxxx/xxxxx --topic "后人类具身化与数字技术"
-/quasi:process-author donna-haraway
-```
-
-`process-book` 的参数现在直接使用 canonical book slug：`{author-surname}-{short-title}-{year}`。
-
-## 结构
+插件使用固定结构，Obsidian 等管理器可直接读取 vault 目录，但 Claude Code 需要有项目根目录权限。
 
 ```
-quasi/
-├── .claude-plugin/          # 插件清单
-├── agents/                  # 自包含执行器（所有逻辑在这里）
-│   ├── extract-agent.md     # 提取+验证+修复 (sonnet)
-│   ├── analyze-agent.md     # 分析，内嵌模板 (opus)
-│   ├── overview-agent.md    # 书籍概览 (opus)
-│   ├── translate-agent.md   # PDF 翻译 (sonnet)
-│   ├── permissions-agent.md # 权限同步 (sonnet, 手动调用)
-│   ├── scan-agent.md        # 期刊扫描+评分 (opus)
-│   ├── download-agent.md    # 下载 (sonnet)
-│   ├── discover-agent.md    # 文献发现 (opus)
-│   ├── profile-agent.md     # 作者档案 (opus)
-│   └── synthesis-agent.md   # 综合报告 (opus)
-├── scripts/                 # Python 工具（被 agent 调用）
-│   ├── extract/             # process_epub.py, split_chapters.py, ocr_pdf.sh, toc_utils.py
-│   ├── translate/           # immersive_translate.py
-│   ├── search/              # search.py
-│   ├── download/            # download.py
-│   ├── journal/             # fetch_papers.py, generate_scan_report.py
-│   └── synthesize/          # aggregate_refs.py
-├── config/                  # 凭据配置（gitignored）
-├── skills/                  # 工作流编排（只有 4 个入口）
-│   ├── process-book/
-│   ├── process-journal/
-│   ├── process-author/
-│   └── citation-snowball/
+vault/
+├── books/{slug}/                  # 逐章分析 + 全书综述 (process-book / process-author)
+├── papers/{slug}.md               # 单篇论文分析 (process-author)
+├── authors/{slug}.md              # 学者档案 (process-author)
+├── journals/
+│   ├── {journal}-scan.md          # 期刊扫描报告
+│   └── {journal}/                 # 逐篇分析 + 综述
+└── topics/{topic-slug}/           # 主题语料库 (citation-snowball)
+
+processing/
+├── authors/{slug}/manifest.json   # 作者采集状态机 (discover-agent)
+├── chapters/{slug}/               # 章节提取中间产物 (extract-agent)
+└── translations/{slug}-{lang}.pdf # PDF 翻译产物 (translate-agent)
+
+sources/
+└── {slug}.{epub,pdf}              # 原始文件 (download-agent)
 ```
 
-## 产出落点（在调用方仓库内）
+## 安装指南
 
-quasi 写入的目录约定与 bts 仓库结构对齐（合并 monographs+handbooks 后的扁平规范）：
+由于 Claude Code 的插件安装比较反人类，建议直接复制 [agents/setup-agent.md](agents/setup-agent.md) 的文件内容，让 Claude Code 帮你完成插件安装与项目配置。
 
-| 类型 | 落点 | 写入者 |
-|------|------|--------|
-| 书的逐章分析 + 全书综述 | `vault/books/{book-slug}/` | process-book / process-author |
-| 论文分析（全库扁平） | `vault/papers/{paper-slug}.md` | process-author Phase 4 |
-| 作者档案（单文件） | `vault/authors/{author-slug}.md` | process-author Phase 5 |
-| 期刊扫描 + 综述 | `vault/journals/{journal}-scan.md`、`vault/journals/{journal}/` | process-journal |
-| 主题语料库（引用滚雪球） | `vault/topics/{topic-slug}/` | citation-snowball |
-| 采集状态机（manifest） | `processing/authors/{slug}/manifest.json` | discover-agent |
-| 章节提取中间产物 | `processing/chapters/{book-slug}/` | extract-agent |
-| 原始 PDF/EPUB | `sources/{book-slug}.{epub,pdf}` | download-agent |
-| PDF 翻译产物 | `processing/translations/{slug}-{lang}.pdf` | translate-agent |
+### 选装项目
 
-slug 统一为 `{author-surname}-{short-title}-{year}`，全库唯一。
+本项目依赖大量第三方服务，凭据存在调用插件的项目下。在安装完成后，在项目根目录下调用 setup-agent 即可完成配置。
 
-## 安装
+| 服务 | 解锁能力 | 必要性 |
+|------|---------|--------|
+| Anna's Archive | 自动下载图书 | 推荐 |
+| EZProxy | 批量下载论文 | 可选 |
+| Immersive Translate | 生成双语翻译 | 可选 |
+| Dokobot | 高效浏览网页 | 可选 |
 
-注册为 Claude Code 自定义 marketplace：
+## 版权协议
 
-```jsonc
-// ~/.claude/plugins/known_marketplaces.json
-{
-  "ramu-toolkit": {
-    "source": { "source": "github", "repo": "giraphant/quasi" },
-    "autoUpdate": true
-  }
-}
-```
-
-然后：
-
-```bash
-claude plugin add quasi --marketplace ramu-toolkit
-```
-
-首次把 quasi 接到一个研究项目时，可手动调用 `permissions-agent`，把 quasi 需要的共享权限同步到该项目的 `.claude/settings.json`，并清理 `.claude/settings.local.json` 里已经迁移过去的公共权限条目。
-
-### 系统依赖
-
-- `python3`
-- `pdftotext`（`analyze-agent` 读取 PDF 时必需）
-- `ebook-convert`（处理 EPUB / 某些 PDF 提取流程时需要）
-
-## 配置
-
-凭据放在**调用 quasi 的研究项目根目录**下的 `config/`（gitignored）。脚本通过当前工作目录（`$PWD`）解析配置——你在哪个项目里启动 claude，凭据就在那个项目的 `config/` 里。**不是放在 quasi 自身安装目录下**，每个研究项目互相独立。
-
-**Anna's Archive** — `config/anna-archive.json`：
-
-```json
-{
-  "donator_key": "你的key",
-  "mirrors": ["https://annas-archive.gl", "https://annas-archive.pk", "https://annas-archive.gd"]
-}
-```
-
-**EZProxy** — `config/ezproxy.json`：
-
-```json
-{
-  "cookie": "SESSION_VALUE",
-  "cookie_name": "yewnoEzProxy",
-  "domain": ".your-institution.idm.oclc.org",
-  "login_url": "https://login.your-institution.idm.oclc.org/login?url="
-}
-```
-
-获取方式：浏览器登录 EZProxy → DevTools → Cookies → 复制。过期极快，过期后脚本自动停。
-
-**Immersive Translate** — `config/immersive-translate.json`：
-
-```json
-{
-  "auth_key": "你的 Zotero 授权码",
-  "api_base_url": "https://api2.immersivetranslate.com/zotero",
-  "target_language": "zh-CN",
-  "translate_model": "gemini-1",
-  "enhance_compatibility": false,
-  "ocr_workaround": "auto",
-  "auto_extract_glossary": false,
-  "rich_text_translate": true,
-  "primary_font_family": "none",
-  "dual_mode": "lort",
-  "custom_system_prompt": "",
-  "layout_model": "version_3"
-}
-```
-
-可通过 `translate-agent` 或 `python3 scripts/translate/immersive_translate.py {slug}` 使用。输出单文件 `processing/translations/{slug}-{lang}.pdf`（split 双语版，原页与译页交替），并自动写入 PDF 目录/bookmarks：优先沿用源 PDF 内置 outline；若源 PDF 无 outline，则尝试使用 `processing/chapters/{slug}/manifest.json`；也可用 `--toc-json` 传入 Tocify 风格的 `[{title, level, page}]` 目录 JSON。默认目录跳到原文页，`--toc-page-side translated` 可改为跳到译文页。
-
-如果某个授权码对应的服务区域不同，可按需覆盖 `api_base_url`；其余字段保持不变即可。
-
-**Dokobot**（可选）— Google Scholar 兜底搜索：
-
-```bash
-npm install -g @dokobot/cli
-dokobot install-bridge
-```
-
-需要 Chrome 浏览器 + Dokobot 扩展。仅在 API 搜索结果不足时由 discover-agent 自动调用。不可用时自动跳过，不影响核心功能。
-
-### 分析参数
-
-项目 `CLAUDE.md` 提供分析立场：
-
-```yaml
-topic: "你的研究主题"
-preamble: "项目特定的分析指令"
-```
-
-这些值由 analyze-agent 从 CLAUDE.md §1.3 读取。
-
-## License
-
-Private use.
+看过我的论文就随便用随便改，没看过就偷着用偷着改。
