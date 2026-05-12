@@ -46,6 +46,10 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.15.1** (2026-05-12): Trim `setup-agent.md` (166 → 122 lines). Drop the
+  obsolete "credentials don't live here" callout and "调用方约定 (主 Claude 应
+  AskUserQuestion 收集凭据)" section — neither makes sense after 0.15.0's hook
+  bridge. No functional change.
 - **0.15.0** (2026-05-12): **Breaking.** Final config resolution: PreToolUse hook
   bridge. The docs claim `CLAUDE_PLUGIN_OPTION_*` env vars reach "plugin
   subprocesses" but empirically Bash-tool subprocesses don't get them — only
