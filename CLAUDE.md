@@ -37,7 +37,7 @@ when run outside a plugin context).
 
 Bootstrap is handled by `scripts/bootstrap-venv.sh`, wired to the `SessionStart`
 hook in `hooks/hooks.json`. It diffs the bundled `requirements.txt` against the
-copy in `$DATA_DIR/requirements.txt` and only reinstalls on change. Each `bin/qua-*`
+copy in `$DATA_DIR/requirements.txt` and only reinstalls on change. Each `bin/quasi-*`
 shim resolves `$DATA_DIR/.venv/bin/python` and falls back to running bootstrap if
 the venv is missing — so shims work even when SessionStart hasn't fired yet
 (bare invocation, fresh install).
@@ -46,11 +46,20 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
-- **0.14.1** (2026-05-12): Ship `debug-userconfig` probe agent to verify whether
-  `${user_config.KEY}` substitution actually reaches agent content at dispatch
-  time. Throwaway diagnostic — informs whether 0.15.0 config-resolution path
-  goes through agent content substitution, hook-bridge, or direct settings.json
-  reads. No functional change to other components.
+- **0.15.0** (2026-05-12): **Breaking.** Final config resolution: PreToolUse hook
+  bridge. The docs claim `CLAUDE_PLUGIN_OPTION_*` env vars reach "plugin
+  subprocesses" but empirically Bash-tool subprocesses don't get them — only
+  hooks/MCP/LSP/monitor do. Solution: a PreToolUse(Bash) hook
+  (`scripts/hooks/inject-userconfig.py`) runs in a real plugin subprocess, reads
+  its env, and prepends `export QUASI_<KEY>=...; ` to any `quasi-*` shell
+  command before Claude Code executes it. Scripts read clean `QUASI_*` env
+  vars. Sensitive userConfig fields stay in the macOS keychain — they only
+  materialise in the hook+bash process env for one tool call at a time. Also
+  renames all `bin/qua-*` shims to `bin/quasi-*`. Probe agent removed.
+- **0.14.1–0.14.3** (2026-05-12): Diagnostic releases — probe agents and probe
+  hooks to map out which subprocess types actually receive `CLAUDE_PLUGIN_OPTION_*`
+  env injection. Results: only the 4 documented types (hook/MCP/LSP/monitor) do;
+  Bash-tool subprocesses and Task-tool subagents do not. Drove the 0.15.0 design.
 - **0.14.0** (2026-05-12): **Breaking.** Anna's Archive and Immersive Translate
   credentials follow CookieCloud into plugin `userConfig`. New userConfig fields:
   `anna_donator_key` (sensitive), `anna_mirrors` (multiple, defaults to 3 official

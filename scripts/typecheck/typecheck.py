@@ -332,7 +332,7 @@ TYPE_ORDER = ["author", "book", "chapter", "paper", "unknown"]
 
 def build_report(stats: dict, total_files: int) -> str:
     lines = [
-        "# qua-vault typecheck report",
+        "# quasi-vault typecheck report",
         "",
         f"Generated: {datetime.now(timezone.utc).isoformat()}Z",
         f"Total files scanned: {total_files}",

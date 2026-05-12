@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# qua-extract-ocr — OCR a scanned PDF into a searchable PDF.
+# quasi-extract-ocr — OCR a scanned PDF into a searchable PDF.
 #
 # Usage:
-#   qua-extract-ocr INPUT.pdf [OUTPUT.pdf] [LANGUAGE]
+#   quasi-extract-ocr INPUT.pdf [OUTPUT.pdf] [LANGUAGE]
 
 set -e
 

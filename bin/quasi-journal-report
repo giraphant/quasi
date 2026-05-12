@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# qua-journal-report — Render a scored journal scan report (scan.md).
+# quasi-journal-report — Render a scored journal scan report (scan.md).
 #
 # Usage:
-#   qua-journal-report --papers PAPERS_JSON --scores SCORES_DIR --output PATH
+#   quasi-journal-report --papers PAPERS_JSON --scores SCORES_DIR --output PATH
 
 set -e
 

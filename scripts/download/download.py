@@ -17,12 +17,11 @@ Usage:
     # Batch: download all metadata_found papers in a manifest
     python3 download.py --manifest manifest.json --batch
 
-Config — all from plugin user-config env vars (set at `/plugin install`):
-    CLAUDE_PLUGIN_OPTION_ANNA_DONATOR_KEY        (sensitive)
-    CLAUDE_PLUGIN_OPTION_ANNA_MIRRORS            (multiple, JSON/newline-encoded)
-    CLAUDE_PLUGIN_OPTION_COOKIECLOUD_*           (see cookiecloud.py)
-No project-local config files are read. Sensitive values live in the system
-keychain via Claude Code's `sensitive: true` userConfig flag.
+Config: all from QUASI_* env vars injected by the PreToolUse hook
+(see `scripts/hooks/inject-userconfig.py`). Plugin `userConfig` defines the
+values; the hook reads them in its own env and prepends them to qua's
+shell command. Sensitive values stay in the system keychain — they only
+materialise in the hook+bash subprocess env for one tool call at a time.
 """
 
 import argparse
@@ -43,7 +42,7 @@ import requests
 # --- Config ---
 
 _PROJECT_DIR = Path.cwd()  # caller's research project root — output dir, no config
-# All credentials come from plugin user-config env vars; see CLAUDE_PLUGIN_OPTION_*.
+# All credentials come from QUASI_* env vars (injected by PreToolUse hook).
 
 DEFAULT_AA_MIRRORS = [
     "https://annas-archive.gl",
@@ -467,44 +466,29 @@ def try_ezproxy_download(doi, output_path):
 # Anna's Archive — MD5 → file (no search)
 # ============================================================
 
-def _env(key: str) -> str:
-    """Read CLAUDE_PLUGIN_OPTION_<KEY>, trying upper and original case."""
-    prefix = "CLAUDE_PLUGIN_OPTION_"
-    for variant in (f"{prefix}{key.upper()}", f"{prefix}{key}"):
-        val = os.environ.get(variant, "").strip()
-        if val:
-            return val
-    return ""
-
-
-def _parse_mirrors(raw: str) -> list[str]:
-    """Parse anna_mirrors env var — Claude Code's serialization format for
-    `multiple: true` strings is undocumented, so probe defensively."""
-    if not raw:
-        return []
-    # JSON array
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            return [str(m).strip().rstrip("/") for m in parsed if str(m).strip()]
-    except (ValueError, TypeError):
-        pass
-    # Newline-separated
-    if "\n" in raw:
-        return [m.strip().rstrip("/") for m in raw.split("\n") if m.strip()]
-    # Comma-separated
-    if "," in raw:
-        return [m.strip().rstrip("/") for m in raw.split(",") if m.strip()]
-    # Single value
-    return [raw.strip().rstrip("/")]
-
-
 def load_aa_config():
-    """Resolve Anna's Archive config from plugin user-config env vars."""
-    donator_key = _env("anna_donator_key")
+    """Resolve Anna's Archive config from QUASI_ANNA_* env vars.
+
+    Env is injected by the PreToolUse hook (see scripts/hooks/inject-userconfig.py).
+    `QUASI_ANNA_MIRRORS` is a JSON array string (hook uses shlex.quote on the
+    multiple-typed userConfig value). Empty/missing mirrors → DEFAULT_AA_MIRRORS.
+    """
+    donator_key = os.environ.get("QUASI_ANNA_DONATOR_KEY", "").strip()
     if not donator_key:
         return None
-    mirrors = _parse_mirrors(_env("anna_mirrors")) or list(DEFAULT_AA_MIRRORS)
+    raw_mirrors = os.environ.get("QUASI_ANNA_MIRRORS", "").strip()
+    mirrors: list[str] = []
+    if raw_mirrors:
+        try:
+            parsed = json.loads(raw_mirrors)
+            if isinstance(parsed, list):
+                mirrors = [str(m).strip().rstrip("/") for m in parsed if str(m).strip()]
+            elif isinstance(parsed, str) and parsed.strip():
+                mirrors = [parsed.strip().rstrip("/")]
+        except (ValueError, TypeError):
+            mirrors = [raw_mirrors.rstrip("/")]
+    if not mirrors:
+        mirrors = list(DEFAULT_AA_MIRRORS)
     return {"donator_key": donator_key, "mirrors": mirrors}
 
 

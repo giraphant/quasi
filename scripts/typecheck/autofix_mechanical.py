@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pure-mechanical autofix for qua-vault drift.
+"""Pure-mechanical autofix for quasi-vault drift.
 
 Only operations with **zero judgment** live here. Everything that requires
 context, content understanding, or policy decisions is handed off to the

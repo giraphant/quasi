@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# qua-extract-epub — Extract chapter-level plain text from an EPUB.
+# quasi-extract-epub — Extract chapter-level plain text from an EPUB.
 #
 # Usage:
-#   qua-extract-epub SOURCE_EPUB CHAPTERS_DIR
+#   quasi-extract-epub SOURCE_EPUB CHAPTERS_DIR
 
 set -e
 

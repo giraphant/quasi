@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# qua-synthesize-refs — Aggregate references across analysis files into a reading list.
+# quasi-synthesize-refs — Aggregate references across analysis files into a reading list.
 #
 # Usage:
-#   qua-synthesize-refs ANALYSIS_DIR --output READING_LIST_PATH
+#   quasi-synthesize-refs ANALYSIS_DIR --output READING_LIST_PATH
 
 set -e
 

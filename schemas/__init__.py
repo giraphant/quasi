@@ -1,4 +1,4 @@
-"""qua-vault schema definitions (Pydantic V2 + dataclasses).
+"""quasi-vault schema definitions (Pydantic V2 + dataclasses).
 
 Frontmatter schemas (Pydantic):
     AuthorSchema · BookSchema · ChapterSchema · PaperSchema

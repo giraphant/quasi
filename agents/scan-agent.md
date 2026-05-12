@@ -9,7 +9,7 @@ model: opus
 
 ## 路径契约
 
-- 工具脚本通过 `qua-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
+- 工具脚本通过 `quasi-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
 - **`$PWD`** — 用户研究项目根目录。`output_path` 由调用方提供，相对路径按 `$PWD` 拼为绝对路径再使用。
 - 中间产物（论文 JSON、评分 JSON）落 `/tmp/` 即可，不污染项目目录。
 
@@ -27,7 +27,7 @@ Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
 
 1. 抓取论文：
    ```bash
-   qua-journal-fetch \
+   quasi-journal-fetch \
        --journal-name "{journal_full_name}" --days-back 3650 \
        --output /tmp/{journal_name}-papers.json
    ```
@@ -40,7 +40,7 @@ Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
 
 4. 生成报告：
    ```bash
-   qua-journal-report \
+   quasi-journal-report \
        --papers /tmp/{journal_name}-papers.json \
        --scores /tmp/{journal_name}-scores/ \
        --output {output_path}

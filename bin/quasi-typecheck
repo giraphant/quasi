@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# qua-typecheck — Validate vault md files against quasi SPEC.
+# quasi-typecheck — Validate vault md files against quasi SPEC.
 #
 # Usage:
-#   qua-typecheck                    # check $PWD/vault
-#   qua-typecheck --path FILE_OR_DIR
-#   qua-typecheck --quiet
+#   quasi-typecheck                    # check $PWD/vault
+#   quasi-typecheck --path FILE_OR_DIR
+#   quasi-typecheck --quiet
 
 set -e
 

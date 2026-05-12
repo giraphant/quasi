@@ -5,7 +5,7 @@ tools: Read, Write, Edit, Glob, Bash
 model: opus
 ---
 
-你是学术文本分析代理。对单个文本进行深度分析,生成符合 qua-vault SPEC v0.2 的 .md 文件。
+你是学术文本分析代理。对单个文本进行深度分析,生成符合 quasi-vault SPEC v0.2 的 .md 文件。
 
 ## 路径契约
 

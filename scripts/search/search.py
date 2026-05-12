@@ -52,7 +52,7 @@ DELAY = 0.35
 
 # --- Anna's Archive config ---
 _PROJECT_DIR = Path.cwd()  # caller's research project root
-# AA credentials come from plugin user-config env vars; see CLAUDE_PLUGIN_OPTION_ANNA_*.
+# AA credentials come from QUASI_ANNA_* env (injected by PreToolUse hook).
 AA_DEFAULT_MIRRORS = [
     "https://annas-archive.gl",
     "https://annas-archive.pk",
@@ -274,39 +274,22 @@ def search_books(query: str = "", author: str = None, title: str = None, subject
 # Anna's Archive book search (HTML scraping)
 # ============================================================
 
-def _env(key: str) -> str:
-    """Read CLAUDE_PLUGIN_OPTION_<KEY>, trying upper and original case."""
-    prefix = "CLAUDE_PLUGIN_OPTION_"
-    for variant in (f"{prefix}{key.upper()}", f"{prefix}{key}"):
-        val = os.environ.get(variant, "").strip()
-        if val:
-            return val
-    return ""
-
-
-def _parse_mirrors(raw: str) -> list:
-    """Parse anna_mirrors env var — see download.py:_parse_mirrors for rationale."""
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            return [str(m).strip().rstrip("/") for m in parsed if str(m).strip()]
-    except (ValueError, TypeError):
-        pass
-    if "\n" in raw:
-        return [m.strip().rstrip("/") for m in raw.split("\n") if m.strip()]
-    if "," in raw:
-        return [m.strip().rstrip("/") for m in raw.split(",") if m.strip()]
-    return [raw.strip().rstrip("/")]
-
-
 def _load_aa_config():
-    """Resolve AA config from plugin user-config env vars."""
-    donator_key = _env("anna_donator_key")
+    """Resolve AA config from QUASI_ANNA_* env (injected by PreToolUse hook)."""
+    donator_key = os.environ.get("QUASI_ANNA_DONATOR_KEY", "").strip()
     if not donator_key:
         return None
-    mirrors = _parse_mirrors(_env("anna_mirrors"))
+    raw_mirrors = os.environ.get("QUASI_ANNA_MIRRORS", "").strip()
+    mirrors: list = []
+    if raw_mirrors:
+        try:
+            parsed = json.loads(raw_mirrors)
+            if isinstance(parsed, list):
+                mirrors = [str(m).strip().rstrip("/") for m in parsed if str(m).strip()]
+            elif isinstance(parsed, str) and parsed.strip():
+                mirrors = [parsed.strip().rstrip("/")]
+        except (ValueError, TypeError):
+            mirrors = [raw_mirrors.rstrip("/")]
     return {"donator_key": donator_key, "mirrors": mirrors}
 
 

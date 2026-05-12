@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# qua-translate — Translate a local PDF via Immersive Translate (Zotero API).
+# quasi-journal-fetch — Fetch a journal's paper list to JSON.
 #
 # Usage:
-#   qua-translate SLUG [additional args...]
+#   quasi-journal-fetch --journal-name "Full Name" --days-back N --output PATH
 
 set -e
 
@@ -13,4 +13,4 @@ PYTHON="$DATA_DIR/.venv/bin/python"
 
 [ -x "$PYTHON" ] || "$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
 
-exec "$PYTHON" "$PLUGIN_ROOT/scripts/translate/immersive_translate.py" "$@"
+exec "$PYTHON" "$PLUGIN_ROOT/scripts/journal/fetch_papers.py" "$@"

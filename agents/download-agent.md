@@ -9,15 +9,12 @@ model: sonnet
 
 ## 路径契约
 
-- 工具脚本通过 `qua-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
+- 工具脚本通过 `quasi-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
 - **`$PWD`** — 用户研究项目根目录。所有写入落在此根下：
   - 源文件落点：`$PWD/sources/`
   - manifest / 中间产物：`$PWD/processing/`
-- 所有凭据**不在 `$PWD/config/`** —— 走插件 `userConfig`，Claude Code 注入 `CLAUDE_PLUGIN_OPTION_*` 环境变量。涉及：
-  - Anna's Archive：`anna_donator_key`、`anna_mirrors`
-  - EZProxy (via CookieCloud)：`cookiecloud_*` 5 字段
 
-凡涉及 HTTP 下载（OA、Sci-Hub、AA、EZProxy、Wayback）唯一通道是 `qua-download`。AA 搜索唯一通道是 `qua-search`。
+凡涉及 HTTP 下载（OA、Sci-Hub、AA、EZProxy、Wayback）唯一通道是 `quasi-download`。AA 搜索唯一通道是 `quasi-search`。
 
 Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
 
@@ -32,15 +29,15 @@ Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
 ## 脚本
 
 - 搜 AA（仅书）：
-  `qua-search books --source aa "{title}" --author "{author}" --limit 5`
+  `quasi-search books --source aa "{title}" --author "{author}" --limit 5`
 - 按 MD5 下载（仅书）：
-  `qua-download --md5 {md5} --filename {slug} -o sources/`
+  `quasi-download --md5 {md5} --filename {slug} -o sources/`
 - 书籍下载后定稿：
-  `qua-download --finalize-book --manifest {manifest_path} --book-index {N} --downloaded-path sources/{slug}.{ext} --expected-author "{full_name}"`
+  `quasi-download --finalize-book --manifest {manifest_path} --book-index {N} --downloaded-path sources/{slug}.{ext} --expected-author "{full_name}"`
 - 按 DOI 下载（论文）：
-  `qua-download --doi "{doi}" --output-dir {output_dir} --filename {slug} --verify-author "{author}" --verify-title "{title}"`
+  `quasi-download --doi "{doi}" --output-dir {output_dir} --filename {slug} --verify-author "{author}" --verify-title "{title}"`
 - manifest 批量：
-  `qua-download --manifest {manifest_path} --batch --retry-wayback`
+  `quasi-download --manifest {manifest_path} --batch --retry-wayback`
 
 ## 执行流程
 
@@ -61,20 +58,8 @@ Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
 
 ## 凭据故障排查
 
-自 quasi 0.14.0 起所有凭据都在插件 `userConfig` 层。**不要**自己写 `$PWD/config/*.json`——脚本不读。
-
-### Anna's Archive
-
-脚本报 "Anna's Archive donator key not set" → 引导用户 `/plugin` → Configure options 填 `anna_donator_key`。如果用户想用自定义镜像，同处填 `anna_mirrors`（多行，每行一个 URL；留空用默认三个 .gl/.pk/.gd）。
-
-### EZProxy（经 CookieCloud）
-
-脚本报 `EZPROXY COOKIE EXPIRED` 有两种情况：
-
-1. **CookieCloud server 上 cookie 也过期了。** 引导用户：在 Chrome 打开任意论文链接 → 走完一次 SSO + 2FA → CookieCloud 扩展会自动把新 cookie 推回 server → 重跑 download。
-2. **CookieCloud 根本没配。** 引导用户 `/plugin` → Configure options 填 5 字段：`cookiecloud_server` / `cookiecloud_uuid` / `cookiecloud_password` / `cookiecloud_ezproxy_domain` / `cookiecloud_login_url`（默认 Harvard）。
-
-调试 env 是否注入：`python3 $CLAUDE_PLUGIN_ROOT/scripts/download/cookiecloud.py` 会打印当前可见的 `CLAUDE_PLUGIN_OPTION_*` 列表 + 实际拉到的 cookie 名集合。
+- "Anna's Archive donator key not set" → 引导用户 `/plugin` → Configure options 填 `anna_donator_key`
+- `EZPROXY COOKIE EXPIRED` → 让用户在 Chrome 打开任意论文链接走一次 SSO+2FA,CookieCloud 扩展会自动推新 cookie,然后重跑下载。如果根本没配 CookieCloud,让用户去 `/plugin` 填 `cookiecloud_*` 5 字段。
 
 ## 输出协议
 

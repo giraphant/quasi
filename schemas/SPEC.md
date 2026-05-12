@@ -1,4 +1,4 @@
-# qua-vault Schema Specification
+# quasi-vault Schema Specification
 
 ```
 Version : 0.1.0-draft
@@ -657,7 +657,7 @@ LLM 生成新文档时**应当**:
 - ✓ `schemas/{author,book,chapter,paper,body,registry,__init__}.py` 实现
 - ✓ `scripts/typecheck/typecheck.py` —— 校验器
 - ✓ `scripts/typecheck/autofix_mechanical.py` —— Layer 1 机械修复
-- ✓ `bin/qua-typecheck` + `bin/qua-autofix-mechanical` —— shim 命令
+- ✓ `bin/quasi-typecheck` + `bin/quasi-autofix-mechanical` —— shim 命令
 - ✓ `agents/typecheck-agent.md` —— 自包含 agent
 - ✓ 端到端测试:4 个不同 type 的文件全部 clean
 

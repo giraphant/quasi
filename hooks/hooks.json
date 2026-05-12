@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "env | grep '^CLAUDE_PLUGIN_OPTION_' | sed 's/=.*$/=<SET>/' | sort > /tmp/quasi-hook-env-probe.txt; echo \"---total: $(env | grep -c '^CLAUDE_PLUGIN_OPTION_')\" >> /tmp/quasi-hook-env-probe.txt"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/hooks/inject-userconfig.py"
           }
         ]
       }

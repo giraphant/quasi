@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# qua-extract-split — Split a PDF into per-chapter files.
+# quasi-extract-split — Split a PDF into per-chapter files.
 #
 # Usage:
-#   qua-extract-split INPUT.pdf --output-dir DIR [--max-chapters N]
-#   qua-extract-split INPUT.pdf --output-dir DIR --chapters '<JSON>'
-#   qua-extract-split INPUT.pdf --output-dir DIR --pages 15-32 --title "..."
+#   quasi-extract-split INPUT.pdf --output-dir DIR [--max-chapters N]
+#   quasi-extract-split INPUT.pdf --output-dir DIR --chapters '<JSON>'
+#   quasi-extract-split INPUT.pdf --output-dir DIR --pages 15-32 --title "..."
 
 set -e
 

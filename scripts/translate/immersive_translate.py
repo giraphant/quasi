@@ -71,23 +71,14 @@ class AmbiguousSourceError(TranslationError):
         super().__init__(f"Multiple PDF candidates found for '{slug}':\n{joined}")
 
 
-def _env(key: str) -> str:
-    """Read CLAUDE_PLUGIN_OPTION_<KEY>, trying upper and original case."""
-    prefix = "CLAUDE_PLUGIN_OPTION_"
-    for variant in (f"{prefix}{key.upper()}", f"{prefix}{key}"):
-        val = os.environ.get(variant, "").strip()
-        if val:
-            return val
-    return ""
-
-
 def load_settings_from_env() -> dict[str, Any]:
     """Build the Immersive Translate request payload from env + hardcoded template.
 
-    Only `auth_key` is user-supplied (via plugin userConfig). The rest are fixed
+    Only `auth_key` is user-supplied (via plugin userConfig, injected by the
+    PreToolUse hook as `QUASI_IMMERSIVE_AUTH_KEY`). The rest are fixed
     request-shape knobs — see DEFAULT_SETTINGS at the top of this module.
     """
-    auth_key = _env("immersive_auth_key")
+    auth_key = os.environ.get("QUASI_IMMERSIVE_AUTH_KEY", "").strip()
     if not auth_key:
         raise MissingAuthKeyError(
             "Immersive Translate auth key not set. "

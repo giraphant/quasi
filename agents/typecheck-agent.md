@@ -11,7 +11,7 @@ model: sonnet
 
 - **`$PWD`** — 用户研究项目根目录(包含 `vault/`)。所有 Read/Write 路径基于此根。
 - **`$PWD/.quasi/`** — typecheck 报告写在这里(自动创建)。
-- **`qua-typecheck` / `qua-autofix-mechanical`** — plugin 提供的两个 bash 命令,**Claude Code 自动把 plugin 的 `bin/` 加入 PATH**,所以直接按名调用即可。它们内部自己解析 plugin 路径 + 维护 venv,你不用操心。
+- **`quasi-typecheck` / `quasi-autofix-mechanical`** — plugin 提供的两个 bash 命令,**Claude Code 自动把 plugin 的 `bin/` 加入 PATH**,所以直接按名调用即可。它们内部自己解析 plugin 路径 + 维护 venv,你不用操心。
 
 ## 输入参数
 
@@ -25,7 +25,7 @@ model: sonnet
 ### Step 1: 初始 typecheck
 
 ```bash
-qua-typecheck --path "{path}" --quiet
+quasi-typecheck --path "{path}" --quiet
 ```
 
 退出码 0 = clean,1 = 有违规。读 `$PWD/.quasi/typecheck-results.json` 拿详细数据。
@@ -35,7 +35,7 @@ qua-typecheck --path "{path}" --quiet
 ### Step 2: 纯机械修复
 
 ```bash
-qua-autofix-mechanical --path "{path}" --write
+quasi-autofix-mechanical --path "{path}" --write
 ```
 
 这一步零 LLM 成本,**只做有零判断空间的操作**:
@@ -60,7 +60,7 @@ qua-autofix-mechanical --path "{path}" --write
 ### Step 3: 再次 typecheck,看剩余违规
 
 ```bash
-qua-typecheck --path "{path}" --quiet
+quasi-typecheck --path "{path}" --quiet
 ```
 
 读新的 `.quasi/typecheck-results.json`。剩余违规分类(全部 Step 4 处理):
@@ -164,7 +164,7 @@ frontmatter 错 paper 缺 `journal` 但有 `source: "..."`:
 ### Step 5: 最终 typecheck 验收
 
 ```bash
-qua-typecheck --path "{path}" --quiet
+quasi-typecheck --path "{path}" --quiet
 ```
 
 读最新报告。统计剩余 violations 数:

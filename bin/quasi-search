@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# qua-search — Search books / papers via OpenLibrary, Crossref, Anna's Archive, etc.
+# quasi-search — Search books / papers via OpenLibrary, Crossref, Anna's Archive, etc.
 #
 # Usage:
-#   qua-search books --author "..." --limit N
-#   qua-search papers --author "..." --limit N
-#   qua-search books --source aa "TITLE" --author "AUTHOR" --limit N
-#   qua-search validate --manifest PATH
-#   qua-search metadata --manifest PATH --all
+#   quasi-search books --author "..." --limit N
+#   quasi-search papers --author "..." --limit N
+#   quasi-search books --source aa "TITLE" --author "AUTHOR" --limit N
+#   quasi-search validate --manifest PATH
+#   quasi-search metadata --manifest PATH --all
 
 set -e
 
