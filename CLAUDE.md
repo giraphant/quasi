@@ -46,6 +46,14 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.15.2** (2026-05-12): PreToolUse hook also propagates `CLAUDE_PLUGIN_ROOT`
+  and `CLAUDE_PLUGIN_DATA` to bash subprocesses (in addition to the userConfig
+  `QUASI_*` block). Before this, the shims fell back to `~/.cache/quasi/.venv`
+  for the venv because `$CLAUDE_PLUGIN_DATA` was unset in Bash-tool env, even
+  though the SessionStart hook had already materialised the venv at the
+  official `$CLAUDE_PLUGIN_DATA/.venv` (= `~/.claude/plugins/data/<id>/.venv`).
+  Now shims use the official path. Users with the old fallback venv can
+  `rm -rf ~/.cache/quasi/.venv` to reclaim disk.
 - **0.15.1** (2026-05-12): Trim `setup-agent.md` (166 → 122 lines). Drop the
   obsolete "credentials don't live here" callout and "调用方约定 (主 Claude 应
   AskUserQuestion 收集凭据)" section — neither makes sense after 0.15.0's hook

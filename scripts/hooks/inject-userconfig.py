@@ -55,6 +55,17 @@ def main() -> None:
         return
 
     exports: list[str] = []
+
+    # Propagate the plugin path vars too: Bash-tool subprocesses don't inherit
+    # CLAUDE_PLUGIN_ROOT / CLAUDE_PLUGIN_DATA either, so the qua-* shims fall
+    # back to `~/.cache/quasi` for the venv and lose the bundled-path fast
+    # path. Re-injecting here keeps everything pointing at the official
+    # `$CLAUDE_PLUGIN_DATA` (= `~/.claude/plugins/data/<id>/`) location.
+    for plugin_var in ("CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA"):
+        val = os.environ.get(plugin_var, "").strip()
+        if val:
+            exports.append(f"{plugin_var}={shlex.quote(val)}")
+
     for key in _KEYS:
         val = os.environ.get(f"CLAUDE_PLUGIN_OPTION_{key}", "").strip()
         if val:
