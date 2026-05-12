@@ -61,7 +61,7 @@ if not exists(manifest_path):
     analysis = Read(f"vault/topics/{topic_slug}/seed.md")
     citations = parse_citation_section(analysis)
     create_manifest(manifest_path, seed, citations)
-    Bash(f'python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/search/search.py" metadata --manifest {manifest_path} --all')
+    Bash(f'qua-search metadata --manifest {manifest_path} --all')
 
 # Phase 1-N: EXPAND
 manifest = read_json(manifest_path)
@@ -70,7 +70,7 @@ for round_num in range(manifest["rounds_completed"] + 1, MAX_ROUNDS + 1):
     if not discovered:
         break
 
-    Bash(f'python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/search/search.py" metadata --manifest {manifest_path} --all')
+    Bash(f'qua-search metadata --manifest {manifest_path} --all')
     Agent("quasi:download-agent", foreground=True,
           prompt=f"manifest_path: {manifest_path}, mode: papers")
 
@@ -99,6 +99,12 @@ if not exists(f"vault/topics/{topic_slug}-synthesis.md"):
                  f"analysis_dir: vault/topics/{topic_slug}/, "
                  f"output_path: vault/topics/{topic_slug}-synthesis.md, "
                  f"reading_list_path: vault/topics/{topic_slug}-reading-list.md, topic: ...")
+
+# TYPECHECK
+# 校验 + 修复本次滚雪球产出的所有 paper 分析(在 vault/topics/{slug}/ 下)。
+# synthesis.md 自身不打 type,不在 schema 校验范围内 —— typecheck 只扫子目录里的论文。
+Agent("quasi:typecheck-agent", foreground=True,
+      prompt=f"path: vault/topics/{topic_slug}/\nmode: full")
 ```
 
 ## Manifest 格式
@@ -125,6 +131,7 @@ if not exists(f"vault/topics/{topic_slug}-synthesis.md"):
 | Phase 0 | `manifest.json` | 存在则跳过 |
 | Phase N | `rounds_completed >= N` | 跳过已完成轮次 |
 | FINAL | `synthesis.md` | 存在则跳过 |
+| TYPECHECK | 无 —— 幂等,可重复跑 | 上次 typecheck clean 时几乎无成本 |
 
 ## 目录结构
 

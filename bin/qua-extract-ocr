@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# qua-extract-ocr — OCR a scanned PDF into a searchable PDF.
+#
+# Usage:
+#   qua-extract-ocr INPUT.pdf [OUTPUT.pdf] [LANGUAGE]
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+
+exec bash "$PLUGIN_ROOT/scripts/extract/ocr_pdf.sh" "$@"

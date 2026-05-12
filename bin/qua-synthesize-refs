@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# qua-synthesize-refs — Aggregate references across analysis files into a reading list.
+#
+# Usage:
+#   qua-synthesize-refs ANALYSIS_DIR --output READING_LIST_PATH
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+
+exec python3 "$PLUGIN_ROOT/scripts/synthesize/aggregate_refs.py" "$@"

@@ -1,0 +1,18 @@
+[project]
+name = "qua-schemas"
+version = "0.2.0"
+description = "Pydantic V2 schemas for the qua-vault (author / book / chapter / paper)"
+readme = "SPEC.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyyaml>=6.0",     # for reading frontmatter in scripts
+    "rich>=13",        # for prettier reports
+]
+
+[tool.uv]
+package = false        # 不发布,只内部使用

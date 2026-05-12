@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# qua-typecheck — Validate vault md files against quasi SPEC.
+#
+# This shim discovers its own plugin location via realpath, then dispatches
+# to the actual Python script. Uses a shared venv at $CLAUDE_PLUGIN_DATA/.venv
+# and ensures its deps on every run (so a venv created by a sibling shim
+# without these deps still works).
+#
+# Usage:
+#   qua-typecheck                    # check $PWD/vault
+#   qua-typecheck --path FILE_OR_DIR
+#   qua-typecheck --quiet
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-$PLUGIN_ROOT/.venv-data}"
+VENV="$DATA_DIR/.venv"
+
+if [ ! -x "$VENV/bin/python" ]; then
+    echo "[qua-typecheck] creating venv at $VENV ..." >&2
+    mkdir -p "$DATA_DIR"
+    python3 -m venv "$VENV"
+    "$VENV/bin/pip" install --quiet --upgrade pip
+fi
+
+if ! "$VENV/bin/python" -c "import pydantic, yaml" 2>/dev/null; then
+    echo "[qua-typecheck] installing pydantic pyyaml ..." >&2
+    "$VENV/bin/pip" install --quiet pydantic pyyaml
+fi
+
+exec "$VENV/bin/python" "$PLUGIN_ROOT/scripts/typecheck/typecheck.py" "$@"

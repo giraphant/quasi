@@ -89,7 +89,12 @@ if not exists(f"{output_dir}/00-overview.md"):
     Agent("quasi:overview-agent", foreground=True,
           prompt=f"output_dir: {output_dir}, book_title: ..., topic: ...")
 
-print(f"Done: {len(selected)} chapters, overview generated")
+# Step 5: TYPECHECK
+# 校验 + 修复整本书目录(overview + 所有章节),在源头止住 schema 漂移。
+Agent("quasi:typecheck-agent", foreground=True,
+      prompt=f"path: {output_dir}\nmode: full")
+
+print(f"Done: {len(selected)} chapters, overview generated, typechecked")
 ```
 
 ## 断点续跑
@@ -99,6 +104,7 @@ print(f"Done: {len(selected)} chapters, overview generated")
 | Step 1 | `{chapters_dir}/manifest.json` | 存在则跳过 |
 | Step 3 | `ch{slot}-*.md` | 存在则跳过该章 |
 | Step 4 | `00-overview.md` | 存在则跳过 |
+| Step 5 | 无 —— 幂等,可重复跑 | 上次 typecheck clean 时几乎无成本 |
 
 ## 目录结构
 

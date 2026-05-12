@@ -40,7 +40,8 @@ description: >
 │   ├─ Glob 轮询
 │   └─ 逐本: overview-agent (opus, 前台)
 ├─ Phase 4: analyze-agent ×M (opus, 后台) → 论文
-└─ Phase 5: profile-agent (opus, 前台) → profile.md
+├─ Phase 5: profile-agent (opus, 前台) → profile.md
+└─ Phase 6: typecheck-agent (sonnet, 前台) → 校验 + 修复所有生成文件
 ```
 
 ## 执行流程
@@ -120,6 +121,19 @@ if not exists(profile_path):
           prompt=f"author_name: {author_name}, full_name: {full_name}, topic: ..., "
                  f"output_path: {profile_path}, "
                  f"book_overview_paths: {book_overview_paths}, paper_paths: {paper_paths}")
+
+# 6. TYPECHECK
+# 校验 + 修复所有本次生成的文件,在源头止住 schema 漂移。
+# 每个 path 一个独立 Agent() 调用,顺序前台跑(typecheck-agent 单文件 ~30-60s)。
+typecheck_targets = [profile_path]
+for b in acquired_books:
+    typecheck_targets.append(f"vault/books/{b.slug}/")  # overview + 所有章节
+for p in manifest.papers where status == "acquired":
+    typecheck_targets.append(f"vault/papers/{p.slug}.md")
+
+for path in typecheck_targets:
+    Agent("quasi:typecheck-agent", foreground=True,
+          prompt=f"path: {path}\nmode: full")
 ```
 
 ## 断点续跑
@@ -133,6 +147,7 @@ if not exists(profile_path):
 | Phase 3c | `00-overview.md` | 存在则跳过该书 |
 | Phase 4 | `vault/papers/{paper.slug}.md` | 存在则跳过 |
 | Phase 5 | `vault/authors/{author-name}.md` | 存在则跳过 |
+| Phase 6 | 无 —— 幂等,可重复跑 | 上次 typecheck clean 时几乎无成本 |
 
 ## 目录结构
 

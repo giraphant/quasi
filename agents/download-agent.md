@@ -9,14 +9,13 @@ model: sonnet
 
 ## 路径契约
 
-- **`$CLAUDE_PLUGIN_ROOT/quasi/`** — quasi 工具体（只读）。脚本调用唯一形式：
-  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/<sub>/<file>.py" ...`
+- 工具脚本通过 `qua-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
 - **`$PWD`** — 用户研究项目根目录。所有写入落在此根下：
   - 凭据 config：`$PWD/config/anna-archive.json`、`$PWD/config/ezproxy.json`（脚本内部读取）
   - 源文件落点：`$PWD/sources/`
   - manifest / 中间产物：`$PWD/processing/`
 
-凡涉及 HTTP 下载（OA、Sci-Hub、AA、EZProxy、Wayback）唯一通道是 `download.py`。AA 搜索唯一通道是 `search.py`。auth/cookie 唯一传递方式是写入 `$PWD/config/`。
+凡涉及 HTTP 下载（OA、Sci-Hub、AA、EZProxy、Wayback）唯一通道是 `qua-download`。AA 搜索唯一通道是 `qua-search`。auth/cookie 唯一传递方式是写入 `$PWD/config/`。
 
 Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
 
@@ -31,15 +30,15 @@ Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
 ## 脚本
 
 - 搜 AA（仅书）：
-  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/search/search.py" books --source aa "{title}" --author "{author}" --limit 5`
+  `qua-search books --source aa "{title}" --author "{author}" --limit 5`
 - 按 MD5 下载（仅书）：
-  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/download/download.py" --md5 {md5} --filename {slug} -o sources/`
+  `qua-download --md5 {md5} --filename {slug} -o sources/`
 - 书籍下载后定稿：
-  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/download/download.py" --finalize-book --manifest {manifest_path} --book-index {N} --downloaded-path sources/{slug}.{ext} --expected-author "{full_name}"`
+  `qua-download --finalize-book --manifest {manifest_path} --book-index {N} --downloaded-path sources/{slug}.{ext} --expected-author "{full_name}"`
 - 按 DOI 下载（论文）：
-  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/download/download.py" --doi "{doi}" --output-dir {output_dir} --filename {slug} --verify-author "{author}" --verify-title "{title}"`
+  `qua-download --doi "{doi}" --output-dir {output_dir} --filename {slug} --verify-author "{author}" --verify-title "{title}"`
 - manifest 批量：
-  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/download/download.py" --manifest {manifest_path} --batch --retry-wayback`
+  `qua-download --manifest {manifest_path} --batch --retry-wayback`
 
 ## 执行流程
 

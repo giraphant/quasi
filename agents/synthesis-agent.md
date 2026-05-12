@@ -9,8 +9,7 @@ model: opus
 
 ## 路径契约
 
-- **`$CLAUDE_PLUGIN_ROOT/quasi/`** — quasi 工具体（只读）。脚本调用唯一形式：
-  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/synthesize/<file>.py" ...`
+- 工具脚本通过 `qua-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
 - **`$PWD`** — 用户研究项目根目录。`analysis_dir`、`output_path`、`reading_list_path`、`kb_path` 全部基于此根。
 
 Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
@@ -37,7 +36,7 @@ kb-update 模式额外参数：
 
 1. 聚合参考文献：
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/synthesize/aggregate_refs.py" {analysis_dir} --output {reading_list_path}
+   qua-synthesize-refs {analysis_dir} --output {reading_list_path}
    ```
 2. 读取 `{analysis_dir}` 下所有 .md 分析文件
 3. 按下方综合模板生成报告

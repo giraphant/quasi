@@ -9,9 +9,7 @@ model: sonnet
 
 ## 路径契约
 
-- **`$CLAUDE_PLUGIN_ROOT/quasi/`** — quasi 工具体（只读）。脚本调用唯一形式：
-  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/extract/<file>.py" ...`
-  `bash "$CLAUDE_PLUGIN_ROOT/quasi/scripts/extract/ocr_pdf.sh" ...`
+- 工具脚本通过 `qua-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
 - **`$PWD`** — 用户研究项目根目录。`source_file` / `chapters_dir` 等输入路径由调用方提供，必须为绝对路径或相对 `$PWD`。
 - 调用方传入 Read/Write 路径时，相对路径必须按 `$PWD` 拼为绝对路径再使用。
 
@@ -26,15 +24,15 @@ model: sonnet
 ## 脚本
 
 - EPUB 提取：
-  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/extract/process_epub.py" {source_file} {chapters_dir}`
+  `qua-extract-epub {source_file} {chapters_dir}`
 - PDF 自动模式：
-  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/extract/split_chapters.py" {source_file} --output-dir {chapters_dir} --max-chapters 150`
+  `qua-extract-split {source_file} --output-dir {chapters_dir} --max-chapters 150`
 - PDF 手动模式：
-  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/extract/split_chapters.py" {source_file} --output-dir {chapters_dir} --chapters '<JSON>'`
+  `qua-extract-split {source_file} --output-dir {chapters_dir} --chapters '<JSON>'`
 - 单章修复：
-  `python3 "$CLAUDE_PLUGIN_ROOT/quasi/scripts/extract/split_chapters.py" {source_file} --output-dir {chapters_dir} --pages 15-32 --title "..."`
+  `qua-extract-split {source_file} --output-dir {chapters_dir} --pages 15-32 --title "..."`
 - OCR：
-  `bash "$CLAUDE_PLUGIN_ROOT/quasi/scripts/extract/ocr_pdf.sh" {source_file} {source_file}-ocr.pdf`
+  `qua-extract-ocr {source_file} {source_file}-ocr.pdf`
 
 `--chapters` JSON 格式：`[{"title": "...", "start": 页码, "end": 页码}, ...]`
 

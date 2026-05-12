@@ -77,6 +77,11 @@ if not exists(f"vault/journals/{journal_name}-synthesis.md"):
           prompt=f"source_name: ..., analysis_dir: vault/journals/{journal_name}/, "
                  f"output_path: vault/journals/{journal_name}-synthesis.md, "
                  f"reading_list_path: vault/journals/{journal_name}-reading-list.md, topic: ...")
+
+# Step 6: TYPECHECK
+# 校验 + 修复本期刊本批次生成的所有论文(papers 都在 vault/journals/{name}/).
+Agent("quasi:typecheck-agent", foreground=True,
+      prompt=f"path: vault/journals/{journal_name}/\nmode: full")
 ```
 
 ## 断点续跑
@@ -86,6 +91,7 @@ if not exists(f"vault/journals/{journal_name}-synthesis.md"):
 | Step 1 | `{name}-scan.md` | 存在则跳过 |
 | Step 4 | `{name}/{doi}.md` | 存在则跳过 |
 | Step 5 | `{name}-synthesis.md` | 存在则跳过 |
+| Step 6 | 无 —— 幂等,可重复跑 | 上次 typecheck clean 时几乎无成本 |
 
 ## 目录结构
 

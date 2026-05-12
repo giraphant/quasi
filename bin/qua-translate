@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# qua-translate — Translate a local PDF via Immersive Translate (Zotero API).
+#
+# Usage:
+#   qua-translate SLUG [additional args...]
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-$PLUGIN_ROOT/.venv-data}"
+VENV="$DATA_DIR/.venv"
+
+if [ ! -x "$VENV/bin/python" ]; then
+    echo "[qua-translate] creating venv at $VENV ..." >&2
+    mkdir -p "$DATA_DIR"
+    python3 -m venv "$VENV"
+    "$VENV/bin/pip" install --quiet --upgrade pip
+fi
+
+if ! "$VENV/bin/python" -c "import requests, fitz" 2>/dev/null; then
+    echo "[qua-translate] installing requests pymupdf ..." >&2
+    "$VENV/bin/pip" install --quiet requests pymupdf
+fi
+
+exec "$VENV/bin/python" "$PLUGIN_ROOT/scripts/translate/immersive_translate.py" "$@"

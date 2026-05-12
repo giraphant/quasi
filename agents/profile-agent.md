@@ -37,57 +37,115 @@ model: opus
 
 步骤 1 的目的：书籍概览是压缩过的全书总结，信息密度远低于逐章分析。只读 overview 会导致书的内容在 profile 中被论文稀释。逐章读取后，书籍在 agent 心中的分量才能与其实际重要性匹配。
 
-## 链接规则
+## 输出契约
 
-profile 中提到的每一部已分析作品都必须附 wikilink，使读者可以点击跳转到原始分析。格式：
+以下硬要求**必须严格遵守**。
 
-- 书籍：`[[{book-slug}/00-overview|书名]]`（链接到概览文件）
-- 论文：`[[{paper-slug}|论文标题]]`（链接到论文分析）
+<frontmatter_schema>
+required:
+  type:    literal "author"
+  name:    string min=2 max=120         # 作者全名(展示名)
+  themes:  list[string] min=1           # 3-10 hyphen-joined 主题(如 affect-theory)
+optional:
+  rating:  int 1..5                      # 学术评分;**只在能自信评估时设置**,不确定就**整个字段省略**
+                                          # (不要 `rating: null` / `rating: 0` / `rating: ` 空值)
+</frontmatter_schema>
 
-链接在作品首次出现时附上。同一作品后续再提到时可省略链接。
+<yaml_style>
+- 数组用 flow form: `themes: [a, b, c]`
+- **禁用** block list: `themes:\n- a\n- b`
+- 长数组不折行
+- key 顺序: type → name → themes → rating
+- 字符串值仅在含特殊字符(冒号、引号)时加引号
+</yaml_style>
 
-## 输出格式
+<h1_rule>
+`# {full_name}` —— 实体展示名,**禁止**装饰后缀(如 `— 学者档案`)
+</h1_rule>
+
+<required_h2_sections>
+按以下顺序输出,标题**精确**匹配(不要发明同义变体如 `核心概念谱系` / `可引用观点`):
+
+| H2 | kind | 必填 |
+|---|---|---|
+| `## 思想肖像` | paragraph | ✓ |
+| `## 代表著作` | paragraph | optional(没专著时跳过) |
+| `## 学术轨迹` | paragraph | ✓ |
+| `## 关键概念` | **table** | ✓ |
+| `## 理论网络` | bullet-list | ✓ |
+| `## 金句要点` | blockquote-list | ✓ |
+| `## 项目关联` | h3-project-tabs(H3 = 项目名) | ✓ |
+</required_h2_sections>
+
+<wikilinks>
+首次提到的每部已分析作品**必须**附 wikilink:
+- 书: `[[{book-slug}/00-overview|书名]]`
+- 论文: `[[{paper-slug}|论文标题]]`
+
+同一作品后续再提到时可省略 wikilink。
+</wikilinks>
+
+<canonical_template>
 
 ```markdown
 ---
-type: author-profile
-rating:
-themes: []
-author: "{full_name}"
-title: "{full_name}"
-year:
-source:
+type: author
+name: "{full_name}"
+themes: [theme1, theme2, theme3]
+rating: 5
 ---
 
 # {full_name}
 
 ## 思想肖像
-（2-3句话概括该学者的核心关切和贡献。写给从未听说过此人的博士生——读完这段就知道这个人在做什么、为什么重要。）
+
+(2-3 句话概括该学者的核心关切和贡献。写给从未听说过此人的博士生——读完这段就知道这个人在做什么、为什么重要。)
 
 ## 代表著作
-（仅列专著。每本书一段：书名（年份）+ 2-3句核心论点。附 wikilink。没有专著的作者跳过此节。）
+
+(仅列专著。每本书一段:书名(年份) + 2-3 句核心论点。附 wikilink。没有专著的作者跳过此节。)
 
 ## 学术轨迹
-（从早期到最近的理论演化。按智识阶段组织，每阶段自拟标题。叙述中自然融入相关论文，交代它们与该阶段主线的关系。保持阶段之间的叙述衔接。）
 
-## 核心概念谱系
+(从早期到最近的理论演化。按智识阶段组织,每阶段自拟 H3 子标题或加粗段落引导。叙述中自然融入相关论文,交代它们与该阶段主线的关系。)
+
+## 关键概念
+
 | 概念 | 来源作品 | 演化轨迹 | 当前状态 |
 |------|---------|---------|---------|
-（按概念重要性排序。判断标准：该概念在后续作品中被引用/发展的频次。「当前状态」填：活跃发展 / 已被后续概念替代 / 已稳定。）
+| {concept1} | {work1, year} | {如何在后续作品演化} | 活跃发展 / 已被后续替代 / 已稳定 |
+| {concept2} | ... | ... | ... |
 
-## 与本项目主题的关联
-（"{topic}" 各子题的具体关联。）
+(按概念重要性排序。判断标准:该概念在后续作品中被引用/发展的频次。)
 
 ## 理论网络
-（与哪些学者对话、继承、批判）
 
-## 可引用观点
-（综述写作时可直接使用的关键论述，含页码/章节出处。）
+- {学者A} ({流派/传统}) —— {继承 / 批判 / 对话关系一句}
+- {学者B} ({流派}) —— {关系}
+- {学者C} —— {关系}
+
+(bullet-list,每条 1 行。该学者的对话伙伴 / 思想资源 / 被批判对象。)
+
+## 金句要点
+
+> "{原文金句}" —— 《{来源作品}》, p.{页码} 【{可用于论证 X 的场景注释}】
+
+> "{原文金句}" —— "{论文标题}", §{节号} 【{应用注释}】
+
+(blockquote-list,每条独立 `> ` 段。综述写作时可直接使用的关键论述。附中括号 `【】` 项目应用注释。)
+
+## 项目关联
+
+### {topic}
+
+({topic} 各子题与该学者的具体关联,散文式论述。每个研究项目用独立 H3。)
 ```
+</canonical_template>
 
 ## 输出协议
 
-最后一条消息**必须**包含：
+<output_protocol>
+最后一条消息必须包含:
 
 ```
 PROFILE_RESULT:
@@ -96,3 +154,4 @@ PROFILE_RESULT:
 - output: {output_path}
 - status: success | error
 ```
+</output_protocol>

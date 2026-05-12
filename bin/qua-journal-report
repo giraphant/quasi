@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# qua-journal-report — Render a scored journal scan report (scan.md).
+#
+# Usage:
+#   qua-journal-report --papers PAPERS_JSON --scores SCORES_DIR --output PATH
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+
+exec python3 "$PLUGIN_ROOT/scripts/journal/generate_scan_report.py" "$@"

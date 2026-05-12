@@ -1,5 +1,18 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "quasi",
   "description": "Academic research toolkit — search, download, extract, analyze, synthesize",
-  "version": "0.9.0"
+  "version": "0.10.0",
+  "author": {
+    "name": "ramu"
+  },
+  "homepage": "https://github.com/giraphant/quasi",
+  "repository": "https://github.com/giraphant/quasi",
+  "keywords": [
+    "academic-research",
+    "papers",
+    "books",
+    "knowledge-base",
+    "translation"
+  ]
 }
