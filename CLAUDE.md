@@ -46,6 +46,11 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.14.1** (2026-05-12): Ship `debug-userconfig` probe agent to verify whether
+  `${user_config.KEY}` substitution actually reaches agent content at dispatch
+  time. Throwaway diagnostic — informs whether 0.15.0 config-resolution path
+  goes through agent content substitution, hook-bridge, or direct settings.json
+  reads. No functional change to other components.
 - **0.14.0** (2026-05-12): **Breaking.** Anna's Archive and Immersive Translate
   credentials follow CookieCloud into plugin `userConfig`. New userConfig fields:
   `anna_donator_key` (sensitive), `anna_mirrors` (multiple, defaults to 3 official
