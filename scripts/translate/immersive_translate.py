@@ -16,11 +16,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import tempfile
 import time
-from getpass import getpass
 from pathlib import Path
 from typing import Any
 
@@ -28,8 +28,7 @@ import pymupdf
 import requests
 
 
-PROJECT_ROOT = Path.cwd()  # caller's research project root
-CONFIG_PATH = PROJECT_ROOT / "config" / "immersive-translate.json"
+PROJECT_ROOT = Path.cwd()  # caller's research project root (output only, no config)
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "processing" / "translations"
 
 DEFAULT_SETTINGS = {
@@ -72,57 +71,31 @@ class AmbiguousSourceError(TranslationError):
         super().__init__(f"Multiple PDF candidates found for '{slug}':\n{joined}")
 
 
-def load_settings(raw_config: dict[str, Any] | None) -> dict[str, Any]:
+def _env(key: str) -> str:
+    """Read CLAUDE_PLUGIN_OPTION_<KEY>, trying upper and original case."""
+    prefix = "CLAUDE_PLUGIN_OPTION_"
+    for variant in (f"{prefix}{key.upper()}", f"{prefix}{key}"):
+        val = os.environ.get(variant, "").strip()
+        if val:
+            return val
+    return ""
+
+
+def load_settings_from_env() -> dict[str, Any]:
+    """Build the Immersive Translate request payload from env + hardcoded template.
+
+    Only `auth_key` is user-supplied (via plugin userConfig). The rest are fixed
+    request-shape knobs — see DEFAULT_SETTINGS at the top of this module.
+    """
+    auth_key = _env("immersive_auth_key")
+    if not auth_key:
+        raise MissingAuthKeyError(
+            "Immersive Translate auth key not set. "
+            "Run /plugin → Configure options and fill `immersive_auth_key`.",
+        )
     settings = dict(DEFAULT_SETTINGS)
-    if raw_config:
-        settings.update({key: value for key, value in raw_config.items() if value is not None})
+    settings["auth_key"] = auth_key
     return settings
-
-
-def read_config(config_path: Path = CONFIG_PATH) -> dict[str, Any] | None:
-    if not config_path.exists():
-        return None
-    try:
-        with config_path.open("r", encoding="utf-8") as handle:
-            return json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise TranslationError(f"Failed to read config from {config_path}: {exc}") from exc
-
-
-def write_config(settings: dict[str, Any], config_path: Path = CONFIG_PATH) -> None:
-    try:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        with config_path.open("w", encoding="utf-8") as handle:
-            json.dump(settings, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-    except OSError as exc:
-        raise TranslationError(f"Failed to write config to {config_path}: {exc}") from exc
-
-
-def load_settings_from_disk(
-    config_path: Path = CONFIG_PATH,
-    *,
-    prompt_for_auth: bool = False,
-) -> dict[str, Any]:
-    settings = load_settings(read_config(config_path))
-    auth_key = str(settings.get("auth_key", "")).strip()
-    if auth_key:
-        settings["auth_key"] = auth_key
-        return settings
-
-    if prompt_for_auth and sys.stdin.isatty():
-        auth_key = getpass("Immersive Translate auth key: ").strip()
-        if not auth_key:
-            raise MissingAuthKeyError(
-                f"No auth key provided. Populate {config_path} with an auth_key.",
-            )
-        settings["auth_key"] = auth_key
-        write_config(settings, config_path)
-        return settings
-
-    raise MissingAuthKeyError(
-        f"Missing auth_key in {config_path}. Create the file or let the agent write it before retrying.",
-    )
 
 
 def resolve_source_pdf(
@@ -548,16 +521,14 @@ def translate_slug(
     slug: str,
     *,
     source_file: Path | None = None,
-    config_path: Path = CONFIG_PATH,
     target_language: str | None = None,
     project_root: Path = PROJECT_ROOT,
-    prompt_for_auth: bool = False,
     poll_interval: int = 10,
     max_polls: int = 180,
     toc_json: Path | None = None,
     toc_page_side: str = "original",
 ) -> dict[str, Any]:
-    settings = load_settings_from_disk(config_path, prompt_for_auth=prompt_for_auth)
+    settings = load_settings_from_env()
     if target_language:
         settings["target_language"] = target_language
 
@@ -619,19 +590,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit PDF path when slug resolution is ambiguous or unavailable",
     )
     parser.add_argument(
-        "--config-path",
-        type=Path,
-        default=CONFIG_PATH,
-        help="Project-local Immersive Translate config path",
-    )
-    parser.add_argument(
         "--target-language",
-        help="Override the target language from config/immersive-translate.json",
-    )
-    parser.add_argument(
-        "--prompt-for-auth",
-        action="store_true",
-        help="Prompt in-terminal for a missing auth key and write config/immersive-translate.json",
+        help="Override the default target language (zh-CN)",
     )
     parser.add_argument(
         "--poll-interval",
@@ -666,9 +626,7 @@ def main(argv: list[str] | None = None) -> int:
         result = translate_slug(
             slug=args.slug,
             source_file=args.source_file,
-            config_path=args.config_path,
             target_language=args.target_language,
-            prompt_for_auth=args.prompt_for_auth,
             poll_interval=args.poll_interval,
             max_polls=args.max_polls,
             toc_json=args.toc_json,

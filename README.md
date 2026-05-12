@@ -70,19 +70,18 @@ sources/
 /plugin install quasi@ramu-toolkit
 ```
 
-装好后：
+### 可选凭据矩阵
 
-- **CookieCloud / EZProxy 凭据**：`/plugin install quasi@ramu-toolkit` 时会弹窗收集 `cookiecloud_server / uuid / password / ezproxy_domain / login_url`。`password` 进系统 keychain。后续可通过 `/plugin` → Configure options 修改。
-- **其他凭据**：在目标项目根目录调用 `setup-agent`，会同步标准权限、检查系统依赖，并问 Anna's Archive / Immersive Translate / Dokobot。
+本项目随意组装大量其他服务，调用相关服务需要通过 `/plugin` → Configure 填入凭据。
 
-### 凭据矩阵
+| 服务 | 解锁能力 | 必要等级 | 配置字段 |
+|------|---------|--------|----------------|
+| Anna's Archive | 自动下载图书 / AA 搜索 | 推荐 | `anna_donator_key`、`anna_mirrors` |
+| CookieCloud (EZProxy) | 自动同步 → 批量下载论文 | 可选 | `cookiecloud_*` 5 字段 |
+| Immersive Translate | 生成双语翻译 | 可选 | `immersive_auth_key` |
+| Dokobot | Google Scholar 兜底 | 可选 | 无 userConfig，独立 CLI 安装 |
 
-| 服务 | 解锁能力 | 必要性 | 配置位置 |
-|------|---------|--------|---------|
-| CookieCloud | EZProxy 自动同步 → 批量下载论文 | 可选 | 插件 userConfig（install 时弹窗） |
-| Anna's Archive | 自动下载图书 | 推荐 | `$PWD/config/anna-archive.json`（setup-agent） |
-| Immersive Translate | 生成双语翻译 | 可选 | `$PWD/config/immersive-translate.json`（setup-agent） |
-| Dokobot | Google Scholar 兜底 | 可选 | 独立 CLI 安装 |
+> 装完后可选：在研究项目根目录调用 `setup-agent` 同步标准权限和检查系统依赖（Python / pdftotext / ebook-convert）。
 
 ## 版权协议
 

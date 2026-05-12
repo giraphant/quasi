@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "quasi",
   "description": "Academic research toolkit — search, download, extract, analyze, synthesize",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "author": {
     "name": "ramu"
   },
@@ -40,8 +40,31 @@
     "cookiecloud_login_url": {
       "type": "string",
       "title": "EZProxy login URL prefix",
-      "description": "EZProxy login redirector that DOIs are wrapped through. Example: https://login.eux.idm.oclc.org/login?url= (OCLC-hosted) or your institution's equivalent.",
+      "description": "EZProxy login redirector that DOIs are wrapped through. Example: http://ezp-prod1.hul.harvard.edu/login?url= (Harvard) or your institution's equivalent.",
       "default": "http://ezp-prod1.hul.harvard.edu/login?url="
+    },
+    "anna_donator_key": {
+      "type": "string",
+      "title": "Anna's Archive donator key",
+      "description": "Donator key from https://annas-archive.org/donations — unlocks the Fast Download API used for batch book acquisition. Stored in the system keychain.",
+      "sensitive": true
+    },
+    "anna_mirrors": {
+      "type": "string",
+      "title": "Anna's Archive mirrors",
+      "description": "Mirror URLs to try in order (one per line, or leave default). The first reachable mirror is used.",
+      "multiple": true,
+      "default": [
+        "https://annas-archive.gl",
+        "https://annas-archive.pk",
+        "https://annas-archive.gd"
+      ]
+    },
+    "immersive_auth_key": {
+      "type": "string",
+      "title": "Immersive Translate Zotero auth key",
+      "description": "Auth key for the Immersive Translate Zotero PDF translation API. Used by the translate skill. Stored in the system keychain.",
+      "sensitive": true
     }
   }
 }

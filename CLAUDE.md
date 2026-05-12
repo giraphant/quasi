@@ -46,14 +46,16 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
-- **0.13.0** (2026-05-12): **Breaking.** EZProxy credentials moved from
-  `config/*.json` project files to plugin `userConfig` (`.claude-plugin/plugin.json`).
-  `/plugin install quasi` now prompts for `cookiecloud_server/uuid/password/
-  ezproxy_domain/login_url` once; sensitive `password` lands in the system keychain
-  rather than a plaintext file. `download.py` no longer reads
-  `config/cookiecloud.json` *or* `config/ezproxy.json` — cookies are pulled fresh
-  from the CookieCloud server on each process start and cached in memory. Manual
-  cookie-pasting fallback is gone. `setup-agent` no longer handles EZProxy at all.
+- **0.14.0** (2026-05-12): **Breaking.** Anna's Archive and Immersive Translate
+  credentials follow CookieCloud into plugin `userConfig`. New userConfig fields:
+  `anna_donator_key` (sensitive), `anna_mirrors` (multiple, defaults to 3 official
+  mirrors), `immersive_auth_key` (sensitive). `download.py` / `search.py` /
+  `immersive_translate.py` no longer read `config/anna-archive.json` or
+  `config/immersive-translate.json` — fully env-var driven. `setup-agent` becomes
+  purely permissions + system deps + dokobot indicator; the entire `$PWD/config/`
+  directory is now optional and quasi never writes there.
+- **0.13.0** (2026-05-12): EZProxy creds moved to `userConfig` (CookieCloud).
+  Removed `config/cookiecloud.json` and `config/ezproxy.json` reading.
 - **0.12.1** (2026-05-12): Drop `setup-agent` Step 0 (plugin self-install bootstrap).
   Installation is now the canonical `/plugin marketplace add giraphant/quasi` +
   `/plugin install quasi@ramu-toolkit` flow; `setup-agent` is purely env + creds.

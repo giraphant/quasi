@@ -29,6 +29,7 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -51,7 +52,7 @@ DELAY = 0.35
 
 # --- Anna's Archive config ---
 _PROJECT_DIR = Path.cwd()  # caller's research project root
-AA_CONFIG_PATH = _PROJECT_DIR / "config" / "anna-archive.json"
+# AA credentials come from plugin user-config env vars; see CLAUDE_PLUGIN_OPTION_ANNA_*.
 AA_DEFAULT_MIRRORS = [
     "https://annas-archive.gl",
     "https://annas-archive.pk",
@@ -273,15 +274,40 @@ def search_books(query: str = "", author: str = None, title: str = None, subject
 # Anna's Archive book search (HTML scraping)
 # ============================================================
 
+def _env(key: str) -> str:
+    """Read CLAUDE_PLUGIN_OPTION_<KEY>, trying upper and original case."""
+    prefix = "CLAUDE_PLUGIN_OPTION_"
+    for variant in (f"{prefix}{key.upper()}", f"{prefix}{key}"):
+        val = os.environ.get(variant, "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _parse_mirrors(raw: str) -> list:
+    """Parse anna_mirrors env var — see download.py:_parse_mirrors for rationale."""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(m).strip().rstrip("/") for m in parsed if str(m).strip()]
+    except (ValueError, TypeError):
+        pass
+    if "\n" in raw:
+        return [m.strip().rstrip("/") for m in raw.split("\n") if m.strip()]
+    if "," in raw:
+        return [m.strip().rstrip("/") for m in raw.split(",") if m.strip()]
+    return [raw.strip().rstrip("/")]
+
+
 def _load_aa_config():
-    """Load AA config (donator key + mirrors)."""
-    if not AA_CONFIG_PATH.exists():
+    """Resolve AA config from plugin user-config env vars."""
+    donator_key = _env("anna_donator_key")
+    if not donator_key:
         return None
-    with open(AA_CONFIG_PATH) as f:
-        config = json.load(f)
-    if not config.get("donator_key"):
-        return None
-    return config
+    mirrors = _parse_mirrors(_env("anna_mirrors"))
+    return {"donator_key": donator_key, "mirrors": mirrors}
 
 
 def _get_aa_base_url(config):
@@ -353,7 +379,7 @@ def search_aa(query: str, fmt: str = "pdf", lang: str = None,
     config = _load_aa_config()
     if not config:
         return {"success": False, "source": "Anna's Archive",
-                "error": f"AA config not found or missing donator_key. Create: {AA_CONFIG_PATH}",
+                "error": "Anna's Archive donator key not set. Run /plugin → Configure options → anna_donator_key.",
                 "results": []}
 
     base_url = _get_aa_base_url(config)

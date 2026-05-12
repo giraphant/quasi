@@ -11,10 +11,11 @@ model: sonnet
 
 - 工具脚本通过 `qua-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
 - **`$PWD`** — 用户研究项目根目录。所有写入落在此根下：
-  - 凭据 config：`$PWD/config/anna-archive.json`（脚本内部读取）
   - 源文件落点：`$PWD/sources/`
   - manifest / 中间产物：`$PWD/processing/`
-- EZProxy 凭据**不在 `$PWD/config/`** —— 走插件 `userConfig`，由 Claude Code 注入 `CLAUDE_PLUGIN_OPTION_COOKIECLOUD_*` 环境变量
+- 所有凭据**不在 `$PWD/config/`** —— 走插件 `userConfig`，Claude Code 注入 `CLAUDE_PLUGIN_OPTION_*` 环境变量。涉及：
+  - Anna's Archive：`anna_donator_key`、`anna_mirrors`
+  - EZProxy (via CookieCloud)：`cookiecloud_*` 5 字段
 
 凡涉及 HTTP 下载（OA、Sci-Hub、AA、EZProxy、Wayback）唯一通道是 `qua-download`。AA 搜索唯一通道是 `qua-search`。
 
@@ -58,28 +59,20 @@ Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
 
 下载操作只通过上述脚本命令。如现有脚本不支持某操作，报错说明缺失功能即可。
 
-## 配置
+## 凭据故障排查
 
-### Anna's Archive — `$PWD/config/anna-archive.json`
+自 quasi 0.14.0 起所有凭据都在插件 `userConfig` 层。**不要**自己写 `$PWD/config/*.json`——脚本不读。
 
-```json
-{
-  "donator_key": "你的key",
-  "mirrors": ["https://annas-archive.gl", "https://annas-archive.pk", "https://annas-archive.gd"]
-}
-```
+### Anna's Archive
 
-### EZProxy（自 0.13.0 起完全经由 CookieCloud）
+脚本报 "Anna's Archive donator key not set" → 引导用户 `/plugin` → Configure options 填 `anna_donator_key`。如果用户想用自定义镜像，同处填 `anna_mirrors`（多行，每行一个 URL；留空用默认三个 .gl/.pk/.gd）。
 
-quasi 不再读 `config/ezproxy.json`。EZProxy 凭据来自插件 `userConfig`（`/plugin install quasi` 时一次性收集，sensitive 字段进系统 keychain），`download.py` 在每次进程启动时从 CookieCloud server 即时拉取，过期时自动失效缓存重试一次。
+### EZProxy（经 CookieCloud）
 
-脚本若仍报 `EZPROXY COOKIE EXPIRED`，说明 CookieCloud server 上的 cookie 也过期了。引导用户：
+脚本报 `EZPROXY COOKIE EXPIRED` 有两种情况：
 
-1. 在 Chrome 打开任意被改写的论文链接 → 走完一次 SSO + 2FA
-2. CookieCloud 扩展会自动把新 cookie 推回 server
-3. 重跑 download，脚本会拉到新的
-
-如果用户根本没配 CookieCloud，引导他们去 `/plugin` → Configure options 填四个字段：`cookiecloud_server` / `cookiecloud_uuid` / `cookiecloud_password` / `cookiecloud_ezproxy_domain`。
+1. **CookieCloud server 上 cookie 也过期了。** 引导用户：在 Chrome 打开任意论文链接 → 走完一次 SSO + 2FA → CookieCloud 扩展会自动把新 cookie 推回 server → 重跑 download。
+2. **CookieCloud 根本没配。** 引导用户 `/plugin` → Configure options 填 5 字段：`cookiecloud_server` / `cookiecloud_uuid` / `cookiecloud_password` / `cookiecloud_ezproxy_domain` / `cookiecloud_login_url`（默认 Harvard）。
 
 调试 env 是否注入：`python3 $CLAUDE_PLUGIN_ROOT/scripts/download/cookiecloud.py` 会打印当前可见的 `CLAUDE_PLUGIN_OPTION_*` 列表 + 实际拉到的 cookie 名集合。
 

@@ -11,11 +11,11 @@ model: sonnet
 
 - 工具脚本通过 `qua-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
 - **`$PWD`** — 用户研究项目根目录（claude code 启动目录）。所有写入落在此。
-  - 配置：`$PWD/config/immersive-translate.json`（脚本内部读取）
   - 产出：`$PWD/processing/translations/{slug}-{lang}.pdf`（单文件，扁平存放；脚本自动创建写入，自动带 PDF 目录/bookmarks）
   - 源 PDF：脚本按 slug 在 `$PWD/sources/{slug}.pdf` 自动定位
+- 配置**不在 `$PWD/config/`**。`immersive_auth_key` 来自插件 `userConfig`（`/plugin install` 弹窗或 `/plugin` → Configure options 填），由 Claude Code 注入 `CLAUDE_PLUGIN_OPTION_IMMERSIVE_AUTH_KEY` 环境变量。其它请求字段（`translate_model` / `dual_mode` / `layout_model` 等）作为请求模板硬编码在 `immersive_translate.py` 内。
 
-凡涉及 Immersive Translate API 的所有交互（key 验证、上传、轮询、下载）唯一通道是 `qua-translate`。auth_key 唯一传递方式是写入 `$PWD/config/immersive-translate.json`。
+凡涉及 Immersive Translate API 的所有交互（key 验证、上传、轮询、下载）唯一通道是 `qua-translate`。
 
 ## 输入参数
 
@@ -30,38 +30,15 @@ model: sonnet
 ## 执行流程
 
 1. 验证 shim 可达：`command -v qua-translate`。失败则报错退出。
-2. 检查 `$PWD/config/immersive-translate.json` 存在且 `auth_key` 非空。
-3. 若 config 缺失或 auth_key 为空：向用户索取一次授权码，按下方模板写入 `$PWD/config/immersive-translate.json`。
-4. 运行翻译：
+2. 运行翻译：
    ```bash
    qua-translate {slug} --source-file {source_file_abs}
    ```
-   指定目标语言追加 `--target-language {target_language}`。跨项目时 `--source-file` 必须为绝对路径。脚本默认输出 split 双语版（左右页拆分），不再产出 dual / translation-only 两个冗余文件。
-5. 目录写入由脚本自动处理：优先复制源 PDF 内置 outline；若没有，则使用 `$PWD/processing/chapters/{slug}/manifest.json`；若调用方提供 `toc_json`，追加 `--toc-json {toc_json_abs}`。需要让目录跳到译文页时追加 `--toc-page-side translated`。
-6. 若脚本报 source ambiguous：读出候选路径，向用户确认一次后用 `--source-file` 重跑。
-7. 脚本成功，按输出协议返回路径。
-
-## 配置模板
-
-写入 `$PWD/config/immersive-translate.json`：
-
-```json
-{
-  "auth_key": "用户提供的授权码",
-  "target_language": "zh-CN",
-  "translate_model": "gemini-1",
-  "enhance_compatibility": false,
-  "ocr_workaround": "auto",
-  "auto_extract_glossary": false,
-  "rich_text_translate": true,
-  "primary_font_family": "none",
-  "dual_mode": "lort",
-  "custom_system_prompt": "",
-  "layout_model": "version_3"
-}
-```
-
-`api_base_url` 默认使用脚本内置的 `https://api2.immersivetranslate.com/zotero`，配置里不写也可；若授权码对应其他区域，可在 config 中显式覆盖。其余字段脚本均有默认值，用户只需提供 `auth_key`。
+   指定目标语言追加 `--target-language {target_language}`。跨项目时 `--source-file` 必须为绝对路径。脚本默认输出 split 双语版（左右页拆分）。
+3. 目录写入由脚本自动处理：优先复制源 PDF 内置 outline；若没有，则使用 `$PWD/processing/chapters/{slug}/manifest.json`；若调用方提供 `toc_json`，追加 `--toc-json {toc_json_abs}`。需要让目录跳到译文页时追加 `--toc-page-side translated`。
+4. 若脚本以 exit code 5 报 `MissingAuthKeyError`：引导用户 `/plugin` → Configure options 填 `immersive_auth_key`，**不要**让用户在终端粘贴授权码。
+5. 若脚本报 source ambiguous：读出候选路径，向用户确认一次后用 `--source-file` 重跑。
+6. 脚本成功，按输出协议返回路径。
 
 ## 输出协议
 

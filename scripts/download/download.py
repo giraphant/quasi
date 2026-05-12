@@ -17,13 +17,12 @@ Usage:
     # Batch: download all metadata_found papers in a manifest
     python3 download.py --manifest manifest.json --batch
 
-Config (AA only): config/anna-archive.json (project root)
-    {"donator_key": "YOUR_KEY", "mirrors": ["https://annas-archive.gl", ...]}
-
-Config (EZProxy): plugin user-config (set at `/plugin install` time, read from
-    CLAUDE_PLUGIN_OPTION_COOKIECLOUD_* env vars). See cookiecloud.py — the
-    EZProxy cookie set is fetched fresh from a CookieCloud server on each
-    Python invocation and cached in memory. No project-local file.
+Config — all from plugin user-config env vars (set at `/plugin install`):
+    CLAUDE_PLUGIN_OPTION_ANNA_DONATOR_KEY        (sensitive)
+    CLAUDE_PLUGIN_OPTION_ANNA_MIRRORS            (multiple, JSON/newline-encoded)
+    CLAUDE_PLUGIN_OPTION_COOKIECLOUD_*           (see cookiecloud.py)
+No project-local config files are read. Sensitive values live in the system
+keychain via Claude Code's `sensitive: true` userConfig flag.
 """
 
 import argparse
@@ -43,10 +42,8 @@ import requests
 
 # --- Config ---
 
-_PROJECT_DIR = Path.cwd()  # caller's research project root
-_PROJECT_CONFIG = _PROJECT_DIR / "config"
-CONFIG_PATH = _PROJECT_CONFIG / "anna-archive.json"
-# EZProxy creds come from CookieCloud / plugin user-config — see cookiecloud.py.
+_PROJECT_DIR = Path.cwd()  # caller's research project root — output dir, no config
+# All credentials come from plugin user-config env vars; see CLAUDE_PLUGIN_OPTION_*.
 
 DEFAULT_AA_MIRRORS = [
     "https://annas-archive.gl",
@@ -470,15 +467,45 @@ def try_ezproxy_download(doi, output_path):
 # Anna's Archive — MD5 → file (no search)
 # ============================================================
 
+def _env(key: str) -> str:
+    """Read CLAUDE_PLUGIN_OPTION_<KEY>, trying upper and original case."""
+    prefix = "CLAUDE_PLUGIN_OPTION_"
+    for variant in (f"{prefix}{key.upper()}", f"{prefix}{key}"):
+        val = os.environ.get(variant, "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _parse_mirrors(raw: str) -> list[str]:
+    """Parse anna_mirrors env var — Claude Code's serialization format for
+    `multiple: true` strings is undocumented, so probe defensively."""
+    if not raw:
+        return []
+    # JSON array
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(m).strip().rstrip("/") for m in parsed if str(m).strip()]
+    except (ValueError, TypeError):
+        pass
+    # Newline-separated
+    if "\n" in raw:
+        return [m.strip().rstrip("/") for m in raw.split("\n") if m.strip()]
+    # Comma-separated
+    if "," in raw:
+        return [m.strip().rstrip("/") for m in raw.split(",") if m.strip()]
+    # Single value
+    return [raw.strip().rstrip("/")]
+
+
 def load_aa_config():
-    """Load Anna's Archive config (donator key + mirrors)."""
-    if not CONFIG_PATH.exists():
+    """Resolve Anna's Archive config from plugin user-config env vars."""
+    donator_key = _env("anna_donator_key")
+    if not donator_key:
         return None
-    with open(CONFIG_PATH) as f:
-        config = json.load(f)
-    if not config.get("donator_key"):
-        return None
-    return config
+    mirrors = _parse_mirrors(_env("anna_mirrors")) or list(DEFAULT_AA_MIRRORS)
+    return {"donator_key": donator_key, "mirrors": mirrors}
 
 
 def get_aa_base_url(config):
@@ -625,8 +652,8 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
     """
     config = load_aa_config()
     if not config:
-        print("Error: AA config not found or missing donator_key", file=sys.stderr)
-        print(f"Create: {CONFIG_PATH}", file=sys.stderr)
+        print("Error: Anna's Archive donator key not set", file=sys.stderr)
+        print("  Run /plugin → Configure options and fill `anna_donator_key`", file=sys.stderr)
         return None
 
     base_url = get_aa_base_url(config)
