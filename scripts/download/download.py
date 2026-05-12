@@ -20,14 +20,10 @@ Usage:
 Config (AA only): config/anna-archive.json (project root)
     {"donator_key": "YOUR_KEY", "mirrors": ["https://annas-archive.gl", ...]}
 
-Config (EZproxy): config/ezproxy.json (project root)
-    {"cookie": "VALUE", "cookie_name": "yewnoEzProxy", "domain": "...", "login_url": "..."}
-
-Config (CookieCloud, optional auto-refresh): config/cookiecloud.json
-    {"server": "...", "uuid": "...", "password": "...", "ezproxy_domain": ".idm.oclc.org",
-     "login_url": "..."}
-    When present, ezproxy.json is auto-materialized on first use and refreshed
-    once on EZProxyCookieExpired before falling through to Wayback.
+Config (EZProxy): plugin user-config (set at `/plugin install` time, read from
+    CLAUDE_PLUGIN_OPTION_COOKIECLOUD_* env vars). See cookiecloud.py — the
+    EZProxy cookie set is fetched fresh from a CookieCloud server on each
+    Python invocation and cached in memory. No project-local file.
 """
 
 import argparse
@@ -50,8 +46,7 @@ import requests
 _PROJECT_DIR = Path.cwd()  # caller's research project root
 _PROJECT_CONFIG = _PROJECT_DIR / "config"
 CONFIG_PATH = _PROJECT_CONFIG / "anna-archive.json"
-# Credentials are project-local only.
-_EZPROXY_PATH = _PROJECT_CONFIG / "ezproxy.json"
+# EZProxy creds come from CookieCloud / plugin user-config — see cookiecloud.py.
 
 DEFAULT_AA_MIRRORS = [
     "https://annas-archive.gl",
@@ -86,40 +81,34 @@ class AAQuotaExhausted(Exception):
 
 
 def load_ezproxy_config():
-    """Load EZProxy cookie config from project-root config/ezproxy.json.
+    """Resolve EZProxy cookie config from CookieCloud (in-memory).
 
-    If the file is missing but CookieCloud is configured, pulls a fresh copy
-    first. Returns None when neither is available or pull fails.
+    Connection params come from plugin user-config env vars; see cookiecloud.py.
+    Returns None when CookieCloud is not configured or unreachable.
     """
-    if not _EZPROXY_PATH.exists():
-        try:
-            from cookiecloud import refresh_ezproxy_config
-        except ImportError:
-            from .cookiecloud import refresh_ezproxy_config  # type: ignore
-        refresh_ezproxy_config(verbose=False)
-    if _EZPROXY_PATH.exists():
-        with open(_EZPROXY_PATH) as f:
-            config = json.load(f)
-        if (config.get("cookie") or config.get("cookies")) and config.get("domain"):
-            return config
-    return None
+    try:
+        from cookiecloud import get_ezproxy_config
+    except ImportError:
+        from .cookiecloud import get_ezproxy_config  # type: ignore
+    return get_ezproxy_config(verbose=True)
 
 
 def _try_ezproxy_with_refresh(doi, output_path):
-    """Try EZProxy download; on expiry, refresh via CookieCloud and retry once.
+    """Try EZProxy download; on expiry, invalidate cache + retry once.
 
-    Falls through (re-raises EZProxyCookieExpired) if CookieCloud isn't
-    configured or the refreshed cookies are also rejected. Callers' existing
-    except EZProxyCookieExpired blocks still trigger for true expiry.
+    Clears the in-memory CookieCloud cache so the next call re-pulls fresh
+    cookies from the server. Re-raises EZProxyCookieExpired if the refreshed
+    cookies are also rejected (Chrome side likely hasn't re-logged in yet).
     """
     try:
         return try_ezproxy_download(doi, output_path)
     except EZProxyCookieExpired:
         try:
-            from cookiecloud import refresh_ezproxy_config
+            from cookiecloud import invalidate_cache, get_ezproxy_config
         except ImportError:
-            from .cookiecloud import refresh_ezproxy_config  # type: ignore
-        if refresh_ezproxy_config():
+            from .cookiecloud import invalidate_cache, get_ezproxy_config  # type: ignore
+        invalidate_cache()
+        if get_ezproxy_config():
             print(f"  EZProxy: refreshed via CookieCloud, retrying...", file=sys.stderr)
             return try_ezproxy_download(doi, output_path)
         raise
@@ -414,10 +403,10 @@ def try_ezproxy_download(doi, output_path):
     if final_url.startswith(login_url.rstrip("?").rsplit("/", 1)[0]):
         lower_html = landing_html[:2000].lower()
         if b"shibboleth" in lower_html or (b"login" in lower_html and b"password" in lower_html):
-            raise EZProxyCookieExpired(f"EZProxy cookie expired. Update: {_EZPROXY_PATH}")
+            raise EZProxyCookieExpired("EZProxy cookie expired — re-login in Chrome to let CookieCloud sync fresh cookies")
         # Stayed on login page but no explicit auth form — still expired
         if len(resp.history) == 0:
-            raise EZProxyCookieExpired(f"EZProxy cookie not accepted. Update: {_EZPROXY_PATH}")
+            raise EZProxyCookieExpired("EZProxy cookie not accepted — re-login in Chrome to let CookieCloud sync fresh cookies")
 
     if resp.status_code != 200:
         print(f"  EZProxy: HTTP {resp.status_code}", file=sys.stderr)
@@ -890,7 +879,7 @@ def download_pdf_from_url(url, output_path, timeout=60):
                     or b"ezproxy" in lower_data or b"shibboleth" in lower_data
                 ):
                     raise EZProxyCookieExpired(
-                        f"EZProxy cookie expired. Update: {_EZPROXY_PATH}"
+                        "EZProxy cookie expired — re-login in Chrome to let CookieCloud sync fresh cookies"
                     )
                 print(f"  SKIP not-a-pdf ({len(data)} bytes)", file=sys.stderr)
                 return False
@@ -1347,9 +1336,9 @@ def main():
     except EZProxyCookieExpired as e:
         print(f"\n*** EZPROXY COOKIE EXPIRED ***", file=sys.stderr)
         print(f"  {e}", file=sys.stderr)
-        print(f"  Update cookie in: {_EZPROXY_PATH}", file=sys.stderr)
-        print(f"  Login URL: https://login.eux.idm.oclc.org/login", file=sys.stderr)
-        print(f"  Stop all paper downloads until cookie is refreshed.", file=sys.stderr)
+        print(f"  Open any paywalled article in Chrome → SSO → 2FA.", file=sys.stderr)
+        print(f"  CookieCloud extension will sync the new cookie automatically.", file=sys.stderr)
+        print(f"  Stop all paper downloads until that's done.", file=sys.stderr)
         sys.exit(3)
 
 

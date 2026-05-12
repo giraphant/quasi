@@ -63,18 +63,26 @@ sources/
 
 ## 安装指南
 
-由于 Claude Code 的插件安装比较反人类，建议直接复制 [agents/setup-agent.md](agents/setup-agent.md) 的文件内容，让 Claude Code 帮你完成插件安装与项目配置。
+在 Claude Code 内执行:
 
-### 选装项目
+```
+/plugin marketplace add giraphant/quasi
+/plugin install quasi@ramu-toolkit
+```
 
-本项目依赖大量第三方服务，凭据存在调用插件的项目下。在安装完成后，在项目根目录下调用 setup-agent 即可完成配置。
+装好后：
 
-| 服务 | 解锁能力 | 必要性 |
-|------|---------|--------|
-| Anna's Archive | 自动下载图书 | 推荐 |
-| EZProxy | 批量下载论文 | 可选 |
-| Immersive Translate | 生成双语翻译 | 可选 |
-| Dokobot | 高效浏览网页 | 可选 |
+- **CookieCloud / EZProxy 凭据**：`/plugin install quasi@ramu-toolkit` 时会弹窗收集 `cookiecloud_server / uuid / password / ezproxy_domain / login_url`。`password` 进系统 keychain。后续可通过 `/plugin` → Configure options 修改。
+- **其他凭据**：在目标项目根目录调用 `setup-agent`，会同步标准权限、检查系统依赖，并问 Anna's Archive / Immersive Translate / Dokobot。
+
+### 凭据矩阵
+
+| 服务 | 解锁能力 | 必要性 | 配置位置 |
+|------|---------|--------|---------|
+| CookieCloud | EZProxy 自动同步 → 批量下载论文 | 可选 | 插件 userConfig（install 时弹窗） |
+| Anna's Archive | 自动下载图书 | 推荐 | `$PWD/config/anna-archive.json`（setup-agent） |
+| Immersive Translate | 生成双语翻译 | 可选 | `$PWD/config/immersive-translate.json`（setup-agent） |
+| Dokobot | Google Scholar 兜底 | 可选 | 独立 CLI 安装 |
 
 ## 版权协议
 

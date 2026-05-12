@@ -1,52 +1,60 @@
-"""CookieCloud pull → write config/ezproxy.json.
+"""CookieCloud pull → in-memory EZProxy cookie dict.
 
-CookieCloud (https://github.com/easychen/CookieCloud) is a self-hosted browser-
-cookie sync service: a Chrome extension pushes E2E-encrypted cookies to the
-server; consumers pull and decrypt. We use the server-side-decrypt endpoint
-(POST /get/<uuid> with password in body) since the server is user-controlled.
+Connection params come from plugin user-config env vars set by Claude Code
+when the plugin is enabled (see `userConfig` in `.claude-plugin/plugin.json`).
+The docs spec the env var name as `CLAUDE_PLUGIN_OPTION_<KEY>` but don't
+specify whether `<KEY>` is uppercased or kept verbatim, so we probe both:
 
-Config: config/cookiecloud.json
-    {
-        "server":         "https://cookiecloud.example.com",
-        "uuid":           "...",
-        "password":       "...",
-        "ezproxy_domain": ".idm.oclc.org",
-        "login_url":      "https://login.eux.idm.oclc.org/login?url="
-    }
+    CLAUDE_PLUGIN_OPTION_COOKIECLOUD_SERVER       (or cookiecloud_server)
+    CLAUDE_PLUGIN_OPTION_COOKIECLOUD_UUID
+    CLAUDE_PLUGIN_OPTION_COOKIECLOUD_PASSWORD     (sensitive → system keychain)
+    CLAUDE_PLUGIN_OPTION_COOKIECLOUD_EZPROXY_DOMAIN
+    CLAUDE_PLUGIN_OPTION_COOKIECLOUD_LOGIN_URL    (optional)
 
-Only cookies whose `domain` field contains `ezproxy_domain` are kept — that
-naturally filters out unrelated tracking cookies from publisher pages.
+No files are read or written. The pulled cookie dict is cached for the
+lifetime of the Python process; `invalidate_cache()` forces a re-fetch on
+the next `get_ezproxy_config()` call.
 """
 from __future__ import annotations
 
-import json
+import os
 import sys
-from pathlib import Path
 
 import requests
 
-_PROJECT_DIR = Path.cwd()
-_PROJECT_CONFIG = _PROJECT_DIR / "config"
-COOKIECLOUD_PATH = _PROJECT_CONFIG / "cookiecloud.json"
-EZPROXY_PATH = _PROJECT_CONFIG / "ezproxy.json"
+_cache: dict | None = None
+_DEFAULT_LOGIN_URL = "http://ezp-prod1.hul.harvard.edu/login?url="
 
 
-def load_config(path: Path = COOKIECLOUD_PATH) -> dict | None:
-    if not path.exists():
+def _env(key: str) -> str:
+    """Read an env var, trying upper/original case to handle Claude Code ambiguity."""
+    prefix = "CLAUDE_PLUGIN_OPTION_"
+    for variant in (f"{prefix}{key.upper()}", f"{prefix}{key}"):
+        val = os.environ.get(variant, "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _env_config() -> dict | None:
+    server    = _env("cookiecloud_server")
+    uuid      = _env("cookiecloud_uuid")
+    password  = _env("cookiecloud_password")
+    domain    = _env("cookiecloud_ezproxy_domain")
+    login_url = _env("cookiecloud_login_url") or _DEFAULT_LOGIN_URL
+    if not all([server, uuid, password, domain]):
         return None
-    with open(path) as f:
-        cfg = json.load(f)
-    required = ("server", "uuid", "password", "ezproxy_domain")
-    if not all(cfg.get(k) for k in required):
-        print(f"  cookiecloud config missing keys; need {required}", file=sys.stderr)
-        return None
-    return cfg
+    return {
+        "server": server,
+        "uuid": uuid,
+        "password": password,
+        "ezproxy_domain": domain,
+        "login_url": login_url,
+    }
 
 
-def fetch(cfg: dict, timeout: int = 15) -> dict | None:
-    """Fetch and server-side-decrypt the cookie blob. Returns parsed JSON or None."""
-    server = cfg["server"].rstrip("/")
-    url = f"{server}/get/{cfg['uuid']}"
+def _fetch(cfg: dict, timeout: int = 15) -> dict | None:
+    url = f"{cfg['server'].rstrip('/')}/get/{cfg['uuid']}"
     try:
         r = requests.post(url, json={"password": cfg["password"]}, timeout=timeout)
     except requests.RequestException as e:
@@ -66,13 +74,8 @@ def fetch(cfg: dict, timeout: int = 15) -> dict | None:
     return data
 
 
-def filter_cookies(data: dict, ezproxy_domain: str) -> dict[str, str]:
-    """Pick cookies set on the EZProxy domain (exact match, leading-dot agnostic).
-
-    A cookie's `domain` attribute equals the EZProxy domain — typically the
-    parent host like `.idm.oclc.org`. Tracking cookies set on rewritten
-    publisher subdomains (`.foo-com.eux.idm.oclc.org`) are excluded.
-    """
+def _filter_cookies(data: dict, ezproxy_domain: str) -> dict[str, str]:
+    """Pick cookies set on the EZProxy domain (exact match, leading-dot agnostic)."""
     target = ezproxy_domain.lstrip(".").lower()
     out: dict[str, str] = {}
     for bucket in data.get("cookie_data", {}).values():
@@ -86,39 +89,81 @@ def filter_cookies(data: dict, ezproxy_domain: str) -> dict[str, str]:
     return out
 
 
-def refresh_ezproxy_config(verbose: bool = True) -> bool:
-    """Pull from CookieCloud and write config/ezproxy.json. Returns True on success.
+def get_ezproxy_config(verbose: bool = True) -> dict | None:
+    """Return EZProxy config dict from CookieCloud (cached).
 
-    Safe to call when CookieCloud is not configured — returns False quietly.
+    Shape matches what download.py's `_build_ezproxy_session` expects:
+        {"cookies": {name: value, ...}, "domain": "...", "login_url": "..."}
+
+    Returns None when CookieCloud user-config is not set, the server is
+    unreachable, the password is rejected, or no cookies match the configured
+    EZProxy domain.
     """
-    cfg = load_config()
+    global _cache
+    if _cache is not None:
+        return _cache
+
+    cfg = _env_config()
     if not cfg:
-        return False
+        return None
 
-    data = fetch(cfg)
+    data = _fetch(cfg)
     if not data:
-        return False
+        return None
 
-    cookies = filter_cookies(data, cfg["ezproxy_domain"])
+    cookies = _filter_cookies(data, cfg["ezproxy_domain"])
     if not cookies:
         print(f"  cookiecloud: no cookies matched domain {cfg['ezproxy_domain']!r}",
               file=sys.stderr)
-        return False
+        return None
 
-    out = {
+    _cache = {
         "cookies":   cookies,
         "domain":    cfg["ezproxy_domain"],
-        "login_url": cfg.get("login_url", "https://login.eux.idm.oclc.org/login?url="),
+        "login_url": cfg["login_url"],
     }
-    EZPROXY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    EZPROXY_PATH.write_text(json.dumps(out, indent=2))
     if verbose:
-        print(f"  cookiecloud: wrote {len(cookies)} cookies → {EZPROXY_PATH}",
-              file=sys.stderr)
-    return True
+        print(f"  cookiecloud: {len(cookies)} cookies pulled "
+              f"(domain {cfg['ezproxy_domain']!r})", file=sys.stderr)
+    return _cache
+
+
+def invalidate_cache() -> None:
+    """Drop cached cookies so the next get_ezproxy_config() re-fetches."""
+    global _cache
+    _cache = None
+
+
+def _debug_env() -> None:
+    """Print which CLAUDE_PLUGIN_OPTION_* env vars are visible. For setup debugging."""
+    keys = ["cookiecloud_server", "cookiecloud_uuid", "cookiecloud_password",
+            "cookiecloud_ezproxy_domain", "cookiecloud_login_url"]
+    seen = []
+    missing = []
+    for k in keys:
+        # Don't print sensitive values, just flag presence
+        for variant in (f"CLAUDE_PLUGIN_OPTION_{k.upper()}", f"CLAUDE_PLUGIN_OPTION_{k}"):
+            if os.environ.get(variant, "").strip():
+                seen.append(variant)
+                break
+        else:
+            missing.append(k)
+    print(f"env vars set:     {seen or '(none)'}")
+    print(f"env vars missing: {missing or '(none)'}")
+    cc_vars = [k for k in os.environ if k.startswith("CLAUDE_PLUGIN_OPTION_")]
+    print(f"all CLAUDE_PLUGIN_OPTION_* visible: {cc_vars or '(none)'}")
 
 
 if __name__ == "__main__":
-    # CLI: `python3 cookiecloud.py` to force a refresh.
-    ok = refresh_ezproxy_config()
-    sys.exit(0 if ok else 1)
+    # CLI: print env-var visibility + resolved cookie set, exit 0/1.
+    print("=== env probe ===")
+    _debug_env()
+    print("\n=== pull ===")
+    cfg = get_ezproxy_config()
+    if not cfg:
+        print("cookiecloud: not configured or fetch failed", file=sys.stderr)
+        sys.exit(1)
+    print(f"domain:    {cfg['domain']}")
+    print(f"login_url: {cfg['login_url']}")
+    print(f"cookies:   {sorted(cfg['cookies'].keys())}")
+    sys.exit(0)

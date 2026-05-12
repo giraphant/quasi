@@ -46,11 +46,20 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
-- **0.12.0** (2026-05-12): CookieCloud auto-refresh for EZProxy. New optional
-  `config/cookiecloud.json` lets `download.py` pull fresh cookies from a self-hosted
-  [CookieCloud](https://github.com/easychen/CookieCloud) server — first call
-  materialises `config/ezproxy.json`; `EZProxyCookieExpired` triggers one refresh +
-  retry before falling through to Wayback. Code: `scripts/download/cookiecloud.py`.
+- **0.13.0** (2026-05-12): **Breaking.** EZProxy credentials moved from
+  `config/*.json` project files to plugin `userConfig` (`.claude-plugin/plugin.json`).
+  `/plugin install quasi` now prompts for `cookiecloud_server/uuid/password/
+  ezproxy_domain/login_url` once; sensitive `password` lands in the system keychain
+  rather than a plaintext file. `download.py` no longer reads
+  `config/cookiecloud.json` *or* `config/ezproxy.json` — cookies are pulled fresh
+  from the CookieCloud server on each process start and cached in memory. Manual
+  cookie-pasting fallback is gone. `setup-agent` no longer handles EZProxy at all.
+- **0.12.1** (2026-05-12): Drop `setup-agent` Step 0 (plugin self-install bootstrap).
+  Installation is now the canonical `/plugin marketplace add giraphant/quasi` +
+  `/plugin install quasi@ramu-toolkit` flow; `setup-agent` is purely env + creds.
+  README install section rewritten to match.
+- **0.12.0** (2026-05-12): CookieCloud auto-refresh for EZProxy. Initial `config/
+  cookiecloud.json` + `config/ezproxy.json` file-based flow — superseded by 0.13.0.
 - **0.11.0** (2026-05-12): Python venv extracted from per-shim inline pip into a
   `SessionStart` hook + bootstrap script. Shims now ~half the size. Persistent venv
   lives in `$CLAUDE_PLUGIN_DATA` (or `~/.cache/quasi/`), never in plugin root.

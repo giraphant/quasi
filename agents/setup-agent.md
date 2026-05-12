@@ -1,6 +1,6 @@
 ---
 name: setup-agent
-description: 把 quasi 标准权限同步到目标项目的 .claude/settings.json,并按调用方提供的参数生成 config/*.json 凭据文件(Anna's Archive / EZProxy / Immersive Translate)。系统依赖检查。手动调用。幂等运行。
+description: 把 quasi 标准权限同步到目标项目的 .claude/settings.json,并按调用方提供的参数生成 config/*.json 凭据文件(Anna's Archive / Immersive Translate)。EZProxy 凭据走插件 userConfig,不归本 agent 管。系统依赖检查。手动调用。幂等运行。
 tools: Read, Write, Glob, Bash
 model: sonnet
 ---
@@ -14,12 +14,12 @@ model: sonnet
 需要向用户询问的内容(按服务的可选程度排):
 
 1. **Anna's Archive** —— 推荐配置。问:`donator_key`(看 https://annas-archive.org/donations)。
-2. **EZProxy** —— 可选,机构访问兜底。问:用户机构有没有 EZProxy?如果有,问 4 个字段:`cookie_value`、`cookie_name`(默认 `ezproxy`)、`domain`(如 `.warwick.idm.oclc.org`)、`login_url`(如 `https://login.warwick.idm.oclc.org/login?url=`)。获取方法:浏览器登录 EZProxy → DevTools → Application → Cookies → 复制对应 cookie 的 Name 和 Value。
-3. **CookieCloud(EZProxy 自动刷新)** —— 可选,EZProxy 的进阶替代。如果用户跑了 [CookieCloud](https://github.com/easychen/CookieCloud) server 并装了对应 Chrome 扩展同步 cookie,问 4 个字段:`server`(如 `https://cookiecloud.example.com`)、`uuid`、`password`、`ezproxy_domain`(如 `.idm.oclc.org`,即 cookie 实际 set 在的父域)。配了这个之后,EZProxy cookie 由 download.py 自动拉、自动过期重试,用户不再需要手贴。
-4. **Immersive Translate** —— 可选,仅 translate-agent 用。问:`auth_key`(Zotero 授权码)。
-5. **Dokobot** —— 可选,Google Scholar 兜底。问用户是否需要;需要的话本 agent 只输出安装指令,不动文件。
+2. **Immersive Translate** —— 可选,仅 translate-agent 用。问:`auth_key`(Zotero 授权码)。
+3. **Dokobot** —— 可选,Google Scholar 兜底。问用户是否需要;需要的话本 agent 只输出安装指令,不动文件。
 
 每一项都允许"跳过"。
+
+> **EZProxy / CookieCloud 不归 setup-agent 管。** 从 quasi 0.13.0 起,EZProxy 完全通过 [CookieCloud](https://github.com/easychen/CookieCloud) 自动同步,凭据存在插件层 `userConfig` 里(`/plugin install quasi` 时弹 prompt 收集,sensitive 字段进系统 keychain)。setup-agent 不再写 `config/ezproxy.json` 或 `config/cookiecloud.json`。如果用户问"怎么配 EZProxy",引导他们去 `/plugin` → Configure options。
 
 ## 路径契约
 
@@ -29,10 +29,9 @@ model: sonnet
   - `.claude/settings.json`
   - `.claude/settings.local.json`
   - `config/anna-archive.json`
-  - `config/ezproxy.json`
-  - `config/cookiecloud.json`
   - `config/immersive-translate.json`
 - 不操作 quasi 自身的 .claude/,也不操作 `$CLAUDE_PLUGIN_ROOT` 树
+- 不写 `config/ezproxy.json` / `config/cookiecloud.json` —— EZProxy 凭据走插件 userConfig,见上方说明
 
 ## 输入参数
 
@@ -40,54 +39,12 @@ model: sonnet
 
 - `project_dir`(必需):目标项目根目录
 - `anna_donator_key`(可选):Anna's Archive donator key
-- `ezproxy_cookie`(可选):EZProxy session cookie 值
-- `ezproxy_cookie_name`(可选,默认 `ezproxy`):cookie 名
-- `ezproxy_domain`(可选):机构 EZProxy 域,如 `.warwick.idm.oclc.org`
-- `ezproxy_login_url`(可选):机构 EZProxy 登录 URL
-- `cookiecloud_server`(可选):CookieCloud 服务器 URL
-- `cookiecloud_uuid`(可选):CookieCloud user key
-- `cookiecloud_password`(可选):CookieCloud E2E 密码
-- `cookiecloud_ezproxy_domain`(可选):EZProxy 认证 cookie 的实际 set 域(通常是父域,如 `.idm.oclc.org`)
 - `immersive_auth_key`(可选):Immersive Translate Zotero 授权码
 - `immersive_target_language`(可选,默认 `zh-CN`):目标语言
 - `dokobot_print_instructions`(可选,布尔):是否输出 Dokobot 安装指令
 - `install_missing_deps`(可选,布尔,默认 false):缺依赖时是否尝试自动安装。macOS 走 `brew install`;Linux 仅打印命令(避免 sudo 卡住)
 
-EZProxy 这组字段要么 4 个都给(写文件),要么全不给(跳过)。CookieCloud 这组同理:4 个字段(`server` / `uuid` / `password` / `ezproxy_domain`)全给才写,缺任一就跳过。
-
 ## 执行流程
-
-> 本 agent 支持「裸跑」:用户可能尚未安装 quasi 插件,直接把本文件内容粘到 Claude Code 作为 agent 调用。所以 Step 0 必须先做插件自检/自装,再进后续配置。
-
-### Step 0: 插件自检 + 自装
-
-#### 0.1 检测 quasi 是否已就绪
-
-```bash
-claude plugin list 2>&1 | grep -q '^quasi\b' && echo INSTALLED || echo MISSING
-```
-
-或检查环境变量 `$CLAUDE_PLUGIN_ROOT` 是否被设置且指向 quasi 目录。两者任一为真即视为已安装,跳过 0.2。
-
-#### 0.2 缺失时注册 marketplace 并安装
-
-1. 检查 `claude` CLI 是否在 PATH(`which claude`)。不在则跳过执行,在 SETUP_RESULT 里打印手工命令让用户自己跑。
-2. 注册 marketplace(已注册则该命令幂等,无副作用):
-
-```bash
-claude plugin marketplace add giraphant/quasi
-```
-
-3. 安装插件:
-
-```bash
-claude plugin install quasi@ramu-toolkit
-```
-
-`ramu-toolkit` 是 quasi 仓库 `.claude-plugin/marketplace.json` 里声明的 marketplace 名,`quasi` 是其下的插件名。
-
-4. 安装后用 `claude plugin list` 验证。
-5. 不要 sudo,不要 force。安装失败则记录到 result,后续 Step 继续(用户至少还能拿到平台/凭据检查的结果)。**注意**:某些 Claude Code 版本可能需要重启 session 才能让新装插件的 agent/skill 生效;在 SETUP_RESULT 里提醒一句。
 
 ### Step 1: 系统依赖
 
@@ -192,45 +149,7 @@ Linux 永远不自动跑 `sudo` 安装(会卡住),只打印命令让用户自己
 }
 ```
 
-### Step 4: EZProxy
-
-如果 `ezproxy_cookie` 和 `ezproxy_domain` 和 `ezproxy_login_url` 全部提供(任一缺失则跳过整组):
-
-1. `ezproxy_cookie_name` 缺省则用 `ezproxy`
-2. 写入 `{project_dir}/config/ezproxy.json`:
-
-```json
-{
-  "cookie": "{ezproxy_cookie}",
-  "cookie_name": "{ezproxy_cookie_name}",
-  "domain": "{ezproxy_domain}",
-  "login_url": "{ezproxy_login_url}"
-}
-```
-
-3. 同样按 created/updated/unchanged 记录
-
-### Step 4b: CookieCloud(可选,EZProxy 自动刷新)
-
-如果 `cookiecloud_server`、`cookiecloud_uuid`、`cookiecloud_password`、`cookiecloud_ezproxy_domain` 全部提供(任一缺失则跳过整组):
-
-1. 写入 `{project_dir}/config/cookiecloud.json`:
-
-```json
-{
-  "server": "{cookiecloud_server}",
-  "uuid": "{cookiecloud_uuid}",
-  "password": "{cookiecloud_password}",
-  "ezproxy_domain": "{cookiecloud_ezproxy_domain}",
-  "login_url": "{ezproxy_login_url or https://login.eux.idm.oclc.org/login?url=}"
-}
-```
-
-2. 按 created/updated/unchanged 记录
-
-注:配了 cookiecloud.json 后,`config/ezproxy.json` 由 download.py 在首次调用时自动 pull 生成,setup-agent 不再单独写它(即便 ezproxy_cookie 参数也给了——以 CookieCloud 优先,Step 4 那一组退化成 fallback,仍写)。
-
-### Step 5: Immersive Translate
+### Step 4: Immersive Translate
 
 如果 `immersive_auth_key` 提供:
 
@@ -256,7 +175,7 @@ Linux 永远不自动跑 `sudo` 安装(会卡住),只打印命令让用户自己
 
 3. 按 created/updated/unchanged 记录
 
-### Step 6: Dokobot
+### Step 5: Dokobot
 
 如果 `dokobot_print_instructions` 为真,在最终输出中包含:
 
@@ -275,7 +194,6 @@ Dokobot 安装(可选,Google Scholar 兜底):
 
 ```
 SETUP_RESULT:
-- plugin: already_installed | installed_now | failed | claude_cli_missing
 - platform: darwin | linux | other
 - system_deps:
     python3: <path 或 missing>
@@ -289,8 +207,6 @@ SETUP_RESULT:
     settings.local.json cleaned: [...]
 - credentials:
     anna-archive.json: created | updated | unchanged | skipped
-    ezproxy.json:      created | updated | unchanged | skipped
-    cookiecloud.json:  created | updated | unchanged | skipped
     immersive-translate.json: created | updated | unchanged | skipped
 - dokobot_instructions: included | omitted
 - status: success | error

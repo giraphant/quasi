@@ -11,11 +11,12 @@ model: sonnet
 
 - 工具脚本通过 `qua-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
 - **`$PWD`** — 用户研究项目根目录。所有写入落在此根下：
-  - 凭据 config：`$PWD/config/anna-archive.json`、`$PWD/config/ezproxy.json`（脚本内部读取）
+  - 凭据 config：`$PWD/config/anna-archive.json`（脚本内部读取）
   - 源文件落点：`$PWD/sources/`
   - manifest / 中间产物：`$PWD/processing/`
+- EZProxy 凭据**不在 `$PWD/config/`** —— 走插件 `userConfig`，由 Claude Code 注入 `CLAUDE_PLUGIN_OPTION_COOKIECLOUD_*` 环境变量
 
-凡涉及 HTTP 下载（OA、Sci-Hub、AA、EZProxy、Wayback）唯一通道是 `qua-download`。AA 搜索唯一通道是 `qua-search`。auth/cookie 唯一传递方式是写入 `$PWD/config/`。
+凡涉及 HTTP 下载（OA、Sci-Hub、AA、EZProxy、Wayback）唯一通道是 `qua-download`。AA 搜索唯一通道是 `qua-search`。
 
 Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
 
@@ -68,25 +69,19 @@ Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
 }
 ```
 
-### EZProxy — `$PWD/config/ezproxy.json`
+### EZProxy（自 0.13.0 起完全经由 CookieCloud）
 
-**首选（如果项目配了 CookieCloud）：** 不用手动改。`$PWD/config/cookiecloud.json` 存在时，`download.py` 会在首次调用自动 pull，并在 `EZPROXY COOKIE EXPIRED` 时自动刷新一次。脚本仍报错说明 Chrome 那边也过期了——提示用户去浏览器重登一次，CookieCloud 扩展会把新 cookie 推回 server，下一次 download 自动接续。
+quasi 不再读 `config/ezproxy.json`。EZProxy 凭据来自插件 `userConfig`（`/plugin install quasi` 时一次性收集，sensitive 字段进系统 keychain），`download.py` 在每次进程启动时从 CookieCloud server 即时拉取，过期时自动失效缓存重试一次。
 
-**手动模式（无 CookieCloud）：** 脚本报 `EZPROXY COOKIE EXPIRED` 时，向用户获取新 cookie 值，按下方模板写入：
+脚本若仍报 `EZPROXY COOKIE EXPIRED`，说明 CookieCloud server 上的 cookie 也过期了。引导用户：
 
-```json
-{
-  "cookie": "新的 cookie 值",
-  "cookie_name": "yewnoEzProxy",
-  "domain": ".eux.idm.oclc.org",
-  "login_url": "https://login.eux.idm.oclc.org/login?url="
-}
-```
+1. 在 Chrome 打开任意被改写的论文链接 → 走完一次 SSO + 2FA
+2. CookieCloud 扩展会自动把新 cookie 推回 server
+3. 重跑 download，脚本会拉到新的
 
-注意：
-- `cookie_name` 固定为 `yewnoEzProxy`（不是 `ezproxy`，不是 `yewnoEzProxyn`）
-- `domain` 与 `login_url` 不变，只换 `cookie` 值
-- 获取方式：浏览器登录 EZProxy → DevTools → Application → Cookies → 复制 `yewnoEzProxy` 值
+如果用户根本没配 CookieCloud，引导他们去 `/plugin` → Configure options 填四个字段：`cookiecloud_server` / `cookiecloud_uuid` / `cookiecloud_password` / `cookiecloud_ezproxy_domain`。
+
+调试 env 是否注入：`python3 $CLAUDE_PLUGIN_ROOT/scripts/download/cookiecloud.py` 会打印当前可见的 `CLAUDE_PLUGIN_OPTION_*` 列表 + 实际拉到的 cookie 名集合。
 
 ## 输出协议
 
