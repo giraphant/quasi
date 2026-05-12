@@ -22,6 +22,12 @@ Config (AA only): config/anna-archive.json (project root)
 
 Config (EZproxy): config/ezproxy.json (project root)
     {"cookie": "VALUE", "cookie_name": "yewnoEzProxy", "domain": "...", "login_url": "..."}
+
+Config (CookieCloud, optional auto-refresh): config/cookiecloud.json
+    {"server": "...", "uuid": "...", "password": "...", "ezproxy_domain": ".idm.oclc.org",
+     "login_url": "..."}
+    When present, ezproxy.json is auto-materialized on first use and refreshed
+    once on EZProxyCookieExpired before falling through to Wayback.
 """
 
 import argparse
@@ -80,13 +86,43 @@ class AAQuotaExhausted(Exception):
 
 
 def load_ezproxy_config():
-    """Load EZProxy cookie config from project-root config/ezproxy.json."""
+    """Load EZProxy cookie config from project-root config/ezproxy.json.
+
+    If the file is missing but CookieCloud is configured, pulls a fresh copy
+    first. Returns None when neither is available or pull fails.
+    """
+    if not _EZPROXY_PATH.exists():
+        try:
+            from cookiecloud import refresh_ezproxy_config
+        except ImportError:
+            from .cookiecloud import refresh_ezproxy_config  # type: ignore
+        refresh_ezproxy_config(verbose=False)
     if _EZPROXY_PATH.exists():
         with open(_EZPROXY_PATH) as f:
             config = json.load(f)
         if (config.get("cookie") or config.get("cookies")) and config.get("domain"):
             return config
     return None
+
+
+def _try_ezproxy_with_refresh(doi, output_path):
+    """Try EZProxy download; on expiry, refresh via CookieCloud and retry once.
+
+    Falls through (re-raises EZProxyCookieExpired) if CookieCloud isn't
+    configured or the refreshed cookies are also rejected. Callers' existing
+    except EZProxyCookieExpired blocks still trigger for true expiry.
+    """
+    try:
+        return try_ezproxy_download(doi, output_path)
+    except EZProxyCookieExpired:
+        try:
+            from cookiecloud import refresh_ezproxy_config
+        except ImportError:
+            from .cookiecloud import refresh_ezproxy_config  # type: ignore
+        if refresh_ezproxy_config():
+            print(f"  EZProxy: refreshed via CookieCloud, retrying...", file=sys.stderr)
+            return try_ezproxy_download(doi, output_path)
+        raise
 
 
 def _url_matches_ezproxy(url, ezproxy_config):
@@ -928,7 +964,7 @@ def download_paper(doi=None, url=None, output_dir="sources", filename=None,
     if doi:
         print(f"  Trying EZProxy for {doi}...", file=sys.stderr)
         try:
-            if try_ezproxy_download(doi, dest) and _verify_and_accept(dest, "EZProxy"):
+            if _try_ezproxy_with_refresh(doi, dest) and _verify_and_accept(dest, "EZProxy"):
                 return dest
         except EZProxyCookieExpired:
             print(f"  EZProxy cookie expired, skipping to Wayback...", file=sys.stderr)
@@ -1032,7 +1068,7 @@ def batch_download_manifest(manifest_path, retry_wayback=False):
             # 4. Try EZProxy
             if not success and doi:
                 print(f"  Trying EZProxy for {doi}...", file=sys.stderr)
-                success = try_ezproxy_download(doi, pdf_path)
+                success = _try_ezproxy_with_refresh(doi, pdf_path)
                 if success and not _batch_verify(pdf_path, "EZProxy"):
                     success = False
                 time.sleep(0.5)

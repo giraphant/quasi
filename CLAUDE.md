@@ -46,6 +46,11 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.12.0** (2026-05-12): CookieCloud auto-refresh for EZProxy. New optional
+  `config/cookiecloud.json` lets `download.py` pull fresh cookies from a self-hosted
+  [CookieCloud](https://github.com/easychen/CookieCloud) server — first call
+  materialises `config/ezproxy.json`; `EZProxyCookieExpired` triggers one refresh +
+  retry before falling through to Wayback. Code: `scripts/download/cookiecloud.py`.
 - **0.11.0** (2026-05-12): Python venv extracted from per-shim inline pip into a
   `SessionStart` hook + bootstrap script. Shims now ~half the size. Persistent venv
   lives in `$CLAUDE_PLUGIN_DATA` (or `~/.cache/quasi/`), never in plugin root.

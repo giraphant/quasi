@@ -15,8 +15,9 @@ model: sonnet
 
 1. **Anna's Archive** —— 推荐配置。问:`donator_key`(看 https://annas-archive.org/donations)。
 2. **EZProxy** —— 可选,机构访问兜底。问:用户机构有没有 EZProxy?如果有,问 4 个字段:`cookie_value`、`cookie_name`(默认 `ezproxy`)、`domain`(如 `.warwick.idm.oclc.org`)、`login_url`(如 `https://login.warwick.idm.oclc.org/login?url=`)。获取方法:浏览器登录 EZProxy → DevTools → Application → Cookies → 复制对应 cookie 的 Name 和 Value。
-3. **Immersive Translate** —— 可选,仅 translate-agent 用。问:`auth_key`(Zotero 授权码)。
-4. **Dokobot** —— 可选,Google Scholar 兜底。问用户是否需要;需要的话本 agent 只输出安装指令,不动文件。
+3. **CookieCloud(EZProxy 自动刷新)** —— 可选,EZProxy 的进阶替代。如果用户跑了 [CookieCloud](https://github.com/easychen/CookieCloud) server 并装了对应 Chrome 扩展同步 cookie,问 4 个字段:`server`(如 `https://cookiecloud.example.com`)、`uuid`、`password`、`ezproxy_domain`(如 `.idm.oclc.org`,即 cookie 实际 set 在的父域)。配了这个之后,EZProxy cookie 由 download.py 自动拉、自动过期重试,用户不再需要手贴。
+4. **Immersive Translate** —— 可选,仅 translate-agent 用。问:`auth_key`(Zotero 授权码)。
+5. **Dokobot** —— 可选,Google Scholar 兜底。问用户是否需要;需要的话本 agent 只输出安装指令,不动文件。
 
 每一项都允许"跳过"。
 
@@ -29,6 +30,7 @@ model: sonnet
   - `.claude/settings.local.json`
   - `config/anna-archive.json`
   - `config/ezproxy.json`
+  - `config/cookiecloud.json`
   - `config/immersive-translate.json`
 - 不操作 quasi 自身的 .claude/,也不操作 `$CLAUDE_PLUGIN_ROOT` 树
 
@@ -42,12 +44,16 @@ model: sonnet
 - `ezproxy_cookie_name`(可选,默认 `ezproxy`):cookie 名
 - `ezproxy_domain`(可选):机构 EZProxy 域,如 `.warwick.idm.oclc.org`
 - `ezproxy_login_url`(可选):机构 EZProxy 登录 URL
+- `cookiecloud_server`(可选):CookieCloud 服务器 URL
+- `cookiecloud_uuid`(可选):CookieCloud user key
+- `cookiecloud_password`(可选):CookieCloud E2E 密码
+- `cookiecloud_ezproxy_domain`(可选):EZProxy 认证 cookie 的实际 set 域(通常是父域,如 `.idm.oclc.org`)
 - `immersive_auth_key`(可选):Immersive Translate Zotero 授权码
 - `immersive_target_language`(可选,默认 `zh-CN`):目标语言
 - `dokobot_print_instructions`(可选,布尔):是否输出 Dokobot 安装指令
 - `install_missing_deps`(可选,布尔,默认 false):缺依赖时是否尝试自动安装。macOS 走 `brew install`;Linux 仅打印命令(避免 sudo 卡住)
 
-EZProxy 这组字段要么 4 个都给(写文件),要么全不给(跳过)。
+EZProxy 这组字段要么 4 个都给(写文件),要么全不给(跳过)。CookieCloud 这组同理:4 个字段(`server` / `uuid` / `password` / `ezproxy_domain`)全给才写,缺任一就跳过。
 
 ## 执行流程
 
@@ -204,6 +210,26 @@ Linux 永远不自动跑 `sudo` 安装(会卡住),只打印命令让用户自己
 
 3. 同样按 created/updated/unchanged 记录
 
+### Step 4b: CookieCloud(可选,EZProxy 自动刷新)
+
+如果 `cookiecloud_server`、`cookiecloud_uuid`、`cookiecloud_password`、`cookiecloud_ezproxy_domain` 全部提供(任一缺失则跳过整组):
+
+1. 写入 `{project_dir}/config/cookiecloud.json`:
+
+```json
+{
+  "server": "{cookiecloud_server}",
+  "uuid": "{cookiecloud_uuid}",
+  "password": "{cookiecloud_password}",
+  "ezproxy_domain": "{cookiecloud_ezproxy_domain}",
+  "login_url": "{ezproxy_login_url or https://login.eux.idm.oclc.org/login?url=}"
+}
+```
+
+2. 按 created/updated/unchanged 记录
+
+注:配了 cookiecloud.json 后,`config/ezproxy.json` 由 download.py 在首次调用时自动 pull 生成,setup-agent 不再单独写它(即便 ezproxy_cookie 参数也给了——以 CookieCloud 优先,Step 4 那一组退化成 fallback,仍写)。
+
 ### Step 5: Immersive Translate
 
 如果 `immersive_auth_key` 提供:
@@ -264,6 +290,7 @@ SETUP_RESULT:
 - credentials:
     anna-archive.json: created | updated | unchanged | skipped
     ezproxy.json:      created | updated | unchanged | skipped
+    cookiecloud.json:  created | updated | unchanged | skipped
     immersive-translate.json: created | updated | unchanged | skipped
 - dokobot_instructions: included | omitted
 - status: success | error

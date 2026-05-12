@@ -70,7 +70,9 @@ Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
 
 ### EZProxy — `$PWD/config/ezproxy.json`
 
-脚本报 `EZPROXY COOKIE EXPIRED` 时，向用户获取新 cookie 值，按下方模板写入：
+**首选（如果项目配了 CookieCloud）：** 不用手动改。`$PWD/config/cookiecloud.json` 存在时，`download.py` 会在首次调用自动 pull，并在 `EZPROXY COOKIE EXPIRED` 时自动刷新一次。脚本仍报错说明 Chrome 那边也过期了——提示用户去浏览器重登一次，CookieCloud 扩展会把新 cookie 推回 server，下一次 download 自动接续。
+
+**手动模式（无 CookieCloud）：** 脚本报 `EZPROXY COOKIE EXPIRED` 时，向用户获取新 cookie 值，按下方模板写入：
 
 ```json
 {
