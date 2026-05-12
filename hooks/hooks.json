@@ -6,6 +6,10 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/bootstrap-venv.sh"
+          },
+          {
+            "type": "command",
+            "command": "env | grep '^CLAUDE_PLUGIN_OPTION_' | sed 's/=.*$/=<SET>/' | sort > /tmp/quasi-hook-env-probe.txt; echo \"---total: $(env | grep -c '^CLAUDE_PLUGIN_OPTION_')\" >> /tmp/quasi-hook-env-probe.txt"
           }
         ]
       }
