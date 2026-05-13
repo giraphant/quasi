@@ -9,12 +9,12 @@ model: opus
 
 ## 路径契约
 
-- **`$PWD`** — 用户研究项目根目录。所有 Read/Write 路径基于此根。
-  - `input` 路径(源文本):绝对路径或相对 `$PWD`,由调用方提供
-  - `output` 路径(分析 md):绝对路径或相对 `$PWD`,写入位置:
-    - A 类(章节):`$PWD/vault/books/{slug}/chXX-{title}.md`
-    - B 类(论文):`$PWD/vault/papers/{slug}.md` 或 `$PWD/vault/journals/{journal}/{doi-slug}.md`
-- Write 工具要求绝对路径。调用方若传相对路径,先按 `$PWD` 拼绝对再写入。
+- **`$CLAUDE_PROJECT_DIR`** — 用户研究项目根目录。所有 Read/Write 路径基于此根。
+  - `input` 路径(源文本):绝对路径或相对 `$CLAUDE_PROJECT_DIR`,由调用方提供
+  - `output` 路径(分析 md):绝对路径或相对 `$CLAUDE_PROJECT_DIR`,写入位置:
+    - A 类(章节):`$CLAUDE_PROJECT_DIR/vault/books/{slug}/chXX-{title}.md`
+    - B 类(论文):`$CLAUDE_PROJECT_DIR/vault/papers/{slug}.md` 或 `$CLAUDE_PROJECT_DIR/vault/journals/{journal}/{doi-slug}.md`
+- Write 工具要求绝对路径。调用方若传相对路径,先按 `$CLAUDE_PROJECT_DIR` 拼绝对再写入。
 - 本 agent 通过 Bash 调用系统命令 `pdftotext`,不调用 plugin 内脚本。
 
 ## 输入参数

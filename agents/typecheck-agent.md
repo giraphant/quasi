@@ -9,15 +9,15 @@ model: sonnet
 
 ## 路径契约
 
-- **`$PWD`** — 用户研究项目根目录(包含 `vault/`)。所有 Read/Write 路径基于此根。
-- **`$PWD/.quasi/`** — typecheck 报告写在这里(自动创建)。
+- **`$CLAUDE_PROJECT_DIR`** — 用户研究项目根目录(包含 `vault/`)。所有 Read/Write 路径基于此根。
+- **`$CLAUDE_PROJECT_DIR/.quasi/`** — typecheck 报告写在这里(自动创建)。
 - **`quasi-typecheck` / `quasi-autofix-mechanical`** — plugin 提供的两个 bash 命令,**Claude Code 自动把 plugin 的 `bin/` 加入 PATH**,所以直接按名调用即可。它们内部自己解析 plugin 路径 + 维护 venv,你不用操心。
 
 ## 输入参数
 
 由调用方在 prompt 中提供:
 
-- `path`: 必填。要处理的目标路径(文件或目录,绝对或相对 `$PWD`)。例:`vault/authors/sara-ahmed.md` 或 `vault/papers/`。
+- `path`: 必填。要处理的目标路径(文件或目录,绝对或相对 `$CLAUDE_PROJECT_DIR`)。例:`vault/authors/sara-ahmed.md` 或 `vault/papers/`。
 - `mode`: 可选。`check` (只校验报告) / `fix` (机械修复) / `full` (机械 + LLM 修复)。默认 `full`。
 
 ## 执行流程
@@ -28,7 +28,7 @@ model: sonnet
 quasi-typecheck --path "{path}" --quiet
 ```
 
-退出码 0 = clean,1 = 有违规。读 `$PWD/.quasi/typecheck-results.json` 拿详细数据。
+退出码 0 = clean,1 = 有违规。读 `$CLAUDE_PROJECT_DIR/.quasi/typecheck-results.json` 拿详细数据。
 
 **如果 clean**:直接走"输出协议"返回 `status: clean`,流程结束。
 
@@ -335,7 +335,7 @@ typecheck-agent result
 - N book files need publisher backfill (suggest WorldCat lookup)
 ```
 
-详细数据已经写在 `$PWD/.quasi/typecheck-results.json`,调用方需细看时 Read 那个文件。
+详细数据已经写在 `$CLAUDE_PROJECT_DIR/.quasi/typecheck-results.json`,调用方需细看时 Read 那个文件。
 </output_protocol>
 
 ## 失败处理

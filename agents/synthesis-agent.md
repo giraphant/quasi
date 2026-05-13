@@ -10,9 +10,9 @@ model: opus
 ## 路径契约
 
 - 工具脚本通过 `quasi-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
-- **`$PWD`** — 用户研究项目根目录。`analysis_dir`、`output_path`、`reading_list_path`、`kb_path` 全部基于此根。
+- **`$CLAUDE_PROJECT_DIR`** — 用户研究项目根目录。`analysis_dir`、`output_path`、`reading_list_path`、`kb_path` 全部基于此根。
 
-Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
+Write/Read 工具要求绝对路径。相对路径必须按 `$CLAUDE_PROJECT_DIR` 拼接。
 
 ## 输入参数
 

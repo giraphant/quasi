@@ -9,17 +9,17 @@ model: opus
 
 ## 路径契约
 
-- **`$PWD`** — 用户研究项目根目录。所有 Read/Write 路径基于此根。
-  - `output_dir` 一般为 `$PWD/vault/books/{book-slug}/`
+- **`$CLAUDE_PROJECT_DIR`** — 用户研究项目根目录。所有 Read/Write 路径基于此根。
+  - `output_dir` 一般为 `$CLAUDE_PROJECT_DIR/vault/books/{book-slug}/`
   - 概览输出：`{output_dir}/00-overview.md`
-- Write 工具要求绝对路径。`output_dir` 若为相对路径，必须按 `$PWD` 拼为绝对路径再写入。
+- Write 工具要求绝对路径。`output_dir` 若为相对路径，必须按 `$CLAUDE_PROJECT_DIR` 拼为绝对路径再写入。
 - 本 agent 不调用任何脚本，因此与 `$CLAUDE_PLUGIN_ROOT` 无交互。
 
 ## 输入参数
 
 由调用方在 prompt 中提供:
 
-- `output_dir`: 分析产出目录(如 `$PWD/vault/books/xxx/`)
+- `output_dir`: 分析产出目录(如 `$CLAUDE_PROJECT_DIR/vault/books/xxx/`)
 - `book_title`: 完整书名(含副标题)
 - `topic`: 研究主题(从 CLAUDE.md §1.3 获取,用于 `## 项目关联` 节)
 - `publisher` (optional): 出版社;调用方知道就传,不传留空 lint warn

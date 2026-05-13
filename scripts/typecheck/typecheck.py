@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Type-check every typed file in $PWD/vault against quasi SPEC schemas.
+"""Type-check every typed file in $CLAUDE_PROJECT_DIR/vault against quasi SPEC schemas.
 
-Read-only. Outputs (written under $PWD):
-  $PWD/.quasi/typecheck-report.md    — human-readable summary
-  $PWD/.quasi/typecheck-results.json — full per-file detail (for autofix)
+Read-only. Outputs (written under $CLAUDE_PROJECT_DIR):
+  $CLAUDE_PROJECT_DIR/.quasi/typecheck-report.md    — human-readable summary
+  $CLAUDE_PROJECT_DIR/.quasi/typecheck-results.json — full per-file detail (for autofix)
 
 Usage:
   # Standalone, from inside a vault project:
   python "$CLAUDE_PLUGIN_ROOT/scripts/typecheck/typecheck.py" [--path PATH]
 
-  # PATH defaults to "vault" (i.e. $PWD/vault).
+  # PATH defaults to "vault" (i.e. $CLAUDE_PROJECT_DIR/vault).
   # PATH can be a single file or a subtree.
 """
 
@@ -28,8 +28,13 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
-# Vault root = $PWD (the user's project, where they invoke from).
-PROJECT_ROOT = Path(os.environ.get("QUA_PROJECT_ROOT", os.getcwd())).resolve()
+# Vault root = $CLAUDE_PROJECT_DIR (the user's project, where they invoke from).
+# Priority: explicit QUA_PROJECT_ROOT override > Claude Code's CLAUDE_PROJECT_DIR > cwd.
+PROJECT_ROOT = Path(
+    os.environ.get("QUA_PROJECT_ROOT")
+    or os.environ.get("CLAUDE_PROJECT_DIR")
+    or os.getcwd()
+).resolve()
 
 import yaml  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
@@ -421,7 +426,7 @@ def main() -> None:
     parser.add_argument(
         "--path",
         default=str(VAULT_DEFAULT),
-        help="File or directory to typecheck (default: $PWD/vault)",
+        help="File or directory to typecheck (default: $CLAUDE_PROJECT_DIR/vault)",
     )
     parser.add_argument(
         "--quiet", action="store_true",

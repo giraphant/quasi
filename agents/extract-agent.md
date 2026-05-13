@@ -10,8 +10,8 @@ model: sonnet
 ## 路径契约
 
 - 工具脚本通过 `quasi-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
-- **`$PWD`** — 用户研究项目根目录。`source_file` / `chapters_dir` 等输入路径由调用方提供，必须为绝对路径或相对 `$PWD`。
-- 调用方传入 Read/Write 路径时，相对路径必须按 `$PWD` 拼为绝对路径再使用。
+- **`$CLAUDE_PROJECT_DIR`** — 用户研究项目根目录。`source_file` / `chapters_dir` 等输入路径由调用方提供，必须为绝对路径或相对 `$CLAUDE_PROJECT_DIR`。
+- 调用方传入 Read/Write 路径时，相对路径必须按 `$CLAUDE_PROJECT_DIR` 拼为绝对路径再使用。
 
 ## 输入参数
 

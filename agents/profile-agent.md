@@ -9,11 +9,11 @@ model: opus
 
 ## 路径契约
 
-- **`$PWD`** — 用户研究项目根目录。所有 Read/Write 路径基于此根。
-  - 书籍概览：`$PWD/vault/books/{slug}/00-overview.md`
-  - 论文分析：`$PWD/vault/papers/{paper-slug}.md`
-  - 作者档案输出：`$PWD/vault/authors/{author_name}.md`
-- Write 工具要求绝对路径。相对路径必须按 `$PWD` 拼为绝对路径再写入。
+- **`$CLAUDE_PROJECT_DIR`** — 用户研究项目根目录。所有 Read/Write 路径基于此根。
+  - 书籍概览：`$CLAUDE_PROJECT_DIR/vault/books/{slug}/00-overview.md`
+  - 论文分析：`$CLAUDE_PROJECT_DIR/vault/papers/{paper-slug}.md`
+  - 作者档案输出：`$CLAUDE_PROJECT_DIR/vault/authors/{author_name}.md`
+- Write 工具要求绝对路径。相对路径必须按 `$CLAUDE_PROJECT_DIR` 拼为绝对路径再写入。
 - 本 agent 不调用任何脚本，因此与 `$CLAUDE_PLUGIN_ROOT` 无交互。
 
 ## 输入参数

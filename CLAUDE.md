@@ -46,6 +46,15 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.15.3** (2026-05-13): Doc/script rename — `$PWD` → `$CLAUDE_PROJECT_DIR`
+  across all 11 agent prompts, `bin/quasi-typecheck`, and the two typecheck
+  scripts' docstrings/help. Aligns with the official plugins-reference
+  recommendation: `$CLAUDE_PROJECT_DIR` is set by Claude Code at session start
+  and doesn't drift if anything `cd`s; `$PWD` is just the shell's transient
+  cwd. `typecheck.py` / `autofix_mechanical.py` `PROJECT_ROOT` resolution now
+  consults `CLAUDE_PROJECT_DIR` between the existing `QUA_PROJECT_ROOT`
+  escape hatch and the `os.getcwd()` fallback — no behavior change when
+  invoked from the project root (the common case), but stable under `cd`.
 - **0.15.2** (2026-05-12): PreToolUse hook also propagates `CLAUDE_PLUGIN_ROOT`
   and `CLAUDE_PLUGIN_DATA` to bash subprocesses (in addition to the userConfig
   `QUASI_*` block). Before this, the shims fell back to `~/.cache/quasi/.venv`
@@ -78,7 +87,7 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
   mirrors), `immersive_auth_key` (sensitive). `download.py` / `search.py` /
   `immersive_translate.py` no longer read `config/anna-archive.json` or
   `config/immersive-translate.json` — fully env-var driven. `setup-agent` becomes
-  purely permissions + system deps + dokobot indicator; the entire `$PWD/config/`
+  purely permissions + system deps + dokobot indicator; the entire `$CLAUDE_PROJECT_DIR/config/`
   directory is now optional and quasi never writes there.
 - **0.13.0** (2026-05-12): EZProxy creds moved to `userConfig` (CookieCloud).
   Removed `config/cookiecloud.json` and `config/ezproxy.json` reading.

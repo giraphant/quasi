@@ -10,11 +10,11 @@ model: opus
 ## 路径契约
 
 - 工具脚本通过 `quasi-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
-- **`$PWD`** — 用户研究项目根目录。manifest 与一切产出落在此根下：
-  - manifest 路径：`$PWD/processing/authors/{author_name}/manifest.json`
+- **`$CLAUDE_PROJECT_DIR`** — 用户研究项目根目录。manifest 与一切产出落在此根下：
+  - manifest 路径：`$CLAUDE_PROJECT_DIR/processing/authors/{author_name}/manifest.json`
 - `dokobot` 是用户机器全局命令（如已安装），直接通过 PATH 调用，不属于 quasi 树。
 
-Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
+Write/Read 工具要求绝对路径。相对路径必须按 `$CLAUDE_PROJECT_DIR` 拼接。
 
 ## 输入参数
 
@@ -73,7 +73,7 @@ which dokobot >/dev/null 2>&1 && echo "DOKO_AVAILABLE" || echo "DOKO_NOT_AVAILAB
 按「引用量 × 与 {topic} 相关性」从候选池选 5 本书 + 10 篇论文，附筛选理由，写入：
 
 ```
-$PWD/processing/authors/{author_name}/manifest.json
+$CLAUDE_PROJECT_DIR/processing/authors/{author_name}/manifest.json
 ```
 
 manifest 是采集状态机，归 `processing/`，与 vault 知识对象分层。

@@ -9,8 +9,8 @@ model: sonnet
 
 ## 路径契约
 
-- **`$PWD`** —— 默认目标项目根目录(当 `project_dir` 未提供时)
-- **`project_dir`** ——(参数)显式目标项目根目录,可指向 `$PWD` 或任意绝对路径
+- **`$CLAUDE_PROJECT_DIR`** —— 默认目标项目根目录(当 `project_dir` 未提供时)
+- **`project_dir`** ——(参数)显式目标项目根目录,可指向 `$CLAUDE_PROJECT_DIR` 或任意绝对路径
 - 只操作 `{project_dir}/.claude/settings.json` 和 `settings.local.json`
 - 不操作 quasi 自身的 .claude/,也不操作 `$CLAUDE_PLUGIN_ROOT` 树
 

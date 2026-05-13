@@ -10,13 +10,13 @@ model: sonnet
 ## 路径契约
 
 - 工具脚本通过 `quasi-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
-- **`$PWD`** — 用户研究项目根目录。所有写入落在此根下：
-  - 源文件落点：`$PWD/sources/`
-  - manifest / 中间产物：`$PWD/processing/`
+- **`$CLAUDE_PROJECT_DIR`** — 用户研究项目根目录。所有写入落在此根下：
+  - 源文件落点：`$CLAUDE_PROJECT_DIR/sources/`
+  - manifest / 中间产物：`$CLAUDE_PROJECT_DIR/processing/`
 
 凡涉及 HTTP 下载（OA、Sci-Hub、AA、EZProxy、Wayback）唯一通道是 `quasi-download`。AA 搜索唯一通道是 `quasi-search`。
 
-Write/Read 工具要求绝对路径。相对路径必须按 `$PWD` 拼接。
+Write/Read 工具要求绝对路径。相对路径必须按 `$CLAUDE_PROJECT_DIR` 拼接。
 
 ## 输入参数
 

@@ -46,7 +46,11 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
-PROJECT_ROOT = Path(os.environ.get("QUA_PROJECT_ROOT", os.getcwd())).resolve()
+PROJECT_ROOT = Path(
+    os.environ.get("QUA_PROJECT_ROOT")
+    or os.environ.get("CLAUDE_PROJECT_DIR")
+    or os.getcwd()
+).resolve()
 
 import yaml  # noqa: E402
 
@@ -437,7 +441,7 @@ def collect_files(target: Path) -> list[Path]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--path", default=str(VAULT_DEFAULT),
-                        help="File or directory to fix (default: $PWD/vault)")
+                        help="File or directory to fix (default: $CLAUDE_PROJECT_DIR/vault)")
     parser.add_argument("--write", action="store_true",
                         help="Actually write changes (default: dry-run)")
     parser.add_argument("--limit", type=int, default=0,

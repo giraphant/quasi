@@ -2,7 +2,7 @@
 # quasi-typecheck — Validate vault md files against quasi SPEC.
 #
 # Usage:
-#   quasi-typecheck                    # check $PWD/vault
+#   quasi-typecheck                    # check $CLAUDE_PROJECT_DIR/vault
 #   quasi-typecheck --path FILE_OR_DIR
 #   quasi-typecheck --quiet
 
