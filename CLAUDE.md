@@ -46,6 +46,29 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.24.0** (2026-05-17): **search bin complete refactor (BREAKING).**
+  Spec: `docs/superpowers/specs/2026-05-17-search-refactor-design.md`.
+  Plan: `docs/superpowers/plans/2026-05-17-search-refactor.md`.
+  - 2137-line `scripts/search/search.py` replaced by sectioned ~700-line
+    `search.py` + 9 per-platform adapters in `sources/`.
+  - CLI: only two verbs left — `quasi-search book` / `quasi-search paper`.
+    `metadata` / `validate` / `scholar` / `backfill` / `cndouban` / `books` /
+    `papers` removed entirely (no back-compat).
+  - AA file-locate moved to `scripts/download/aa.py` (Python import only,
+    no CLI verb). `download-agent` calls it directly.
+  - Backfill dispatcher + sweep scripts moved to `scripts/audit/`.
+    `quasi-audit backfill --strategy X` replaces `quasi-search backfill`.
+  - Unpaywall / S2 / Wayback adapters dropped (enrich cascade non-goal).
+  - Conflict surfacing: every fan-out call's diagnostics carries
+    `conflicts[].evidence` for year / isbn_13 / publisher / page_count /
+    authors — process-book Step 0 YEAR_TRIAGE now reads this rather than
+    re-calling each source. Generalises 0.21.0's `year_signals` hack.
+  - Callers migrated in same PR: `new-discover-agent.md` (delete routing
+    table), `process-book` / `process-topic` / `process-author` /
+    `wrap-up` (verb rename + remove validate/metadata batch calls),
+    `download-agent.md` (AA via Python import), `discover-agent.md`
+    (verb rename + delete validate/scholar).
+
 - **0.22.0** (2026-05-17): **citation review pivots to TUI — HTML report
   + structured verdict enum deprecated.** Background: 0.20.0's tab-based
   HTML review still had a coarse fit between agent output shape and what
