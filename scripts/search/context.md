@@ -24,7 +24,7 @@ See `plugins/quasi/docs/superpowers/specs/2026-05-17-search-refactor-design.md` 
 Removed since 0.24.0 (no back-compat): `books`, `papers`, `metadata`, `validate`, `scholar`, `backfill`, `cndouban`.
 
 ## Dependencies
-- Internal: used by `new-discover-agent`, `discover-agent`, skill main processes of process-book / process-topic / process-author / wrap-up
+- Internal: used by `search-agent`, skill main processes of process-book / process-topic / process-author / wrap-up
 - External APIs: OpenAlex, Crossref, OpenLibrary, Google Books (HTTP + dokobot fallback for 429), Google Scholar (HTML scrape with proxy support)
 - Scrapers: Goodreads, StoryGraph (curl_cffi), Amazon, Douban CN (direct + dokobot for works-page)
 - Python: requests, beautifulsoup4, curl_cffi (all in scripts/requirements.txt)

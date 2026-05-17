@@ -31,7 +31,7 @@ description: >
 
 ```
 主进程 (dispatcher)
-├─ Phase 1: discover-agent (opus, 前台) → manifest
+├─ Phase 1: search-agent (opus, 前台) → manifest
 ├─ Phase 2: download-agent (sonnet, 前台) → 下载
 ├─ Phase 3: 书籍处理
 │   ├─ 逐本: extract-agent (sonnet, 前台)
@@ -52,7 +52,7 @@ manifest_path = f"processing/authors/{author_name}/manifest.json"
 
 # 1. DISCOVER
 if not exists(manifest_path):
-    Agent("quasi:new-discover-agent", foreground=True,
+    Agent("quasi:search-agent", foreground=True,
           prompt=f"""
 task: discover this author's representative works on the given topic
 
