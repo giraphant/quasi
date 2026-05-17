@@ -19,11 +19,11 @@ description: >
 源文件落在 `sources/{book-slug}.{epub,pdf}`。
 
 **没有源文件时,本 skill 自己 dispatch download-agent 去拿** —— 不要求调用方先准备。download-agent **复刻 process-author 的"discover → download → finalize"三阶段**,只是 N=1:
-1. **discover** (pre-download): `quasi-search books` 拿 OL/CR/AA 候选,记下 best-match 的 year (= `ol_year`) 和 md5
+1. **discover** (pre-download): `quasi-search books` 拿 GB/OL/OA/AA 候选,每个 source 单独记录 year (不混叫 `ol_year`),记 best-match 的 md5
 2. **download**: `quasi-download book --md5 {md5}`
-3. **finalize** (post-download): Read PDF 前 3 页(版权页/titlepage)提取 `pdf_year`,三方比 `slug_year` / `ol_year` / `pdf_year`,任何不一致都不要 finalize、直接返回 `YEAR_MISMATCH` 让主进程拍板
+3. **finalize** (post-download): Read PDF 前 3 页(版权页/titlepage)抽多种 year signal (first_published / copyright_year / original_year),与 slug_year + 各 source year 一起报回主进程裁决
 
-这套验证不是 process-book 特有的——它就是 process-author Phase 1+2 那条 chain 的单本切片。
+这套验证不是 process-book 特有的——它就是 process-author Phase 1+2 那条 chain 的单本切片。N-source contract 把"次次取一个糊名 year"换成"每个源单独列",让多源分歧(典型: AA 抄版权页 2022,OL editions 全 2023)在主进程面前显形而不是被压成单值。
 
 ## ⚠ 硬约束
 
@@ -66,42 +66,76 @@ source_file = Glob(f"sources/{book_slug}.epub") or Glob(f"sources/{book_slug}.pd
 # 不接 --doi/--md5/--url 等 flag(那是 download-agent 内部要管的事)。
 if not source_file:
     result = Agent("quasi:download-agent", foreground=True, prompt=f"""\
-intent: single book with metadata cross-verification
+intent: single book with N-source year triage
 book_slug: {book_slug}
 output_dir: sources/
 
 steps (复刻 process-author 的 discover → download → finalize 三段):
 
 1. **discover** —— 从 slug 反解 (author, title, year_in_slug);
-   `quasi-search books --author X --title Y --limit 5` 拿候选 (含 AA / OL / CR);
-   挑 best-match (title overlap >=0.7 + author surname 必须出现);
-   记下 best-match.year = ol_year, best-match.md5 (or DOI/URL).
+   `quasi-search books --author X --title Y --limit 5 --json` 拿候选;
+   该命令默认 --source all,内部并发 Google Books / OpenLibrary / OpenAlex,
+   再单独 `--source aa` 拿 Anna's Archive (含 MD5).
+   **每个 source 单独记录命中的 year**,不要合并成一个值:
+     - gb_year (Google Books publishedDate[:4])
+     - ol_year (OpenLibrary first_publish_year)
+     - oa_year (OpenAlex publication_year)
+     - aa_year (Anna's Archive table cell)
+   挑 best-match (title overlap >=0.7 + author surname 必须出现) 拿 md5,
+   md5 来自哪个源就标在 best_match_source 字段里.
 
 2. **download** —— `quasi-download book --md5 {{md5}} -o sources/ --filename {book_slug}`
-   先下到 sources/{book_slug}.tmp.{{ext}} (临时名,等三方对完再 finalize)
+   先下到 sources/{book_slug}.tmp.{{ext}} (临时名,等 triage 完再 finalize)
 
 3. **finalize** —— Read 临时文件前 3 页 (版权页 / titlepage);
-   从中提取 pdf_year (出现的最大 published year,排除 reprint dates).
+   抽多种 year signal,不要直接归并成单值:
+     - first_published: 命中 "First published in {{year}}" / "First edition {{year}}" / "Published {{year}}" 模式
+     - copyright_year: 命中 "Copyright © {{year}}" / "Copyright {{year}}" 模式
+     - original_year: 命中 "Originally published as ... {{year}}" / "Translated from ... {{year}}" (翻译书原版年)
+     - other_years: 前 3 页里其余 1900-2099 数字
+   并把版权页相关那段原文 (≤120 字) 放到 pdf_evidence 字段里.
 
-4. **三方对比** —— slug_year vs ol_year vs pdf_year:
-   - 全一致 → mv tmp file 到 sources/{book_slug}.{{ext}}, 返回:
+4. **N-source triage** —— 不强求"全一致"。按下面格式报告,让主进程裁决:
+
+   YEAR_TRIAGE:
+   - slug_year: {{year_in_slug}}
+   - source_years:
+       google_books: {{gb_year or null}}
+       openlibrary:  {{ol_year or null}}
+       openalex:     {{oa_year or null}}
+       anna_archive: {{aa_year or null}}
+   - best_match_source: {{which source the md5 came from}}
+   - pdf_signals:
+       first_published: {{int or null}}
+       copyright_year:  {{int or null}}
+       original_year:   {{int or null}}
+       other_years:     [..]
+   - pdf_evidence: "..."
+   - recommended_year: {{int}}
+     # 偏好顺序: pdf.first_published > 多源众数 > pdf.copyright_year
+     # 翻译书: original_year 不应作为 recommended (那是原文年,不是本版年)
+   - recommendation_reason: "{{one line: 为什么选这个而不是其他}}"
+   - verdict: MATCH | MISMATCH | AMBIGUOUS
+     # MATCH:  slug_year == recommended_year && (至少 2 个 source/pdf signal 一致 recommended_year)
+     # MISMATCH: slug_year != recommended_year 且证据明确
+     # AMBIGUOUS: 证据太散无法定论
+   - tmp_file: sources/{book_slug}.tmp.{{ext}}  (仅 MISMATCH/AMBIGUOUS 时保留)
+
+   verdict=MATCH 时,mv tmp file 到 sources/{book_slug}.{{ext}} 并改输出头为:
      DOWNLOAD_OK:
-     - year: ... (三方一致)
+     - year: {{recommended_year}}
      - source: sources/{book_slug}.{{ext}}
-   - 任何不一致 → **不要 mv / finalize**, 临时文件保留, 返回:
-     YEAR_MISMATCH:
-     - slug_year: ...
-     - ol_year:   ... (source: openlibrary/crossref/aa)
-     - pdf_year:  ...
-     - tmp_file:  sources/{book_slug}.tmp.{{ext}}
-     - candidates: [...]
-     - hint: 大概率 slug 年份错(用户基于 prior knowledge 编的)或多版次
-             (hardcover 2023 vs paperback 2024). 推荐用 ol_year + pdf_year 一致的那个.
+     - source_years: {{...}}
+     - pdf_signals: {{...}}
+
+   verdict ∈ {{MISMATCH, AMBIGUOUS}}: 不要 mv,临时文件保留,完整 YEAR_TRIAGE 块照报.
 """)
 
     # 检查 download-agent 的输出
-    if result.contains("YEAR_MISMATCH"):
-        report(f"year mismatch — 请确认 canonical year 后改 slug 重跑")
+    if result.contains("YEAR_TRIAGE") and (result.contains("MISMATCH") or result.contains("AMBIGUOUS")):
+        # 主进程把 YEAR_TRIAGE 整块原样递给用户,让用户基于 source_years + pdf_signals 拍板.
+        # 用户改 slug 重跑,或手动 mv tmp 文件 + 接受 recommended_year.
+        report(f"year triage — 见上方 YEAR_TRIAGE 块,改 slug 后重跑")
         return
     source_file = Glob(f"sources/{book_slug}.epub") or Glob(f"sources/{book_slug}.pdf")
     if not source_file:

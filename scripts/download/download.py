@@ -221,10 +221,109 @@ def _extract_epub_text(epub_path, max_items=3):
         return ""
 
 
+_YEAR_RE = r"\b(?:19|20)\d{2}\b"
+
+# Patterns that indicate the year is the *publication* year of this edition.
+# Order matters: earlier patterns win when assembling best_guess.
+_FIRST_PUBLISHED_PATTERNS = [
+    re.compile(r"first\s+published[^.]{0,40}?(" + _YEAR_RE + r")", re.IGNORECASE),
+    re.compile(r"first\s+edition[^.]{0,30}?(" + _YEAR_RE + r")", re.IGNORECASE),
+    re.compile(r"first\s+english(?:\s+language)?\s+edition[^.]{0,30}?(" + _YEAR_RE + r")", re.IGNORECASE),
+    # "Published 2023 by X" / "Published in 2023" — but NOT "Originally published"
+    re.compile(r"(?<!ly\s)(?<!originally\s)published\s+(?:in\s+)?(" + _YEAR_RE + r")", re.IGNORECASE),
+]
+
+# Patterns that indicate the year is the *copyright* year — often the
+# preceding calendar year for press books finalised in Q4.
+_COPYRIGHT_PATTERNS = [
+    re.compile(r"copyright\s*©?\s*(" + _YEAR_RE + r")", re.IGNORECASE),
+    re.compile(r"©\s*(" + _YEAR_RE + r")", re.IGNORECASE),
+]
+
+# Patterns that indicate the year is the *original* (pre-translation /
+# pre-reissue) year — never the year of *this* edition.
+_ORIGINAL_PATTERNS = [
+    re.compile(r"originally\s+published[^.]{0,80}?(" + _YEAR_RE + r")", re.IGNORECASE),
+    re.compile(r"translated\s+from[^.]{0,80}?(" + _YEAR_RE + r")", re.IGNORECASE),
+    re.compile(r"original(?:\s+french|\s+german|\s+spanish|\s+italian)?\s+edition[^.]{0,30}?(" + _YEAR_RE + r")", re.IGNORECASE),
+]
+
+
+def _extract_year_signals(text):
+    """Structurally extract year signals from front matter.
+
+    Returns dict with:
+      - first_published: int | None — "First published 2023" / "First edition 2023"
+      - copyright_year:  int | None — "Copyright 2022"
+      - original_year:   int | None — "Originally published in French as ... 2008"
+      - other_years:     list[int]  — every 1900-2099 hit, in text order, dedup
+      - best_guess:      int | None — first_published > copyright_year > other_years[-1]
+                                      (copyright_year+1 prefers the later year when
+                                       copyright year sits inside other_years and a
+                                       later year is also present — heuristic for
+                                       Q4-finalised press books)
+      - evidence_text:   short snippet quoting the matched fragment for best_guess
+    """
+    text = text or ""
+    lowered_for_search = text  # patterns are IGNORECASE
+
+    def _first_match(patterns):
+        for pat in patterns:
+            m = pat.search(lowered_for_search)
+            if m:
+                return int(m.group(1)), m.group(0)
+        return None, None
+
+    first_published, first_published_ctx = _first_match(_FIRST_PUBLISHED_PATTERNS)
+    copyright_year, copyright_ctx = _first_match(_COPYRIGHT_PATTERNS)
+    original_year, original_ctx = _first_match(_ORIGINAL_PATTERNS)
+
+    # All years in text order, deduped
+    raw_years = [int(y) for y in re.findall(_YEAR_RE, text)]
+    seen = set()
+    other_years: list[int] = []
+    for y in raw_years:
+        if y in seen:
+            continue
+        seen.add(y)
+        other_years.append(y)
+
+    best_guess = first_published or copyright_year
+    evidence = first_published_ctx or copyright_ctx or None
+
+    # Q4-finalised press heuristic: if copyright is in other_years and a
+    # strictly later year ≤ copyright+2 also appears (release lag), prefer
+    # the later one. Conservative — only nudges by 1-2 years.
+    if best_guess == copyright_year and copyright_year is not None:
+        candidate = next(
+            (y for y in other_years
+             if copyright_year < y <= copyright_year + 2 and y not in {original_year}),
+            None,
+        )
+        if candidate is not None:
+            best_guess = candidate
+            evidence = f"copyright {copyright_year}; release year {candidate} also present in front matter"
+
+    # Final fallback: nothing structurally tagged — take last year in text order
+    # (front matter usually leads with original/translation/copyright; the
+    # latest year mentioned is most likely the edition year).
+    if best_guess is None and other_years:
+        best_guess = max(other_years)
+        evidence = "fallback: no structural year tag found, using max(other_years)"
+
+    return {
+        "first_published": first_published,
+        "copyright_year": copyright_year,
+        "original_year": original_year,
+        "other_years": other_years,
+        "best_guess": best_guess,
+        "evidence_text": evidence,
+    }
+
+
 def _guess_year(text):
-    """Guess a publication year from extracted front text."""
-    matches = re.findall(r"\b(?:19|20)\d{2}\b", text or "")
-    return int(matches[0]) if matches else None
+    """Back-compat shim — returns just best_guess. Prefer _extract_year_signals."""
+    return _extract_year_signals(text)["best_guess"]
 
 
 def _title_keywords(title):
@@ -269,11 +368,13 @@ def verify_book_file(path, expected_author, expected_title):
     if not _text_mentions_title(text, expected_title):
         return {"status": "mismatch", "reason": "title_not_found"}
 
+    year_signals = _extract_year_signals(text)
     return {
         "status": "match",
         "author": expected_author,
         "title": expected_title,
-        "year": _guess_year(text),
+        "year": year_signals["best_guess"],
+        "year_signals": year_signals,
         "evidence": text[:500],
     }
 
@@ -1158,18 +1259,27 @@ def is_same_book(expected_author, expected_title, actual_author, actual_title):
     return bool(expected and actual and (expected in actual or actual in expected))
 
 
-def finalize_book_identity(manifest_book, actual_author, actual_title, actual_year):
-    """Return the corrected canonical book identity for a downloaded file."""
+def finalize_book_identity(manifest_book, actual_author, actual_title, actual_year,
+                           year_signals=None):
+    """Return the corrected canonical book identity for a downloaded file.
+
+    `year_signals` (optional) is the dict returned by `_extract_year_signals`.
+    When provided it is stored alongside `year` on the manifest entry so
+    downstream consumers / audits can see how the year was derived.
+    """
     final_year = actual_year or manifest_book.get("year")
     final_title = actual_title or manifest_book.get("title")
     final_author = actual_author or manifest_book.get("author")
-    return {
+    out = {
         **manifest_book,
         "author": final_author,
         "title": final_title,
         "year": final_year,
         "slug": build_book_slug(final_author, final_title, final_year),
     }
+    if year_signals is not None:
+        out["year_signals"] = year_signals
+    return out
 
 
 def finalize_downloaded_book(manifest_path, book_index, downloaded_path, expected_author):
@@ -1209,6 +1319,7 @@ def finalize_downloaded_book(manifest_path, book_index, downloaded_path, expecte
         actual_author=verification.get("author"),
         actual_title=verification.get("title"),
         actual_year=verification.get("year"),
+        year_signals=verification.get("year_signals"),
     )
 
     src = Path(downloaded_path)

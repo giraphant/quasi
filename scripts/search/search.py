@@ -30,6 +30,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -99,8 +100,14 @@ def _abstract_from_inverted_index(idx: dict) -> str:
 # Book search (Google Books, OpenLibrary, OpenAlex)
 # ============================================================
 
-def search_google_books(query: str, limit: int = 10,
-                        year_from: Optional[int] = None, year_to: Optional[int] = None) -> dict:
+def _search_google_books_http(query: str, limit: int,
+                              year_from: Optional[int], year_to: Optional[int]) -> dict:
+    """Unauthenticated Google Books volumes API call.
+
+    The default project is rate-limited to quota=0 — callers must inspect
+    the `error_kind` field on failure and decide whether to fall back to
+    `_search_google_books_via_doko`.
+    """
     url = (f"https://www.googleapis.com/books/v1/volumes"
            f"?q={urllib.parse.quote(query)}&maxResults={min(limit, 40)}"
            f"&printType=books&langRestrict=en")
@@ -139,8 +146,216 @@ def search_google_books(query: str, limit: int = 10,
             if len(results) >= limit:
                 break
         return {"success": True, "source": "Google Books", "count": len(results), "results": results}
+    except urllib.error.HTTPError as e:
+        # Read body to detect RATE_LIMIT_EXCEEDED (quota=0 on the default
+        # unauthenticated project) — this is the failure mode the dokobot
+        # fallback was built for.
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+        kind = None
+        if e.code == 429 or "RATE_LIMIT_EXCEEDED" in body or "RESOURCE_EXHAUSTED" in body:
+            kind = "rate_limited"
+        return {"success": False, "source": "Google Books",
+                "error": f"HTTP {e.code}: {body[:200] or e.reason}",
+                "error_kind": kind, "results": []}
     except Exception as e:
-        return {"success": False, "source": "Google Books", "error": str(e), "results": []}
+        return {"success": False, "source": "Google Books",
+                "error": str(e), "error_kind": None, "results": []}
+
+
+_GB_YEAR_INLINE = re.compile(r"\b(?:19|20)\d{2}\b")
+# Doko rendered format: `books.google.{tld} › books [N] TITLE [N]`
+# (the `[N]` are footnote markers doko inserts for inline links)
+_GB_RESULT_HEADER = re.compile(
+    r"books\.google\.(?:com|ru|co\.uk|de|fr|it|es)\s*›\s*books\s*"
+    r"(?:\[\d+\])?\s*(.+?)(?:\s*\[\d+\])?\s*$",
+    re.MULTILINE,
+)
+# Author/year line: `AUTHOR [N], ‎AUTHOR2 [N] · YEAR · ...`
+_GB_AUTHOR_YEAR = re.compile(
+    r"^(?P<authors>[^·\n]+?)\s*·\s*(?P<year>(?:19|20)\d{2})(?:\s*·.*)?$",
+    re.MULTILINE,
+)
+
+
+def _strip_doko_footnotes(s: str) -> str:
+    """Remove the `[N]` link markers doko inserts in rendered text."""
+    return re.sub(r"\s*\[\d+\]\s*", " ", s).strip()
+
+
+def _parse_google_books_doko_text(body: str, limit: int) -> list[dict]:
+    """Best-effort parser for `dokobot read --local` output of a Google Books search page.
+
+    The rendered text from `dokobot read` follows a stable shape:
+      books.google.com › books [N] TITLE [N]
+      <blank>
+      AUTHOR [N] · YEAR
+      Snippet text...
+
+    We anchor on the `books.google.<tld> › books` header lines and look
+    one block ahead for `AUTHOR · YEAR`. Results that don't fit the shape
+    are skipped; downstream consumers can re-parse `raw_doko_text` if
+    needed.
+    """
+    if not body:
+        return []
+    results: list[dict] = []
+    seen_titles: set[str] = set()
+    # Doko separates result records with a `---` line. Within a record,
+    # blank lines separate the header / author-year / snippet sub-blocks,
+    # so we must NOT split on blank lines (that would orphan the year line).
+    sections = re.split(r"\n-{2,}\n", body)
+    for section in sections:
+        section = section.strip()
+        if not section:
+            continue
+        header_match = _GB_RESULT_HEADER.search(section)
+        if not header_match:
+            continue
+        title = _strip_doko_footnotes(header_match.group(1))[:200]
+        # Skip "Page N" snippets (those are deep-link results, not editions)
+        if re.match(r"^.+\s+-\s+Page\s+\d+\s*$", title, re.IGNORECASE):
+            continue
+        if not title or title.lower() in seen_titles:
+            continue
+        seen_titles.add(title.lower())
+
+        ay_match = _GB_AUTHOR_YEAR.search(section)
+        author = ""
+        year: Optional[int] = None
+        if ay_match:
+            author = _strip_doko_footnotes(ay_match.group("authors"))
+            # Strip leading "‎" zero-width characters Google embeds for RTL handling
+            author = author.replace("‎", "").strip(" ,")
+            try:
+                year = int(ay_match.group("year"))
+            except ValueError:
+                year = None
+        else:
+            # Fall back to first 4-digit year anywhere in section
+            yhit = _GB_YEAR_INLINE.search(section)
+            if yhit:
+                year = int(yhit.group(0))
+
+        # Authors may be comma-separated
+        authors_list = [a.strip() for a in re.split(r"\s*,\s*", author) if a.strip()] if author else []
+
+        results.append({
+            "title": title,
+            "subtitle": "",
+            "authors": authors_list,
+            "year": year,
+            "publisher": "",
+            "isbn_13": None, "isbn_10": None,
+            "description": _strip_doko_footnotes(section)[:300],
+            "categories": [],
+            "page_count": None,
+            "preview_link": "",
+            "source": "Google Books (dokobot)",
+        })
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _search_google_books_via_doko(query: str, limit: int,
+                                  year_from: Optional[int],
+                                  year_to: Optional[int]) -> dict:
+    """Fallback path: scrape Google Books search HTML via the dokobot browser bridge.
+
+    Why doko: the unauthenticated `googleapis.com/books/v1/volumes` endpoint
+    is rate-limited to quota=0 on the default project, so HTTP calls return
+    no results. A real browser session on `google.com/search?tbm=bks` works
+    because that path doesn't use the API quota.
+
+    Returns a result dict shaped like the other source helpers, plus a
+    `raw_doko_text` field so agents (LLMs) can dig past whatever the local
+    parser missed.
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("dokobot"):
+        return {"success": False, "source": "Google Books",
+                "error": "Google Books rate-limited and dokobot CLI not found. "
+                         "Install dokobot to enable the browser fallback.",
+                "error_kind": "rate_limited_no_doko", "results": []}
+
+    params = {"q": query, "tbm": "bks", "hl": "en", "num": str(min(limit, 20))}
+    if year_from:
+        params["tbs"] = f"cdr:1,cd_min:{year_from}"
+        if year_to:
+            params["tbs"] = f"cdr:1,cd_min:{year_from},cd_max:{year_to}"
+    elif year_to:
+        params["tbs"] = f"cdr:1,cd_max:{year_to}"
+    url = "https://www.google.com/search?" + urllib.parse.urlencode(params)
+    print(f"google-books: doko fetching {url}", file=sys.stderr)
+
+    # Prefer --local: works without an API key when the user has the
+    # dokobot browser bridge installed (the common case). If --local
+    # fails (no bridge installed) we retry without it, which falls
+    # back to remote mode and surfaces "API key required" cleanly.
+    def _run(extra_args: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["dokobot", "read", *extra_args, url],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+
+    try:
+        result = _run(["--local"])
+        if result.returncode != 0 and "bridge" in (result.stderr or "").lower():
+            result = _run([])
+    except subprocess.TimeoutExpired:
+        return {"success": False, "source": "Google Books",
+                "error": "dokobot read timed out after 60s",
+                "error_kind": "doko_timeout", "results": []}
+    except FileNotFoundError:
+        return {"success": False, "source": "Google Books",
+                "error": "dokobot CLI invocation failed",
+                "error_kind": "doko_failed", "results": []}
+
+    if result.returncode != 0:
+        return {"success": False, "source": "Google Books",
+                "error": f"dokobot rc={result.returncode}: {result.stderr[:200]}",
+                "error_kind": "doko_failed", "results": []}
+
+    body = result.stdout or ""
+    parsed = _parse_google_books_doko_text(body, limit)
+    # Post-filter by year if user asked for a range — Google may not honour tbs cleanly.
+    if year_from:
+        parsed = [r for r in parsed if not r["year"] or r["year"] >= year_from]
+    if year_to:
+        parsed = [r for r in parsed if not r["year"] or r["year"] <= year_to]
+    return {
+        "success": True,
+        "source": "Google Books (dokobot)",
+        "count": len(parsed),
+        "results": parsed,
+        "raw_doko_text": body[:8000],  # cap so json output stays readable
+    }
+
+
+def search_google_books(query: str, limit: int = 10,
+                        year_from: Optional[int] = None, year_to: Optional[int] = None) -> dict:
+    """Google Books volumes search.
+
+    Tries the unauthenticated HTTPS API first; on `error_kind == "rate_limited"`
+    (the default-project quota=0 condition) falls back to a `dokobot read`
+    of the Google Books search HTML. The fallback only fires when dokobot
+    is on PATH.
+    """
+    primary = _search_google_books_http(query, limit, year_from, year_to)
+    if primary.get("success"):
+        return primary
+    if primary.get("error_kind") == "rate_limited":
+        fallback = _search_google_books_via_doko(query, limit, year_from, year_to)
+        # Preserve the original error message so the caller can see why we fell back.
+        fallback["fallback_reason"] = primary.get("error", "rate limited")
+        return fallback
+    return primary
 
 
 def search_openlibrary(query: str, limit: int = 10,

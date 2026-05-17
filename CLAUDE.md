@@ -46,6 +46,65 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.21.0** (2026-05-17): **year triage overhaul — N-source contract,
+  structured PDF year signals, Google Books via dokobot.** Triggered by a
+  failure case where Simondon's *Imagination and Invention* (UMN Press
+  English translation, canonical year 2023) kept finalising as 2022.
+  Root causes were 4 independent bugs stacked:
+  - `_guess_year` in `scripts/download/download.py` returned the *first*
+    `\b(?:19|20)\d{2}\b` regex hit in front matter — for translations this
+    is almost always the original-language year ("Originally published in
+    French as ... 1965"). Replaced with `_extract_year_signals` returning
+    a structured dict `{first_published, copyright_year, original_year,
+    other_years, best_guess, evidence_text}`. Anchors on
+    "First published / First edition / Published" patterns, treats
+    "Copyright YEAR" separately, and never lets "Originally published"
+    or "Translated from" leak into best_guess. Includes a Q4-press
+    heuristic: if `copyright == YEAR` and `YEAR+1` or `YEAR+2` also
+    appears in front matter, prefer the later one (typical for press
+    books copyrighted in Q4 and shipped the following year).
+    `verify_book_file` returns `year_signals` alongside `year`;
+    `finalize_book_identity` propagates it into the manifest entry.
+    Back-compat shim `_guess_year` still exists, calling
+    `_extract_year_signals(...)["best_guess"]`.
+  - `process-book/SKILL.md` Step 0 prompt previously asked the agent
+    for a slug / ol / pdf 3-way compare but named the discover-side year
+    `ol_year` regardless of which source it came from — almost always
+    Anna's Archive, since AA is the only source that yields an MD5.
+    Rewritten as YEAR_TRIAGE: agent reports per-source years separately
+    (`source_years: {google_books, openlibrary, openalex, anna_archive}`),
+    per-pattern PDF signals (`pdf_signals: {first_published,
+    copyright_year, original_year, other_years}`), a `recommended_year`
+    with a one-line `recommendation_reason`, and a `verdict ∈ {MATCH,
+    MISMATCH, AMBIGUOUS}`. Only `MATCH` finalises the file rename;
+    other verdicts keep the `.tmp.{ext}` and surface the full triage
+    block to the skill main process for user adjudication.
+    `download-agent.md` finalize-doc updated to describe the new
+    `year_signals` field and the N-source contract.
+  - `search_google_books` was hitting the unauthenticated
+    `googleapis.com/books/v1/volumes` endpoint, which returns HTTP 429
+    with `RATE_LIMIT_EXCEEDED` (quota=0 on the default project) — i.e.
+    the Google Books source was silently dead, cutting cross-verification
+    from 3 sources to 2 without anyone noticing. Refactored into
+    `_search_google_books_http` (existing path) + `_search_google_books_via_doko`
+    (new, scrapes `google.com/search?tbm=bks` via `dokobot read --local`,
+    falls back to remote mode if no bridge installed). Wrapper detects
+    HTTP 429 / `RATE_LIMIT_EXCEEDED` and dispatches automatically.
+    Returns parsed entries (title / authors / year via `AUTHOR · YEAR`
+    pattern) plus a `raw_doko_text` field so agents can re-parse when
+    the structured parse looks thin.
+  - The agent-prompt heuristic "pdf_year = 出现的最大 published year,
+    排除 reprint dates" couldn't distinguish copyright year from
+    publication year — the new N-source contract makes the agent
+    enumerate both `copyright_year` and `first_published` separately
+    instead, so the skill main process sees the actual structure.
+
+  Net: Simondon's book now triages as `pdf_signals.first_published=2023,
+  pdf_signals.copyright_year=2022, pdf_signals.original_year=1965`,
+  GB+OL=2023, AA=2022 — `recommended_year=2023` with reason "first_published
+  beats copyright by 1 year (Q4 press lag)", and the slug `-2017` shows
+  up as MISMATCH for user correction rather than auto-finalising to 2022.
+
 - **0.20.0** (2026-05-17): **citation review UI — tabs by dimension,
   decisions grouped by side-effect.** Background: the previous review.html
   rendered a flat table with uniform `✓ ✗ ?` per row whose "✓ accept agent
