@@ -50,9 +50,12 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
   rework of the bin / agent / skill split per `docs/LAYERS.md` and
   `docs/ARCHITECTURE.md`. Drives Pattern B (skill 直调 bin) out of the
   layer model by aggregating skill helpers into a single `quasi-helpers` bin.
-  - **bins**: 13 → 9 (6 active + 3 deferred journal/refs). Deletions:
-    `quasi-typecheck`, `quasi-autofix-mechanical`, `quasi-proofread`,
-    `quasi-citation`, `quasi-extract-{epub,ocr,split}`. New:
+  - **bins**: 13 → 6. Deletions: `quasi-typecheck`,
+    `quasi-autofix-mechanical`, `quasi-proofread`, `quasi-citation`,
+    `quasi-extract-{epub,ocr,split}`, `quasi-journal-{fetch,report}`,
+    `quasi-synthesize-refs`. The last three are **deletion-as-forcing-
+    function**: synthesis-agent's journal/topic mode will fail until the
+    refs-extraction redesign (Q3) and journal stack rework land. New:
     `quasi-audit {check|fix|emit-bib}` (vault consistency dispatcher),
     `quasi-helpers {proofread|citation} <sub>` (skill orchestration aggregator).
     Subcommand restructure: `quasi-extract {epub|ocr|split}`,
