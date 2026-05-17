@@ -147,7 +147,222 @@ class SearchResponse:
 # === 2. MERGE
 # ===============================================
 
-# (populated by Task 2.1)
+
+# Per-field source priority lists. Higher index = lower priority.
+# Picked from current 0.20.0 schema; sources extended for scholar.
+_BOOK_YEAR_PRIO  = ["goodreads", "amazon", "googlebooks", "openlibrary",
+                    "storygraph", "douban_cn", "openalex", "scholar"]
+_BOOK_PUB_PRIO   = ["goodreads", "amazon", "openlibrary", "googlebooks",
+                    "storygraph", "douban_cn", "openalex", "scholar"]
+_BOOK_ISBN_PRIO  = ["goodreads", "amazon", "openlibrary", "storygraph",
+                    "douban_cn", "googlebooks", "scholar"]
+_PAPER_YEAR_PRIO = ["openalex", "crossref", "scholar"]
+_PAPER_PUB_PRIO  = ["openalex", "crossref", "scholar"]
+
+# Fields whose conflicts are surfaced in diagnostics.conflicts.
+_CONFLICT_FIELDS_BOOK  = {"year", "isbn_13", "publisher", "page_count", "authors"}
+_CONFLICT_FIELDS_PAPER = {"year", "publisher", "authors"}
+
+
+def _norm_title(s: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace — for fuzzy matching."""
+    s = (s or "").lower()
+    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _title_fuzzy(a: str, b: str) -> float:
+    """Jaccard token overlap on normalised titles.
+
+    Also returns 1.0 when the shorter title's tokens are fully contained in
+    the longer one — handles 'Title' vs 'Title: Subtitle' cases.
+    """
+    ta, tb = set(_norm_title(a).split()), set(_norm_title(b).split())
+    if not ta or not tb:
+        return 0.0
+    # subset containment: short title is fully within the longer one
+    shorter, longer = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    if shorter and shorter.issubset(longer):
+        return 1.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _book_match(a: dict, b: dict) -> bool:
+    """Match key: ISBN exact, or fuzzy title + year within 1."""
+    for k in ("isbn_13", "isbn_10"):
+        if a.get(k) and b.get(k) and a[k] == b[k]:
+            return True
+    ya, yb = a.get("year"), b.get("year")
+    if (a.get("title") and b.get("title")
+            and _title_fuzzy(a["title"], b["title"]) >= 0.85
+            and ya and yb and abs(ya - yb) <= 1):
+        return True
+    return False
+
+
+def _paper_match(a: dict, b: dict) -> bool:
+    if a.get("doi") and b.get("doi") and a["doi"] == b["doi"]:
+        return True
+    ya, yb = a.get("year"), b.get("year")
+    if (a.get("title") and b.get("title")
+            and _title_fuzzy(a["title"], b["title"]) >= 0.85
+            and ya and yb and abs(ya - yb) <= 1):
+        return True
+    return False
+
+
+def _pick_by_priority(entries_by_src: dict, field_name: str, prio: list[str]) -> tuple[Any, str | None]:
+    """Return (chosen_value, source_id) by walking priority list, taking first non-empty."""
+    for src in prio:
+        if src in entries_by_src:
+            v = entries_by_src[src].get(field_name)
+            if v not in (None, "", [], {}):
+                return v, src
+    # fall back: any non-empty value from any source
+    for src, e in entries_by_src.items():
+        v = e.get(field_name)
+        if v not in (None, "", [], {}):
+            return v, src
+    return None, None
+
+
+def _merge_candidate(entries_by_src: dict[str, dict], kind: str) -> tuple[dict, list[dict]]:
+    """Merge a set of matched entries (one per source) into one record + per-field conflicts."""
+    is_book = kind == "book"
+    merged = (BookRecord() if is_book else PaperRecord()).to_dict()
+
+    year_prio = _BOOK_YEAR_PRIO if is_book else _PAPER_YEAR_PRIO
+    pub_prio  = _BOOK_PUB_PRIO  if is_book else _PAPER_PUB_PRIO
+
+    # title: longest wins (favours subtitled versions)
+    title_candidates = [(s, e.get("title") or "") for s, e in entries_by_src.items()]
+    title_candidates.sort(key=lambda x: -len(x[1]))
+    if title_candidates and title_candidates[0][1]:
+        merged["title"] = title_candidates[0][1]
+        merged["_field_src"]["title"] = title_candidates[0][0]
+
+    # year / publisher / isbn — priority-driven
+    field_specs: list[tuple[str, list[str]]] = [
+        ("year", year_prio),
+        ("publisher", pub_prio),
+    ]
+    if is_book:
+        field_specs.extend([
+            ("isbn_13", _BOOK_ISBN_PRIO),
+            ("isbn_10", _BOOK_ISBN_PRIO),
+        ])
+
+    for fld, prio in field_specs:
+        v, src = _pick_by_priority(entries_by_src, fld, prio)
+        if v is not None:
+            merged[fld] = v
+            merged["_field_src"][fld] = src
+
+    # all other fields: first non-empty wins (source iteration order)
+    skip = {"title", "year", "publisher", "isbn_13", "isbn_10",
+            "_sources", "_field_src", "source_ids", "ratings"}
+    for src, e in entries_by_src.items():
+        for fld, v in e.items():
+            if fld in skip:
+                continue
+            if v in (None, "", [], {}):
+                continue
+            if merged.get(fld) in (None, "", [], {}):
+                merged[fld] = v
+                merged["_field_src"][fld] = src
+
+    # ratings / source_ids: component-wise union
+    for src, e in entries_by_src.items():
+        sids = e.get("source_ids") or {}
+        for k, v in sids.items():
+            if v and not merged["source_ids"].get(k):
+                merged["source_ids"][k] = v
+        if is_book:
+            r = e.get("ratings") or {}
+            if r.get("count") and not merged["ratings"]["count"]:
+                merged["ratings"]["count"] = r["count"]
+                merged["_field_src"]["ratings.count"] = src
+            if r.get("average") and not merged["ratings"]["average"]:
+                merged["ratings"]["average"] = r["average"]
+                merged["_field_src"]["ratings.average"] = src
+
+    merged["_sources"] = list(entries_by_src.keys())
+
+    # Conflict surfacing on whitelist fields
+    conflict_fields = _CONFLICT_FIELDS_BOOK if is_book else _CONFLICT_FIELDS_PAPER
+    conflicts = []
+    for fld in conflict_fields:
+        evidence = {}
+        for src, e in entries_by_src.items():
+            v = e.get(fld)
+            if v not in (None, "", [], {}):
+                evidence[src] = v
+        # only surface if there's actual disagreement
+        unique_vals = {repr(v) for v in evidence.values()}
+        if len(unique_vals) >= 2:
+            conflicts.append({
+                "field": fld,
+                "chosen": merged.get(fld),
+                "chosen_from": merged["_field_src"].get(fld),
+                "evidence": evidence,
+                "policy_note": None,
+            })
+    return merged, conflicts
+
+
+def match_and_priority_merge(by_source: dict[str, list[dict]], kind: str) -> list[dict]:
+    """Public API: merge multi-source entries into deduplicated candidate list."""
+    merged, _ = match_and_priority_merge_with_conflicts(by_source, kind)
+    return merged
+
+
+def match_and_priority_merge_with_conflicts(
+    by_source: dict[str, list[dict]], kind: str,
+) -> tuple[list[dict], list[dict]]:
+    """Merge + return (merged_candidates, all_conflicts_across_candidates)."""
+    is_book = kind == "book"
+    matcher = _book_match if is_book else _paper_match
+
+    # Flatten all entries with their source label
+    flat: list[tuple[str, dict]] = []
+    for src, entries in by_source.items():
+        for e in entries:
+            flat.append((src, e))
+
+    # Greedy clustering: each cluster = one merged candidate
+    clusters: list[dict[str, dict]] = []
+    for src, entry in flat:
+        placed = False
+        for cluster in clusters:
+            if any(matcher(entry, e) for e in cluster.values()):
+                # If source already in cluster, keep first occurrence (don't overwrite)
+                cluster.setdefault(src, entry)
+                placed = True
+                break
+        if not placed:
+            clusters.append({src: entry})
+
+    merged_list: list[dict] = []
+    all_conflicts: list[dict] = []
+    for cluster in clusters:
+        m, c = _merge_candidate(cluster, kind)
+        merged_list.append(m)
+        all_conflicts.extend(c)
+
+    # Sort: more sources first, then by ratings count (book) / cited_by (paper)
+    if is_book:
+        merged_list.sort(key=lambda r: (
+            -len(r.get("_sources", [])),
+            -(r.get("ratings", {}).get("count") or 0),
+            -(r.get("cited_by_count") or 0),
+        ))
+    else:
+        merged_list.sort(key=lambda r: (
+            -(r.get("cited_by_count") or 0),
+            -(r.get("year") or 0),
+        ))
+    return merged_list, all_conflicts
 
 
 # ===============================================
