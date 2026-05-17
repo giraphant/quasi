@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# quasi-helpers — skill-orchestration helpers (NOT an agent-callable bin).
+#
+# Aggregates the deterministic setup/teardown operations that live around
+# map-reduce LLM agent dispatches (proofread-agent × 节, citation-agent × 批).
+# Called from skill main process; never called from inside an agent.
+#
+# Nested subcommand:
+#   quasi-helpers proofread {split|init|cleanup} [args...]
+#       split   draft.md → sections.json (前置切节,准备 dispatch)
+#       init    建 draft 末尾 <!-- proofread:* --> 记录块
+#       cleanup 审完后清记录块
+#
+#   quasi-helpers citation {biblio|parse|resolve|render|emit-bib} [args...]
+#       biblio    扫 vault → biblio.json  (deprecated: prefer quasi-audit emit-bib)
+#       parse     draft.md → parse.json
+#       resolve   parse.json + biblio.json → manifest.json
+#       render    manifest.json (+ verdicts) → review.html
+#       emit-bib  manifest.json + biblio.json → references.bib (draft-level)
+#
+# Each nested subcommand has its own --help.
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
+PYTHON="$DATA_DIR/.venv/bin/python"
+
+[ -x "$PYTHON" ] || "$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
+
+if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    cat <<'HELP'
+quasi-helpers — skill-orchestration helpers (NOT an agent-callable bin).
+
+Aggregates deterministic setup/teardown operations around map-reduce
+LLM agent dispatches. Called from skill main process; never from agents.
+
+Usage:
+  quasi-helpers proofread {split|init|cleanup} [args...]
+  quasi-helpers citation  {biblio|parse|resolve|render|emit-bib} [args...]
+
+Each nested subcommand has its own --help, e.g.:
+  quasi-helpers proofread split --help
+  quasi-helpers citation parse --help
+HELP
+    exit 0
+fi
+
+DOMAIN="$1"
+shift
+
+case "$DOMAIN" in
+    proofread)
+        exec "$PYTHON" "$PLUGIN_ROOT/scripts/proofread/proofread.py" "$@"
+        ;;
+    citation)
+        exec "$PYTHON" "$PLUGIN_ROOT/scripts/citation/citation.py" "$@"
+        ;;
+    *)
+        echo "quasi-helpers: unknown domain: $DOMAIN" >&2
+        echo "valid: proofread | citation" >&2
+        exit 2
+        ;;
+esac
