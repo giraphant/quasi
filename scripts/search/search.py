@@ -1082,6 +1082,115 @@ def format_papers_markdown(results: list, author: str) -> str:
 
 
 # ============================================================
+# Scholar (Google Scholar via dokobot)
+# ============================================================
+
+def run_scholar(query: str, limit: int = 10, year_from: int | None = None,
+                year_to: int | None = None, as_json: bool = False) -> None:
+    """Fetch Google Scholar SERP via the dokobot browser bridge.
+
+    Why dokobot: Scholar blocks `requests`/`urllib`-style fetches with
+    CAPTCHAs. A real Chrome session (dokobot) gets the page. The agent
+    then parses the rendered text.
+    """
+    import shutil
+    import subprocess
+    import urllib.parse
+
+    if not shutil.which("dokobot"):
+        print(
+            "scholar: dokobot CLI not found on PATH. Install via "
+            "`brew install dokobot` or see https://dokobot.ai. "
+            "Scholar is an optional advanced source.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    params: dict[str, str] = {"q": query, "hl": "en", "num": str(limit)}
+    if year_from and year_to:
+        params["as_ylo"] = str(year_from)
+        params["as_yhi"] = str(year_to)
+    elif year_from:
+        params["as_ylo"] = str(year_from)
+    elif year_to:
+        params["as_yhi"] = str(year_to)
+
+    url = "https://scholar.google.com/scholar?" + urllib.parse.urlencode(params)
+    print(f"scholar: fetching {url}", file=sys.stderr)
+
+    try:
+        result = subprocess.run(
+            ["dokobot", "read", url],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+    except FileNotFoundError:
+        print("scholar: dokobot CLI invocation failed", file=sys.stderr)
+        sys.exit(2)
+    except subprocess.TimeoutExpired:
+        print("scholar: dokobot read timed out after 60s", file=sys.stderr)
+        sys.exit(3)
+
+    if result.returncode != 0:
+        print(f"scholar: dokobot read failed (rc={result.returncode}):", file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        sys.exit(result.returncode)
+
+    body = result.stdout
+    if as_json:
+        print(json.dumps({"query": query, "url": url, "body": body}, ensure_ascii=False))
+    else:
+        print(body)
+
+
+# ============================================================
+# Backfill (vault metadata multi-source chain)
+# ============================================================
+
+_BACKFILL_STRATEGIES: dict[str, str] = {
+    "clean": "sweep-book-fm-clean.py",
+    "crossref": "sweep-book-fm-meta.py",
+    "aa-title": "sweep-book-fm-meta-aa.py",
+    "aa-md5": "sweep-book-fm-meta-aa-by-md5.py",
+    "aa-from-slug": "sweep-book-fm-meta-aa-from-slug.py",
+    "openalex": "sweep-book-fm-meta-oa.py",
+    "ol-search": "sweep-book-fm-meta-ol-fallback.py",
+    "ol-isbn-reverse": "sweep-book-fm-ol-isbn-reverse.py",
+}
+
+
+def run_backfill(strategy: str, extra_argv: list[str]) -> None:
+    """Dispatch to a single-source sweep script under scripts/search/sweep/.
+
+    Each sweep script has its own argparse — extra_argv passes through
+    verbatim. See `scripts/search/sweep/README.md` for the empirical
+    fallback chain rationale.
+    """
+    import subprocess
+
+    script_name = _BACKFILL_STRATEGIES.get(strategy)
+    if script_name is None:
+        valid = ", ".join(sorted(_BACKFILL_STRATEGIES))
+        print(f"backfill: unknown strategy {strategy!r}. valid: {valid}", file=sys.stderr)
+        sys.exit(2)
+
+    plugin_root = Path(__file__).resolve().parents[2]
+    script = plugin_root / "scripts" / "search" / "sweep" / script_name
+    if not script.exists():
+        print(f"backfill: missing sweep script {script}", file=sys.stderr)
+        sys.exit(2)
+
+    # extra_argv may start with '--' (argparse REMAINDER hack); drop it.
+    if extra_argv and extra_argv[0] == "--":
+        extra_argv = extra_argv[1:]
+
+    result = subprocess.run(
+        [sys.executable, str(script), *extra_argv],
+        check=False,
+    )
+    sys.exit(result.returncode)
+
+
+# ============================================================
 # CLI
 # ============================================================
 
@@ -1130,6 +1239,39 @@ def main():
     validate_parser = subparsers.add_parser("validate", help="Validate DOIs in manifest")
     validate_parser.add_argument("--manifest", help="Manifest file path")
     validate_parser.add_argument("--doi", help="Validate a single DOI")
+
+    # Scholar subcommand (Google Scholar via dokobot fallback)
+    scholar_parser = subparsers.add_parser(
+        "scholar",
+        help="Google Scholar via dokobot (browser-based fallback for hard-to-find papers)",
+    )
+    scholar_parser.add_argument("query", help="Search query (title / author / phrase)")
+    scholar_parser.add_argument("--limit", type=int, default=10,
+                                help="Max results to return (default: 10)")
+    scholar_parser.add_argument("--year-from", type=int, help="Min year filter")
+    scholar_parser.add_argument("--year-to", type=int, help="Max year filter")
+    scholar_parser.add_argument("--json", action="store_true", help="Raw JSON output")
+
+    # Backfill subcommand (vault metadata multi-source chain)
+    backfill_parser = subparsers.add_parser(
+        "backfill",
+        help="Vault metadata backfill (multi-source fallback chain; "
+             "see scripts/search/sweep/ and docs/EXPERIENCE-vault-metadata-backfill.md)",
+    )
+    backfill_parser.add_argument(
+        "--strategy",
+        required=True,
+        choices=[
+            "clean", "crossref", "aa-title", "aa-md5", "aa-from-slug",
+            "openalex", "ol-search", "ol-isbn-reverse",
+        ],
+        help="Which single-source sweep to run",
+    )
+    backfill_parser.add_argument(
+        "extra", nargs=argparse.REMAINDER,
+        help="Extra args passed through to the underlying sweep script "
+             "(see `quasi-search backfill --strategy X -- --help`)",
+    )
 
     args = parser.parse_args()
 
@@ -1228,6 +1370,18 @@ def main():
             validate_manifest_dois(args.manifest)
         else:
             validate_parser.error("Need --doi or --manifest")
+
+    elif args.mode == "scholar":
+        run_scholar(
+            query=args.query,
+            limit=args.limit,
+            year_from=args.year_from,
+            year_to=args.year_to,
+            as_json=args.json,
+        )
+
+    elif args.mode == "backfill":
+        run_backfill(strategy=args.strategy, extra_argv=args.extra or [])
 
     else:
         parser.print_help()
