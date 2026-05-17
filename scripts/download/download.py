@@ -1267,78 +1267,10 @@ def _stream_download(url, dest_path, headers=None):
 # CLI
 # ============================================================
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Academic file download — pure acquisition by identifier (MD5/DOI/URL)"
-    )
-
-    # Input modes
-    group = parser.add_argument_group("input (pick one)")
-    group.add_argument("--md5", help="AA download by MD5 (needs donator key)")
-    group.add_argument("--doi", help="Paper DOI (cascade: OA → EZProxy → Wayback)")
-    group.add_argument("--url", help="Direct PDF URL")
-    group.add_argument("--manifest", help="Manifest file for batch download")
-
-    # Options
-    parser.add_argument("--output-dir", "-o", default="sources", help="Output directory (default: sources)")
-    parser.add_argument("--filename", help="Output filename (without extension)")
-    parser.add_argument("--format", "-f", default="pdf", help="File format (default: pdf)")
-    parser.add_argument("--batch", action="store_true", help="Batch download all metadata_found in manifest")
-    parser.add_argument("--retry-wayback", action="store_true", help="Re-check Wayback for papers")
-    parser.add_argument("--verify-author", help="Expected author name (for post-download verification)")
-    parser.add_argument("--verify-title", help="Expected title (for post-download verification)")
-
-    # Post-download book finalization (separate mode)
-    parser.add_argument("--finalize-book", action="store_true",
-                        help="Verify a downloaded book against manifest, rename to canonical slug, rewrite manifest")
-    parser.add_argument("--book-index", type=int, help="Index into manifest['books'] for --finalize-book")
-    parser.add_argument("--downloaded-path", help="Path to the file just downloaded (for --finalize-book)")
-    parser.add_argument("--expected-author", help="Expected author full name (for --finalize-book)")
-
-    args = parser.parse_args()
-
-    # Route to appropriate handler
+def _handle_errors(fn, *args, **kwargs):
+    """Run fn, translate domain exceptions to exit codes consistently."""
     try:
-        if args.finalize_book:
-            missing = [n for n, v in [("--manifest", args.manifest),
-                                       ("--book-index", args.book_index),
-                                       ("--downloaded-path", args.downloaded_path),
-                                       ("--expected-author", args.expected_author)] if v is None]
-            if missing:
-                parser.error(f"--finalize-book requires {', '.join(missing)}")
-            result = finalize_downloaded_book(
-                manifest_path=args.manifest,
-                book_index=args.book_index,
-                downloaded_path=args.downloaded_path,
-                expected_author=args.expected_author,
-            )
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-        elif args.manifest and args.batch:
-            batch_download_manifest(args.manifest, retry_wayback=args.retry_wayback)
-        elif args.md5:
-            result = download_from_aa(
-                md5=args.md5, output_dir=args.output_dir,
-                filename=args.filename, fmt=args.format,
-                verify_author=args.verify_author,
-                verify_title=args.verify_title,
-            )
-            if result:
-                print(result)
-            else:
-                sys.exit(1)
-        elif args.doi or args.url:
-            result = download_paper(
-                doi=args.doi, url=args.url, output_dir=args.output_dir,
-                filename=args.filename, retry_wayback=args.retry_wayback,
-                verify_author=args.verify_author,
-                verify_title=args.verify_title,
-            )
-            if result:
-                print(result)
-            else:
-                sys.exit(1)
-        else:
-            parser.error("Need one of: --md5, --doi, --url, or --manifest --batch")
+        return fn(*args, **kwargs)
     except AAQuotaExhausted as e:
         print(f"\n*** AA QUOTA EXHAUSTED ***", file=sys.stderr)
         print(f"  {e}", file=sys.stderr)
@@ -1351,6 +1283,184 @@ def main():
         print(f"  CookieCloud extension will sync the new cookie automatically.", file=sys.stderr)
         print(f"  Stop all paper downloads until that's done.", file=sys.stderr)
         sys.exit(3)
+
+
+# ---- subcommand handlers ---------------------------------------------------
+
+def _cmd_paper(args) -> int:
+    if not (args.doi or args.url):
+        print("paper: need --doi or --url", file=sys.stderr)
+        return 2
+    result = _handle_errors(
+        download_paper,
+        doi=args.doi, url=args.url,
+        output_dir=args.output_dir, filename=args.filename,
+        retry_wayback=args.retry_wayback,
+        verify_author=args.verify_author,
+        verify_title=args.verify_title,
+    )
+    if result:
+        print(result)
+        return 0
+    return 1
+
+
+def _cmd_book(args) -> int:
+    if not args.md5:
+        print("book: need --md5", file=sys.stderr)
+        return 2
+    result = _handle_errors(
+        download_from_aa,
+        md5=args.md5, output_dir=args.output_dir,
+        filename=args.filename, fmt=args.format,
+        verify_author=args.verify_author,
+        verify_title=args.verify_title,
+    )
+    if result:
+        print(result)
+        return 0
+    return 1
+
+
+def _cmd_batch(args) -> int:
+    if not args.manifest:
+        print("batch: need --manifest", file=sys.stderr)
+        return 2
+    _handle_errors(
+        batch_download_manifest,
+        args.manifest, retry_wayback=args.retry_wayback,
+    )
+    return 0
+
+
+def _cmd_finalize(args) -> int:
+    missing = [n for n, v in [
+        ("--manifest", args.manifest),
+        ("--book-index", args.book_index),
+        ("--downloaded-path", args.downloaded_path),
+        ("--expected-author", args.expected_author),
+    ] if v is None]
+    if missing:
+        print(f"finalize: missing {', '.join(missing)}", file=sys.stderr)
+        return 2
+    result = _handle_errors(
+        finalize_downloaded_book,
+        manifest_path=args.manifest,
+        book_index=args.book_index,
+        downloaded_path=args.downloaded_path,
+        expected_author=args.expected_author,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+# ---- argparse: subcommand structure ----------------------------------------
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="quasi-download",
+        description="Academic file download by intent. "
+                    "Each subcommand runs its own fallback chain.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    # Shared options factory.
+    def _add_common_io(p, with_format=False):
+        p.add_argument("--output-dir", "-o", default="sources",
+                       help="Output directory (default: sources)")
+        p.add_argument("--filename", help="Output filename (without extension)")
+        if with_format:
+            p.add_argument("--format", "-f", default="pdf",
+                           help="File format (default: pdf)")
+
+    def _add_verify(p):
+        p.add_argument("--verify-author", help="Expected author name (post-download check)")
+        p.add_argument("--verify-title", help="Expected title (post-download check)")
+
+    # paper: by DOI/URL, runs OA → EZProxy → Wayback cascade
+    p_paper = sub.add_parser("paper",
+                              help="Download paper by DOI or URL (OA → EZProxy → Wayback)")
+    p_paper.add_argument("--doi", help="Paper DOI")
+    p_paper.add_argument("--url", help="Direct PDF URL")
+    p_paper.add_argument("--retry-wayback", action="store_true",
+                          help="Re-check Wayback if primary sources fail")
+    _add_common_io(p_paper)
+    _add_verify(p_paper)
+    p_paper.set_defaults(func=_cmd_paper)
+
+    # book: by MD5, fetches via Anna's Archive
+    p_book = sub.add_parser("book",
+                             help="Download book by MD5 (Anna's Archive, needs donator key)")
+    p_book.add_argument("--md5", help="Anna's Archive file MD5")
+    _add_common_io(p_book, with_format=True)
+    _add_verify(p_book)
+    p_book.set_defaults(func=_cmd_book)
+
+    # batch: from manifest
+    p_batch = sub.add_parser("batch",
+                              help="Batch download all metadata_found entries in a manifest")
+    p_batch.add_argument("--manifest", help="Manifest file path")
+    p_batch.add_argument("--retry-wayback", action="store_true",
+                          help="Re-check Wayback for papers")
+    p_batch.set_defaults(func=_cmd_batch)
+
+    # finalize: post-download book verification + manifest rewrite
+    p_fin = sub.add_parser("finalize",
+                            help="Verify downloaded book against manifest, rename, rewrite manifest")
+    p_fin.add_argument("--manifest", help="Manifest file path")
+    p_fin.add_argument("--book-index", type=int, help="Index into manifest['books']")
+    p_fin.add_argument("--downloaded-path", help="Path to the file just downloaded")
+    p_fin.add_argument("--expected-author", help="Expected author full name")
+    p_fin.set_defaults(func=_cmd_finalize)
+
+    return parser
+
+
+def _legacy_main(argv: list[str]) -> int:
+    """Pre-refactor flag-based interface, kept until callers migrate.
+
+    Triggered when first arg starts with '-' (e.g. `--doi X`). Routes to
+    the same subcommand handlers based on which flag is present.
+    """
+    parser = argparse.ArgumentParser(
+        prog="quasi-download (legacy flag mode)",
+        description="Legacy flag interface. Prefer subcommand form: "
+                    "paper / book / batch / finalize.",
+    )
+    g = parser.add_argument_group("input (pick one)")
+    g.add_argument("--md5"); g.add_argument("--doi"); g.add_argument("--url"); g.add_argument("--manifest")
+    parser.add_argument("--output-dir", "-o", default="sources")
+    parser.add_argument("--filename")
+    parser.add_argument("--format", "-f", default="pdf")
+    parser.add_argument("--batch", action="store_true")
+    parser.add_argument("--retry-wayback", action="store_true")
+    parser.add_argument("--verify-author"); parser.add_argument("--verify-title")
+    parser.add_argument("--finalize-book", action="store_true")
+    parser.add_argument("--book-index", type=int)
+    parser.add_argument("--downloaded-path"); parser.add_argument("--expected-author")
+    args = parser.parse_args(argv)
+
+    # Dispatch
+    if args.finalize_book:
+        return _cmd_finalize(args)
+    if args.manifest and args.batch:
+        return _cmd_batch(args)
+    if args.md5:
+        return _cmd_book(args)
+    if args.doi or args.url:
+        return _cmd_paper(args)
+    parser.error("Need one of: --md5, --doi, --url, or --manifest --batch")
+    return 2
+
+
+def main():
+    argv = sys.argv[1:]
+    if argv and argv[0].startswith("-") and argv[0] not in ("-h", "--help"):
+        # Legacy flag interface (old agent prompts, existing scripts).
+        sys.exit(_legacy_main(argv))
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    sys.exit(args.func(args))
 
 
 if __name__ == "__main__":
