@@ -19,7 +19,7 @@ description: >
 源文件落在 `sources/{book-slug}.{epub,pdf}`。
 
 **没有源文件时,本 skill 自己 dispatch download-agent 去拿** —— 不要求调用方先准备。download-agent **复刻 process-author 的"discover → download → finalize"三阶段**,只是 N=1:
-1. **discover** (pre-download): `quasi-search books` 拿 GB/OL/OA/AA 候选,每个 source 单独记录 year (不混叫 `ol_year`),记 best-match 的 md5
+1. **discover** (pre-download): `quasi-search book` 拿 GB/OL/OA/AA 候选,每个 source 单独记录 year (不混叫 `ol_year`),记 best-match 的 md5
 2. **download**: `quasi-download book --md5 {md5}`
 3. **finalize** (post-download): Read PDF 前 3 页(版权页/titlepage)抽多种 year signal (first_published / copyright_year / original_year),与 slug_year + 各 source year 一起报回主进程裁决
 
@@ -73,7 +73,7 @@ output_dir: sources/
 steps (复刻 process-author 的 discover → download → finalize 三段):
 
 1. **discover** —— 从 slug 反解 (author, title, year_in_slug);
-   `quasi-search books --author X --title Y --limit 5 --json` 拿候选;
+   `quasi-search book --author X --title Y --limit 5 --json` 拿候选;
    该命令默认 --source all,内部并发 Google Books / OpenLibrary / OpenAlex,
    再单独 `--source aa` 拿 Anna's Archive (含 MD5).
    **每个 source 单独记录命中的 year**,不要合并成一个值:
@@ -97,13 +97,20 @@ steps (复刻 process-author 的 discover → download → finalize 三段):
 
 4. **N-source triage** —— 不强求"全一致"。按下面格式报告,让主进程裁决:
 
-   YEAR_TRIAGE:
-   - slug_year: {{year_in_slug}}
-   - source_years:
-       google_books: {{gb_year or null}}
-       openlibrary:  {{ol_year or null}}
-       openalex:     {{oa_year or null}}
-       anna_archive: {{aa_year or null}}
+   ### YEAR_TRIAGE (search-side year cross-check)
+
+   After Step 0 search, read `diagnostics.conflicts` from the search response.
+   Find any entry with `field == "year"`:
+
+   - If none: years agreed across sources → no triage prompt; use the chosen year.
+   - If exactly one year conflict:
+     - The `evidence` dict shows every source's year claim.
+     - Compare against the slug's year (from `{author}-{title}-{year}` slug parse).
+     - If slug year matches `chosen` and dissenting sources are minority: emit verdict=MATCH.
+     - If slug year differs from `chosen`: emit verdict=MISMATCH with full evidence + recommended_year and recommendation_reason.
+
+   You no longer need to re-call each source individually; `diagnostics.conflicts[].evidence` carries the per-source years.
+
    - best_match_source: {{which source the md5 came from}}
    - pdf_signals:
        first_published: {{int or null}}
@@ -125,7 +132,6 @@ steps (复刻 process-author 的 discover → download → finalize 三段):
      DOWNLOAD_OK:
      - year: {{recommended_year}}
      - source: sources/{book_slug}.{{ext}}
-     - source_years: {{...}}
      - pdf_signals: {{...}}
 
    verdict ∈ {{MISMATCH, AMBIGUOUS}}: 不要 mv,临时文件保留,完整 YEAR_TRIAGE 块照报.
@@ -133,7 +139,7 @@ steps (复刻 process-author 的 discover → download → finalize 三段):
 
     # 检查 download-agent 的输出
     if result.contains("YEAR_TRIAGE") and (result.contains("MISMATCH") or result.contains("AMBIGUOUS")):
-        # 主进程把 YEAR_TRIAGE 整块原样递给用户,让用户基于 source_years + pdf_signals 拍板.
+        # 主进程把 YEAR_TRIAGE 整块原样递给用户,让用户基于 diagnostics.conflicts evidence + pdf_signals 拍板.
         # 用户改 slug 重跑,或手动 mv tmp 文件 + 接受 recommended_year.
         report(f"year triage — 见上方 YEAR_TRIAGE 块,改 slug 后重跑")
         return
@@ -180,8 +186,33 @@ if not exists(f"{output_dir}/00-overview.md"):
 
 # Step 5: AUDIT
 # 校验 + 修复整本书目录(overview + 所有章节),在源头止住 schema 漂移。
-Agent("quasi:audit-agent", foreground=True,
-      prompt=f"path: {output_dir}\nmode: full")
+audit = Agent("quasi:audit-agent", foreground=True,
+              prompt=f"path: {output_dir}")
+
+# audit-agent 只做本地最小修复。若返回 escalated,说明对应内容需要由本 workflow
+# 的生成阶段重做,不要让 audit-agent 补写内容。
+if audit.audit_result.escalated:
+    for item in audit.audit_result.escalated:
+        path = item.path
+        if path.endswith("/00-overview.md"):
+            Agent("quasi:synthesis-agent", foreground=True,
+                  prompt=f"mode: book\noutput_dir: {output_dir}\nbook_title: ...\ntopic: ...\n"
+                         f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+        elif basename(path).startswith("ch"):
+            ch = find_manifest_chapter_for_output(manifest, path)
+            Agent("quasi:analyse-agent", foreground=True,
+                  prompt=f"type: A, book_title: ..., slot: {ch.slot}, chapter_label: {chapter_label}, "
+                         f"input: {chapters_dir}/{ch.filename}, "
+                         f"output: {path}, topic: ...\n"
+                         f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+        else:
+            report(f"audit escalated unknown book path: {path}")
+
+    audit = Agent("quasi:audit-agent", foreground=True,
+                  prompt=f"path: {output_dir}")
+    if audit.audit_result.escalated:
+        report("audit still has escalated items after one regeneration pass; hand off to user")
+        return
 
 print(f"Done: {len(selected)} chapters, overview generated, typechecked")
 ```
