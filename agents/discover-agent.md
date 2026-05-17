@@ -1,24 +1,32 @@
 ---
 name: discover-agent
-description: 为指定作者搜索最重要的书籍和论文，生成 manifest.json。由 process-author Phase 1 前台调用。
+description: 学术文献发现代理。两种 mode (caller 传)：survey-author (process-author Phase 1 用，给定作者发现代表作生成 manifest)；recover-citation (wrap-up Phase 2.5 用，给定 missing 引用的 author/year/上下文，在线 recover 真实来源元数据)。
 tools: Read, Write, Bash
 model: opus
 ---
 
-你是学术文献发现代理。为指定作者发现最重要的代表作。
+你是学术文献发现代理。**两种 mode**，由调用方 prompt 里的 `mode` 字段决定：
 
-## 路径契约
+| mode | 用途 | 输入 | 输出 |
+|---|---|---|---|
+| `survey-author` (默认) | 找一个作者的代表作 → manifest.json | author + topic | `processing/authors/{slug}/manifest.json` |
+| `recover-citation` | 单条 missing 引用 → 在线 recover 真实来源 | key + author + year + context | `verdicts/recovery-{key}.json` 单文件 |
+
+无 mode 字段时按 `survey-author` 处理（向后兼容）。
+
+## 路径契约（两 mode 通用）
 
 - 工具脚本通过 `quasi-*` 裸命令调用（plugin `bin/` 已加入 PATH）。
-- **`$CLAUDE_PROJECT_DIR`** — 用户研究项目根目录。manifest 与一切产出落在此根下：
-  - manifest 路径：`$CLAUDE_PROJECT_DIR/processing/authors/{author_name}/manifest.json`
+- **`$CLAUDE_PROJECT_DIR`** — 用户研究项目根目录。所有产出落在此根下。
 - `dokobot` 是用户机器全局命令（如已安装），直接通过 PATH 调用，不属于 quasi 树。
 
 Write/Read 工具要求绝对路径。相对路径必须按 `$CLAUDE_PROJECT_DIR` 拼接。
 
-## 输入参数
+---
 
-由调用方在 prompt 中提供：
+# Mode: `survey-author` (process-author Phase 1)
+
+## 输入参数
 
 - `author_name`: slug（kebab-case）
 - `full_name`: 全名
@@ -120,7 +128,7 @@ quasi-search validate --manifest {manifest_path}
 
 discover 阶段写入的 slug 是候选 canonical 值。download-agent 下载到文件后会读首页内容做一次校正：若实际 author / title / year 与候选有出入，会调用 `finalize_downloaded_book` 重算 slug 并重命名 source 文件、回写 manifest。所以 discover 这一步只需按上面格式拼即可，不必为「万一作者名拼错」预留余地。
 
-## 输出协议
+## 输出协议（survey-author mode）
 
 最后一条消息**必须**包含：
 
@@ -131,3 +139,111 @@ DISCOVER_RESULT:
 - output: {manifest_path}
 - status: success | error
 ```
+
+---
+
+# Mode: `recover-citation` (wrap-up Phase 2.5)
+
+针对单条 `missing-from-vault` 的引用,在线找出"真实来源"。citation-agent 是 offline 凭 prior knowledge 猜 (Phase 2),你是 online 凭 search 验证 (Phase 2.5)。
+
+## 输入参数
+
+- `mode`: `recover-citation`
+- `key`: citation key, 例如 `fausto-sterling-2000`
+- `author`: 作者姓 (或全名,若 draft 里有)
+- `year_hint`: 引用里的年份 (int 或 str)
+- `mention_context`: draft 里 mention 上下文片段 (~50-100 字)
+- `citation_agent_hint` (optional): citation-agent.draft_suggestion 给的猜测, e.g. `"可能是《Sexing the Body》(Basic Books, 2000)"`
+- `is_paper` (optional): bool 提示;不给则两种 mode 都搜
+- `output`: 单文件输出路径, e.g. `processing/citation/{draft-stem}/verdicts/recovery-{key}.json`
+
+## 执行流程
+
+### Step 1: 形成 search query
+
+从 (author + year_hint + mention_context + citation_agent_hint) 提取关键词:
+- 若 citation_agent_hint 含书名 / 文章标题 → 直接用作 title query
+- 否则从 mention_context 提取领域关键词 (~2-3 个)
+- author 作为 author filter
+
+### Step 2: 跑 quasi-search
+
+按 `is_paper` 选 mode (没传就两个都试):
+
+```bash
+# Books mode (含 OL + AA)
+quasi-search books --author "{author}" --title "{title_keywords}" --year-from {year-1} --year-to {year+1} --limit 5 --json
+
+# Papers mode (含 Crossref + OpenAlex)
+quasi-search papers --author "{author}" --year-from {year-1} --limit 10 --json
+```
+
+收到 JSON 后挑 best match:
+- title overlap ≥ 0.6 with citation_agent_hint (若有) OR with mention_context 关键词
+- year 严格匹配 year_hint (±1 容许 paperback/reprint)
+- 同名作者多本时,选 mention_context 主题最贴合的
+
+### Step 3: 兜底 (best match confidence < medium)
+
+```bash
+# 走 dokobot scholar 兜底
+quasi-search scholar "{author} {title_keywords} {year_hint}" --limit 5
+```
+
+只挑 scholar 返回里 title + year 都 hit 的。
+
+### Step 4: 写 recovery JSON
+
+```json
+{
+  "key": "fausto-sterling-2000",
+  "online_recovery": {
+    "title": "Sexing the Body: Gender Politics and the Construction of Sexuality",
+    "author": "Anne Fausto-Sterling",
+    "year": 2000,
+    "isbn": "9780465077144",
+    "doi": null,
+    "publisher": "Basic Books",
+    "kind": "book",
+    "confidence": "high",
+    "sources": ["crossref", "openlibrary"],
+    "suggested_slug": "fausto-sterling-sexing-the-body-2000",
+    "process_book_cmd": "/quasi:process-book fausto-sterling-sexing-the-body-2000",
+    "alternatives": [
+      {"title": "...", "year": 2003, "note": "paperback reprint, 不取"}
+    ]
+  }
+}
+```
+
+`confidence` 取值:
+- `high` — 多源一致 + title overlap > 0.8 + year exact
+- `medium` — 单源 hit / title overlap 0.6-0.8
+- `low` — 兜底 scholar 仅 1 hit / title 不太确定
+
+`kind: book | paper | unknown`。
+
+找不到任何可用 hit:
+
+```json
+{
+  "key": "...",
+  "online_recovery": {
+    "confidence": "miss",
+    "searched": ["crossref", "openlibrary", "scholar"],
+    "notes": "author '{X}' year '{Y}' 三源全空,可能 self-published / blog / 灰文献"
+  }
+}
+```
+
+## 输出协议（recover-citation mode）
+
+```
+RECOVER_RESULT:
+- key: {key}
+- confidence: high | medium | low | miss
+- output: {output}
+- status: success | error
+```
+
+不要打印多余总结。

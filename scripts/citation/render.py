@@ -87,6 +87,9 @@ label.bib-opt input{cursor:pointer;margin-top:3px}
 .propose-draft h4{color:#7a5a00;margin:0 0 6px;font-size:13px}
 .propose-hint{background:#eef6ff;border-color:#a8c8e8}
 .propose-hint h4{color:#1a4f8a;margin:0 0 6px;font-size:13px}
+.propose-recovery{background:#f5efff;border-color:#c8b0e8}
+.propose-recovery h4{color:#5a1080;margin:0 0 6px;font-size:13px}
+.propose-recovery code{background:rgba(90,16,128,0.08);padding:1px 5px;border-radius:3px;font-size:12px}
 """
 
 
@@ -119,10 +122,19 @@ STATUS_LABEL = {
 # ---- merge verdicts ----------------------------------------------------------
 
 def _load_verdicts(verdicts_dir: Path | None) -> dict[str, dict]:
-    """Read all batch-*.json files; return {key: verdict_dict}."""
+    """Read all batch-*.json and recovery-*.json files in verdicts_dir.
+
+    batch-*.json: citation-agent offline verdicts (Phase 2)
+    recovery-*.json: discover-agent online recovery for missing entries (Phase 2.5)
+
+    Merge shape: {key: verdict_dict} where verdict_dict may also include
+    an "online_recovery" field if Phase 2.5 ran for that key.
+    """
     out: dict[str, dict] = {}
     if not verdicts_dir or not verdicts_dir.is_dir():
         return out
+
+    # Phase 2: offline citation-agent verdicts
     for f in sorted(verdicts_dir.glob("batch-*.json")):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
@@ -132,6 +144,31 @@ def _load_verdicts(verdicts_dir: Path | None) -> dict[str, dict]:
             continue
         for v in data.get("verdicts", []):
             out[v["key"]] = v
+
+    # Phase 2.5: online discover-agent recovery (overlays online_recovery field)
+    for f in sorted(verdicts_dir.glob("recovery-*.json")):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            print(f"warn: {f.name} broken JSON ({e.msg} at line {e.lineno})",
+                  file=sys.stderr)
+            continue
+        key = data.get("key")
+        if not key:
+            continue
+        recovery = data.get("online_recovery")
+        if recovery is None:
+            continue
+        if key in out:
+            out[key]["online_recovery"] = recovery
+        else:
+            # No batch verdict but recovery exists — synthesize a minimal verdict.
+            out[key] = {
+                "key": key,
+                "verdict": "missing-from-vault",
+                "confidence": "medium",
+                "online_recovery": recovery,
+            }
     return out
 
 
@@ -270,6 +307,72 @@ def _propose_block_hint(verdict: dict | None) -> str:
     return "".join(parts)
 
 
+def _propose_block_recovery(verdict: dict | None) -> str:
+    """For missing-from-vault: Phase 2.5 discover-agent online recovery result."""
+    if not verdict:
+        return ""
+    recovery = verdict.get("online_recovery") or {}
+    if not recovery:
+        return ""
+
+    confidence = recovery.get("confidence", "unknown")
+    if confidence == "miss":
+        searched = ", ".join(recovery.get("searched") or [])
+        notes = _esc(recovery.get("notes") or "")
+        return ('<div class="propose-block propose-recovery" '
+                'style="border-color:#caa">'
+                '<h4>🔍 在线 recover — <span style="color:#a00">未找到</span></h4>'
+                f'<div style="color:#666">已查 {_esc(searched)}。{notes}</div>'
+                '</div>')
+
+    conf_color = {"high": "#1d6b3a", "medium": "#7a5a00", "low": "#8a4500"}.get(
+        confidence, "#666")
+    title = _esc(recovery.get("title") or "")
+    author = _esc(recovery.get("author") or "")
+    year = _esc(str(recovery.get("year") or ""))
+    publisher = _esc(recovery.get("publisher") or "")
+    isbn = _esc(recovery.get("isbn") or "")
+    doi = _esc(recovery.get("doi") or "")
+    sources = ", ".join(recovery.get("sources") or [])
+    cmd = recovery.get("process_book_cmd") or ""
+
+    bits = []
+    if title:
+        bits.append(f'<div><b>{title}</b></div>')
+    meta_bits = []
+    if author:
+        meta_bits.append(author)
+    if year:
+        meta_bits.append(year)
+    if publisher:
+        meta_bits.append(publisher)
+    if meta_bits:
+        bits.append(f'<div style="color:#666;font-size:12.5px">'
+                    f'{_esc(" · ".join(meta_bits))}</div>')
+    id_bits = []
+    if isbn:
+        id_bits.append(f'ISBN {isbn}')
+    if doi:
+        id_bits.append(f'DOI {doi}')
+    if id_bits:
+        bits.append(f'<div style="color:#888;font-size:11.5px;margin-top:2px">'
+                    f'{_esc(" · ".join(id_bits))}</div>')
+    if cmd:
+        bits.append(f'<div style="margin-top:6px"><b>建议:</b> '
+                    f'<code>{_esc(cmd)}</code></div>')
+
+    return (
+        f'<div class="propose-block propose-recovery">'
+        f'<h4>🔍 在线 recover '
+        f'<span style="color:{conf_color};font-weight:600">'
+        f'[{confidence} confidence]</span> '
+        f'<span style="color:#888;font-size:11.5px">来源: {_esc(sources)}</span>'
+        f'</h4>'
+        + "".join(bits) +
+        '</div>'
+    )
+
+
 def _candidates_table(entry: dict) -> str:
     cands = entry.get("candidates") or []
     if not cands:
@@ -362,6 +465,7 @@ def _row_html(entry: dict, verdict: dict | None) -> str:
     detail.append(_candidates_table(entry))
     detail.append(_propose_block_draft(verdict))
     detail.append(_propose_block_hint(verdict))
+    detail.append(_propose_block_recovery(verdict))
 
     if verdict and verdict.get("rationale"):
         detail.append(

@@ -131,7 +131,27 @@ Stage A(sonnet 已改)+ Stage B(codex 已提议)都跑完后,主进程对每个 
 1. `quasi-helpers citation parse <draft> -o {ct_dir}/parse.json`
 2. `quasi-helpers citation resolve {ct_dir}/parse.json -o {ct_dir}/manifest.json`
 3. 把 manifest 里的 entries 按 8 条一批分组,每批并发 dispatch `quasi:citation-agent`(cap 4)
-4. `quasi-helpers citation render` → `report.html` + `references.bib`
+   → 产出 `{ct_dir}/verdicts/batch-NNN.json` (offline 判断,含 prior-knowledge 猜测)
+4. **Phase 2.5 — RECOVER MISSING (新)**: 对 verdict == `missing-from-vault` 的每条,
+   并发 dispatch `quasi:discover-agent` (mode=recover-citation),让它在线搜真实来源:
+   ```python
+   missing = [v for batch in verdicts for v in batch if v.verdict == "missing-from-vault"]
+   for v in missing:  # 可并发,cap 4
+       Agent("quasi:discover-agent", background=True,
+             prompt=f"mode: recover-citation\n"
+                    f"key: {v.key}\n"
+                    f"author: {v.parsed_author}\n"
+                    f"year_hint: {v.parsed_year}\n"
+                    f"mention_context: {v.mention_snippet}\n"
+                    f"citation_agent_hint: {v.draft_suggestion.proposed or ''}\n"
+                    f"output: {ct_dir}/verdicts/recovery-{v.key}.json")
+   while Glob(f"{ct_dir}/verdicts/recovery-*.json").count < len(missing):
+       sleep(15)
+   ```
+   产出 `{ct_dir}/verdicts/recovery-{key}.json`,render 会自动 merge 进 review。
+   **可关**: `/quasi:wrap-up <draft> --no-recover` 跳过 Phase 2.5。
+5. `quasi-helpers citation render` → `report.html` + `references.bib`
+   (render 自动读取 verdicts/batch-*.json + verdicts/recovery-*.json 双源)
 
 **硬约束**:Phase 1 全部完成才进入 Phase 2;否则改字会让 parse 行号失效。
 

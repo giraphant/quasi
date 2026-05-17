@@ -46,6 +46,22 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.19.0** (2026-05-17): **wrap-up Phase 2.5 — online citation recovery.**
+  When citation-agent flags an entry as `missing-from-vault`, the existing
+  flow could only say "vault 缺,补完再重跑". This release adds an online
+  step: discover-agent gains a new `mode=recover-citation` that takes the
+  citation key + author + year_hint + mention_context + citation-agent's
+  prior-knowledge guess, hits quasi-search (Crossref/OL/AA + scholar
+  fallback), and emits an `online_recovery` record with title / author /
+  year / ISBN / DOI / publisher / confidence / suggested_slug /
+  process_book_cmd. wrap-up dispatches one discover-agent per missing
+  entry in parallel (cap 4) after citation-agent finishes; render.py
+  merges `verdicts/recovery-*.json` into the review UI so each
+  missing row shows a "🔍 在线 recover" block with the recovered ID.
+  This converts vault-todo from "list of names to look up" into "list of
+  ready-to-paste `/quasi:process-book {slug}` commands". Opt-out with
+  `/quasi:wrap-up <draft> --no-recover` to skip the online step.
+
 - **0.18.1** (2026-05-17): process-book Step 0 hardening.
   - Self-dispatches download-agent when `sources/{slug}.{epub,pdf}` is
     absent — no longer bails out telling the user to "先用 process-author".
