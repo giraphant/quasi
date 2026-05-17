@@ -46,6 +46,12 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.19.1** (2026-05-17): wrap-up `--citation-only` flag.
+  Skips Phase 0 (audit) + Phase 1 (proofread) + Phase 4 (cleanup), runs
+  Phase 2 + 2.5 + 3 only. Use after补 vault'd a few books — re-emit bib
+  in seconds without re-proofreading. Also documents `--no-recover` and
+  `--audit-first` flags more explicitly in the call-shape section.
+
 - **0.19.0** (2026-05-17): **wrap-up Phase 2.5 — online citation recovery.**
   When citation-agent flags an entry as `missing-from-vault`, the existing
   flow could only say "vault 缺,补完再重跑". This release adds an online

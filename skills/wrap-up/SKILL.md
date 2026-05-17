@@ -18,7 +18,14 @@ description: >
 ```
 /quasi:wrap-up vault/drafts/draft.md
 /quasi:wrap-up vault/drafts/                # 整目录
+
+# Flags:
+/quasi:wrap-up <draft> --no-recover         # Phase 2.5 跳过(不在线找 missing)
+/quasi:wrap-up <draft> --citation-only      # 跳 Phase 0/1, 只跑 Phase 2-3
+/quasi:wrap-up <draft> --audit-first        # 强制跑 Phase 0 (默认按 state.json 判断)
 ```
+
+`--citation-only` 是"补完 vault 后增量重跑"的快捷入口: proofread 已经做过、draft 文本已经定稿、只是 vault 增量补了几本书想重新出 .bib。**直接跳过 Phase 0/1**, 从 Phase 2 进。
 
 ## 整体流程
 
@@ -29,12 +36,44 @@ description: >
 │   ├─ Stage B: codex 整篇 2 轮 → 只提议(`? c{N}` 前缀),不改正文
 │   └─ Stage C: 主进程审稿 → 接受/拒绝 codex 提议,sanity-check sonnet 改动
 ├─ Phase 2 CITATION  ─ 解析引用 + 在线交叉验证 → report.html + .bib
+│   └─ Phase 2.5 RECOVER ─ missing-from-vault 在线 recover (discover-agent)
 ├─ Phase 3 SUMMARY   ─ 单页汇总 summary.html,链接两份详细
 └─ Phase 4 CLEANUP   ─ 等用户审完触发("审完了" / "清理记录块"等)
                        quasi-helpers proofread cleanup 删 draft 末尾的记录块
 ```
 
-## Phase 0 — AUDIT (可选, 跳过条件见下)
+**`--citation-only` 跳过 Phase 0/1, 从 Phase 2 起**:
+```
+─ (skip Phase 0 audit)
+─ (skip Phase 1 proofread, draft 已定稿)
+├─ Phase 2 CITATION + Phase 2.5 RECOVER
+└─ Phase 3 SUMMARY
+```
+(Phase 4 cleanup 也跳, draft 末尾 proofread 记录块上轮已处理。)
+
+## Flag 解析
+
+主进程从 caller 提供的命令里解析 flag:
+
+```python
+draft_path = parse_positional()
+flags = parse_flags()  # --no-recover, --citation-only, --audit-first
+
+if flags.citation_only:
+    # 直接跳到 Phase 2,proofread / cleanup 全不跑
+    skip_phase_0 = True
+    skip_phase_1 = True
+    skip_phase_4 = True
+elif flags.audit_first:
+    skip_phase_0 = False
+else:
+    # 默认按 processing/audit/state.json 是否 clean: true 决定
+    skip_phase_0 = audit_state_clean()
+```
+
+## Phase 0 — AUDIT (跳过条件见下)
+
+`--citation-only` 时整段跳过。否则:
 
 如果调用方传了 `--audit-first` 或 vault 自上次 audit 后有变动迹象:
 
@@ -48,7 +87,7 @@ audit-agent 完成后再进入 Phase 1。
 
 **跳过条件**:`processing/audit/state.json` 存在且 `clean: true` —— 视为已 audit 过,不重跑。
 
-## Phase 1 — PROOFREAD
+## Phase 1 — PROOFREAD (`--citation-only` 时全跳过)
 
 按节切 → sonnet 节内多轮迭代到收敛 → codex 跨模型兜底。**改动直接累积在 draft 末尾的 `<!-- proofread:start -->...<!-- proofread:end -->` 块**。
 
