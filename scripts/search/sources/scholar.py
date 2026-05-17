@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import search_new as _s
+import search as _s
 
 SUPPORTS = ["book", "paper"]; SOURCE_ID = "scholar"
 

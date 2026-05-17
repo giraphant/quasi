@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import search_new as _s  # for BookQuery, PaperQuery, AdapterResult, sniff_isbn, sniff_doi
+import search as _s  # for BookQuery, PaperQuery, AdapterResult, sniff_isbn, sniff_doi
 import requests
 
 SUPPORTS = ["book", "paper"]

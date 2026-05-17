@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-import search_new as search
+import search
 
 
 def _adapter_result(source: str, entries: list[dict], success: bool = True) -> search.AdapterResult:
@@ -29,7 +29,7 @@ def test_book_search_fan_out_and_merge():
                                               "_sources": ["openlibrary"]}])
     fake = {"openalex": fake_oa, "openlibrary": fake_ol}
 
-    with patch("search_new._adapter_search_book", side_effect=lambda src, q: fake[src](q)
+    with patch("search._adapter_search_book", side_effect=lambda src, q: fake[src](q)
                                                    if src in fake
                                                    else _adapter_result(src, [], success=False)):
         resp = search.book_search(search.BookQuery(isbn="ISBN1"))
@@ -43,7 +43,7 @@ def test_book_search_fan_out_and_merge():
 def test_paper_search_returns_paper_envelope():
     fake_oa = _adapter_result("openalex", [{"title": "P", "doi": "10.1/x", "year": 2020,
                                              "_sources": ["openalex"]}])
-    with patch("search_new._adapter_search_paper", return_value=fake_oa):
+    with patch("search._adapter_search_paper", return_value=fake_oa):
         resp = search.paper_search(search.PaperQuery(doi="10.1/x"))
     assert resp.kind == "paper"
     assert len(resp.results) >= 1
@@ -54,7 +54,7 @@ def test_failed_adapter_recorded_in_errors_not_raises():
                                         error="HTTP 429")
     ok = _adapter_result("openalex", [{"title": "X", "isbn_13": "i", "_sources": ["openalex"]}])
     fakes = {"openalex": ok, "googlebooks": fail_result}
-    with patch("search_new._adapter_search_book",
+    with patch("search._adapter_search_book",
                side_effect=lambda src, q: fakes.get(src,
                                                     search.AdapterResult(source=src,
                                                                           success=True, entries=[]))):

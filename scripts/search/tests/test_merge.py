@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import search_new as search
+import search
 
 
 # Helper: build a BookRecord with overrides

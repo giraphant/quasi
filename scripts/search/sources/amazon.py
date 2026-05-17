@@ -35,7 +35,7 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import search_new as _s
+import search as _s
 
 SUPPORTS = ["book"]
 SOURCE_ID = "amazon"

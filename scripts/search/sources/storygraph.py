@@ -26,7 +26,7 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import search_new as _s
+import search as _s
 
 try:
     from curl_cffi import requests as _cffi_requests

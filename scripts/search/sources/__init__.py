@@ -8,11 +8,11 @@ Each module exports:
     def search_paper(query: PaperQuery) -> AdapterResult: # if "paper" in SUPPORTS
 
 Adapters return raw entries (their private shape) + per-source diagnostics.
-Main search functions (book_search / paper_search in search_new.py) handle
+Main search functions (book_search / paper_search in search.py) handle
 normalisation to BookRecord/PaperRecord and cross-source merging.
 
 This package's __init__.py just lists available modules. Import them
-explicitly by name in search_new.py (so missing/broken adapters fail
+explicitly by name in search.py (so missing/broken adapters fail
 loudly at top of import).
 """
 
