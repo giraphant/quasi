@@ -16,7 +16,9 @@ description: >
 ```
 
 `{book-slug}` 必须是 canonical 格式：`{author-surname}-{short-title}-{year}`。
-源文件应在 `sources/{book-slug}.epub` 或 `.pdf`。
+源文件落在 `sources/{book-slug}.{epub,pdf}`。
+
+**没有源文件时,本 skill 自己 dispatch download-agent 去拿** —— 不要求调用方先准备。download-agent 内部会用 quasi-search 找 md5/DOI 再下,具体策略它自己定。这跟 process-author 内部"逐本下载 → 处理"是同一段子流程的拆分。
 
 ## ⚠ 硬约束
 
@@ -33,12 +35,15 @@ description: >
 
 ```
 主进程 (dispatcher)
+├─ Step 0: download-agent (sonnet, 前台) → 没源文件时,自己去拿
 ├─ Step 1: extract-agent (sonnet, 前台) → 提取+验证+修复
 ├─ Step 2: 主进程读 manifest.json → 筛选章节
 ├─ Step 3: analyse-agent ×N (opus, 后台并行) → Glob 轮询
 ├─ Step 4: synthesis-agent(mode=book) (opus, 前台)
-└─ Step 5: synthesis-agent (可选, KB 更新)
+└─ Step 5: audit-agent (sonnet, 前台) → 校验
 ```
+
+本质上是 process-author 内部"逐本下载 → 处理"子流程的单本切片,所以编排形态对齐。
 
 ## 执行流程
 
@@ -50,9 +55,22 @@ description: >
 # 本 skill 不再重新派生 slug，所有路径直接基于 book_slug。
 book_slug = parse_args()
 source_file = Glob(f"sources/{book_slug}.epub") or Glob(f"sources/{book_slug}.pdf")
+
+# Step 0: ACQUIRE — sources/ 没有源文件时,dispatch download-agent 去拿
+# 不要求调用方先准备源文件;不接 --doi/--md5/--url 等 flag(那是 download-agent 内部要管的事)。
+# 注意:这跟 process-author Phase 2 的 download-agent 是同一段子流程,只不过这里 N=1。
 if not source_file:
-    report(f"sources/{book_slug}.{{epub,pdf}} 不存在；先用 process-author 或 download-agent 拿到定稿 slug")
-    return
+    Agent("quasi:download-agent", foreground=True,
+          prompt=f"intent: single book\nbook_slug: {book_slug}\noutput_dir: sources/\n"
+                 f"hints: 从 slug 推断 author/title/year,先用 quasi-search books 找候选(含 AA),"
+                 f"再 quasi-download book --md5 拿到文件,最后 quasi-download finalize 定稿到 "
+                 f"sources/{book_slug}.{{ext}}")
+    source_file = Glob(f"sources/{book_slug}.epub") or Glob(f"sources/{book_slug}.pdf")
+    if not source_file:
+        report(f"download-agent 没能拿到 sources/{book_slug}.{{epub,pdf}};检查 slug 是否准确,"
+               f"或手动放文件后重跑")
+        return
+
 chapters_dir = f"processing/chapters/{book_slug}/"
 
 # 1. EXTRACT（一次调用完成提取+验证+修复）
@@ -101,10 +119,11 @@ print(f"Done: {len(selected)} chapters, overview generated, typechecked")
 
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
-| Step 1 | `{chapters_dir}/manifest.json` | 存在则跳过 |
+| Step 0 | `sources/{slug}.{epub,pdf}` | 存在则跳过 download-agent |
+| Step 1 | `{chapters_dir}/manifest.json` | 存在则跳过 extract-agent |
 | Step 3 | `ch{slot}-*.md` | 存在则跳过该章 |
 | Step 4 | `00-overview.md` | 存在则跳过 |
-| Step 5 | 无 —— 幂等,可重复跑 | 上次 typecheck clean 时几乎无成本 |
+| Step 5 | 无 —— 幂等,可重复跑 | 上次 audit clean 时几乎无成本 |
 
 ## 目录结构
 
