@@ -17,7 +17,7 @@ def test_supports():
 
 def test_calls_legacy_with_concatenated_query():
     fake_raw = [{"title": "T", "authors": ["A"], "year": 2020, "goodreads_id": 1}]
-    with patch("sources.goodreads._legacy_search", return_value=fake_raw) as mock_leg:
+    with patch("sources.goodreads._scrape_goodreads", return_value=fake_raw) as mock_leg:
         r = gr_adapter.search_book(search.BookQuery(title="Cyborg", author="Haraway"))
     assert r.success is True
     assert len(r.entries) == 1
@@ -27,7 +27,7 @@ def test_calls_legacy_with_concatenated_query():
 
 
 def test_legacy_exception_caught():
-    with patch("sources.goodreads._legacy_search", side_effect=RuntimeError("boom")):
+    with patch("sources.goodreads._scrape_goodreads", side_effect=RuntimeError("boom")):
         r = gr_adapter.search_book(search.BookQuery(title="X"))
     assert r.success is False
     assert "boom" in r.error

@@ -18,7 +18,7 @@ def test_supports():
 
 def test_calls_legacy_with_concatenated_query():
     fake = [{"title": "T", "authors": ["A"], "year": 2020, "asin": "B0TEST"}]
-    with patch("sources.amazon._legacy", return_value=fake) as mock_leg:
+    with patch("sources.amazon._scrape_amazon", return_value=fake) as mock_leg:
         r = amazon.search_book(search.BookQuery(title="Cyborg", author="Haraway"))
     assert r.success is True
     assert r.entries[0]["asin"] == "B0TEST"
@@ -26,7 +26,7 @@ def test_calls_legacy_with_concatenated_query():
 
 
 def test_legacy_exception_caught():
-    with patch("sources.amazon._legacy", side_effect=RuntimeError("boom")):
+    with patch("sources.amazon._scrape_amazon", side_effect=RuntimeError("boom")):
         r = amazon.search_book(search.BookQuery(title="X"))
     assert r.success is False
     assert "boom" in r.error

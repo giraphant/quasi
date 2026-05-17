@@ -20,7 +20,7 @@ def test_supports():
 
 def test_calls_legacy_with_concatenated_query():
     fake = [{"title": "T", "authors": ["A"], "year": 2020, "storygraph_id": "u-1"}]
-    with patch("sources.storygraph._legacy", return_value=fake) as mock_leg:
+    with patch("sources.storygraph._scrape_storygraph", return_value=fake) as mock_leg:
         r = sg.search_book(search.BookQuery(title="Cyborg", author="Haraway"))
     assert r.success is True
     assert r.entries[0]["title"] == "T"
@@ -29,7 +29,7 @@ def test_calls_legacy_with_concatenated_query():
 
 
 def test_legacy_exception_caught():
-    with patch("sources.storygraph._legacy", side_effect=RuntimeError("boom")):
+    with patch("sources.storygraph._scrape_storygraph", side_effect=RuntimeError("boom")):
         r = sg.search_book(search.BookQuery(title="X"))
     assert r.success is False
     assert "boom" in r.error
