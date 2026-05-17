@@ -41,8 +41,8 @@ Write/Read 工具要求绝对路径。相对路径必须按 `$CLAUDE_PROJECT_DIR
 执行两条命令并保留各自 stdout：
 
 ```bash
-quasi-search books --author "{full_name}" --limit 20
-quasi-search papers --author "{full_name}" --limit 30
+quasi-search book --author "{full_name}" --limit 20
+quasi-search paper --author "{full_name}" --limit 30
 ```
 
 论文搜索自动查询 OpenAlex + Crossref 双源并合并去重。
@@ -86,21 +86,12 @@ $CLAUDE_PROJECT_DIR/processing/authors/{author_name}/manifest.json
 
 manifest 是采集状态机，归 `processing/`，与 vault 知识对象分层。
 
-### Step 4: 验证 DOI
-
-```bash
-quasi-search validate --manifest {manifest_path}
-```
-
-该命令会：验证已有 DOI → 清除无效 DOI → 用 Crossref 标题搜索补回缺失 DOI。
-
 ## 来源约束
 
 - 论文条目只能来自搜索结果表格。
 - 若你确信某篇重要论文未出现在搜索结果中，可加入 manifest，但必须：
   - `status` 设为 `"unverified"`
   - `doi`、`year`、`citations` 字段留空（null）——不得从记忆中填写
-  - Step 4 的 validate 命令会尝试通过 Crossref 标题搜索补全这些字段
 - DOI 格式必须来自搜索结果原文，不得自行编写或修改 DOI。
 
 ## manifest 格式
@@ -172,10 +163,10 @@ DISCOVER_RESULT:
 
 ```bash
 # Books mode (含 OL + AA)
-quasi-search books --author "{author}" --title "{title_keywords}" --year-from {year-1} --year-to {year+1} --limit 5 --json
+quasi-search book --author "{author}" --title "{title_keywords}" --year-from {year-1} --year-to {year+1} --limit 5 --json
 
 # Papers mode (含 Crossref + OpenAlex)
-quasi-search papers --author "{author}" --year-from {year-1} --limit 10 --json
+quasi-search paper --author "{author}" --year-from {year-1} --limit 10 --json
 ```
 
 收到 JSON 后挑 best match:
@@ -183,16 +174,7 @@ quasi-search papers --author "{author}" --year-from {year-1} --limit 10 --json
 - year 严格匹配 year_hint (±1 容许 paperback/reprint)
 - 同名作者多本时,选 mention_context 主题最贴合的
 
-### Step 3: 兜底 (best match confidence < medium)
-
-```bash
-# 走 dokobot scholar 兜底
-quasi-search scholar "{author} {title_keywords} {year_hint}" --limit 5
-```
-
-只挑 scholar 返回里 title + year 都 hit 的。
-
-### Step 4: 写 recovery JSON
+### Step 3: 写 recovery JSON
 
 ```json
 {
