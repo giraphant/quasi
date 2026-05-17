@@ -65,7 +65,25 @@ if not exists(manifest_path):
     analysis = Read(f"vault/topics/{topic_slug}/seed.md")
     citations = parse_citation_section(analysis)
     create_manifest(manifest_path, seed, citations)
-    Bash(f'quasi-search metadata --manifest {manifest_path} --all')
+    
+    # Per-entry metadata fetch (caller-side)
+    for key, paper in manifest['papers'].items():
+        doi = paper.get('doi')
+        if not doi:
+            continue
+        out = subprocess.run(
+            ['quasi-search', 'paper', '--doi', doi, '--json', '--shape', 'single'],
+            capture_output=True, text=True, check=False,
+        )
+        if out.returncode != 0:
+            continue
+        resp = json.loads(out.stdout)
+        if not resp.get('results'):
+            continue
+        rec = resp['results'][0]
+        for field in ('title', 'authors', 'year', 'abstract', 'cited_by_count', 'is_oa', 'oa_url'):
+            if rec.get(field) and not paper.get(field):
+                paper[field] = rec[field]
 
 # Phase 1-N: EXPAND
 manifest = read_json(manifest_path)
@@ -74,7 +92,25 @@ for round_num in range(manifest["rounds_completed"] + 1, MAX_ROUNDS + 1):
     if not discovered:
         break
 
-    Bash(f'quasi-search metadata --manifest {manifest_path} --all')
+    # Per-entry metadata fetch (caller-side)
+    for key, paper in manifest['papers'].items():
+        doi = paper.get('doi')
+        if not doi:
+            continue
+        out = subprocess.run(
+            ['quasi-search', 'paper', '--doi', doi, '--json', '--shape', 'single'],
+            capture_output=True, text=True, check=False,
+        )
+        if out.returncode != 0:
+            continue
+        resp = json.loads(out.stdout)
+        if not resp.get('results'):
+            continue
+        rec = resp['results'][0]
+        for field in ('title', 'authors', 'year', 'abstract', 'cited_by_count', 'is_oa', 'oa_url'):
+            if rec.get(field) and not paper.get(field):
+                paper[field] = rec[field]
+    
     Agent("quasi:download-agent", foreground=True,
           prompt=f"manifest_path: {manifest_path}, mode: papers")
 
@@ -107,8 +143,25 @@ if not exists(f"vault/topics/{topic_slug}-synthesis.md"):
 # TYPECHECK
 # 校验 + 修复本次滚雪球产出的所有 paper 分析(在 vault/topics/{slug}/ 下)。
 # synthesis.md 自身不打 type,不在 schema 校验范围内 —— typecheck 只扫子目录里的论文。
-Agent("quasi:audit-agent", foreground=True,
-      prompt=f"path: vault/topics/{topic_slug}/\nmode: full")
+audit = Agent("quasi:audit-agent", foreground=True,
+              prompt=f"path: vault/topics/{topic_slug}/")
+
+if audit.audit_result.escalated:
+    for item in audit.audit_result.escalated:
+        paper = find_manifest_paper_for_output(manifest, item.path)
+        if not paper:
+            report(f"audit escalated unknown topic paper path: {item.path}")
+            continue
+        Agent("quasi:analyse-agent", foreground=True,
+              prompt=f"type: B, input: {paper.pdf_path}, "
+                     f"output: {item.path}, topic: {topic_desc}\n"
+                     f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+
+    audit = Agent("quasi:audit-agent", foreground=True,
+                  prompt=f"path: vault/topics/{topic_slug}/")
+    if audit.audit_result.escalated:
+        report("audit still has escalated topic items after one regeneration pass")
+        return
 ```
 
 ## Manifest 格式
