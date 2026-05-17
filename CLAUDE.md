@@ -46,6 +46,36 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.18.0** (2026-05-17): **Layer-cleanup refactor (BREAKING).** End-to-end
+  rework of the bin / agent / skill split per `docs/LAYERS.md` and
+  `docs/ARCHITECTURE.md`. Drives Pattern B (skill 直调 bin) out of the
+  layer model by aggregating skill helpers into a single `quasi-helpers` bin.
+  - **bins**: 13 → 9 (6 active + 3 deferred journal/refs). Deletions:
+    `quasi-typecheck`, `quasi-autofix-mechanical`, `quasi-proofread`,
+    `quasi-citation`, `quasi-extract-{epub,ocr,split}`. New:
+    `quasi-audit {check|fix|emit-bib}` (vault consistency dispatcher),
+    `quasi-helpers {proofread|citation} <sub>` (skill orchestration aggregator).
+    Subcommand restructure: `quasi-extract {epub|ocr|split}`,
+    `quasi-download {paper|book|batch|finalize}` (was flag-based),
+    `quasi-search` + `scholar` (dokobot Google Scholar) + `backfill`
+    (vault metadata multi-source chain; ingests bts/scripts 8 sweep scripts
+    documented in `docs/EXPERIENCE-vault-metadata-backfill.md`).
+  - **agents**: `typecheck-agent` → `audit-agent` with new online
+    metadata backfill responsibility. `analyze-agent` → `analyse-agent`
+    (British spelling). `overview-agent` + `profile-agent` + 原 `synthesis-agent`
+    → unified `synthesis-agent` with caller-passed `mode = book|author|
+    journal|topic|kb-update`. `scan-agent` / `setup-agent` marked DEPRECATED
+    (files retained, not dispatched by new code).
+  - **skills**: `citation-snowball/` → `process-topic/` (rename only,
+    internal redesign deferred). `wrap-up/SKILL.md` now calls `quasi-helpers
+    {proofread,citation} *` and gains a Phase 0 audit-agent dispatch.
+    `process-book` / `process-author` migrated to `synthesis-agent(mode=X)` +
+    `audit-agent`.
+  - **Deferred** (next round): entire journal stack
+    (`quasi-journal-{fetch,report}` / `scan-agent` / `/quasi:process-journal`
+    skill / `quasi-search journal` subcommand); `setup-agent` redesign;
+    `process-topic` internal redesign; `quasi-synthesize-refs` disposition.
+
 - **0.17.0** (2026-05-17): **Citation pipeline refactor — biblio.json as ground truth.**
   Driven by ADR-002 (see `docs/ADR-002-capability-layering.md`): citation
   flow now reads a pre-computed `biblio.json` instead of glob-walking the
