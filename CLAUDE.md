@@ -46,6 +46,36 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.20.0** (2026-05-17): **citation review UI — tabs by dimension,
+  decisions grouped by side-effect.** Background: the previous review.html
+  rendered a flat table with uniform `✓ ✗ ?` per row whose "✓ accept agent
+  suggestion" semantics differed wildly across statuses (apply draft rewrite
+  / run vault mv / pick candidate / nothing-to-apply for `ok`). User found
+  the buttons misleading — particularly `ok` rows showing "accept" when
+  there's nothing to accept, and a sea of `?` for rows agent didn't process.
+  - render.py: replaced the 3-state filter (全部/需处理/已通过) with a
+    7-tab nav by display_status: 全部 / 挑候选 / 修 draft / 修 vault /
+    补 vault / 等 agent / ✓ 通过. Each tab shows count.
+  - new `_action_widget()` renders per-dimension actions:
+      ok                  → "✓ 通过" read-only badge
+      pending             → "⏳ 等 agent" read-only badge
+      context-mismatch    → [✓ 应用] [✗ 保留原引] (default 应用)
+      maybe-vault-typo    → [✓ 执行 rename] [✗ 忽略] (default 忽略;
+                            renames are destructive, opt-in)
+      missing-from-vault  → [✓ 加待跑] [✗ 忽略] (default 加 if Phase 2.5
+                            recovered with ≥medium confidence)
+      multi-hit           → badge → "展开选 bib chooser radio"
+  - JS exportDecisions now emits 4 grouped buckets:
+      draft_rewrites     (context-mismatch + applied)
+      vault_renames      (maybe-vault-typo + applied)
+      vault_todo         (missing-from-vault + applied)
+      multi_hit_picks    (multi-hit + bib chosen)
+    plus a `skipped` group and a flat `by_key` for backward compat.
+  - apply-bar at top of report instructs user to run
+    `quasi-helpers citation apply <decisions.json>` (subcommand not yet
+    implemented — coming in next minor version; for now decisions.json
+    is enough to drive things manually).
+
 - **0.19.1** (2026-05-17): wrap-up `--citation-only` flag.
   Skips Phase 0 (audit) + Phase 1 (proofread) + Phase 4 (cleanup), runs
   Phase 2 + 2.5 + 3 only. Use after补 vault'd a few books — re-emit bib
