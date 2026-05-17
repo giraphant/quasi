@@ -38,6 +38,7 @@ model: opus
 | 任意页面 scrape | `dokobot read <url> --local --screens N` |
 | 跨语言 work-同一性 | 豆瓣条目页的「原作名」字段 |
 | 译本 ⨯ 原书 linkage | 豆瓣条目页右侧「这本书的其他版本」sidebar |
+| 多版本总览 (work-level) | 豆瓣 works 页 `https://book.douban.com/works/<work_id>/` — 列出该 work 的所有 manifestations (subject_id + 出版社 + 年),用于交叉验证 sidebar 是否漏 |
 
 ### 路径与环境
 
@@ -54,7 +55,7 @@ model: opus
 | 信号（出现在 task / constraints / context） | 路由 |
 |---|---|
 | `sort_by="citations"` 且要 papers | OpenAlex 优先（citations 字段全），Crossref 补缺 |
-| 任务提到 中文 / 译本 / 中译 / Chinese edition / CJK author | Douban 优先；先抓原书条目页 → 读「其他版本」sidebar |
+| 任务提到 中文 / 译本 / 中译 / Chinese edition / CJK author | Douban 优先；先抓原书条目页 → 读「其他版本」sidebar。**条目页单次 dokobot 调用失败 (timeout / 空 DOM / error)** 立即转 `search.douban.com/book/subject_search` 路径 + works 页交叉验证,不重试。 |
 | 任务提到 downloadable / md5 / 下载 | Anna's Archive 优先 |
 | 古书 / 民国 / 无 ISBN | Douban only，跳过 Crossref/OpenAlex |
 | 单条引用回收（context 有 `key` + `year_hint` + `mention_context`） | 先 quasi-search books+papers，confidence < medium 走 scholar 兜底 |
@@ -78,6 +79,7 @@ model: opus
    - `medium` — 单源 hit 或 title overlap 0.6-0.8
    - `low` — 兜底来源 / 单一 weak signal
 6. **slug 字段**（仅 book 输出需要）形如 `{author-surname}-{short-title}-{year}`，全小写 kebab-case；CJK 标题用 pinyin 主标题前 3-4 词。例：`shew-against-technoableism-2023` / `fei-xiaotong-xiangtu-zhongguo-1948`
+7. **Retry budget**：单个 dokobot URL 最多调用 **1 次**。失败（timeout / 空 DOM / error）立即按 routing 表的 fallback 路径走，不要重试同一 URL。`quasi-search` 失败可重试 1 次（共 2 次）。
 
 ---
 
