@@ -395,14 +395,116 @@ def match_and_priority_merge_with_conflicts(
 # === 3. BOOK SEARCH
 # ===============================================
 
-# (populated by Task 5.1)
+import importlib
+from concurrent.futures import as_completed
+from sources import BOOK_ADAPTERS, PAPER_ADAPTERS
+
+DEFAULT_BOOK_SOURCES = list(BOOK_ADAPTERS)
+DEFAULT_PAPER_SOURCES = list(PAPER_ADAPTERS)
+
+
+def _adapter_search_book(source_id: str, query: BookQuery) -> AdapterResult:
+    """Look up sources/<source_id>.py and call its search_book."""
+    try:
+        mod = importlib.import_module(f"sources.{source_id}")
+    except ImportError as e:
+        return AdapterResult(source=source_id, success=False, error=f"adapter import failed: {e}")
+    if "book" not in getattr(mod, "SUPPORTS", []):
+        return AdapterResult(source=source_id, success=False,
+                             error=f"adapter does not support book")
+    return mod.search_book(query)
+
+
+def book_search(query: BookQuery, sources: list[str] | None = None) -> SearchResponse:
+    sources = sources or DEFAULT_BOOK_SOURCES
+    diagnostics = {
+        "sources_attempted": list(sources),
+        "sources_hit": [],
+        "errors": [],
+        "conflicts": [],
+        "raw_doko_excerpts": None,
+    }
+    by_source: dict[str, list[dict]] = {}
+
+    with ThreadPoolExecutor(max_workers=min(8, len(sources) or 1)) as ex:
+        futures = {ex.submit(_adapter_search_book, src, query): src for src in sources}
+        for fut in as_completed(futures):
+            src = futures[fut]
+            try:
+                result = fut.result(timeout=60)
+            except Exception as e:
+                diagnostics["errors"].append({"source": src, "error": f"{type(e).__name__}: {e}"})
+                continue
+            if not result.success:
+                diagnostics["errors"].append({"source": src, "error": result.error or "unknown"})
+                continue
+            if result.entries:
+                diagnostics["sources_hit"].append(src)
+                by_source[src] = result.entries
+            if result.raw_excerpts:
+                diagnostics["raw_doko_excerpts"] = (diagnostics["raw_doko_excerpts"] or {})
+                diagnostics["raw_doko_excerpts"].update(result.raw_excerpts)
+
+    merged, conflicts = match_and_priority_merge_with_conflicts(by_source, kind="book")
+    diagnostics["conflicts"] = conflicts
+
+    return SearchResponse(
+        kind="book",
+        query=asdict(query),
+        results=merged,
+        diagnostics=diagnostics,
+    )
 
 
 # ===============================================
 # === 4. PAPER SEARCH
 # ===============================================
 
-# (populated by Task 5.1)
+
+def _adapter_search_paper(source_id: str, query: PaperQuery) -> AdapterResult:
+    try:
+        mod = importlib.import_module(f"sources.{source_id}")
+    except ImportError as e:
+        return AdapterResult(source=source_id, success=False, error=f"adapter import failed: {e}")
+    if "paper" not in getattr(mod, "SUPPORTS", []):
+        return AdapterResult(source=source_id, success=False,
+                             error="adapter does not support paper")
+    return mod.search_paper(query)
+
+
+def paper_search(query: PaperQuery, sources: list[str] | None = None) -> SearchResponse:
+    sources = sources or DEFAULT_PAPER_SOURCES
+    diagnostics = {
+        "sources_attempted": list(sources), "sources_hit": [],
+        "errors": [], "conflicts": [], "raw_doko_excerpts": None,
+    }
+    by_source: dict[str, list[dict]] = {}
+
+    with ThreadPoolExecutor(max_workers=min(8, len(sources) or 1)) as ex:
+        futures = {ex.submit(_adapter_search_paper, src, query): src for src in sources}
+        for fut in as_completed(futures):
+            src = futures[fut]
+            try:
+                result = fut.result(timeout=60)
+            except Exception as e:
+                diagnostics["errors"].append({"source": src, "error": str(e)})
+                continue
+            if not result.success:
+                diagnostics["errors"].append({"source": src, "error": result.error or "unknown"})
+                continue
+            if result.entries:
+                diagnostics["sources_hit"].append(src)
+                by_source[src] = result.entries
+
+    merged, conflicts = match_and_priority_merge_with_conflicts(by_source, kind="paper")
+    diagnostics["conflicts"] = conflicts
+
+    return SearchResponse(
+        kind="paper",
+        query=asdict(query),
+        results=merged,
+        diagnostics=diagnostics,
+    )
 
 
 # ===============================================
