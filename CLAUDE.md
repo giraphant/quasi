@@ -46,6 +46,46 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.22.0** (2026-05-17): **citation review pivots to TUI — HTML report
+  + structured verdict enum deprecated.** Background: 0.20.0's tab-based
+  HTML review still had a coarse fit between agent output shape and what
+  the user actually had to do per cite — and earlier reflection on the
+  Decisions Report json export (274 entries, ~10% had unstructured-note
+  carryover that the buckets couldn't capture) showed the agent's
+  structured verdict was both token-wasteful and less useful than a
+  short context-fit note. User's diagnosis: "我们之前犯的错就是太结构化了".
+  - **citation-agent rewritten** to output a minimal `{key, picked_slug,
+    flag, note}` per cite. Drops the 4-way verdict enum (ok /
+    context-mismatch / maybe-vault-typo / missing-from-vault) entirely.
+    Agent only does two things now: pick the bib_source from candidates
+    (single → the only one; multi → context-fittest), and flag ok or
+    review for upper-layer triage. Note is free-form Chinese.
+  - **wrap-up Phase 2 restructured** into 2.1 parse+resolve → 2.2
+    citation-agent (single+multi only) → 2.3 discover-agent recover
+    (miss only) → **2.4 TUI 审定** → 2.5 decisions.json + emit-bib.
+    Phase 2.4 is a main-process AskUserQuestion loop, walking bins in
+    dimension order (`review_single` / `review_multi` / `miss_recover` /
+    `miss_orphan`) — `flag=ok` cites auto-accept with no user prompt.
+    Each prompt shows mention snippet + agent's picked_slug + note;
+    options vary by bin (accept / pick another candidate / mark
+    draft-rewrite / vault-todo / skip).
+  - **HTML review.html no longer driven by the skill.** `render.py` /
+    `quasi-helpers citation render` is retained on disk but is now
+    **stale** — it expects the old verdict enum (`ok` / `context-mismatch`
+    / `maybe-vault-typo` / `missing-from-vault`) and will not render
+    cleanly against the new `{key, picked_slug, flag, note}` batch
+    format. Will be either rewritten against the new shape or deleted
+    in a future minor; not blocking. The Phase 3 SUMMARY HTML is
+    dropped — TUI prints a final stats block + paths inline.
+  - **decisions.json schema preserved at the seams** — top level still
+    `by_key: {key: {bib_source, decision, note}}` (what emit_bib.py
+    consumes via `_pick_vault_slug`) plus `vault_todo[]` and
+    `draft_rewrites[]` arrays for the user's follow-up work. emit_bib
+    unchanged.
+  - `--citation-only` flag now skips Phase 0/1/3 (cleanup), runs only
+    Phase 2 (parse → agent → recover → TUI → emit). `--no-recover` still
+    skips 2.3.
+
 - **0.21.0** (2026-05-17): **year triage overhaul — N-source contract,
   structured PDF year signals, Google Books via dokobot.** Triggered by a
   failure case where Simondon's *Imagination and Invention* (UMN Press
