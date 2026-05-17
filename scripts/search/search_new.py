@@ -143,6 +143,32 @@ class SearchResponse:
         return asdict(self)
 
 
+# --- identifier sniffers (used by adapters when caller passes ISBN/DOI as --query) ---
+
+_ISBN_RE = re.compile(r"\b(?:97[89][- ]?)?\d{1,5}[- ]?\d{1,7}[- ]?\d{1,7}[- ]?[\dX]\b")
+_DOI_RE  = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
+
+
+def sniff_isbn(s: str | None) -> str | None:
+    """Return canonical ISBN (digits + uppercase X, no hyphens) if `s` is an ISBN-like string."""
+    if not s:
+        return None
+    m = _ISBN_RE.search(s)
+    if not m:
+        return None
+    raw = re.sub(r"[^\dX]", "", m.group(0).upper())
+    if len(raw) in (10, 13):
+        return raw
+    return None
+
+
+def sniff_doi(s: str | None) -> str | None:
+    if not s:
+        return None
+    m = _DOI_RE.search(s)
+    return m.group(0) if m else None
+
+
 # ===============================================
 # === 2. MERGE
 # ===============================================
