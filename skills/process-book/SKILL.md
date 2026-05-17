@@ -18,7 +18,12 @@ description: >
 `{book-slug}` 必须是 canonical 格式：`{author-surname}-{short-title}-{year}`。
 源文件落在 `sources/{book-slug}.{epub,pdf}`。
 
-**没有源文件时,本 skill 自己 dispatch download-agent 去拿** —— 不要求调用方先准备。download-agent 内部会用 quasi-search 找 md5/DOI 再下,具体策略它自己定。这跟 process-author 内部"逐本下载 → 处理"是同一段子流程的拆分。
+**没有源文件时,本 skill 自己 dispatch download-agent 去拿** —— 不要求调用方先准备。download-agent **复刻 process-author 的"discover → download → finalize"三阶段**,只是 N=1:
+1. **discover** (pre-download): `quasi-search books` 拿 OL/CR/AA 候选,记下 best-match 的 year (= `ol_year`) 和 md5
+2. **download**: `quasi-download book --md5 {md5}`
+3. **finalize** (post-download): Read PDF 前 3 页(版权页/titlepage)提取 `pdf_year`,三方比 `slug_year` / `ol_year` / `pdf_year`,任何不一致都不要 finalize、直接返回 `YEAR_MISMATCH` 让主进程拍板
+
+这套验证不是 process-book 特有的——它就是 process-author Phase 1+2 那条 chain 的单本切片。
 
 ## ⚠ 硬约束
 
@@ -43,8 +48,6 @@ description: >
 └─ Step 5: audit-agent (sonnet, 前台) → 校验
 ```
 
-本质上是 process-author 内部"逐本下载 → 处理"子流程的单本切片,所以编排形态对齐。
-
 ## 执行流程
 
 ```python
@@ -56,19 +59,53 @@ description: >
 book_slug = parse_args()
 source_file = Glob(f"sources/{book_slug}.epub") or Glob(f"sources/{book_slug}.pdf")
 
-# Step 0: ACQUIRE — sources/ 没有源文件时,dispatch download-agent 去拿
-# 不要求调用方先准备源文件;不接 --doi/--md5/--url 等 flag(那是 download-agent 内部要管的事)。
-# 注意:这跟 process-author Phase 2 的 download-agent 是同一段子流程,只不过这里 N=1。
+# Step 0: ACQUIRE & VERIFY
+# 复刻 process-author Phase 1+2 那条 chain,N=1 版:
+#   discover (quasi-search 拿 OL/CR/AA year) → download → finalize (PDF 首页 year)
+#   → 三方 year 对比 (slug / OL / PDF)
+# 不接 --doi/--md5/--url 等 flag(那是 download-agent 内部要管的事)。
 if not source_file:
-    Agent("quasi:download-agent", foreground=True,
-          prompt=f"intent: single book\nbook_slug: {book_slug}\noutput_dir: sources/\n"
-                 f"hints: 从 slug 推断 author/title/year,先用 quasi-search books 找候选(含 AA),"
-                 f"再 quasi-download book --md5 拿到文件,最后 quasi-download finalize 定稿到 "
-                 f"sources/{book_slug}.{{ext}}")
+    result = Agent("quasi:download-agent", foreground=True, prompt=f"""\
+intent: single book with metadata cross-verification
+book_slug: {book_slug}
+output_dir: sources/
+
+steps (复刻 process-author 的 discover → download → finalize 三段):
+
+1. **discover** —— 从 slug 反解 (author, title, year_in_slug);
+   `quasi-search books --author X --title Y --limit 5` 拿候选 (含 AA / OL / CR);
+   挑 best-match (title overlap >=0.7 + author surname 必须出现);
+   记下 best-match.year = ol_year, best-match.md5 (or DOI/URL).
+
+2. **download** —— `quasi-download book --md5 {{md5}} -o sources/ --filename {book_slug}`
+   先下到 sources/{book_slug}.tmp.{{ext}} (临时名,等三方对完再 finalize)
+
+3. **finalize** —— Read 临时文件前 3 页 (版权页 / titlepage);
+   从中提取 pdf_year (出现的最大 published year,排除 reprint dates).
+
+4. **三方对比** —— slug_year vs ol_year vs pdf_year:
+   - 全一致 → mv tmp file 到 sources/{book_slug}.{{ext}}, 返回:
+     DOWNLOAD_OK:
+     - year: ... (三方一致)
+     - source: sources/{book_slug}.{{ext}}
+   - 任何不一致 → **不要 mv / finalize**, 临时文件保留, 返回:
+     YEAR_MISMATCH:
+     - slug_year: ...
+     - ol_year:   ... (source: openlibrary/crossref/aa)
+     - pdf_year:  ...
+     - tmp_file:  sources/{book_slug}.tmp.{{ext}}
+     - candidates: [...]
+     - hint: 大概率 slug 年份错(用户基于 prior knowledge 编的)或多版次
+             (hardcover 2023 vs paperback 2024). 推荐用 ol_year + pdf_year 一致的那个.
+""")
+
+    # 检查 download-agent 的输出
+    if result.contains("YEAR_MISMATCH"):
+        report(f"year mismatch — 请确认 canonical year 后改 slug 重跑")
+        return
     source_file = Glob(f"sources/{book_slug}.epub") or Glob(f"sources/{book_slug}.pdf")
     if not source_file:
-        report(f"download-agent 没能拿到 sources/{book_slug}.{{epub,pdf}};检查 slug 是否准确,"
-               f"或手动放文件后重跑")
+        report(f"download-agent 没拿到 sources/{book_slug}.{{epub,pdf}};检查 slug 是否准确")
         return
 
 chapters_dir = f"processing/chapters/{book_slug}/"
