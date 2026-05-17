@@ -11,6 +11,11 @@
 #   quasi-audit emit-bib -o PATH [--project-root DIR]
 #       Scan vault/{papers,books}/** frontmatter → biblio.json
 #       (single source of truth for citation pipeline downstream).
+#
+#   quasi-audit backfill --strategy STRATEGY [-- ARGS_TO_SWEEP_SCRIPT...]
+#       Run vault metadata backfill sweep scripts. STRATEGY ∈
+#       {auto, clean, crossref, aa-title, aa-md5, aa-from-slug,
+#        openalex, ol-search, ol-isbn-reverse}
 
 set -e
 
