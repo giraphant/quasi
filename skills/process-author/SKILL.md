@@ -90,6 +90,18 @@ if any(status == "discovered"):
     Agent("quasi:download-agent", foreground=True,
           prompt=f"manifest_path: {manifest_path}, mode: both")
 
+# 2a. DOI liveness (optional, caller-side)
+# If you want to verify every DOI in the manifest resolves, loop:
+# for key, paper in manifest['papers'].items():
+#     doi = paper.get('doi')
+#     if not doi:
+#         continue
+#     rc = subprocess.call(['curl', '-sI', '--max-time', '10',
+#                            f'https://doi.org/{doi}'],
+#                           stdout=subprocess.DEVNULL)
+#     paper['doi_status'] = 'live' if rc == 0 else 'dead'
+# bin 不再提供 batch validate;caller 自行决定 liveness 检查策略。
+
 # 3. PROCESS BOOKS
 # Phase 2 结束时 download-agent 已对每本书调用 --finalize-book，manifest 中
 # books[*].slug 与 sources/{slug}.{ext} 均已是 canonical。Phase 3 起所有路径
@@ -161,8 +173,46 @@ for p in manifest.papers where status == "acquired":
     audit_targets.append(f"vault/papers/{p.slug}.md")
 
 for path in audit_targets:
-    Agent("quasi:audit-agent", foreground=True,
-          prompt=f"path: {path}\nmode: full")
+    audit = Agent("quasi:audit-agent", foreground=True,
+                  prompt=f"path: {path}")
+
+    # audit-agent only performs local minimal repairs. Escalated items mean the
+    # owning generation step must redo the corresponding file/subtree.
+    if audit.audit_result.escalated:
+        for item in audit.audit_result.escalated:
+            p = item.path
+            if p == profile_path:
+                Agent("quasi:synthesis-agent", foreground=True,
+                      prompt=f"mode: author\nauthor_name: {author_name}\nfull_name: {full_name}\ntopic: ...\n"
+                             f"output_path: {profile_path}\n"
+                             f"book_overview_paths: {book_overview_paths}\npaper_paths: {paper_paths}\n"
+                             f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+            elif "/vault/books/" in p and p.endswith("/00-overview.md"):
+                b = find_book_for_overview(acquired_books, p)
+                Agent("quasi:synthesis-agent", foreground=True,
+                      prompt=f"mode: book\noutput_dir: vault/books/{b.slug}\nbook_title: {b.title}\ntopic: ...\n"
+                             f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+            elif "/vault/books/" in p and "/ch" in basename(p):
+                b, ch = find_book_chapter_for_output(acquired_books, p)
+                Agent("quasi:analyse-agent", foreground=True,
+                      prompt=f"type: A, book_title: {b.title}, slot: {ch.slot}, chapter_label: {chapter_label}, "
+                             f"input: processing/chapters/{b.slug}/{ch.filename}, "
+                             f"output: {p}, topic: ...\n"
+                             f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+            elif "/vault/papers/" in p:
+                paper = find_manifest_paper_for_output(manifest, p)
+                Agent("quasi:analyse-agent", foreground=True,
+                      prompt=f"type: B, title: {paper.title}, doi: {paper.doi}, "
+                             f"input: {paper.local_path}, output: {p}, topic: ...\n"
+                             f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+            else:
+                report(f"audit escalated unknown author-processing path: {p}")
+
+        audit = Agent("quasi:audit-agent", foreground=True,
+                      prompt=f"path: {path}")
+        if audit.audit_result.escalated:
+            report(f"audit still escalated for {path} after one regeneration pass")
+            return
 ```
 
 ## 断点续跑
