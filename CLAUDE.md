@@ -46,6 +46,42 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.17.0** (2026-05-17): **Citation pipeline refactor — biblio.json as ground truth.**
+  Driven by ADR-002 (see `docs/ADR-002-capability-layering.md`): citation
+  flow now reads a pre-computed `biblio.json` instead of glob-walking the
+  vault each call. New artefacts in `scripts/citation/`:
+  - `biblio.py` scans vault frontmatter into `biblio.json` (multi-segment
+    author-slug indexing so multi-word surnames like `agard-jones` /
+    `fausto-sterling` resolve correctly)
+  - `resolve.py` rewritten: input is `parse.json` + `biblio.json`,
+    output is `manifest.json` with `{single-hit, multi-hit, miss}` status
+    and 4-tier fuzzy fallback (strict → author-only → fuzzy author+year → miss)
+  - `render.py` rewritten: single-decision review UI, bib chooser per row,
+    top banner for missing-from-vault + maybe-vault-typo
+  - `emit_bib.py` (new) renders BibTeX from `biblio.json` keyed by the draft's
+    citation set; honours user-picked `bib_source` from decisions.json
+  - `citation.py` subcommands: `biblio` / `parse` / `resolve` / `render` /
+    `emit-bib` (removed `run` — orchestration belongs in the skill, not the CLI)
+  `citation-agent` rewritten as **offline universal consistency judge**
+  (no WebFetch / WebSearch): verdict ∈ `{ok, context-mismatch,
+  maybe-vault-typo, missing-from-vault}`. Online cross-checking for vault
+  metadata moves out of citation entirely (slated for `quasi-audit` in a
+  future release). `skills/wrap-up/SKILL.md` is **not yet updated** for the
+  new pipeline — TODO next.
+- **0.16.0** (2026-05-15): **New `quasi:wrap-up` skill + two reusable agents**
+  (`proofread-agent`, `citation-agent`). Drift finalisation in one shot —
+  Phase 1 proofread (per-section parallel agents in-place edit typos /
+  punctuation / spacing), Phase 2 citation (parse + vault lookup CLI →
+  per-batch parallel agents do online cross-verification against Crossref /
+  Anna's / Douban via dokobot), Phase 3 summary HTML linking both reports.
+  Design rule: **skills only exist for composition; single-task work is
+  done by dispatching agents directly** — so no standalone `citation` or
+  `proofread` skills. New files: `skills/wrap-up/SKILL.md`,
+  `agents/{proofread,citation}-agent.md`,
+  `scripts/{proofread,citation}/*.py`,
+  `bin/quasi-{proofread,citation}`. Citation parse-step ships a loose-scan
+  validator (any paren-with-4-digit-year) to catch what the strict parser
+  misses before downstream consumers see the data.
 - **0.15.3** (2026-05-13): Doc/script rename — `$PWD` → `$CLAUDE_PROJECT_DIR`
   across all 11 agent prompts, `bin/quasi-typecheck`, and the two typecheck
   scripts' docstrings/help. Aligns with the official plugins-reference
