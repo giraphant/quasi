@@ -46,6 +46,20 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.18.1** (2026-05-17): process-book Step 0 hardening.
+  - Self-dispatches download-agent when `sources/{slug}.{epub,pdf}` is
+    absent — no longer bails out telling the user to "先用 process-author".
+    The skill is orchestration; acquisition is part of orchestration.
+  - download-agent prompt now replicates process-author's
+    discover→download→finalize 3-stage chain (N=1 version): pre-download
+    `quasi-search books` records `ol_year`, post-download Read PDF first
+    3 pages records `pdf_year`, 3-way compare against `slug_year`. Any
+    mismatch returns `YEAR_MISMATCH` report (skill main process decides
+    whether to correct slug or accept) — file kept as `.tmp.{ext}` until
+    resolution. Prevents the "user-supplied slug year propagating through"
+    failure mode (e.g. user passes `simondon-...-2024` for a book whose
+    canonical first English edition is 2023).
+
 - **0.18.0** (2026-05-17): **Layer-cleanup refactor (BREAKING).** End-to-end
   rework of the bin / agent / skill split per `docs/LAYERS.md` and
   `docs/ARCHITECTURE.md`. Drives Pattern B (skill 直调 bin) out of the
