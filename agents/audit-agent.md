@@ -1,6 +1,6 @@
 ---
 name: audit-agent
-description: vault 一致性守护者。本地 schema 校验 + 机械修复 + LLM 修复 + 在线元数据回填(多源 chain)。由 workflow skill 在生成后调用,也可手动批量调用。
+description: vault 一致性守护者。本地 schema 校验 + 机械修复 + LLM 修复 + 在线元数据回填(英文,多源 chain) + 中译本回填(豆瓣 work-page,一把子拉)。由 workflow skill 在生成后调用,也可手动批量调用。
 tools: Read, Write, Edit, Glob, Bash
 model: sonnet
 ---
@@ -14,13 +14,14 @@ model: sonnet
 - **`$CLAUDE_PROJECT_DIR/processing/audit/state.json`** — 全 vault 单一审计状态(per-vault 全扫,LAYERS.md Q7a)。
 - **`quasi-audit` · `quasi-search backfill`** — plugin 提供的命令,Claude Code 自动把 plugin 的 `bin/` 加入 PATH,直接按名调用。
 
-## 三种能力(本 agent 的职责边界)
+## 能力(本 agent 的职责边界)
 
 | 能力 | 工具 | 何时用 |
 |---|---|---|
 | 本地 schema 校验 + 机械修复 | `quasi-audit check` / `quasi-audit fix` | 默认每次都跑 |
 | LLM 内容修复 | Read/Edit/Write 直接改 vault md | `mode: full` 时(补必填章节、heading 提升、拆多作者等) |
-| 在线元数据多源回填 | `quasi-search backfill --strategy X` | `mode: full` 且 `backfill=true` 时(补 publisher / isbn / doi) |
+| 在线元数据多源回填(英文) | `quasi-search backfill --strategy X` | `mode: full` 且 `backfill=true` 时(补 publisher / isbn / doi) |
+| 中译本回填(豆瓣)| `quasi-search cndouban --slug X` | `mode: full` 且 `backfill=true` 时(给 book 加 `cndouban` 字段) |
 | vault 级 biblio 派生 | `quasi-audit emit-bib` | 调用方请求 biblio 输出时 |
 
 ## 输入参数
@@ -172,7 +173,12 @@ frontmatter 错 paper 缺 `journal` 但有 `source: "..."`:
 - `doi: ""` 空字符串 → 删除字段
 - `doi: "https://doi.org/10..."` → 提取 `10.xxx` 部分,去掉前缀
 
-### Step 4-bis: 在线元数据回填(`backfill=true` 时)
+### Step 4A: 在线元数据回填 — 英文(`backfill=true` 时)
+
+> ⚠️ 临时:这一节仍读外部 `docs/EXPERIENCE-vault-metadata-backfill.md`,
+> 是个反模式(agent 应自包含知识)。**计划在 0.25+ 把 chain 顺序内化到
+> `quasi-search backfill --strategy auto`**,agent 只保留 judgment 部分。
+> 不要复制这条结构给 Step 4B。
 
 读 `docs/EXPERIENCE-vault-metadata-backfill.md` 拿到详细 chain 经验,然后按顺序跑:
 
@@ -199,6 +205,83 @@ quasi-search backfill --strategy ol-isbn-reverse -- --write
 - 同姓不同书的 false positive(EXPERIENCE §4.1):跑完后人工 spot-check title overlap < 0.7 的条目
 - OL imprint 折叠(§4.3):若 vault 里已经有更精确的 imprint 名(如 `Routledge`),不要让 OL 的 `Taylor & Francis Group` 覆盖。本地 regex 已处理,但仍要看输出
 - 整体跑完,生成 `reports/{run-id}/{publisher-mismatch,isbn-notfound,still-missing}.tsv` 三类 review 文件
+
+完成后 → 继续 Step 4B(中译本回填),再回到 Step 5。
+
+### Step 4B: 中译本回填 — 豆瓣(`backfill=true` 时,跟 4A 同 phase)
+
+**完全自包含,不读任何外部 docs。**
+
+针对 `vault/books/*/00-overview.md` 下 frontmatter **没有 `cndouban` key** 的 book
+(缺 key = 还没查过;`cndouban: []` = 已查、豆瓣无中译本,跳过;`cndouban: [id, ...]`
+= 已知译本,跳过)。
+
+#### 4B.1 调命令
+
+```bash
+quasi-search cndouban --slug "{slug}"
+# 或显式参数(slug 反解不出 author+title+year 时):
+quasi-search cndouban --isbn "{isbn}" --title "{title}" --author "{first_author}" --year {year}
+```
+
+bin 内部一把子完成:三路 fallback 定位豆瓣原书 subject → works-page 拉所有 manifestations →
+CJK publisher 过滤 → 进每条中文 candidate 拿 metadata → 输出 JSON 到 stdout。
+
+#### 4B.2 stdout JSON 字段(agent 必须按 status 处理)
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `status` | str | `"ok"` / `"no-douban-entry"` / `"no-translations"` / `"error"` |
+| `primary_subject` | obj 或 null | 原书在豆瓣的 subject(`douban_id` / `douban_url` / `title_on_douban` / `year_on_douban`)|
+| `translations[]` | list of obj | 每条:`douban_id` / `title` / `author` / `translator` / `publisher` / `year` / `isbn` / `original_title` / `ratings_count` / `douban_url`(已按 ratings_count 降序)|
+| `diagnostics` | obj | `routing` 路径列表 + `doko_calls` 数 + `warnings` 列表 |
+
+#### 4B.3 按 status 处理
+
+| status | 写 vault frontmatter | 写 translations.json |
+|---|---|---|
+| `ok` | `cndouban: [id1, id2, ...]`(顺序保留 stdout 给的降序) | merge 每条 translation 为新 entry(key=`douban_id`;value=完整 metadata + `found_for_book` = vault slug + `first_seen` = today) |
+| `no-translations` | `cndouban: []`(空数组,语义"查过了") | 不动 |
+| `no-douban-entry` | `cndouban: []` | 不动 |
+| `error` | **不写**(保持 unset,下次重试) | 不动;在最终报告 `external help needed` flag |
+
+#### 4B.4 frontmatter 写法
+
+Read book md → Edit frontmatter 块插入 `cndouban: [...]` (inline flow form,跟 `authors` 同风格),
+位置:**`publisher` 之后**。已有 key 则 replace。
+
+#### 4B.5 translations.json schema + 写法
+
+`$CLAUDE_PROJECT_DIR/processing/audit/translations.json` —— 单文件,
+douban_id 为 primary key 的全 vault 中译本 cache:
+
+```json
+{
+  "26689038": {
+    "title": "赋身以性：性别政治和性的建构",
+    "author": "安妮·福斯托-斯特林",
+    "translator": "秦海花 / 秦文 / 叶红",
+    "publisher": "江苏凤凰教育出版社",
+    "year": 2015,
+    "isbn": "9787549954025",
+    "original_title": "Sexing the Body",
+    "ratings_count": 30,
+    "douban_url": "https://book.douban.com/subject/26689038/",
+    "found_for_book": "fausto-sterling-sexing-the-body-2000",
+    "first_seen": "2026-05-17"
+  }
+}
+```
+
+写法:Read 现有 JSON(不存在则空 `{}`)→ merge 新 entries(同 douban_id 则更新非空字段
++ 加 `last_seen` 字段,保留 `first_seen`)→ Write 整个 JSON(全量写回,atomic 形式)。
+
+#### 4B.6 Failure modes
+
+- `dokobot` 不可用 → bin 输出 `status="error"` + diagnostics 含 `DOKO_NOT_AVAILABLE`;
+  跳过整个 4B,不报警(audit 仍可 partial-success)
+- 单本失败 → 跳过这本,继续下本;在最终报告 `external help needed` 里 flag 该 slug
+- 不要为单本 retry,bin 内部已经做了 ISBN/search 三路 fallback
 
 完成后 → 回到 Step 5(最终 audit 验收)。
 

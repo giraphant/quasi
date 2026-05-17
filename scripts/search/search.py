@@ -1488,6 +1488,19 @@ def main():
              "(see `quasi-search backfill --strategy X -- --help`)",
     )
 
+    # cndouban subcommand (Chinese-edition lookup via Douban)
+    cndouban_parser = subparsers.add_parser(
+        "cndouban",
+        help="Find Chinese editions of a foreign book on Douban (one-shot: "
+             "locate primary subject → enumerate works-page → filter CJK "
+             "publisher → scrape per-edition metadata → emit structured JSON)",
+    )
+    cndouban_parser.add_argument("--slug", help="Vault book slug (auto-reverse author/title/year)")
+    cndouban_parser.add_argument("--isbn", help="ISBN (preferred entry — bypasses search)")
+    cndouban_parser.add_argument("--title", help="Original title")
+    cndouban_parser.add_argument("--author", help="Original author (Latin name or surname)")
+    cndouban_parser.add_argument("--year", type=int, help="Original publication year")
+
     args = parser.parse_args()
 
     if args.mode == "books":
@@ -1597,6 +1610,10 @@ def main():
 
     elif args.mode == "backfill":
         run_backfill(strategy=args.strategy, extra_argv=args.extra or [])
+
+    elif args.mode == "cndouban":
+        from cndouban import run_cndouban
+        sys.exit(run_cndouban(args))
 
     else:
         parser.print_help()

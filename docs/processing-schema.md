@@ -47,6 +47,40 @@ re-scans the whole vault each time and rewrites this file.
   `*-mismatch.tsv` / `*-isbn-notfound.tsv` / `*-still-missing.tsv` left for
   the user.
 
+## audit/translations.json — Chinese-edition cache (single file)
+
+Written by `audit-agent` Step 4B. Single file, douban_id keyed, full-vault
+中译本 metadata cache. Vault `cndouban: [int]` frontmatter field stores
+just the IDs; full detail lives here.
+
+```json
+{
+  "26689038": {
+    "title": "赋身以性：性别政治和性的建构",
+    "author": "安妮·福斯托-斯特林",
+    "translator": "秦海花 / 秦文 / 叶红",
+    "publisher": "江苏凤凰教育出版社",
+    "year": 2015,
+    "isbn": "9787549954025",
+    "original_title": "Sexing the Body",
+    "ratings_count": 30,
+    "douban_url": "https://book.douban.com/subject/26689038/",
+    "found_for_book": "fausto-sterling-sexing-the-body-2000",
+    "first_seen": "2026-05-17",
+    "last_seen": "2026-05-17"
+  }
+}
+```
+
+Merge semantics: same `douban_id` from another vault book run updates
+non-null fields and bumps `last_seen`; `first_seen` is preserved.
+
+Source-of-truth pairing: vault book frontmatter's `cndouban: [id, ...]`
+field is the **authoritative** list per book (three-state: absent = not
+yet queried; `[]` = queried, no translations; `[ids...]` = found).
+`translations.json` is the **derived** detail cache;
+regenerate-able from re-running `quasi-search cndouban` for any slug.
+
 ## biblio — derived view, NO standalone cache
 
 biblio is **not** cached. Two callable derivations from vault frontmatter:
