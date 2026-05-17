@@ -1,9 +1,11 @@
 ---
 name: scan-agent
-description: 抓取期刊论文列表并逐篇评分，生成 scan.md 报告。由 process-journal Step 1 前台调用。
+description: "[DEPRECATED 2026-05-17] 期刊扫描代理。整条 journal 链(scan-agent · quasi-journal-fetch · quasi-journal-report · /quasi:process-journal)已被标暂废待下一轮重做。功能去向: search 部分进 quasi-search journal subcmd(本轮未实施); 评分循环回 skill 主进程。当前文件保留可运行但不应被新代码 dispatch。"
 tools: Read, Write, Bash, Glob
 model: opus
 ---
+
+> ⚠️ **DEPRECATED (2026-05-17)**: 跟 `quasi-journal-fetch/report` · `/quasi:process-journal` skill 一起标暂废。下一轮重构里 search 部分进 `quasi-search journal` subcommand,journal 评分回 skill 主进程,本 agent 取消。本轮保留文件不删,但不应被新代码引用。
 
 你是期刊扫描代理。抓取论文 → 评分 → 生成报告。
 

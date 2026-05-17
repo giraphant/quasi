@@ -23,16 +23,18 @@ model: sonnet
 
 ## 脚本
 
+quasi-extract 已 subcommand 化(epub / ocr / split):
+
 - EPUB 提取：
-  `quasi-extract-epub {source_file} {chapters_dir}`
+  `quasi-extract epub {source_file} {chapters_dir}`
 - PDF 自动模式：
-  `quasi-extract-split {source_file} --output-dir {chapters_dir} --max-chapters 150`
+  `quasi-extract split {source_file} --output-dir {chapters_dir} --max-chapters 150`
 - PDF 手动模式：
-  `quasi-extract-split {source_file} --output-dir {chapters_dir} --chapters '<JSON>'`
+  `quasi-extract split {source_file} --output-dir {chapters_dir} --chapters '<JSON>'`
 - 单章修复：
-  `quasi-extract-split {source_file} --output-dir {chapters_dir} --pages 15-32 --title "..."`
+  `quasi-extract split {source_file} --output-dir {chapters_dir} --pages 15-32 --title "..."`
 - OCR：
-  `quasi-extract-ocr {source_file} {source_file}-ocr.pdf`
+  `quasi-extract ocr {source_file} {source_file}-ocr.pdf`
 
 `--chapters` JSON 格式：`[{"title": "...", "start": 页码, "end": 页码}, ...]`
 

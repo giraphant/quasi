@@ -23,7 +23,7 @@ description: >
 - **禁止用 TaskOutput 检查后台 agent**：TaskOutput 会报 "No task found"，导致卡住
 - **必须用 Glob 轮询输出文件**：检查 `{output_dir}/ch*.md` 数量来判断完成
 - 后台 agent 完成时会自动通知，但如果错过通知，Glob 是唯一可靠的检查方式
-- **每个文本独立 dispatch 一个 analyze-agent**：禁止把多章合并到一个 agent 调用中。一章 = 一个 Agent() 调用。
+- **每个文本独立 dispatch 一个 analyse-agent**：禁止把多章合并到一个 agent 调用中。一章 = 一个 Agent() 调用。
 - **Dispatcher context 卫生**：
   - Glob 轮询只关注完成数 vs 总数，不要逐一列举文件名
   - 后台 agent 完成通知是冗余信息，收到后不需要额外处理
@@ -35,8 +35,8 @@ description: >
 主进程 (dispatcher)
 ├─ Step 1: extract-agent (sonnet, 前台) → 提取+验证+修复
 ├─ Step 2: 主进程读 manifest.json → 筛选章节
-├─ Step 3: analyze-agent ×N (opus, 后台并行) → Glob 轮询
-├─ Step 4: overview-agent (opus, 前台)
+├─ Step 3: analyse-agent ×N (opus, 后台并行) → Glob 轮询
+├─ Step 4: synthesis-agent(mode=book) (opus, 前台)
 └─ Step 5: synthesis-agent (可选, KB 更新)
 ```
 
@@ -69,14 +69,14 @@ output_dir = f"vault/books/{book_slug}"
 
 # 3. 并行分析
 # slot 格式："01".."99" 真章节 / "00a".."00z" 前言 / "99a".."99z" 后记 / "{N}b".."{N}z" 章间插曲
-# 根据 slot 推导人类可读的 chapter_label 传给 analyze-agent：
+# 根据 slot 推导人类可读的 chapter_label 传给 analyse-agent：
 #   slot 纯数字 N       → chapter_label = f"第{int(slot)}章"
 #   slot 以 "00" 开头   → chapter_label = "前言"（或根据 title：Foreword/Preface/Introduction）
 #   slot 以 "99" 开头   → chapter_label = "后记"（或根据 title：Afterword/Epilogue/Appendix）
 #   slot 形如 "{N}{x}" → chapter_label = f"第{N}章（附）"
 for ch in selected:
     if not exists(f"{output_dir}/ch{ch.slot}-{ch.slug}.md"):
-        Agent("quasi:analyze-agent", background=True,
+        Agent("quasi:analyse-agent", background=True,
               prompt=f"type: A, book_title: ..., slot: {ch.slot}, chapter_label: {chapter_label}, "
                      f"input: {chapters_dir}/{ch.filename}, "
                      f"output: {output_dir}/ch{ch.slot}-{ch.slug}.md, topic: ...")
@@ -84,14 +84,14 @@ for ch in selected:
 while Glob(f"{output_dir}/ch*.md").count < len(selected):
     sleep(30)
 
-# 4. 概览
+# 4. 概览(走大一统 synthesis-agent, mode=book)
 if not exists(f"{output_dir}/00-overview.md"):
-    Agent("quasi:overview-agent", foreground=True,
-          prompt=f"output_dir: {output_dir}, book_title: ..., topic: ...")
+    Agent("quasi:synthesis-agent", foreground=True,
+          prompt=f"mode: book\noutput_dir: {output_dir}\nbook_title: ...\ntopic: ...")
 
-# Step 5: TYPECHECK
+# Step 5: AUDIT
 # 校验 + 修复整本书目录(overview + 所有章节),在源头止住 schema 漂移。
-Agent("quasi:typecheck-agent", foreground=True,
+Agent("quasi:audit-agent", foreground=True,
       prompt=f"path: {output_dir}\nmode: full")
 
 print(f"Done: {len(selected)} chapters, overview generated, typechecked")

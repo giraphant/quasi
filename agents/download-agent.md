@@ -28,16 +28,18 @@ Write/Read 工具要求绝对路径。相对路径必须按 `$CLAUDE_PROJECT_DIR
 
 ## 脚本
 
+quasi-download 现已 subcommand 化（每个 subcommand 暴露的 flag 集是该 intent 实际要的,不再混在一起）:
+
 - 搜 AA（仅书）：
   `quasi-search books --source aa "{title}" --author "{author}" --limit 5`
-- 按 MD5 下载（仅书）：
-  `quasi-download --md5 {md5} --filename {slug} -o sources/`
+- 按 MD5 下载（书）：
+  `quasi-download book --md5 {md5} --filename {slug} -o sources/`
 - 书籍下载后定稿：
-  `quasi-download --finalize-book --manifest {manifest_path} --book-index {N} --downloaded-path sources/{slug}.{ext} --expected-author "{full_name}"`
+  `quasi-download finalize --manifest {manifest_path} --book-index {N} --downloaded-path sources/{slug}.{ext} --expected-author "{full_name}"`
 - 按 DOI 下载（论文）：
-  `quasi-download --doi "{doi}" --output-dir {output_dir} --filename {slug} --verify-author "{author}" --verify-title "{title}"`
+  `quasi-download paper --doi "{doi}" --output-dir {output_dir} --filename {slug} --verify-author "{author}" --verify-title "{title}"`
 - manifest 批量：
-  `quasi-download --manifest {manifest_path} --batch --retry-wayback`
+  `quasi-download batch --manifest {manifest_path} --retry-wayback`
 
 ## 执行流程
 

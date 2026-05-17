@@ -1,5 +1,5 @@
 ---
-name: analyze-agent
+name: analyse-agent
 description: 分析单个学术文本（书籍章节或论文），生成结构化 markdown。由 workflow skill 的并行调度触发，每次只处理一个文本。
 tools: Read, Write, Edit, Glob, Bash
 model: opus

@@ -20,7 +20,7 @@ description: >
 - **禁止用 TaskOutput 检查后台 agent**：会报 "No task found"，导致卡住
 - **必须用 Glob 轮询输出文件**来判断完成
 - 后台 agent 完成时会自动通知，但 Glob 是唯一可靠的兜底
-- **每篇论文独立 dispatch 一个 analyze-agent**：禁止把多篇论文合并到一个 agent 调用中。一篇 = 一个 Agent() 调用。
+- **每篇论文独立 dispatch 一个 analyse-agent**：禁止把多篇论文合并到一个 agent 调用中。一篇 = 一个 Agent() 调用。
 - **Dispatcher context 卫生**：
   - Glob 轮询只关注完成数 vs 总数，不要逐一列举文件名
   - 后台 agent 完成通知是冗余信息，收到后不需要额外处理
@@ -33,7 +33,7 @@ description: >
 ├─ Step 1: scan-agent (opus, 前台) → scan.md
 ├─ Step 2: download-agent (sonnet, 前台) → PDFs
 ├─ Step 3: 主进程读 scan.md → 匹配 PDF → 待分析列表
-├─ Step 4: analyze-agent ×N (opus, 后台) → Glob 轮询
+├─ Step 4: analyse-agent ×N (opus, 后台) → Glob 轮询
 └─ Step 5: synthesis-agent (opus, 前台) → synthesis.md
 ```
 
@@ -63,7 +63,7 @@ to_analyze = match_and_filter(scan, pdfs, existing, threshold)
 
 # 4. ANALYZE
 for paper in to_analyze:
-    Agent("quasi:analyze-agent", background=True,
+    Agent("quasi:analyse-agent", background=True,
           prompt=f"type: B, title: {paper.title}, doi: {paper.doi}, "
                  f"input: /tmp/{journal_name}-pdfs/{paper.slug}.pdf, "
                  f"output: vault/journals/{journal_name}/{paper.slug}.md, topic: ...")
@@ -80,7 +80,7 @@ if not exists(f"vault/journals/{journal_name}-synthesis.md"):
 
 # Step 6: TYPECHECK
 # 校验 + 修复本期刊本批次生成的所有论文(papers 都在 vault/journals/{name}/).
-Agent("quasi:typecheck-agent", foreground=True,
+Agent("quasi:audit-agent", foreground=True,
       prompt=f"path: vault/journals/{journal_name}/\nmode: full")
 ```
 
