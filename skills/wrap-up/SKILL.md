@@ -22,7 +22,7 @@ description: >
 # Flags:
 /quasi:wrap-up <draft> --no-recover         # Phase 2.3 跳过(不在线找 missing)
 /quasi:wrap-up <draft> --citation-only      # 跳 Phase 0/1, 只跑 Phase 2
-/quasi:wrap-up <draft> --audit-first        # 强制跑 Phase 0 (默认按 state.json 判断)
+/quasi:wrap-up <draft> --audit-first        # 强制跑 Phase 0 (默认按 .quasi/audit/audit-state.json 判断)
 ```
 
 `--citation-only` 是"补完 vault 后增量重跑"的快捷入口: proofread 已经做过、draft 文本已经定稿、只是 vault 增量补了几本书想重新审引用 + 出 .bib。**直接跳过 Phase 0/1**, 从 Phase 2 进。
@@ -30,8 +30,7 @@ description: >
 ## 整体流程
 
 ```
-┌─ Phase 0  AUDIT       ─ (可选) vault 一致性检查
-├─ Phase 1  PROOFREAD   ─ sonnet 节内多轮 + codex 提议 + 主进程审稿
+┌─ Phase 1  PROOFREAD   ─ sonnet 节内多轮 + codex 提议 + 主进程审稿
 ├─ Phase 2  CITATION    ─ 解析 + LLM context-fit + 在线 recover + TUI 审定 + emit .bib
 │   ├─ 2.1 parse + resolve              (deterministic)
 │   ├─ 2.2 citation-agent 批 (single + multi only)  → flag ok/review + picked_slug
@@ -41,7 +40,7 @@ description: >
 └─ Phase 3  CLEANUP     ─ 等用户审完触发("审完了" 等)删 proofread 记录块
 ```
 
-旧的 HTML 报告 / decisions.json 多桶导出已废弃 —— 用户上一版反馈 "结构化太重 + uniform 三态语义不一致"。新流程: agent 只给一句 context-fit note, **主进程在主上下文里直接 AskUserQuestion 走一遍**, 一边走一边累积 `decisions.by_key` 写盘。
+agent 只给一句 context-fit note, **主进程在主上下文里直接 AskUserQuestion 走一遍**, 一边走一边累积 `decisions.by_key` 写盘。
 
 `render.py` 保留为离线诊断工具 (`quasi-helpers citation render`),但 skill 不再调用。
 
@@ -60,20 +59,8 @@ if flags.citation_only:
 elif flags.audit_first:
     skip_phase_0 = False
 else:
-    skip_phase_0 = audit_state_clean()  # 看 processing/audit/state.json
+    skip_phase_0 = audit_state_clean()  # 看 .quasi/audit/audit-state.json
 ```
-
-## Phase 0 — AUDIT
-
-`--citation-only` 时整段跳过。否则若 `--audit-first` 或 vault 有变动迹象:
-
-```
-Agent("quasi:audit-agent", foreground=True,
-      prompt=f"path: vault/\nmode: full\nbackfill: false")
-```
-
-只跑本地 schema check + 机械修复, **不开 backfill** (在线 metadata chain 在收尾期太重)。
-跳过条件: `processing/audit/state.json` 存在且 `clean: true`。
 
 ## Phase 1 — PROOFREAD
 
@@ -137,7 +124,7 @@ EOF
 
 ## Phase 2 — CITATION
 
-设 `ct_dir = processing/citation/{draft-stem}/`。
+设 `ct_dir = .quasi/citation/{draft-stem}/`。
 
 ### 2.1 — parse + resolve (deterministic)
 
