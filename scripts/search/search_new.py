@@ -511,8 +511,131 @@ def paper_search(query: PaperQuery, sources: list[str] | None = None) -> SearchR
 # === 5. CLI
 # ===============================================
 
-# (populated by Task 6.1)
+
+def _emit(payload: dict, output_path: str | None, as_json: bool) -> None:
+    text = json.dumps(payload, indent=2, ensure_ascii=False) if as_json \
+           else _format_markdown(payload)
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(text)
+        print(f"Results saved to: {output_path}", file=sys.stderr)
+    else:
+        print(text)
+
+
+def _format_markdown(payload: dict) -> str:
+    """Minimal markdown renderer. JSON mode is the agent-default; this is humans-only."""
+    kind = payload.get("kind", "?")
+    results = payload.get("results") or []
+    out = [f"# Search results ({kind}, {len(results)} hits)\n"]
+    for i, r in enumerate(results, 1):
+        title = r.get("title", "")
+        authors = ", ".join(r.get("authors") or [])
+        year = r.get("year") or "?"
+        out.append(f"{i}. **{title}** — {authors} ({year})")
+        srcs = r.get("_sources") or []
+        out.append(f"   Sources: {', '.join(srcs)}")
+        if kind == "book" and r.get("isbn_13"):
+            out.append(f"   ISBN: {r['isbn_13']}")
+        if kind == "paper" and r.get("doi"):
+            out.append(f"   DOI: {r['doi']}")
+    return "\n".join(out)
+
+
+def _apply_shape(resp: SearchResponse, shape: str, top: int | None) -> dict:
+    d = resp.to_dict()
+    if shape == "single":
+        d["results"] = d["results"][:1]
+    elif shape == "raw":
+        # raw mode: caller wants per-source debug, so include by_source
+        # Note: by_source is only populated via the main function's intermediate
+        # state. For now, return the same canonical results.
+        # TODO(deferred): populate `by_source` separately if needed by callers.
+        pass
+    if top is not None and shape != "single":
+        d["results"] = d["results"][:top]
+    return d
+
+
+def _build_book_parser(sub) -> argparse.ArgumentParser:
+    p = sub.add_parser("book", help="Search books across multiple sources")
+    p.add_argument("--isbn")
+    p.add_argument("--title")
+    p.add_argument("--author")
+    p.add_argument("--subject")
+    p.add_argument("--query", help="Free-text query")
+    p.add_argument("--year-from", type=int, dest="year_from")
+    p.add_argument("--year-to", type=int, dest="year_to")
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--shape", choices=["canonical", "raw", "single"], default="canonical")
+    p.add_argument("--top", type=int, default=None)
+    p.add_argument("--source", help="Comma-separated source IDs (default: all)")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--output")
+    return p
+
+
+def _build_paper_parser(sub) -> argparse.ArgumentParser:
+    p = sub.add_parser("paper", help="Search papers across multiple sources")
+    p.add_argument("--doi")
+    p.add_argument("--title")
+    p.add_argument("--author")
+    p.add_argument("--query")
+    p.add_argument("--year-from", type=int, dest="year_from")
+    p.add_argument("--limit", type=int, default=30)
+    p.add_argument("--shape", choices=["canonical", "raw", "single"], default="canonical")
+    p.add_argument("--top", type=int, default=None)
+    p.add_argument("--source")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--output")
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="quasi-search",
+        description="Two-verb search: book / paper.",
+    )
+    sub = parser.add_subparsers(dest="verb")
+    _build_book_parser(sub)
+    _build_paper_parser(sub)
+    args = parser.parse_args(argv)
+
+    if args.verb not in ("book", "paper"):
+        parser.print_help()
+        return 1
+
+    # Validate --source if provided
+    sources: list[str] | None = None
+    if args.source:
+        wanted = [s.strip() for s in args.source.split(",") if s.strip()]
+        valid_registry = (BOOK_ADAPTERS if args.verb == "book" else PAPER_ADAPTERS)
+        invalid = [s for s in wanted if s not in valid_registry]
+        if invalid:
+            print(f"error: unknown source ID(s): {', '.join(invalid)}", file=sys.stderr)
+            print(f"valid sources for `{args.verb}`: {', '.join(valid_registry)}", file=sys.stderr)
+            return 2
+        sources = wanted
+
+    if args.verb == "book":
+        q = BookQuery(
+            isbn=args.isbn, title=args.title, author=args.author,
+            subject=args.subject, query=args.query,
+            year_from=args.year_from, year_to=args.year_to,
+            limit=args.limit,
+        )
+        resp = book_search(q, sources=sources)
+    else:
+        q = PaperQuery(
+            doi=args.doi, title=args.title, author=args.author, query=args.query,
+            year_from=args.year_from, limit=args.limit,
+        )
+        resp = paper_search(q, sources=sources)
+
+    payload = _apply_shape(resp, args.shape, args.top)
+    _emit(payload, args.output, args.json)
+    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit("search_new.py: CLI not yet wired (Phase 6 pending)")
+    sys.exit(main())
