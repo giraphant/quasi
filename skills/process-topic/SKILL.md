@@ -1,18 +1,22 @@
 ---
-name: quasi:citation-snowball
+name: quasi:process-topic
 description: >
-  Use when the user says "滚雪球", "citation chain", "expand references",
-  or wants to build a reading corpus by iteratively tracing citations from a seed paper.
+  Use when the user says "滚雪球", "process topic", "topic corpus", "citation chain",
+  "expand references", or wants to build a topic-centred reading corpus by iteratively
+  tracing citations from a seed paper. (前身: /quasi:citation-snowball, 2026-05-17 重命名)
 ---
 
-# Citation Snowball — 引用滚雪球
+# Process Topic — 主题语料(原: citation snowball)
 
-种子论文 → 逐轮扩展引用链 → 饱和。扁平 agent 调度 + 主进程引用提取。
+种子论文 / 主题关键词 → 逐轮扩展引用链 → 饱和。扁平 agent 调度 + 主进程引用提取。
+
+> 🚧 **本轮(2026-05-17)只改名,内部逻辑保留**。下一轮重做 SKILL.md 把入口泛化到 topic/keyword,
+> 不仅是 seed paper(LAYERS.md Q snowball)。
 
 ## 调用方式
 
 ```
-/quasi:citation-snowball {topic-slug} --seed {doi} --topic "{description}"
+/quasi:process-topic {topic-slug} --seed {doi} --topic "{description}"
 ```
 
 ## ⚠ 硬约束

@@ -23,15 +23,30 @@ description: >
 ## 整体流程
 
 ```
-┌─ Phase 1 PROOFREAD ─ 三阶段:
+┌─ Phase 0 AUDIT    ─ (可选) vault 一致性检查 → 给 PROOFREAD/CITATION 一个干净基线
+├─ Phase 1 PROOFREAD ─ 三阶段:
 │   ├─ Stage A: sonnet 节内多轮 → 直接改正文 + 写记录
 │   ├─ Stage B: codex 整篇 2 轮 → 只提议(`? c{N}` 前缀),不改正文
 │   └─ Stage C: 主进程审稿 → 接受/拒绝 codex 提议,sanity-check sonnet 改动
 ├─ Phase 2 CITATION  ─ 解析引用 + 在线交叉验证 → report.html + .bib
 ├─ Phase 3 SUMMARY   ─ 单页汇总 summary.html,链接两份详细
 └─ Phase 4 CLEANUP   ─ 等用户审完触发("审完了" / "清理记录块"等)
-                       quasi-proofread cleanup 删 draft 末尾的记录块
+                       quasi-helpers proofread cleanup 删 draft 末尾的记录块
 ```
+
+## Phase 0 — AUDIT (可选, 跳过条件见下)
+
+如果调用方传了 `--audit-first` 或 vault 自上次 audit 后有变动迹象:
+
+```
+Agent("quasi:audit-agent", foreground=True,
+      prompt=f"path: vault/\nmode: full\nbackfill: false")
+```
+
+只跑本地 schema check + 机械修复,**不开 backfill**(在线 metadata chain 在收尾期太重)。
+audit-agent 完成后再进入 Phase 1。
+
+**跳过条件**:`processing/audit/state.json` 存在且 `clean: true` —— 视为已 audit 过,不重跑。
 
 ## Phase 1 — PROOFREAD
 
@@ -39,8 +54,8 @@ description: >
 
 **Stage A — sonnet 节串行 + 节内多轮迭代**:
 
-1. `quasi-proofread split <draft> -o {pf_dir}/sections.json` — 按 H2/H3 切节
-2. `quasi-proofread init <draft>` — 在 draft 末尾创建空记录块(已存在则跳过)
+1. `quasi-helpers proofread split <draft> -o {pf_dir}/sections.json` — 按 H2/H3 切节
+2. `quasi-helpers proofread init <draft>` — 在 draft 末尾创建空记录块(已存在则跳过)
 3. 对每节顺序处理(节间串行,避免并发改 draft 末尾块):
    ```
    for sec in sections:
@@ -113,10 +128,10 @@ Stage A(sonnet 已改)+ Stage B(codex 已提议)都跑完后,主进程对每个 
 
 ## Phase 2 — CITATION
 
-1. `quasi-citation parse <draft> -o {ct_dir}/parse.json`
-2. `quasi-citation resolve {ct_dir}/parse.json -o {ct_dir}/manifest.json`
+1. `quasi-helpers citation parse <draft> -o {ct_dir}/parse.json`
+2. `quasi-helpers citation resolve {ct_dir}/parse.json -o {ct_dir}/manifest.json`
 3. 把 manifest 里的 entries 按 8 条一批分组,每批并发 dispatch `quasi:citation-agent`(cap 4)
-4. `quasi-citation render` → `report.html` + `references.bib`
+4. `quasi-helpers citation render` → `report.html` + `references.bib`
 
 **硬约束**:Phase 1 全部完成才进入 Phase 2;否则改字会让 parse 行号失效。
 
@@ -129,7 +144,7 @@ Stage A(sonnet 已改)+ Stage B(codex 已提议)都跑完后,主进程对每个 
 校对记录块是临时审阅工具。审完作者用 git 接受/拒收改动后,触发清理:
 
 - **触发词**:用户说 "审完了" / "清理记录块" / "删掉校对记录" / "cleanup" / "proofread 收尾"
-- **执行**:`quasi-proofread cleanup <draft-or-dir>` — 从每个 markdown 文件删除整个 `<!-- proofread:start -->...<!-- proofread:end -->` 块,无块的文件跳过
+- **执行**:`quasi-helpers proofread cleanup <draft-or-dir>` — 从每个 markdown 文件删除整个 `<!-- proofread:start -->...<!-- proofread:end -->` 块,无块的文件跳过
 - **执行后**(可选):`rm -rf processing/proofread/{stem}/` 清掉 split 产物
 
 ## 中间 / 终产物
