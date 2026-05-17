@@ -52,8 +52,37 @@ manifest_path = f"processing/authors/{author_name}/manifest.json"
 
 # 1. DISCOVER
 if not exists(manifest_path):
-    Agent("quasi:discover-agent", foreground=True,
-          prompt=f"author_name: {author_name}, full_name: {full_name}, topic: ...")
+    Agent("quasi:new-discover-agent", foreground=True,
+          prompt=f"""
+task: discover this author's representative works on the given topic
+
+context:
+  author_name: {author_name}     # kebab slug
+  full_name: {full_name}
+  topic: ...                     # 主进程从 args / 对话收集，不要让 agent 猜
+
+constraints:
+  n_books: 5
+  n_papers: 10
+  sort_by: citations
+
+output_path: {manifest_path}
+
+output_schema (example):
+{{
+  "author": "{full_name}",
+  "slug": "{author_name}",
+  "discovered": "YYYY-MM-DD",
+  "books": [
+    {{"title": "...", "year": 0, "slug": "{author_name}-...-YYYY",
+      "isbn": "...", "md5": null, "status": "discovered", "reason": "..."}}
+  ],
+  "papers": [
+    {{"title": "...", "doi": "...", "year": 0, "citations": 0,
+      "oa_url": null, "status": "discovered", "reason": "..."}}
+  ]
+}}
+""")
 
 # 2. ACQUIRE
 manifest = read_json(manifest_path)

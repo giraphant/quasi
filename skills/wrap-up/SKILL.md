@@ -179,13 +179,36 @@ Agent("quasi:citation-agent", background=True,
 ```python
 miss = [e for e in manifest.entries if e.status == "miss"]
 for v in miss:  # 并发, cap 4
-    Agent("quasi:discover-agent", background=True,
-          prompt=f"mode: recover-citation\n"
-                 f"key: {v.key}\n"
-                 f"author: {v.parsed_author}\n"
-                 f"year_hint: {v.parsed_year}\n"
-                 f"mention_context: {v.mention_snippet}\n"
-                 f"output: {ct_dir}/verdicts/recovery-{v.key}.json")
+    Agent("quasi:new-discover-agent", background=True,
+          prompt=f"""
+task: recover the real source of this missing citation
+
+context:
+  key: {v.key}
+  author: {v.parsed_author}
+  year_hint: {v.parsed_year}
+  mention_context: {v.mention_snippet}
+
+constraints:
+  max_candidates: 5
+  year_tolerance: 1
+
+output_path: {ct_dir}/verdicts/recovery-{v.key}.json
+
+output_schema (example):
+{{
+  "key": "{v.key}",
+  "online_recovery": {{
+    "title": "...", "author": "...", "year": 0,
+    "isbn": null, "doi": null, "publisher": null,
+    "kind": "book | paper | unknown",
+    "confidence": "high | medium | low | miss",
+    "sources": ["..."],
+    "suggested_slug": "...",
+    "process_book_cmd": "/quasi:process-book ..."
+  }}
+}}
+""")
 ```
 
 每条产出 `verdicts/recovery-{key}.json`,含 `online_recovery: {title, author, year, doi, isbn, suggested_slug, process_book_cmd, confidence}`。
