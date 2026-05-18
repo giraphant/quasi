@@ -314,7 +314,7 @@ graph TD
    - `citation-snowball` → 改名 `process-topic` (内部不动)
    - `wrap-up` 改调 `quasi-helpers` + 加 Phase 0 audit
    - `process-book` / `process-author` 级联 agent 名更新
-7. **processing/audit/state.json** 落地
+7. **.quasi/audit/audit-state.json** 落地
 
 ### 本轮不做(留下一轮)
 

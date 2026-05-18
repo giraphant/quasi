@@ -2,8 +2,8 @@
 """Type-check every typed file in $CLAUDE_PROJECT_DIR/vault against quasi SPEC schemas.
 
 Read-only. Outputs (written under $CLAUDE_PROJECT_DIR):
-  $CLAUDE_PROJECT_DIR/.quasi/typecheck-report.md    — human-readable summary
-  $CLAUDE_PROJECT_DIR/.quasi/typecheck-results.json — full per-file detail (for autofix)
+  $CLAUDE_PROJECT_DIR/.quasi/audit/typecheck-report.md    — human-readable summary
+  $CLAUDE_PROJECT_DIR/.quasi/audit/typecheck-results.json — full per-file detail (for autofix)
 
 Usage:
   # Standalone, from inside a vault project:
@@ -47,7 +47,7 @@ from schemas import (  # noqa: E402
 
 
 VAULT_DEFAULT = PROJECT_ROOT / "vault"
-OUT_DIR = PROJECT_ROOT / ".quasi"
+OUT_DIR = PROJECT_ROOT / ".quasi" / "audit"
 
 
 # ─── frontmatter / body parsing ────────────────────────────────
@@ -421,26 +421,18 @@ def collect_files(target: Path) -> list[Path]:
     return files
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--path",
-        default=str(VAULT_DEFAULT),
-        help="File or directory to typecheck (default: $CLAUDE_PROJECT_DIR/vault)",
-    )
-    parser.add_argument(
-        "--quiet", action="store_true",
-        help="Suppress per-type summary (still writes report files)",
-    )
-    args = parser.parse_args()
+def run_typecheck(target: Path, *, quiet: bool = False, write_report: bool = True) -> int:
+    """Run local vault typecheck and write machine-readable results.
 
-    target = Path(args.path).expanduser().resolve()
+    Returns 0 when clean and 1 when any local schema violation remains.
+    """
+    target = Path(target).expanduser().resolve()
     if not target.exists():
         print(f"error: path does not exist: {target}", file=sys.stderr)
-        sys.exit(2)
+        return 2
 
     files = collect_files(target)
-    if not args.quiet:
+    if not quiet:
         rel = (target.relative_to(PROJECT_ROOT) if target.is_relative_to(PROJECT_ROOT) else target)
         print(f"scanning {len(files)} md files under {rel}...")
 
@@ -493,10 +485,11 @@ def main() -> None:
     (OUT_DIR / "typecheck-results.json").write_text(
         json.dumps(results, ensure_ascii=False, indent=2, default=str)
     )
-    report = build_report(stats, len(files))
-    (OUT_DIR / "typecheck-report.md").write_text(report)
+    if write_report:
+        report = build_report(stats, len(files))
+        (OUT_DIR / "typecheck-report.md").write_text(report)
 
-    if not args.quiet:
+    if not quiet:
         print(f"\nresults: {len(results)} files checked")
         for t in TYPE_ORDER:
             s = stats.get(t)
@@ -511,7 +504,8 @@ def main() -> None:
                 f"type_rename: {s['type_rename_needed']:6}"
             )
         rel_out = OUT_DIR.relative_to(PROJECT_ROOT) if OUT_DIR.is_relative_to(PROJECT_ROOT) else OUT_DIR
-        print(f"\nreport → {rel_out / 'typecheck-report.md'}")
+        if write_report:
+            print(f"\nreport → {rel_out / 'typecheck-report.md'}")
         print(f"detail → {rel_out / 'typecheck-results.json'}")
 
     # Exit code: 0 if all clean, 1 if any violations (CI / agent decision).
@@ -519,7 +513,23 @@ def main() -> None:
         s["fm_errors_total"] + s["body_errors_total"] + s["type_rename_needed"] > 0
         for s in stats.values()
     )
-    sys.exit(1 if has_violations else 0)
+    return 1 if has_violations else 0
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--path",
+        default=str(VAULT_DEFAULT),
+        help="File or directory to typecheck (default: $CLAUDE_PROJECT_DIR/vault)",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true",
+        help="Suppress per-type summary (still writes report files)",
+    )
+    args = parser.parse_args()
+
+    sys.exit(run_typecheck(Path(args.path), quiet=args.quiet, write_report=True))
 
 
 if __name__ == "__main__":
