@@ -107,8 +107,7 @@ types:
   book:
     frontmatter:
       required: [type, title, authors, publisher, category]
-      optional: [year, isbn, cndouban, themes, rating]
-      strict_notes:
+      optional: [year, isbn, themes, rating]
         type: book
         authors: array, even for one author
     body:

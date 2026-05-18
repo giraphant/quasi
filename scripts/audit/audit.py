@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """quasi-audit — vault audit dispatcher.
 
-Subcommands (each delegates to an existing scripts/* module):
+Subcommands:
 
-    run       local audit transaction harness (fix/check + state + JSON)
-    check     scripts/typecheck/typecheck.py            (vault schema validation)
-    fix       scripts/typecheck/autofix_mechanical.py   (mechanical drift fixes)
+    run       local audit transaction harness (fix/check + JSON stdout summary)
     emit-bib  scripts/citation/biblio.scan_vault()      (vault → biblio.json)
+    backfill  scripts/audit/backfill.py                 (vault metadata sweep)
+    localise  scripts/audit/localise.py                 (cndouban scan + write,
+              local-agent's helpers — runner stays decoupled from translations.json)
 
 This file is the L0 entry point for everything in the "vault consistency"
 capability domain. agent-side, audit-agent invokes via the quasi-audit shim;
@@ -25,7 +26,6 @@ import importlib.util
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 
@@ -59,19 +59,6 @@ def _load(module_name: str, relative_path: str) -> ModuleType:
     sys.modules[module_name] = mod
     spec.loader.exec_module(mod)
     return mod
-
-
-def _delegate(module_name: str, relative_path: str, subcmd: str) -> int:
-    """Munge argv so the delegated script sees a clean argv and call its main()."""
-    rest = sys.argv[2:]
-    sys.argv = [f"quasi-audit {subcmd}", *rest]
-    mod = _load(module_name, relative_path)
-    main = getattr(mod, "main", None)
-    if main is None:
-        print(f"error: {relative_path} has no main()", file=sys.stderr)
-        return 2
-    rc = main()
-    return int(rc) if isinstance(rc, int) else 0
 
 
 def _cmd_emit_bib() -> int:
@@ -219,7 +206,13 @@ def _missing_value(fm: dict, field: str) -> bool:
 
 
 def _scan_needs_backfill(target: Path, typecheck_mod) -> list[dict]:
-    """Find deterministic metadata gaps for the separate backfill workflow."""
+    """Find deterministic frontmatter gaps for the separate backfill workflow.
+
+    Reports only structural frontmatter fields the audit itself owns
+    (publisher / isbn / doi). The cndouban / translation index lives entirely
+    in `.quasi/audit/translations.json` under local-agent's ownership;
+    audit knows nothing about it.
+    """
     needs: list[dict] = []
     for path in typecheck_mod.collect_files(target):
         text = path.read_text(encoding="utf-8")
@@ -232,8 +225,6 @@ def _scan_needs_backfill(target: Path, typecheck_mod) -> list[dict]:
             for field in ("publisher", "isbn"):
                 if _missing_value(fm, field):
                     missing.append(field)
-            if "cndouban" not in fm or fm.get("cndouban") is None:
-                missing.append("cndouban")
             if missing:
                 required = {"publisher"}
                 qualifier = "" if required.intersection(missing) else "optional "
@@ -256,35 +247,6 @@ def _scan_needs_backfill(target: Path, typecheck_mod) -> list[dict]:
                 })
 
     return needs
-
-
-def _write_state(project_root: Path, target: Path, mode: str, summary: dict) -> Path:
-    state_path = project_root / ".quasi" / "audit" / "audit-state.json"
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state = {
-        "version": 1,
-        "last_audited_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "vault_root": str(target),
-        "clean": summary["status"] == "clean",
-        "checks": {
-            "local": {
-                "ran": True,
-                "mode": mode,
-                "files_checked": summary["files_checked"],
-                "files_with_violations": summary["files_with_violations"],
-                "files_modified": summary["files_modified"],
-                "remaining_violations": summary["remaining_violations"],
-            },
-            "online": {"ran": False, "strategies": [], "review_files": []},
-        },
-        "metadata": {
-            "complete": not summary.get("needs_backfill"),
-            "needs_backfill": summary.get("needs_backfill", []),
-        },
-        "notes": "local audit run",
-    }
-    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    return state_path
 
 
 def _cmd_run() -> int:
@@ -345,10 +307,8 @@ def _cmd_run() -> int:
         "escalated": escalated,
         "artifacts": {
             "typecheck_results": ".quasi/audit/typecheck-results.json",
-            "state": ".quasi/audit/audit-state.json",
         },
     }
-    _write_state(project_root, target, args.mode, summary)
 
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -366,10 +326,10 @@ def _print_help() -> int:
         "\n"
         "Usage:\n"
         "  quasi-audit run       [--path FILE_OR_DIR] [--mode check|fix] [--json]\n"
-        "  quasi-audit check     [--path FILE_OR_DIR] [--quiet]\n"
-        "  quasi-audit fix       [--path FILE_OR_DIR] [--write] [--limit N]\n"
         "  quasi-audit emit-bib  -o PATH [--project-root DIR]\n"
         "  quasi-audit backfill  --strategy STRATEGY [-- ARGS_TO_SWEEP_SCRIPT...]\n"
+        "  quasi-audit localise  scan [--path FILE_OR_DIR] [--json]\n"
+        "  quasi-audit localise  write --slug SLUG (--results-json '[...]' | --results-file PATH)\n"
     )
     return 0
 
@@ -385,20 +345,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if subcmd == "run":
         return _cmd_run()
-    if subcmd == "check":
-        return _delegate(
-            "quasi_audit_check",
-            "scripts/typecheck/typecheck.py",
-            "check",
-        )
-    if subcmd == "fix":
-        return _delegate(
-            "quasi_audit_fix",
-            "scripts/typecheck/autofix_mechanical.py",
-            "fix",
-        )
     if subcmd == "emit-bib":
         return _cmd_emit_bib()
+    if subcmd == "localise":
+        localise_mod = _load("quasi_audit_localise", "scripts/audit/localise.py")
+        return localise_mod.main(sys.argv[2:])
 
     if subcmd == "backfill":
         import argparse as _ap
