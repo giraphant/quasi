@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# quasi-search — Search books / papers via OpenLibrary, Crossref, Anna's Archive, etc.
+# quasi-search — Search book / paper metadata across source adapters.
 #
 # Usage:
 #   quasi-search book  [--isbn|--title|--author|--subject|--query] [filter flags]

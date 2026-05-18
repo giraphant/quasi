@@ -975,136 +975,6 @@ def download_paper(doi=None, url=None, output_dir="sources", filename=None,
     return None
 
 
-# ============================================================
-# Batch mode (manifest)
-# ============================================================
-
-def batch_download_manifest(manifest_path, retry_wayback=False):
-    """Download all metadata_found papers in a manifest."""
-    with open(manifest_path, "r") as f:
-        manifest = json.load(f)
-
-    pdf_dir = manifest.get("pdf_dir", ".quasi/temp/snowball-pdfs")
-    os.makedirs(pdf_dir, exist_ok=True)
-
-    to_process = [
-        (k, p) for k, p in manifest["papers"].items()
-        if p.get("status") == "metadata_found"
-    ]
-    print(f"Papers to acquire: {len(to_process)}", file=sys.stderr)
-
-    acquired = 0
-    abstract_only = 0
-
-    for key, paper in to_process:
-        doi = paper.get("doi", "")
-        title = paper.get("title", key)
-        # Extract author for verification (first author surname)
-        authors = paper.get("authors", [])
-        verify_author = authors[0] if authors else None
-        verify_title = title if title != key else None
-        print(f"\n[{key}] {title[:60]}", file=sys.stderr)
-
-        safe_key = key.replace("/", "_").replace(".", "_").replace(" ", "_")
-        pdf_path = os.path.join(pdf_dir, f"{safe_key}.pdf")
-
-        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 1000:
-            print(f"  EXISTS {pdf_path}", file=sys.stderr)
-            paper["pdf_path"] = pdf_path
-            paper["status"] = "acquired"
-            acquired += 1
-            continue
-
-        success = False
-
-        def _batch_verify(path, source):
-            """Verify and return True if content matches, else delete."""
-            if not verify_pdf_content(path, verify_author, verify_title):
-                print(f"  {source}: content mismatch, deleting", file=sys.stderr)
-                if os.path.exists(path):
-                    os.remove(path)
-                return False
-            return True
-
-        try:
-            # 1. Try OA URL from manifest
-            oa_url = paper.get("oa_url")
-            if oa_url:
-                print(f"  OA: {oa_url[:80]}", file=sys.stderr)
-                success = download_pdf_from_url(oa_url, pdf_path)
-                if success and not _batch_verify(pdf_path, "OA"):
-                    success = False
-                time.sleep(0.5)
-
-            # 2. Try finding new OA
-            if not success and doi:
-                new_oa_url = find_oa_url(doi)
-                if new_oa_url and new_oa_url != oa_url:
-                    print(f"  New OA: {new_oa_url[:80]}", file=sys.stderr)
-                    success = download_pdf_from_url(new_oa_url, pdf_path)
-                    if success:
-                        if _batch_verify(pdf_path, "New OA"):
-                            paper["oa_url"] = new_oa_url
-                        else:
-                            success = False
-                    time.sleep(0.5)
-
-            # 3. Try Sci-Hub
-            if not success and doi:
-                print(f"  Trying Sci-Hub for {doi}...", file=sys.stderr)
-                success = try_scihub_download(doi, pdf_path)
-                if success and not _batch_verify(pdf_path, "Sci-Hub"):
-                    success = False
-                time.sleep(0.5)
-
-            # 4. Try EZProxy
-            if not success and doi:
-                print(f"  Trying EZProxy for {doi}...", file=sys.stderr)
-                success = _try_ezproxy_with_refresh(doi, pdf_path)
-                if success and not _batch_verify(pdf_path, "EZProxy"):
-                    success = False
-                time.sleep(0.5)
-
-            # 5. Try Wayback
-            if not success and doi:
-                wb_url = paper.get("wayback_url")
-                if not wb_url and retry_wayback:
-                    print(f"  Wayback search for {doi}...", file=sys.stderr)
-                    wb_url = find_wayback_url(doi)
-                if wb_url:
-                    print(f"  WB: {wb_url[:80]}", file=sys.stderr)
-                    success = download_pdf_from_url(wb_url, pdf_path, timeout=90)
-                    if success:
-                        if _batch_verify(pdf_path, "Wayback"):
-                            paper["wayback_url"] = wb_url
-                        else:
-                            success = False
-                    time.sleep(0.5)
-
-        except EZProxyCookieExpired as e:
-            print(f"\n*** STOPPED: {e} ***", file=sys.stderr)
-            with open(manifest_path, "w") as f:
-                json.dump(manifest, f, indent=2, ensure_ascii=False)
-            print(f"Progress saved. Acquired so far: {acquired}", file=sys.stderr)
-            sys.exit(1)
-
-        if success:
-            paper["pdf_path"] = pdf_path
-            paper["status"] = "acquired"
-            acquired += 1
-        else:
-            paper["status"] = "abstract_only"
-            abstract_only += 1
-
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
-
-    print(f"\n=== Results ===", file=sys.stderr)
-    print(f"Acquired: {acquired}", file=sys.stderr)
-    print(f"Abstract-only: {abstract_only}", file=sys.stderr)
-    return acquired
-
-
 def _stream_download(url, dest_path, headers=None):
     """Stream-download file with progress."""
     r = requests.get(url, headers=headers or HEADERS_BROWSER, stream=True, timeout=120)
@@ -1352,17 +1222,6 @@ def _cmd_accept(args) -> int:
     return 0
 
 
-def _cmd_batch(args) -> int:
-    if not args.manifest:
-        print("batch: need --manifest", file=sys.stderr)
-        return 2
-    _handle_errors(
-        batch_download_manifest,
-        args.manifest, retry_wayback=args.retry_wayback,
-    )
-    return 0
-
-
 # ---- argparse: subcommand structure ----------------------------------------
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1421,14 +1280,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p_accept.add_argument("--overwrite", action="store_true")
     p_accept.add_argument("--json", action="store_true", help="Accepted for contract clarity; output is always JSON")
     p_accept.set_defaults(func=_cmd_accept)
-
-    # batch: from manifest
-    p_batch = sub.add_parser("batch",
-                              help="Batch download all metadata_found entries in a manifest")
-    p_batch.add_argument("--manifest", help="Manifest file path")
-    p_batch.add_argument("--retry-wayback", action="store_true",
-                          help="Re-check Wayback for papers")
-    p_batch.set_defaults(func=_cmd_batch)
 
     return parser
 

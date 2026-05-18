@@ -8,29 +8,40 @@ description: >
 
 # Process Paper — 单论文处理
 
-最薄的论文处理 skill：复用 search-agent / download-agent / analyse-agent
-(type=B) / 可选 translate-agent。无 synthesis 步骤（analyse-agent type=B
-一次出全文）。
+## 任务
 
-## 调用方式
+搜索、下载和分析用户提供的论文。
 
-```
-/quasi:process-paper --doi {doi}
-/quasi:process-paper --slug {slug}          # PDF 已在 sources/{slug}.pdf
-/quasi:process-paper --title {title} --author {author}
-/quasi:process-paper --doi {doi} --translate
-```
+## 输入
 
-`{slug}` canonical 格式：`{author-surname}-{short-title}-{year}`（全库
-唯一，与 process-author Phase 4 落地的 vault/papers/{slug}.md 同名空间）。
+从用户请求中归一化出以下输入:
 
-## ⚠ 硬约束
+- `doi`,或
+- `slug`(`sources/{slug}.pdf` 已存在时),或
+- `title + author`
+- `translate`:可选布尔值
+
+`slug` canonical 格式:`{author-surname}-{short-title}-{year}`（全库唯一,
+与 process-author Phase 4 落地的 `vault/papers/{slug}.md` 同名空间）。
+
+## 状态
+
+- 无 paper manifest。
+- 主进程 owns state:`.quasi/papers/{slug}.search.json` 和最终成功/失败报告。
+- `vault/papers/{slug}.md` 存在表示 analyse 已完成。
+
+## Agent / Helper 合同
+
+- `search-agent` 只返回 `picked/candidates/localisations`,不写文件。
+- `download-agent` 负责 fetch + inspect + accept,成功后返回稳定 `sources/{slug}.pdf`。
+- `analyse-agent` 只写 `vault/papers/{slug}.md`;audit escalated 时由本 skill 触发一次重做。
+
+## 硬约束
 
 - 单论文流程，无并行后台 agent，无 Glob 轮询。
-- 不做 synthesis，不做章节切分（论文非书）。
-- `--translate` 走 translate-agent，输出在 `processing/translations/`。
+- 多篇论文则每篇论文一个 agent。
 
-## 编排架构
+## 工作流
 
 ```
 主进程 (dispatcher)
@@ -40,8 +51,7 @@ description: >
 │   │   └─ 否则 → search-agent 返回 metadata,主进程可写 `.quasi/papers/{slug}.search.json` 缓存
 │   └─ 否则 → search-agent 返回 metadata + download-agent (kind=paper, items=[1])
 ├─ Step 1: analyse-agent (type=B, 前台) → vault/papers/{slug}.md
-├─ Step 2: audit-agent (前台) → 校验 + 一次重做循环
-└─ Step 3: translate-agent (前台, 仅 --translate)
+└─Step 2: audit-agent (前台) → 校验 + 一次重做循环
 ```
 
 ## 执行流程
@@ -137,12 +147,6 @@ reason:  audit escalated {item.kind}: {item.reason}
     audit = Agent("quasi:audit-agent", foreground=True, prompt=f"path: {output_path}")
     if audit.audit_result.escalated:
         report(f"audit still escalated for {output_path} after one regeneration pass"); return
-
-# Step 3: TRANSLATE (opt-in)
-if args.translate:
-    Agent("quasi:translate-agent", foreground=True, prompt=f"slug: {slug}")
-
-print(f"Done: vault/papers/{slug}.md" + (" + translation" if args.translate else ""))
 ```
 
 ## 断点续跑
@@ -153,14 +157,13 @@ print(f"Done: vault/papers/{slug}.md" + (" + translation" if args.translate else
 | Step 0 download | `sources/{slug}.pdf` | 存在则跳过 download-agent |
 | Step 1 | `vault/papers/{slug}.md` | 存在则跳过 analyse-agent |
 | Step 2 | 无 —— 幂等 | 上次 audit clean 时几乎无成本 |
-| Step 3 | `processing/translations/{slug}-*.pdf` | 存在则 translate-agent 跳过 |
 
-## 目录结构
+## 输出
 
 ```
 sources/{paper-slug}.pdf                            ← 原 PDF
 .quasi/papers/{paper-slug}.search.json              ← search 结果缓存
-vault/papers/{paper-slug}.md                        ← 终产物
+vault/papers/{paper-slug}.md                        ← 最终输出
 processing/translations/{paper-slug}-zh.pdf         ← 可选翻译
 ```
 

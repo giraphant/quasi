@@ -8,18 +8,27 @@ description: >
 
 # Process Topic — 主题语料(原: citation snowball)
 
-种子论文 / 主题关键词 → 逐轮扩展引用链 → 饱和。扁平 agent 调度 + 主进程引用提取。
+## 任务
 
-> 🚧 **本轮(2026-05-17)只改名,内部逻辑保留**。下一轮重做 SKILL.md 把入口泛化到 topic/keyword,
-> 不仅是 seed paper(LAYERS.md Q snowball)。
+从种子论文逐轮扩展引用链并综合主题语料。
 
-## 调用方式
+## 输入
 
-```
-/quasi:process-topic {topic-slug} --seed {doi} --topic "{description}"
-```
+从用户请求中归一化出:
 
-## ⚠ 硬约束
+- `topic_slug`:主题语料目录名
+- `seed`:种子论文 DOI
+- `topic_desc`:主题描述
+
+## Agent / Helper 合同
+
+- 主进程 owns state:`vault/topics/{topic_slug}/manifest.json`。
+- `search-agent` 只补 metadata;本 skill 写回 manifest。
+- `download-agent` 只获取本轮 paper PDF;本 skill 写 `pdf_path/status/failure_note`。
+- `analyse-agent` 每篇论文一个 background worker;引用提取和 dedupe 由主进程完成。
+- `synthesis-agent` 只写最终 topic synthesis / reading list。
+
+## 硬约束
 
 - **禁止用 TaskOutput 检查后台 agent**：会报 "No task found"，导致卡住
 - **必须用 Glob 轮询输出文件**来判断完成
@@ -29,7 +38,7 @@ description: >
   - 后台 agent 完成通知是冗余信息，收到后不需要额外处理
   - 每个阶段完成后不要回顾前序输出，关键状态已在磁盘上
 
-## 编排架构
+## 工作流
 
 ```
 主进程 (dispatcher + 引用提取)
@@ -38,8 +47,8 @@ description: >
 │   ├─ analyse-agent → 种子分析
 │   └─ 主进程: 读引用段落 → 创建 manifest
 ├─ Phase 1-N: EXPAND (循环)
-│   ├─ search.py metadata (Bash)
-│   ├─ download-agent → 本轮 PDF
+│   ├─ search-agent → metadata 补齐
+│   ├─ download-agent(kind=paper, items=[...]) → 本轮 PDF
 │   ├─ analyse-agent ×N (后台) → Glob 轮询
 │   ├─ 主进程: 读引用段落 → 更新 manifest
 │   └─ new_refs == 0? 停止
@@ -55,35 +64,45 @@ MAX_ROUNDS = 5
 
 # Phase 0: SEED
 if not exists(manifest_path):
-    Agent("quasi:download-agent", foreground=True,
-          prompt=f"doi: {seed}, output_dir: .quasi/temp/topic-pdfs/{topic_slug}/, filename: seed")
+    seed_download = Agent("quasi:download-agent", foreground=True,
+                          prompt=f"""\
+kind: paper
+items:
+  - slug: {topic_slug}-seed
+    expected_title: seed paper for {topic_desc}
+    identifiers:
+      doi: {seed}
+output_dir: sources/
+""")
+    seed_item = seed_download.per_item[0]
+    if seed_item["status"] != "ok":
+        report(f"seed download failed: {seed_item.get('verdict_note', 'download_failed')}")
+        return
 
     Agent("quasi:analyse-agent", foreground=True,
-          prompt=f"type: B, input: .quasi/temp/topic-pdfs/{topic_slug}/seed.pdf, "
+          prompt=f"type: B, input: {seed_item['path']}, "
                  f"output: vault/topics/{topic_slug}/seed.md, topic: {topic_desc}")
 
     analysis = Read(f"vault/topics/{topic_slug}/seed.md")
     citations = parse_citation_section(analysis)
     create_manifest(manifest_path, seed, citations)
     
-    # Per-entry metadata fetch (caller-side)
-    for key, paper in manifest['papers'].items():
+    # Per-entry metadata fetch. search-agent returns curated JSON; this skill
+    # owns manifest writes.
+    for key, paper in manifest["papers"].items():
         doi = paper.get('doi')
         if not doi:
             continue
-        out = subprocess.run(
-            ['quasi-search', 'paper', '--doi', doi, '--json', '--shape', 'single'],
-            capture_output=True, text=True, check=False,
-        )
-        if out.returncode != 0:
+        search = Agent("quasi:search-agent", foreground=True,
+                       prompt=f"kind: paper\ndoi: {doi}\nconstraints:\n  count: 1")
+        rec = search.picked
+        if not rec:
             continue
-        resp = json.loads(out.stdout)
-        if not resp.get('results'):
-            continue
-        rec = resp['results'][0]
         for field in ('title', 'authors', 'year', 'abstract', 'cited_by_count', 'is_oa', 'oa_url'):
             if rec.get(field) and not paper.get(field):
                 paper[field] = rec[field]
+        paper["status"] = "metadata_found"
+    write_json(manifest_path, manifest)
 
 # Phase 1-N: EXPAND
 manifest = read_json(manifest_path)
@@ -92,27 +111,57 @@ for round_num in range(manifest["rounds_completed"] + 1, MAX_ROUNDS + 1):
     if not discovered:
         break
 
-    # Per-entry metadata fetch (caller-side)
-    for key, paper in manifest['papers'].items():
+    # Per-entry metadata fetch. Keep this explicit in the skill: topic expansion
+    # is the state machine; search-agent remains a narrow metadata worker.
+    for key, paper in discovered:
         doi = paper.get('doi')
         if not doi:
             continue
-        out = subprocess.run(
-            ['quasi-search', 'paper', '--doi', doi, '--json', '--shape', 'single'],
-            capture_output=True, text=True, check=False,
-        )
-        if out.returncode != 0:
+        search = Agent("quasi:search-agent", foreground=True,
+                       prompt=f"kind: paper\ndoi: {doi}\nconstraints:\n  count: 1")
+        rec = search.picked
+        if not rec:
             continue
-        resp = json.loads(out.stdout)
-        if not resp.get('results'):
-            continue
-        rec = resp['results'][0]
         for field in ('title', 'authors', 'year', 'abstract', 'cited_by_count', 'is_oa', 'oa_url'):
             if rec.get(field) and not paper.get(field):
                 paper[field] = rec[field]
-    
-    Agent("quasi:download-agent", foreground=True,
-          prompt=f"manifest_path: {manifest_path}, mode: papers")
+        if paper.get("title"):
+            paper["status"] = "metadata_found"
+    write_json(manifest_path, manifest)
+
+    download_items = [
+        {
+            "slug": paper.get("slug") or key,
+            "expected_author": (paper.get("authors") or [""])[0],
+            "expected_title": paper.get("title") or key,
+            "identifiers": {"doi": paper.get("doi", "")},
+        }
+        for key, paper in discovered
+        if paper.get("status") == "metadata_found"
+    ]
+    if not download_items:
+        manifest["rounds_completed"] = round_num
+        write_json(manifest_path, manifest)
+        continue
+
+    download_result = Agent("quasi:download-agent", foreground=True,
+                            prompt=f"""\
+kind: paper
+items:
+{format_yaml_list(download_items)}
+output_dir: sources/
+""")
+    # Merge per_item back into manifest: ok -> acquired with local path;
+    # download_failed -> failed. No hidden batch CLI owns this mutation.
+    for item in download_result.per_item:
+        paper = find_manifest_paper(manifest, item["slug"])
+        if item["status"] == "ok":
+            paper["status"] = "acquired"
+            paper["pdf_path"] = item["path"]
+        else:
+            paper["status"] = "failed"
+            paper["failure_note"] = item.get("verdict_note", "download_failed")
+    write_json(manifest_path, manifest)
 
     acquired = get_acquired(manifest, round_num)
     for paper in acquired:
@@ -164,7 +213,7 @@ if audit.audit_result.escalated:
         return
 ```
 
-## Manifest 格式
+## 状态
 
 ```json
 {
@@ -181,6 +230,17 @@ if audit.audit_result.escalated:
 }
 ```
 
+Status enum:
+
+- `discovered` — 从引用段落解析出的候选,metadata 还不完整。
+- `metadata_found` — search-agent 已补齐到足够下载的 metadata。
+- `acquired` — `pdf_path` 指向稳定 PDF。
+- `refs_extracted` — 已完成分析并把新引用写回 manifest。
+- `failed` — 下载或分析失败,带 `failure_note`。
+
+`round` 控制本轮扩展;`rounds_completed` 只在本轮 analyse + refs extraction
+完成后递增。
+
 ## 断点续跑
 
 | 阶段 | 检查 | 跳过条件 |
@@ -190,7 +250,7 @@ if audit.audit_result.escalated:
 | FINAL | `synthesis.md` | 存在则跳过 |
 | TYPECHECK | 无 —— 幂等,可重复跑 | 上次 typecheck clean 时几乎无成本 |
 
-## 目录结构
+## 输出
 
 ```
 vault/topics/{topic-slug}/

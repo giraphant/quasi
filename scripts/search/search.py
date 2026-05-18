@@ -630,47 +630,13 @@ def paper_search(query: PaperQuery, sources: list[str] | None = None) -> SearchR
 # ===============================================
 
 
-def _emit(payload: dict, output_path: str | None, as_json: bool) -> None:
-    text = json.dumps(payload, indent=2, ensure_ascii=False) if as_json \
-           else _format_markdown(payload)
-    if output_path:
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(text)
-        print(f"Results saved to: {output_path}", file=sys.stderr)
-    else:
-        print(text)
+def _emit(payload: dict) -> None:
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
-def _format_markdown(payload: dict) -> str:
-    """Minimal markdown renderer. JSON mode is the agent-default; this is humans-only."""
-    kind = payload.get("kind", "?")
-    results = payload.get("results") or []
-    out = [f"# Search results ({kind}, {len(results)} hits)\n"]
-    for i, r in enumerate(results, 1):
-        title = r.get("title", "")
-        authors = ", ".join(r.get("authors") or [])
-        year = r.get("year") or "?"
-        out.append(f"{i}. **{title}** — {authors} ({year})")
-        srcs = r.get("_sources") or []
-        out.append(f"   Sources: {', '.join(srcs)}")
-        if kind == "book" and r.get("isbn_13"):
-            out.append(f"   ISBN: {r['isbn_13']}")
-        if kind == "paper" and r.get("doi"):
-            out.append(f"   DOI: {r['doi']}")
-    return "\n".join(out)
-
-
-def _apply_shape(resp: SearchResponse, shape: str, top: int | None) -> dict:
+def _apply_top(resp: SearchResponse, top: int | None) -> dict:
     d = resp.to_dict()
-    if shape == "single":
-        d["results"] = d["results"][:1]
-    elif shape == "raw":
-        # raw mode: caller wants per-source debug, so include by_source
-        # Note: by_source is only populated via the main function's intermediate
-        # state. For now, return the same canonical results.
-        # TODO(deferred): populate `by_source` separately if needed by callers.
-        pass
-    if top is not None and shape != "single":
+    if top is not None:
         d["results"] = d["results"][:top]
     return d
 
@@ -685,11 +651,9 @@ def _build_book_parser(sub) -> argparse.ArgumentParser:
     p.add_argument("--year-from", type=int, dest="year_from")
     p.add_argument("--year-to", type=int, dest="year_to")
     p.add_argument("--limit", type=int, default=10)
-    p.add_argument("--shape", choices=["canonical", "raw", "single"], default="canonical")
     p.add_argument("--top", type=int, default=None)
     p.add_argument("--source", help="Comma-separated source IDs (default: all)")
-    p.add_argument("--json", action="store_true")
-    p.add_argument("--output")
+    p.add_argument("--json", action="store_true", help="Accepted for compatibility; output is always JSON")
     return p
 
 
@@ -701,11 +665,9 @@ def _build_paper_parser(sub) -> argparse.ArgumentParser:
     p.add_argument("--query")
     p.add_argument("--year-from", type=int, dest="year_from")
     p.add_argument("--limit", type=int, default=30)
-    p.add_argument("--shape", choices=["canonical", "raw", "single"], default="canonical")
     p.add_argument("--top", type=int, default=None)
     p.add_argument("--source")
-    p.add_argument("--json", action="store_true")
-    p.add_argument("--output")
+    p.add_argument("--json", action="store_true", help="Accepted for compatibility; output is always JSON")
     return p
 
 
@@ -750,8 +712,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         resp = paper_search(q, sources=sources)
 
-    payload = _apply_shape(resp, args.shape, args.top)
-    _emit(payload, args.output, args.json)
+    payload = _apply_top(resp, args.top)
+    _emit(payload)
     return 0
 
 

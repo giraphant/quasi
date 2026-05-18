@@ -15,6 +15,8 @@ slot 格式：
 降级：全书抓到的 chapter 数 < 2 → 全部走纯提取顺序 "01".."NN"。
 """
 
+from __future__ import annotations
+
 import re
 
 

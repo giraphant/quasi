@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# quasi-download — Download a paper/book by DOI / MD5 / manifest.
+# quasi-download — Download a paper/book by DOI / URL / MD5.
 #
 # Usage:
 #   quasi-download book candidates --title TITLE --author AUTHOR --json
 #   quasi-download book fetch --md5 HASH --slug SLUG --json
 #   quasi-download paper fetch --doi "10.x/y" --slug SLUG --json
 #   quasi-download accept --path TEMPFILE --slug SLUG --kind book -o sources --json
-#   quasi-download batch --manifest MANIFEST --retry-wayback
 
 set -e
 

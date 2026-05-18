@@ -2,7 +2,7 @@
 # quasi-helpers — skill-orchestration helpers (NOT an agent-callable bin).
 #
 # Aggregates the deterministic setup/teardown operations that live around
-# map-reduce LLM agent dispatches (proofread-agent × 节, citation-agent × 批).
+# map-reduce LLM agent dispatches (proofread-agent × 节, citecheck-agent × 批).
 # Called from skill main process; never called from inside an agent.
 #
 # Nested subcommand:

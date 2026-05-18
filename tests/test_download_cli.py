@@ -23,7 +23,7 @@ def run_download(*args: str) -> subprocess.CompletedProcess[str]:
 def test_download_help_exposes_agent_contract():
     top = run_download("--help")
     assert top.returncode == 0
-    assert "{book,paper,accept,batch}" in top.stdout
+    assert "{book,paper,accept}" in top.stdout
 
     for args in [
         ("book", "candidates", "--help"),
@@ -37,6 +37,13 @@ def test_download_help_exposes_agent_contract():
 
 def test_legacy_flag_mode_is_removed():
     result = run_download("--doi", "10.1/example")
+
+    assert result.returncode == 2
+    assert "invalid choice" in result.stderr
+
+
+def test_legacy_batch_mode_is_removed():
+    result = run_download("batch", "--manifest", "manifest.json")
 
     assert result.returncode == 2
     assert "invalid choice" in result.stderr

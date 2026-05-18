@@ -32,7 +32,7 @@ separate:
 | bin | contract |
 |---|---|
 | `quasi-search` | `book|paper` metadata discovery |
-| `quasi-download` | `book candidates|fetch`; `paper fetch`; `accept`; `batch` |
+| `quasi-download` | `book candidates|fetch`; `paper fetch`; `accept` |
 | `quasi-extract` | `epub|ocr|split` text extraction |
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
 | `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|emit-bib`; `localise scan|write` |
@@ -47,8 +47,8 @@ Removed legacy bins:
 
 - `scripts/search/search.py`: metadata discovery, source merge, and book
   `localisations.zh` sidecar candidates.
-- `scripts/download/download.py`: acquisition by DOI/URL/MD5, diagnostics, accept
-  into `sources/`, and batch maintenance. AA file search remains in `scripts/download/aa.py` because it is
+- `scripts/download/download.py`: acquisition by DOI/URL/MD5, diagnostics, and accept
+  into `sources/`. AA file search remains in `scripts/download/aa.py` because it is
   acquisition discovery, not metadata search.
 - `scripts/extract/extract.py`: unified extraction dispatcher.
 - `scripts/audit/audit.py`: agent-facing typecheck wrapper. It always runs
@@ -86,6 +86,12 @@ active skills.
 `process-journal` is archived under `deprecated/skills/` until journal
 acquisition is redesigned.
 
+Active skill writing follows the maintainer schema in
+`docs/SKILL_ORCHESTRATION.md`:the skill main process owns workflow state,
+agents are specialist workers, and each phase must state its skip condition,
+writes, failure behavior, and human gate. Active `SKILL.md` files should contain
+runtime instructions, not links back to maintainer docs.
+
 ## Guardrails
 
 - Keep scripts as large, sectioned entrypoints unless splitting removes real
@@ -94,6 +100,5 @@ acquisition is redesigned.
   exact same runtime policy.
 - Keep schema changes in `scripts/schemas/`; do not duplicate schema facts in
   agents or skill prose.
-- Active agents/skills must not reference removed names such as
-  `discover-agent`, `new-discover-agent`, `quasi-search books`, or
-  `quasi-synthesize-refs`.
+- Active agents/skills must not reference removed entrypoint names; this is
+  enforced by `tests/test_dead_names.py`.

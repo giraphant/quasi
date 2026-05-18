@@ -8,6 +8,31 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 - `.claude-plugin/plugin.json` is metadata only. Do not place components inside `.claude-plugin/`.
 - This `CLAUDE.md` helps humans and Claude Code sessions opened inside the quasi source tree, but Claude Code does not load a plugin-root `CLAUDE.md` as context when quasi is installed as a plugin.
 
+## Skill writing schema
+
+`docs/SKILL_ORCHESTRATION.md` is maintainer guidance. Active `SKILL.md` files
+should not cite it directly; runtime skill text should contain only information
+the executing model needs.
+
+Use this shape for active skills when applicable:
+
+```text
+任务
+输入
+硬约束
+状态
+Agent / Helper 合同
+工作流
+执行流程
+断点续跑
+输出
+```
+
+`任务` should be one short positive sentence naming the work. Use `输入` instead
+of `调用方式` unless the skill has a real machine-facing invocation API. In normal
+plugin use, the frontmatter description and natural language trigger the skill;
+the body should define variable extraction and workflow contracts.
+
 ## Release checklist
 
 1. Update `.claude-plugin/plugin.json`.
@@ -45,6 +70,54 @@ the venv is missing — so shims work even when SessionStart hasn't fired yet
 To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the diff.
 
 ## Recent Changes
+
+- **0.32.0** (2026-05-18): **skill orchestration schema + bin
+  surface trim.** All five active skills rewritten to the
+  maintainer schema documented in `docs/SKILL_ORCHESTRATION.md`
+  (new file): `任务` (one positive sentence), `输入` (intent →
+  variable extraction), `硬约束`, `状态` (skill main process owns
+  workflow state), `Agent / Helper 合同`, `工作流`, `执行流程`,
+  `断点续跑`, `输出`. `调用方式`-style invocation API blocks are
+  removed from runtime skills; natural-language trigger via
+  frontmatter description is canonical. `AGENTS.md`, `CLAUDE.md`,
+  `README.md`, and `docs/ARCHITECTURE.md` carry the maintainer-facing
+  pointer to the schema doc, so active `SKILL.md` files no longer
+  link back to maintainer docs.
+  - Rewritten: `process-book`, `process-author`, `process-paper`,
+    `process-topic`, `wrap-up`. Behaviour preserved end-to-end; the
+    rewrite is structural — phases, agent dispatches, and human
+    gates are now made explicit per the schema.
+  - **BREAKING — `quasi-search`**: `--shape canonical|raw|single`
+    and `--output PATH` flags removed; the markdown emitter is
+    gone. Output is always canonical JSON to stdout. `--json` is
+    accepted as a no-op for compatibility. Callers that needed
+    `--shape single` should slice `results[:1]` themselves; the
+    `raw` shape was unused.
+  - **BREAKING — `quasi-download`**: `batch` subcommand removed
+    along with `batch_download_manifest()` and the related glue
+    (`_cmd_batch`, parser entry). Batch acquisition is now a skill
+    main-process concern — `process-author` / `process-topic`
+    dispatch `download-agent` directly with structured items.
+  - `quasi-extract` chapter manifest: per-chapter field `file`
+    renamed to `filename`; added `extracted_count` (top-level) and
+    `word_count` (per chapter). Downstream extract callers and
+    `process-book` Step 2 read the new shape.
+  - `tests/test_dead_names.py` now scans active markdown plus
+    `bin/quasi-*` shims, `README.md`, and `docs/ARCHITECTURE.md`,
+    and grows entries for `--shape single|raw`, `--output`,
+    `quasi-download batch`, `output_schema`, `citation-agent`
+    (post-0.25.2 rename), and `mode: papers` (post-0.24.0 search
+    refactor).
+  - New tests: `tests/test_search_cli.py` (asserts JSON-only output
+    contract, no `--shape`/`--output`), `tests/test_extract_cli.py`
+    (asserts new chapter manifest field names),
+    `tests/test_skill_orchestration.py` (asserts all five active
+    skills carry the schema landmarks).
+  - Minor: `scripts/extract/toc_utils.py` gains
+    `from __future__ import annotations`; `scripts/citation/emit_bib.py`
+    docstring updated to reference the wrap-up review step (not the
+    deprecated `review.html` "导出 JSON" button); `quasi-helpers`
+    header comment updated to `citecheck-agent` (post-0.25.2).
 
 - **0.31.0** (2026-05-18): **quasi-audit becomes a single
   agent-facing typecheck wrapper.** The active CLI is now

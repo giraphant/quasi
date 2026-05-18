@@ -5,7 +5,7 @@ Inputs:
     biblio.json          all vault entries (output of biblio.py)
     manifest.json        which citation keys this draft uses (output of resolve.py)
     decisions.json       (optional) user-picked bib_source per key
-                         (output of review.html "导出 JSON")
+                         (written by the wrap-up review step)
 
 If decisions.json is given, each entry's `bib_source` tells which vault slug
 to pull for that citation key. Otherwise we fall back to the first candidate

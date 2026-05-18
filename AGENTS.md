@@ -21,6 +21,15 @@ This file applies to the `plugins/quasi/` subtree.
 - Persistent generated state, virtualenvs, caches, and downloaded dependencies should use `CLAUDE_PLUGIN_DATA` rather than writing into `CLAUDE_PLUGIN_ROOT`.
 - Treat `CLAUDE_PLUGIN_ROOT` as versioned and ephemeral; use it only to read bundled scripts, schemas, and static assets.
 
+## Skill writing schema
+
+- Treat `docs/SKILL_ORCHESTRATION.md` as maintainer guidance, not runtime skill text.
+- Do not add "follow docs/SKILL_ORCHESTRATION.md" to active `SKILL.md` files.
+- Runtime skills should use these landmarks when applicable: `任务`, `输入`, `硬约束`, `状态`, `Agent / Helper 合同`, `工作流`, `执行流程`, `断点续跑`, `输出`.
+- `任务` must be one short positive sentence naming the work; do not put orchestration, state, or negative scope there.
+- Prefer `输入` over `调用方式`: skills are normally triggered by natural language plus frontmatter description, while the body should describe how to normalise user intent into variables.
+- Keep workflow state ownership in the skill main process. Agents are specialist workers; deterministic helpers may write artifacts only when their CLI contract says so.
+
 ## Python dependencies
 
 - Declared in `scripts/requirements.txt`. Edit there to add/remove deps.

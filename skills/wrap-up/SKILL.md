@@ -11,22 +11,45 @@ description: >
 
 # Wrap-Up — 文章收尾
 
-一篇 draft 写完后的统一收尾入口。`proofread-agent` 改文字 + `citecheck-agent` 给引用打 context-fit 标注, 主进程驱动 TUI 走完引用审定, 产出 `decisions.json` + `references.bib`。审完后再触发清理。
+## 任务
 
-## 调用方式
+校对用户提供的 draft,审定引用并输出 bibliography。
 
-```
-/quasi:wrap-up vault/drafts/draft.md
-/quasi:wrap-up vault/drafts/                # 整目录
+## 输入
 
-# Flags:
-/quasi:wrap-up <draft> --no-recover         # Phase 2.3 跳过(不在线找 missing)
-/quasi:wrap-up <draft> --citation-only      # 跳 Phase 1, 只跑 Phase 2
-```
+从用户请求中归一化出:
+
+- `draft_path`:单个 draft 或 draft 目录
+- `no_recover`:可选;Phase 2.3 跳过,不在线找 missing
+- `citation_only`:可选;跳 Phase 1,只跑 Phase 2
 
 `--citation-only` 是"补完 vault 后增量重跑"的快捷入口: proofread 已经做过、draft 文本已经定稿、只是 vault 增量补了几本书想重新审引用 + 出 .bib。**直接跳过 Phase 1**, 从 Phase 2 进。
 
-## 整体流程
+## 状态
+
+- 主进程 owns state:`.quasi/proofread/{stem}/`,
+  `.quasi/citation/{stem}/decisions.json`,recovery files,以及最终
+  `references.bib` 的生成触发。
+- `decisions.json` 是 citation review 的 single source of truth。
+- draft 末尾 `<!-- proofread:start -->...<!-- proofread:end -->` 块是
+  proofread 改动记录的 single source of truth。
+
+## Agent / Helper 合同
+
+- `proofread-agent` 只处理一个 draft section;全局收敛和人工审稿由主进程完成。
+- `citecheck-agent` 只写指定 `verdict_out`;主进程聚合 verdicts 并驱动 TUI。
+- `search-agent` 只为 miss citation 返回 recovery 候选;主进程判断是否进入
+  `vault_todo/draft_rewrites/skip`。
+- 所有人类决策集中在 Phase 2.4,不要拆给 agent。
+
+## 硬约束
+
+- Phase 1 必须全部完成才进入 Phase 2;proofread 改字会让 citation parse 行号失效。
+- Phase 2.2 + 2.3 必须完成才进入 Phase 2.4;TUI 需要全量数据。
+- TUI 是主进程串行驱动,不要拆给 agent。
+- Phase 3 cleanup 只在用户明确说审完或清理记录块后执行。
+
+## 工作流
 
 ```
 ┌─ Phase 1  PROOFREAD   ─ sonnet 节内多轮 + codex 提议 + 主进程审稿
@@ -56,6 +79,11 @@ if flags.citation_only:
     skip_phase_3 = True   # cleanup
 ```
 
+## 执行流程
+
+下面按 Phase 1-3 展开。Phase 1 负责 proofread,Phase 2 负责 citation review
+和 bibliography 输出,Phase 3 只在用户明确审完后清理 proofread 记录块。
+
 ## Phase 1 — PROOFREAD
 
 `--citation-only` 时全跳过。
@@ -71,10 +99,14 @@ if flags.citation_only:
    ```
    for sec in sections:
      for r in 1..5:
+       before = count_records(round_tag=f"s{r}")  # 只数末尾记录块里的现有 s{r} 行
        Agent("quasi:proofread-agent", prompt 给 draft/section_id/round_tag=s{r}/start_line/end_line)
-       本轮 grep `^- \*\*s{r} ` count in draft 末尾块
-       == 0 → 该节收敛,跳出
+       after = count_records(round_tag=f"s{r}")
+       after - before == 0 → 该节收敛,跳出
    ```
+
+注意:记录块是整篇 draft 共享的,不同节都会写 `s1/s2/...`。因此收敛判断必须看
+本轮前后 delta,不能用全局 grep 总数判断。
 
 **Stage B — codex 提议(不改正文)**:
 
@@ -159,9 +191,10 @@ Agent("quasi:citecheck-agent", background=True,
 
 ```python
 miss = [e for e in manifest.entries if e.status == "miss"]
+recovery_jobs = []
 for v in miss:  # 并发, cap 4
-    Agent("quasi:search-agent", background=True,
-          prompt=f"""
+    job = Agent("quasi:search-agent", background=True,
+                prompt=f"""
 task: recover the real source of this missing citation
 
 context:
@@ -173,26 +206,29 @@ context:
 constraints:
   max_candidates: 5
   year_tolerance: 1
-
-output_path: {ct_dir}/verdicts/recovery-{v.key}.json
-
-output_schema (example):
-{{
-  "key": "{v.key}",
-  "online_recovery": {{
-    "title": "...", "author": "...", "year": 0,
-    "isbn": null, "doi": null, "publisher": null,
-    "kind": "book | paper | unknown",
-    "confidence": "high | medium | low | miss",
-    "sources": ["..."],
-    "suggested_slug": "...",
-    "process_book_cmd": "/quasi:process-book ..."
-  }}
-}}
 """)
+    recovery_jobs.append((v, job))
+
+# 等 search-agent 全部返回后,主进程自己判断/归一化/落盘。
+for v, job in recovery_jobs:
+    search = job.result
+    recovery = choose_recovery_candidate(
+        key=v.key,
+        parsed_author=v.parsed_author,
+        parsed_year=v.parsed_year,
+        mention_context=v.mention_snippet,
+        search_result=search,
+    )
+    write_json(f"{ct_dir}/verdicts/recovery-{v.key}.json", {
+      "key": v.key,
+      "online_recovery": recovery,
+    })
 ```
 
 每条产出 `verdicts/recovery-{key}.json`,含 `online_recovery: {title, author, year, doi, isbn, suggested_slug, process_book_cmd, confidence}`。
+
+Recovery 的判断和落盘属于 `wrap-up` 主进程:search-agent 只搜索并返回候选,不写
+verdict 文件,也不决定是否进入后续用户审定。
 
 ### 2.4 — TUI 审定 (主进程, 关键步骤)
 
@@ -382,9 +418,21 @@ quasi-helpers citation emit-bib {ct_dir}/manifest.json \
 
 - **触发词**: 用户说 "审完了" / "清理记录块" / "删掉校对记录" / "cleanup" / "proofread 收尾"
 - **执行**: `quasi-helpers proofread cleanup <draft-or-dir>` — 从每个 markdown 文件删除整个 `<!-- proofread:start -->...<!-- proofread:end -->` 块
-- **执行后**: `rm -rf .quasi/proofread/{stem}/` 清掉 split 产物
+- **执行后**: `rm -rf .quasi/proofread/{stem}/` 清掉 split 输出
 
-## 中间 / 终产物
+## 断点续跑
+
+| 阶段 | 检查 | 跳过条件 |
+|------|------|---------|
+| Phase 1 | `citation_only` flag | 直接跳过 proofread |
+| Phase 1 prepare | `.quasi/proofread/{stem}/sections.json` | 存在则复用 section manifest |
+| Phase 2.1 | `{ct_dir}/manifest.json` | 存在则可复用 parse/resolve 结果 |
+| Phase 2.2 | `{ct_dir}/verdicts/batch-*.json` | 对已有 batch 不重复跑 citecheck-agent |
+| Phase 2.3 | `no_recover` flag 或 `recovery-{key}.json` | flag 开启则跳过;已有 recovery 则复用 |
+| Phase 2.4 | `{ct_dir}/decisions.json` | 存在则可直接 emit-bib |
+| Phase 3 | 用户触发词 | 用户未明确审完则不 cleanup |
+
+## 输出
 
 ```
 .quasi/
@@ -401,7 +449,7 @@ quasi-helpers citation emit-bib {ct_dir}/manifest.json \
     └── decisions.json         # ← TUI 收集的最终决策
 
 (project_root)/
-└── references.bib             # ← 终产物
+└── references.bib             # ← 最终输出
 ```
 
 **draft 文件本身**:Phase 1 in-place 修改正文 + 末尾累积 `<!-- proofread:start -->...<!-- proofread:end -->` 块,Phase 3 删整段记录块。**改动记录的 single source of truth = draft 末尾块**, 无 sidecar / changelog 冗余。

@@ -9,15 +9,21 @@ DEAD_NAMES = [
     "discover-agent",
     "new-discover-agent",
     "quasi-search books",
+    "--shape single",
+    "--shape raw",
+    "quasi-search --output",
     "quasi-synthesize-refs",
     "quasi-journal-fetch",
     "quasi-journal-report",
     "quasi-helpers citation render",
+    "citation-agent",
     "quasi-helpers proofread split",
     "quasi-helpers proofread init",
     "quasi-download book get",
     "quasi-download paper get",
     "quasi-download finalize",
+    "quasi-download batch",
+    "mode: papers",
     "--finalize-book",
     "quasi:local-agent",
     "local-agent",
@@ -28,6 +34,7 @@ DEAD_NAMES = [
     "--mode check",
     "--mode fix",
     "write_policy",
+    "output_schema",
     ".quasi/audit/translations.json",
 ]
 
@@ -39,9 +46,19 @@ def active_markdown_files() -> list[Path]:
     return files
 
 
+def active_contract_files() -> list[Path]:
+    files = active_markdown_files()
+    files.extend((PLUGIN_ROOT / "bin").glob("quasi-*"))
+    files.extend([
+        PLUGIN_ROOT / "README.md",
+        PLUGIN_ROOT / "docs" / "ARCHITECTURE.md",
+    ])
+    return [path for path in files if path.exists()]
+
+
 def test_active_agents_and_skills_do_not_reference_dead_names():
     offenders: list[str] = []
-    for path in active_markdown_files():
+    for path in active_contract_files():
         text = path.read_text(encoding="utf-8")
         for name in DEAD_NAMES:
             if name in text:

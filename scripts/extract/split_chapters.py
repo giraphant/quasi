@@ -189,12 +189,14 @@ def create_manifest(chapters: list[dict], skipped: list[dict],
         'source_pdf': pdf_name,
         'split_method': method,
         'total_chapters': len(chapters),
+        'extracted_count': len(chapters),
         'chapters': [
             {
                 'slot': ch['slot'],
                 'title': ch['title'],
                 'start_page': ch['start_page'],
-                'file': make_filename(ch['slot'], ch['title']),
+                'filename': make_filename(ch['slot'], ch['title']),
+                'word_count': len('\n'.join(ch['content']).split()),
             }
             for ch in chapters
         ],

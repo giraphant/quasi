@@ -7,17 +7,27 @@ description: >
 
 # Process Author — 作者处理
 
-系统性处理一位核心学者的代表作 → 作者级综合文档。扁平 agent 调度。
+## 任务
 
-## 调用方式
+搜索、下载、分析并综合用户指定作者的代表作。
 
-```
-/quasi:process-author {author-name}
-```
+## 输入
 
-`{author-name}` 为 kebab-case（如 `donna-haraway`）。
+从用户请求中归一化出:
 
-## ⚠ 硬约束
+- `author_name`:kebab-case,如 `donna-haraway`
+- `full_name`:可由用户显式给出,否则由 `author_name` 反推后交给 search-agent 校正
+- `topic`:可选范围提示
+
+## Agent / Helper 合同
+
+- 主进程 owns state:`.quasi/authors/{author_name}/manifest.json`。
+- search/download/analyse/synthesis/audit/localise 只作为专业工种被调度。
+- manifest `status` 控制 downstream phase;warning 字段不能替代可消费状态。
+- 书籍子流程必须保持和 `process-book` 的 chapter manifest / output 命名一致。
+- 本 skill 允许跨书/论文 background fan-out,但同一文件只能由一个 agent 写。
+
+## 硬约束
 
 - **禁止用 TaskOutput 检查后台 agent**：会报 "No task found"，导致卡住
 - **必须用 Glob 轮询输出文件**来判断完成
@@ -27,7 +37,7 @@ description: >
   - 后台 agent 完成通知是冗余信息，收到后不需要额外处理
   - 每个阶段完成后不要回顾前序输出，关键状态已在磁盘上
 
-## 编排架构
+## 工作流
 
 ```
 主进程 (dispatcher)
@@ -109,8 +119,9 @@ constraints:
 # 2. ACQUIRE — two structured download-agent calls (kind=book + kind=paper),
 # skill merges per-item status + year_evidence back into the manifest.
 # Batch policy: year_mismatch / year_ambiguous books DO NOT pause; skill
-# mv's tmp_path → sources/{slug}.{ext} (slug authoritative) and records
-# year_evidence in manifest.books[i].year_warning for end-of-run report.
+# accepts tmp_path → sources/{slug}.{ext} (slug authoritative), keeps
+# status="acquired" so Phase 3 consumes the book, and records year_review /
+# year_evidence / year_warning for end-of-run report.
 manifest = read_json(manifest_path)
 
 # 2a. Books
@@ -128,16 +139,17 @@ items:
 output_dir: sources/
 """)
     # Merge per_item back into manifest.books. Agent status → manifest status:
-    #   ok → acquired, year_mismatch/year_ambiguous → same name, download_failed → failed.
+    #   ok/year_* accepted into sources → acquired; download_failed → failed.
     for item in book_result.per_item:
         i = index_of(manifest["books"], slug=item["slug"])
         if item["status"] == "ok":
             manifest["books"][i]["status"] = "acquired"
         elif item["status"] in ("year_mismatch", "year_ambiguous"):
-            # Override agent's "keep as tmp" — batch mode accepts into sources anyway,
-            # records the year_evidence for offline review.
+            # Override agent's "keep as tmp" — author batch accepts into sources
+            # anyway, but records the year evidence for offline review.
             Bash(f"quasi-download accept --path {item['tmp_path']} --slug {item['slug']} --kind book --json")
-            manifest["books"][i]["status"] = item["status"]
+            manifest["books"][i]["status"] = "acquired"
+            manifest["books"][i]["year_review"] = item["status"]
             manifest["books"][i]["year_evidence"] = item["year_evidence"]
             manifest["books"][i]["year_warning"] = (
                 f"slug_year={item['year_evidence']['slug_year']} but "
@@ -179,8 +191,7 @@ output_dir: sources/
     write_json(manifest_path, manifest)
 
 # End-of-acquire summary (printed by skill main process for visibility):
-n_year_warned = sum(1 for b in manifest["books"]
-                    if b["status"] in ("year_mismatch", "year_ambiguous"))
+n_year_warned = sum(1 for b in manifest["books"] if b.get("year_review"))
 n_paper_failed = sum(1 for p in manifest["papers"] if p["status"] == "failed")
 if n_year_warned or n_paper_failed:
     report(f"Acquire summary: {n_year_warned} book year warnings, "
@@ -318,12 +329,30 @@ for b in acquired_books:
          f"--candidates-file {candidates_file}")
 ```
 
+## 状态
+
+`.quasi/authors/{author_name}/manifest.json` 由本 skill 主进程维护。
+
+Book status:
+- `discovered` — 已由 search-agent 选入代表作清单,尚未获取文件。
+- `acquired` — `sources/{slug}.{ext}` 已可供 Phase 3 使用。
+- `failed` — 获取失败,带 `failure_note`。
+
+Book year ambiguity 不改变 `status`:已 accept 入库的书仍是 `acquired`,
+另写 `year_review ∈ {year_mismatch, year_ambiguous}`、`year_evidence`、
+`year_warning` 供收尾报告和人工复查。
+
+Paper status:
+- `discovered` — 已入清单,尚未获取 PDF。
+- `acquired` — `local_path` 指向稳定 PDF。
+- `failed` — 获取失败,带 `failure_note`。
+
 ## 断点续跑
 
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
 | Phase 1 | `manifest.json` | 存在则跳过 |
-| Phase 2 | manifest `status` | acquired / year_mismatch / year_ambiguous / failed 跳过（重跑只处理 discovered） |
+| Phase 2 | manifest `status` | acquired / failed 跳过（重跑只处理 discovered）；year 问题存在 `year_review` |
 | Phase 3a | `{chapters_dir}/manifest.json` | 存在则跳过提取 |
 | Phase 3b | `ch{NN}-*.md` | 存在则跳过该章 |
 | Phase 3c | `00-overview.md` | 存在则跳过该书 |
@@ -332,7 +361,7 @@ for b in acquired_books:
 | Phase 6 | 无 —— 幂等,可重复跑 | 上次 typecheck clean 时几乎无成本 |
 | Phase 7 | `.quasi/localise/cndouban.json#by_isbn[isbn]` | 已存在 entry(status found/none)则 helper scan 跳过 |
 
-## 目录结构
+## 输出
 
 ```
 .quasi/authors/{author-name}/

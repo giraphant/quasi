@@ -7,25 +7,40 @@ description: >
 
 # Process Book — 书籍处理
 
-从 EPUB/PDF 到结构化摘要。扁平 agent 调度。
+## 任务
 
-## 调用方式
+下载、切分、逐章分析并综合用户提供的书。
 
-```
-/quasi:process-book {book-slug}
-```
+## 输入
 
-`{book-slug}` 必须是 canonical 格式：`{author-surname}-{short-title}-{year}`。
-源文件落在 `sources/{book-slug}.{epub,pdf}`。
+从用户请求中提取可用于搜索和定位源文件的线索:
 
-**没有源文件时,本 skill 自己 dispatch download-agent 去拿** —— 不要求调用方先准备。download-agent 内部完成 search → download → 身份验证 → 算 year_evidence；主进程只读 `per_item[0].status` 决定继续 / 弹给用户 / 失败。具体 year 证据收集与 verdict 计算规则见 `agents/download-agent.md` 的 `year_evidence` 段。
+- `title` 或自然语言 `query`
+- `author`:可选,但强烈优先使用
+- `year_hint`:可选
+- `isbn`:可选
+- `source_path` 或 `slug_hint`:可选,用于命中已有 `sources/` 文件
+- `topic`:可选,传给 analyse/synthesis
 
-`status` 分支：
-- `ok` —— agent 已 mv tmp → final，继续 EXTRACT。
-- `year_mismatch` / `year_ambiguous` —— 不继续；把 `year_evidence`（含 `tmp_path`）原样递给用户。用户改 slug 中的 year 重跑，或手动 mv tmp 到正确路径后重跑。
-- `download_failed` —— 报错退出。
+## 状态
 
-## ⚠ 硬约束
+- 无独立 book workflow manifest。
+- `book_slug` 是 Step 0 产物,由 search/download/source filename 确定;
+  canonical 格式为 `{author-surname}-{short-title}-{year}`。
+- 主进程 owns state:`processing/chapters/{book_slug}/manifest.json` 的消费、
+  `vault/books/{book_slug}/` 的完成判断、以及 localise cache 写入触发。
+- `sources/{book_slug}.{epub,pdf}` 存在表示 acquisition 已完成。
+- `vault/books/{book_slug}/00-overview.md` 存在表示整本书生成完成。
+
+## Agent / Helper 合同
+
+- `download-agent` 只负责 acquisition 判断和 accept;year ambiguity 是 human gate。
+- `extract-agent` 负责提取、验证、修复,并产出统一 chapter manifest
+  (`slot/title/filename/word_count`)。
+- `analyse-agent` 每章一个 background worker,不得合并多章。
+- `synthesis-agent` 只写 `00-overview.md`;audit escalated 由本 skill 路由回生成阶段。
+
+## 硬约束
 
 - **禁止用 TaskOutput 检查后台 agent**：TaskOutput 会报 "No task found"，导致卡住
 - **必须用 Glob 轮询输出文件**：检查 `{output_dir}/ch*.md` 数量来判断完成
@@ -36,11 +51,11 @@ description: >
   - 后台 agent 完成通知是冗余信息，收到后不需要额外处理
   - 每个阶段完成后不要回顾前序输出，关键状态已在磁盘上
 
-## 编排架构
+## 工作流
 
 ```
 主进程 (dispatcher)
-├─ Step 0: download-agent (sonnet, 前台) → 没源文件时,自己去拿
+├─ Step 0: 定位 source + search metadata + 必要时 download-agent
 ├─ Step 1: extract-agent (sonnet, 前台) → 提取+验证+修复
 ├─ Step 2: 主进程读 manifest.json → 筛选章节
 ├─ Step 3: analyse-agent ×N (opus, 后台并行) → Glob 轮询
@@ -52,35 +67,48 @@ description: >
 ## 执行流程
 
 ```python
-# 0. 使用已定稿 slug
-# 输入约定：book_slug 必须是 canonical 格式 {author-surname}-{short-title}-{year}
-# - 通过 process-author 调用：上游 download-agent 已 accept 入库，slug 在 manifest 中定稿
-# - 用户直接调用：用户给定的 book_slug 即视为 canonical，sources/ 文件名应同名
-# 本 skill 不再重新派生 slug，所有路径直接基于 book_slug。
-book_slug = parse_args()
-source_file = Glob(f"sources/{book_slug}.epub") or Glob(f"sources/{book_slug}.pdf")
+# 0. 从用户请求提取搜索线索。book_slug 不是输入,而是 Step 0 的结果。
+request = parse_user_request()  # title/query, author?, year_hint?, isbn?, source_path?, slug_hint?, topic?
 
-# Step 0: ACQUIRE & VERIFY
-# 调 download-agent;agent 内部做 search → download → identity verify + 算 year_evidence。
-# 主进程只做：拿 verdict、按 verdict 分支（MATCH 继续 / 否则弹给用户）。
+# Step 0: SOURCE + METADATA
+# 先用 source_path/slug_hint/query 在 sources/ 中找已存在源文件;再用 search-agent
+# 补齐 metadata 和 canonical slug。找不到源文件时,用 search 结果交给 download-agent 获取。
+source_file = find_existing_source(
+    source_path=request.source_path,
+    slug_hint=request.slug_hint,
+    title=request.title or request.query,
+    author=request.author,
+)
+
+search = Agent("quasi:search-agent", foreground=True, prompt=f"""\
+task: find canonical metadata for this book
+context:
+  kind: book
+  title: {request.title or request.query}
+  author: {request.author or ""}
+  year_hint: {request.year_hint or ""}
+  isbn: {request.isbn or ""}
+constraints:
+  count: 1
+""")
+book_meta = search.picked
+book_slug = book_meta["slug"]
+
 if not source_file:
-    # slug 反解: {author-surname}-{title}-{year}，year 是末尾 4 位数字 segment
-    parts = book_slug.rsplit("-", 1)
-    slug_year = int(parts[1]) if parts[1].isdigit() and len(parts[1]) == 4 else None
-    # author 通常是首 segment（多 segment 姓如 fausto-sterling 需要更长 prefix，
-    # 但单 segment 覆盖绝大多数 case；download-agent 自己用 author+title 模糊匹配，
-    # 这里给个起手 hint 即可）
-    body = parts[0]
-    body_parts = body.split("-")
-    expected_author = body_parts[0]
-    expected_title = " ".join(body_parts[1:])
+    source_file = Glob(f"sources/{book_slug}.epub") or Glob(f"sources/{book_slug}.pdf")
+
+if not source_file:
+    # download-agent 内部完成 fetch → inspect → accept,并返回 year_evidence。
+    # 主进程只根据 per_item[0].status 分支。
 
     result = Agent("quasi:download-agent", foreground=True, prompt=f"""\
 kind: book
 items:
   - slug: {book_slug}
-    expected_author: {expected_author}
-    expected_title: {expected_title}
+    expected_author: {book_meta.get('authors', [''])[0] if book_meta.get('authors') else request.author or ''}
+    expected_title: {book_meta.get('title') or request.title or request.query}
+    identifiers:
+      isbn: {book_meta.get('isbn') or request.isbn or ''}
 output_dir: sources/
 """)
 
@@ -200,7 +228,7 @@ print(f"Done: {len(selected)} chapters, overview generated, typechecked, localis
 | Step 5 | 无 —— 幂等,可重复跑 | 上次 audit clean 时几乎无成本 |
 | Step 6 | `.quasi/localise/cndouban.json#by_isbn[isbn]` | 已存在 entry(status found/none)则 helper scan 跳过 |
 
-## 目录结构
+## 输出
 
 ```
 sources/{book-slug}.epub|.pdf          ← canonical slug 对应的源文件
