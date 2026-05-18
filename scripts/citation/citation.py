@@ -12,7 +12,7 @@ NOT in this CLI):
 
 Conventions:
     project root  = $CLAUDE_PROJECT_DIR (or --project-root)
-    intermediates = {root}/processing/citation/{draft-stem}/
+    intermediates = {root}/.quasi/citation/{draft-stem}/
 """
 from __future__ import annotations
 

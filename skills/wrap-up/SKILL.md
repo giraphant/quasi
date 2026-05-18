@@ -395,21 +395,20 @@ quasi-helpers citation emit-bib {ct_dir}/manifest.json \
 
 ```
 .quasi/
-└── proofread/{stem}/
-    └── sections.json
+├── proofread/{stem}/
+│   └── sections.json
+└── citation/{stem}/
+    ├── biblio.json
+    ├── parse.json
+    ├── manifest.json
+    ├── verdicts/
+    │   ├── batch-001.json     # citecheck-agent context-fit notes
+    │   ├── batch-002.json
+    │   └── recovery-{key}.json # search-agent online recoveries
+    └── decisions.json         # ← TUI 收集的最终决策
 
-processing/
-├── citation/{stem}/
-│   ├── biblio.json
-│   ├── parse.json
-│   ├── manifest.json
-│   ├── verdicts/
-│   │   ├── batch-001.json     # citecheck-agent context-fit notes
-│   │   ├── batch-002.json
-│   │   └── recovery-{key}.json # discover-agent online recoveries
-│   └── decisions.json         # ← TUI 收集的最终决策
-└── (project_root)/
-    └── references.bib         # ← 终产物
+(project_root)/
+└── references.bib             # ← 终产物
 ```
 
 **draft 文件本身**:Phase 1 in-place 修改正文 + 末尾累积 `<!-- proofread:start -->...<!-- proofread:end -->` 块,Phase 3 删整段记录块。**改动记录的 single source of truth = draft 末尾块**, 无 sidecar / changelog 冗余。

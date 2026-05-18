@@ -34,7 +34,7 @@ model: sonnet
 
 - `manifest` — manifest.json 绝对路径(含 candidates + mentions; 每个 candidate 自带 `path` 指向 vault 摘要文件)
 - `batch_keys` — 这批要处理的 citation key 列表(一般 8 条; 都是 status=single-hit 或 multi-hit, miss 不会传给你)
-- `verdict_out` — 写出路径,如 `processing/citation/{stem}/verdicts/batch-NNN.json`
+- `verdict_out` — 写出路径,如 `.quasi/citation/{stem}/verdicts/batch-NNN.json`
 
 ## 硬约束
 
