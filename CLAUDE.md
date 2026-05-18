@@ -46,6 +46,42 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.26.0** (2026-05-18): **artifact path discipline.** Sharpens the
+  `processing/` vs `.quasi/` split on "would the user ever open this
+  file?" Everything plumbing-shaped — manifests, indices, audit state,
+  dispatch scratch, downloaded temp PDFs — moves into `.quasi/`.
+  `processing/` ends minimal: `chapters/` (extracted text the user
+  reads when PDFs are unclear) and `translations/` (translated PDFs).
+  - Group B: `processing/proofread/{stem}/sections.json` →
+    `.quasi/proofread/{stem}/`. Cleanup goes from optional to required.
+  - Group C: `/tmp/{journal,topic,snowball}-pdfs/` →
+    `.quasi/temp/{journal-pdfs/{name}, topic-pdfs/{name}, snowball-pdfs}/`.
+    Brings temp PDFs into the project tree where they're inspectable
+    and not subject to macOS /tmp/ reaping.
+  - Group D: audit pipeline consolidates under `.quasi/audit/`.
+    `scripts/typecheck/typecheck.py` `OUT_DIR` moves from `.quasi/`
+    top-level to `.quasi/audit/`. `agents/audit-agent.md` doc paths
+    fixed across multiple stale references (state.json,
+    translations.json, typecheck-*). `schemas/book.py` description
+    string + `docs/ARCHITECTURE.md` echo updated.
+  - Group E: `processing/authors/{name}/manifest.json` →
+    `.quasi/authors/{name}/manifest.json`. Driver file for the
+    process-author phase state machine; user never opens.
+  - Group A: residual cleanup. The bulk of the citation move was
+    already merged in 0.22.x (`ct_dir = .quasi/citation/...`); this
+    release finishes the trailing edges — citecheck-agent example,
+    citation.py docstring, wrap-up 中间产物 tree. `render.py:741`
+    has a stale reference too but render.py is deprecated per 0.22.0
+    and skipped here.
+  - User-disk migration: only `authors/{name}/manifest.json` carries
+    a real caveat — any author run paused mid-flight loses its
+    `--resume` state on upgrade. Finish or abandon before upgrading.
+    Other stale dirs (`processing/citation/`, `processing/proofread/`,
+    `processing/audit/`, top-level `.quasi/typecheck-*`) become
+    harmless orphans the user can `rm -rf` at leisure.
+  - Spec: `docs/superpowers/specs/2026-05-18-artifact-paths-design.md`.
+    Plan: `docs/superpowers/plans/2026-05-18-artifact-paths.md`.
+
 - **0.25.2** (2026-05-18): **rename citation-agent → citecheck-agent.**
   Naming consistency pass: most agents in quasi are verb-form
   (`search-agent` / `download-agent` / `extract-agent` / `proofread-agent` /
