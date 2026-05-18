@@ -46,6 +46,69 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.28.0** (2026-05-18): **process-book/author reorchestration +
+  new process-paper skill.** Rewires `process-book` Step 0 and
+  `process-author` Phase 1/2 around the post-0.24.0 search-bin and
+  post-0.25.0 agent contracts, and lifts YEAR_TRIAGE out of skill
+  prose into a structured field in `download-agent`'s output protocol.
+  - `agents/download-agent.md`: `DOWNLOAD_RESULT.per_item` for
+    `kind=book` gains a `year_evidence` sub-object
+    (`slug_year`, `source_years`, `pdf_signals`, `recommended_year`,
+    `recommendation_reason`, `verdict`). Status enum grows
+    `year_mismatch` and `year_ambiguous`; `tmp_path` exposed in those
+    cases. Verdict computation rule codified in the agent prompt:
+    `recommended_year` prefers `pdf.first_published` > multi-source
+    mode > `pdf.copyright_year`; translation books exclude
+    `original_year`; `MATCH` iff `slug_year == recommended_year` and
+    ≥2 corroborating signals. Papers (`kind=paper`) explicitly do
+    not carry `year_evidence` — DOIs are one-to-one, no version
+    ambiguity.
+  - `skills/process-book/SKILL.md`: Step 0 shrinks from ~80-line
+    inline prompt (replicating search→download→finalize chain inside
+    download-agent's prompt) to a thin caller — dispatch
+    download-agent with `{kind: book, items: [1]}`, branch on
+    `item.status`. `ok` → continue to EXTRACT;
+    `year_mismatch`/`year_ambiguous` → report `year_evidence`
+    verbatim to user (user changes slug or manually mv tmp);
+    `download_failed` → fail. No more string-match parsing of agent
+    reply prose. Preamble describing the inline chain rewritten to
+    point at the agent contract.
+  - `skills/process-author/SKILL.md`: Phase 1 replaces single
+    narrative search-agent dispatch with two strict-contract
+    dispatches (`kind=book` + `kind=paper`) writing
+    `.quasi/authors/{slug}/{books,papers}.json`; skill merges into
+    the canonical `manifest.json` shape Phase 2+ already expects.
+    Phase 2 replaces single `mode=both` download-agent dispatch (no
+    longer supported by agent contract since 0.24.0) with two
+    structured dispatches (`kind=book` + `kind=paper`). Batch policy
+    on book year mismatch: do NOT pause — skill overrides agent's
+    "keep as tmp" signal, `mv`s tmp → final under slug-authoritative
+    name, records `year_evidence` + a one-line `year_warning` for
+    end-of-run report. Paper failures (fail-fast, no candidate
+    retry) recorded with `failure_note`. Manifest status enum grows
+    `year_mismatch` and `year_ambiguous`; resume-skip rules updated
+    accordingly. Orchestration diagram updated to show
+    `Phase 2: download-agent × 2`.
+  - `skills/process-paper/SKILL.md` (new): single-paper end-to-end
+    skill — `--doi` (preferred), `--slug` (PDF already in
+    `sources/`), or `--title --author` (fallback). Opt-in
+    `--translate` flag dispatches `translate-agent`. Reuses
+    search-agent, download-agent, analyse-agent type=B, audit-agent,
+    translate-agent with no new agent. No synthesis step;
+    `analyse-agent type=B` already produces the full
+    `vault/papers/{slug}.md` indistinguishable from
+    `process-author` Phase 4 output. Trigger phrases: "处理这篇论文",
+    "process paper", "跑这篇 paper", "summarize this paper".
+  - Spec:
+    `docs/superpowers/specs/2026-05-18-process-book-author-paper-reorchestration-design.md`.
+    Plan:
+    `docs/superpowers/plans/2026-05-18-process-book-author-paper-reorchestration.md`.
+  - No bin changes, no Python changes, no user-disk migration.
+    process-author manifests with `status: acquired` from earlier
+    runs are consumed unchanged; new `status: year_mismatch` /
+    `year_ambiguous` entries are treated as `acquired` by downstream
+    Phase 3+ (file is on disk, just with a year warning attached).
+
 - **0.27.0** (2026-05-18): **local-agent for cndouban backfill +
   douban_cn related-version probe.** Splits "find the Chinese
   translation of this book" out of the audit pipeline into its
