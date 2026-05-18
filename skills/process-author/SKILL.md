@@ -32,7 +32,7 @@ description: >
 ```
 主进程 (dispatcher)
 ├─ Phase 1: search-agent (opus, 前台) → manifest
-├─ Phase 2: download-agent (sonnet, 前台) → 下载
+├─ Phase 2: download-agent (sonnet, 前台) × 2 → kind=book + kind=paper
 ├─ Phase 3: 书籍处理
 │   ├─ 逐本: extract-agent (sonnet, 前台)
 │   ├─ 主进程: 读 manifest → 全部章节
@@ -126,23 +126,89 @@ output_schema:
     }
     write_json(manifest_path, manifest)
 
-# 2. ACQUIRE
+# 2. ACQUIRE — two structured download-agent calls (kind=book + kind=paper),
+# skill merges per-item status + year_evidence back into the manifest.
+# Batch policy: year_mismatch / year_ambiguous books DO NOT pause; skill
+# mv's tmp_path → sources/{slug}.{ext} (slug authoritative) and records
+# year_evidence in manifest.books[i].year_warning for end-of-run report.
 manifest = read_json(manifest_path)
-if any(status == "discovered"):
-    Agent("quasi:download-agent", foreground=True,
-          prompt=f"manifest_path: {manifest_path}, mode: both")
 
-# 2a. DOI liveness (optional, caller-side)
-# If you want to verify every DOI in the manifest resolves, loop:
-# for key, paper in manifest['papers'].items():
-#     doi = paper.get('doi')
-#     if not doi:
-#         continue
-#     rc = subprocess.call(['curl', '-sI', '--max-time', '10',
-#                            f'https://doi.org/{doi}'],
-#                           stdout=subprocess.DEVNULL)
-#     paper['doi_status'] = 'live' if rc == 0 else 'dead'
-# bin 不再提供 batch validate;caller 自行决定 liveness 检查策略。
+# 2a. Books
+discovered_books = [b for b in manifest["books"] if b["status"] == "discovered"]
+if discovered_books:
+    book_result = Agent("quasi:download-agent", foreground=True, prompt=f"""\
+kind: book
+items:
+{format_yaml_list([
+    {"slug": b["slug"],
+     "expected_author": full_name,
+     "expected_title": b["title"]}
+    for b in discovered_books
+])}
+output_dir: sources/
+""")
+    # Merge per_item back into manifest.books. Agent status → manifest status:
+    #   ok → acquired, year_mismatch/year_ambiguous → same name, download_failed → failed.
+    for item in book_result.per_item:
+        i = index_of(manifest["books"], slug=item["slug"])
+        if item["status"] == "ok":
+            manifest["books"][i]["status"] = "acquired"
+        elif item["status"] in ("year_mismatch", "year_ambiguous"):
+            # Override agent's "keep as tmp" — batch mode finalizes anyway,
+            # records the year_evidence for offline review.
+            Bash(f"mv {item['tmp_path']} sources/{item['slug']}." + extension_of(item["tmp_path"]))
+            manifest["books"][i]["status"] = item["status"]
+            manifest["books"][i]["year_evidence"] = item["year_evidence"]
+            manifest["books"][i]["year_warning"] = (
+                f"slug_year={item['year_evidence']['slug_year']} but "
+                f"recommended_year={item['year_evidence']['recommended_year']} "
+                f"({item['year_evidence']['recommendation_reason']}); "
+                f"file finalised under slug — re-run /quasi:process-book {item['slug']} "
+                f"to override if you want recommended_year"
+            )
+        else:  # download_failed
+            manifest["books"][i]["status"] = "failed"
+            manifest["books"][i]["failure_note"] = item.get("verdict_note", "download_failed")
+    write_json(manifest_path, manifest)
+
+# 2b. Papers
+discovered_papers = [p for p in manifest["papers"] if p["status"] == "discovered"]
+if discovered_papers:
+    paper_result = Agent("quasi:download-agent", foreground=True, prompt=f"""\
+kind: paper
+items:
+{format_yaml_list([
+    {"slug": p["slug"],
+     "expected_author": full_name,
+     "expected_title": p["title"],
+     "identifiers": {"doi": p["doi"]}}
+    for p in discovered_papers
+])}
+output_dir: sources/
+""")
+    # Papers: no year_evidence; status is just ok | download_failed.
+    # Fail-fast (download-agent paper flow has no candidate retry — single DOI).
+    for item in paper_result.per_item:
+        i = index_of(manifest["papers"], slug=item["slug"])
+        if item["status"] == "ok":
+            manifest["papers"][i]["status"]     = "acquired"
+            manifest["papers"][i]["local_path"] = item["path"]
+        else:
+            manifest["papers"][i]["status"]       = "failed"
+            manifest["papers"][i]["failure_note"] = item.get("verdict_note", "download_failed")
+    write_json(manifest_path, manifest)
+
+# End-of-acquire summary (printed by skill main process for visibility):
+n_year_warned = sum(1 for b in manifest["books"]
+                    if b["status"] in ("year_mismatch", "year_ambiguous"))
+n_paper_failed = sum(1 for p in manifest["papers"] if p["status"] == "failed")
+if n_year_warned or n_paper_failed:
+    report(f"Acquire summary: {n_year_warned} book year warnings, "
+           f"{n_paper_failed} paper download failures — review {manifest_path}")
+
+# DOI liveness check is opt-in caller responsibility (bin no longer ships
+# batch validate verb). If you want it, loop manifest.papers and
+# `curl -sI --max-time 10 https://doi.org/{doi}` per entry.
 
 # 3. PROCESS BOOKS
 # Phase 2 结束时 download-agent 已对每本书调用 --finalize-book，manifest 中
@@ -269,7 +335,7 @@ for b in acquired_books:
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
 | Phase 1 | `manifest.json` | 存在则跳过 |
-| Phase 2 | manifest `status` | acquired/failed 跳过 |
+| Phase 2 | manifest `status` | acquired / year_mismatch / year_ambiguous / failed 跳过（重跑只处理 discovered） |
 | Phase 3a | `{chapters_dir}/manifest.json` | 存在则跳过提取 |
 | Phase 3b | `ch{NN}-*.md` | 存在则跳过该章 |
 | Phase 3c | `00-overview.md` | 存在则跳过该书 |
