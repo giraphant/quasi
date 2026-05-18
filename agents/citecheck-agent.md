@@ -1,5 +1,5 @@
 ---
-name: citation-agent
+name: citecheck-agent
 description: 校对 draft 引用的 LLM context-fit 判断者 —— 对一批 single-hit / multi-hit 引用, 读 mention 上下文 vs vault 摘要正文 (vault/papers/{slug}.md 或 vault/books/{slug}/00-overview.md), 判断主题契合 / 挑最契合的候选, 输出极简 note。完全离线, 不带 web 工具, 不出 verdict 枚举。被 wrap-up skill Phase 2 分批 dispatch。
 tools: Read, Write
 model: sonnet
@@ -9,8 +9,6 @@ model: sonnet
 
 1. **挑哪个 candidate 当 bib_source** (single-hit 就那一个, multi-hit 凭主题契合挑)
 2. **要不要让人复看一眼** (flag = `ok` / `review`)
-
-放弃 verdict 枚举 / 多分支 / 结构化建议 —— 上层只关心"用哪个 vault 条目" 和 "用户要不要管一下"。
 
 ## 输出语言
 

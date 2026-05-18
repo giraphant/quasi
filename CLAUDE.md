@@ -46,6 +46,26 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.25.2** (2026-05-18): **rename citation-agent → citecheck-agent.**
+  Naming consistency pass: most agents in quasi are verb-form
+  (`search-agent` / `download-agent` / `extract-agent` / `proofread-agent` /
+  `translate-agent` / `audit-agent` / `analyse-agent`); `citation-agent`
+  was a noun-form outlier. Renamed to `citecheck-agent` (compare
+  "spellcheck") to bring it into line.
+  - `agents/citation-agent.md` → `agents/citecheck-agent.md` (`git mv` +
+    frontmatter `name:` update).
+  - Caller / cross-reference updates in `skills/wrap-up/SKILL.md`
+    (Phase 2.2 dispatch + prose), `agents/proofread-agent.md` (cross-ref
+    in 不动清单), `docs/ARCHITECTURE.md` (pattern table + DAG).
+  - Historical references in `CLAUDE.md` Recent Changes entries
+    (0.16 / 0.17 / 0.18 / 0.20 / 0.22 / 0.25.1) and in the committed
+    spec / plan docs are **left intact** — they record what the agent
+    was called at the time.
+  - Caller-visible breaking change: any external invocation
+    `Agent("quasi:citation-agent", ...)` must switch to
+    `Agent("quasi:citecheck-agent", ...)`. All in-tree callers updated
+    in the same commit.
+
 - **0.25.1** (2026-05-18): **citation-agent vault-grounded judgment.**
   Phase 2.2 of `quasi:wrap-up` historically had `citation-agent` judge
   context-fit by reading `biblio.json` metadata fields

@@ -11,7 +11,7 @@ description: >
 
 # Wrap-Up — 文章收尾
 
-一篇 draft 写完后的统一收尾入口。`proofread-agent` 改文字 + `citation-agent` 给引用打 context-fit 标注, 主进程驱动 TUI 走完引用审定, 产出 `decisions.json` + `references.bib`。审完后再触发清理。
+一篇 draft 写完后的统一收尾入口。`proofread-agent` 改文字 + `citecheck-agent` 给引用打 context-fit 标注, 主进程驱动 TUI 走完引用审定, 产出 `decisions.json` + `references.bib`。审完后再触发清理。
 
 ## 调用方式
 
@@ -33,7 +33,7 @@ description: >
 ┌─ Phase 1  PROOFREAD   ─ sonnet 节内多轮 + codex 提议 + 主进程审稿
 ├─ Phase 2  CITATION    ─ 解析 + LLM context-fit + 在线 recover + TUI 审定 + emit .bib
 │   ├─ 2.1 parse + resolve              (deterministic)
-│   ├─ 2.2 citation-agent 批 (single + multi only)  → flag ok/review + picked_slug
+│   ├─ 2.2 citecheck-agent 批 (single + multi only)  → flag ok/review + picked_slug
 │   ├─ 2.3 discover-agent 批 (miss)     → online recovery
 │   ├─ 2.4 TUI 审定 (主进程 AskUserQuestion 循环)    ← 新
 │   └─ 2.5 write decisions.json + emit references.bib
@@ -138,7 +138,7 @@ quasi-helpers citation resolve {ct_dir}/parse.json \
 
 manifest entries 每条带 `status ∈ {single-hit, multi-hit, miss}` 和 `candidates: [{slug, ...}]`。
 
-### 2.2 — citation-agent 批 (single + multi only)
+### 2.2 — citecheck-agent 批 (single + multi only)
 
 主进程**过滤** manifest entries:
 
@@ -150,7 +150,7 @@ batches = chunk(todo, size=8)
 并发 dispatch (cap 4):
 
 ```
-Agent("quasi:citation-agent", background=True,
+Agent("quasi:citecheck-agent", background=True,
       prompt=f"manifest: {ct_dir}/manifest.json\n"
              f"batch_keys: {batch_keys_json}\n"
              f"verdict_out: {ct_dir}/verdicts/batch-{NNN}.json")
@@ -400,7 +400,7 @@ processing/
 │   ├── parse.json
 │   ├── manifest.json
 │   ├── verdicts/
-│   │   ├── batch-001.json     # citation-agent context-fit notes
+│   │   ├── batch-001.json     # citecheck-agent context-fit notes
 │   │   ├── batch-002.json
 │   │   └── recovery-{key}.json # discover-agent online recoveries
 │   └── decisions.json         # ← TUI 收集的最终决策
