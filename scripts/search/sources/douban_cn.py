@@ -417,6 +417,28 @@ def _google_site_subject_search_url(query: str) -> str:
             + urllib.parse.urlencode({"q": f"site:book.douban.com/subject {query} 豆瓣读书"}))
 
 
+def _compact_google_book_query(
+    *,
+    title: str | None = None,
+    author: str | None = None,
+    query: str | None = None,
+    year: int | None = None,
+) -> str:
+    """Build a short Google query for Douban subject discovery."""
+    title_text = re.sub(r"\s+", " ", (title or query or "")).strip()
+    if title_text:
+        main_title = re.split(r"\s*[:：]\s*", title_text, maxsplit=1)[0].strip()
+        if main_title:
+            title_text = main_title
+    title_tokens = title_text.split()[:8]
+    author_text = re.sub(r"\s+", " ", (author or "")).strip()
+    author_tokens = author_text.split()[:4]
+    parts = title_tokens + author_tokens
+    if year:
+        parts.append(str(year))
+    return " ".join(parts)
+
+
 def _subject_url(subject_id: str) -> str:
     return f"https://book.douban.com/subject/{subject_id}/"
 
@@ -570,11 +592,11 @@ def _find_cndouban(*, isbn: Optional[str] = None,
             diagnostics["warnings"].append(f"isbn-direct: {body[:120]}")
 
     if primary_subject is None and (title or author):
-        q = " ".join(filter(None, [
-            title,
-            author,
-            str(year) if year else None,
-        ]))
+        q = _compact_google_book_query(
+            title=title,
+            author=author,
+            year=year,
+        )
         diagnostics["routing"].append("google-site-title-author")
         urls, warnings = _google_site_subject_urls(q, limit=5)
         diagnostics["warnings"].extend(warnings)
@@ -1009,11 +1031,17 @@ def _related_version_search(query: _s.BookQuery, direct_hits: list[dict]) -> lis
             seed_urls.append(_normalise_subject_url(url))
 
     if not seed_urls:
-        q_text = " ".join(filter(None, [query.isbn, query.title, query.author, query.query]))
+        q_text = _compact_google_book_query(
+            title=query.title,
+            author=query.author,
+            query=query.query,
+            year=query.year_from,
+        )
         if q_text:
             seed_urls, _ = _google_site_subject_urls(q_text, limit=query.limit)
-        if not seed_urls and q_text:
-            ok, body = _doko_read(_cn_search_url(q_text))
+        douban_q_text = " ".join(filter(None, [query.isbn, query.title, query.author, query.query]))
+        if not seed_urls and douban_q_text:
+            ok, body = _doko_read(_cn_search_url(douban_q_text))
             if ok:
                 seed_urls = _extract_subject_urls_from_doko(body)[:query.limit]
 

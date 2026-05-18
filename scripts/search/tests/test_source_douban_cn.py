@@ -263,6 +263,16 @@ def test_google_site_subject_urls_never_uses_doko():
     mock_doko.assert_not_called()
 
 
+def test_compact_google_book_query_removes_subtitle_and_newline():
+    q = douban_cn._compact_google_book_query(
+        title="Strange Encounters: Embodied Others in\n         Post-Coloniality",
+        author="Sara Ahmed",
+    )
+    assert q == "Strange Encounters Sara Ahmed"
+    assert "\n" not in q
+    assert "Post-Coloniality" not in q
+
+
 def test_extract_google_subject_urls_decodes_redirects():
     html = '''
     <a href="/url?q=https%3A%2F%2Fbook.douban.com%2Fsubject%2F12345%2F&sa=U">x</a>
@@ -326,6 +336,7 @@ def main():
         test_subject_zh_falls_back_to_related_versions_when_cndouban_empty,
         test_related_version_search_uses_google_seed_before_douban_search,
         test_google_site_subject_urls_never_uses_doko,
+        test_compact_google_book_query_removes_subtitle_and_newline,
         test_extract_google_subject_urls_decodes_redirects,
         test_subject_zh_reports_doko_unavailable_when_no_fallback_result,
         test_parse_doko_references_decodes_link2_subject_url,
