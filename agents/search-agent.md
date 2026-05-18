@@ -76,7 +76,7 @@ bin stdout JSON envelope (`--json` 默认 `--shape=canonical`):
 - **`.results` 已经按 bin 内部 priority 合并完**:不要自己再排字段优先级。`results[0]` 是 best candidate (按 `_sources` 多寡 → ratings.count → cited_by_count 排序)。
 - **`.diagnostics.conflicts` 列出 conflict-prone 字段的多源不一致** (白名单:`year` / `isbn_13` / `publisher` / `page_count` / `authors`)。白名单之外的字段静默合并,不进 conflicts。
 - 默认:用 `results[0]` 的字段值。
-- **如果 caller 是 process-book Step 0 / YEAR_TRIAGE,且 `conflicts` 含 `field == "year"` 条目**:把 `chosen` + `evidence` 全部透传给 caller (写进输出的 `year_evidence` 之类的字段),让 caller 决定接受 default 还是 emit verdict=MISMATCH。不要自己再去重新调 source。
+- **如果 caller 在 `output_schema` 里要 `year_evidence` / `conflicts` 之类字段,且 `conflicts` 含 `field == "year"` 条目**:把 `chosen` + `evidence` 全部透传给 caller,让 caller (典型: download-agent 在做 kind=book 的 year verdict;backfill 工具在做版本核对) 自己决定怎么用。不要自己再去重新调 source。
 - **`results` 为空且 `errors` 全失败** → status=error。`results` 空但 `sources_hit` 部分成功 → status=partial (bin 跑通但没找到)。
 
 ### Step 3: 写盘 (按 `write_policy`)
