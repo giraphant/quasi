@@ -78,10 +78,28 @@ if not exists(f"vault/journals/{journal_name}-synthesis.md"):
                  f"output_path: vault/journals/{journal_name}-synthesis.md, "
                  f"reading_list_path: vault/journals/{journal_name}-reading-list.md, topic: ...")
 
-# Step 6: TYPECHECK
+# Step 6: AUDIT
 # 校验 + 修复本期刊本批次生成的所有论文(papers 都在 vault/journals/{name}/).
-Agent("quasi:audit-agent", foreground=True,
-      prompt=f"path: vault/journals/{journal_name}/\nmode: full")
+audit = Agent("quasi:audit-agent", foreground=True,
+              prompt=f"path: vault/journals/{journal_name}/")
+
+if audit.audit_result.escalated:
+    for item in audit.audit_result.escalated:
+        paper = find_paper_for_output(to_analyze, item.path)
+        if not paper:
+            report(f"audit escalated unknown journal paper path: {item.path}")
+            continue
+        Agent("quasi:analyse-agent", foreground=True,
+              prompt=f"type: B, title: {paper.title}, doi: {paper.doi}, "
+                     f"input: .quasi/temp/journal-pdfs/{journal_name}/{paper.slug}.pdf, "
+                     f"output: {item.path}, topic: ...\n"
+                     f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+
+    audit = Agent("quasi:audit-agent", foreground=True,
+                  prompt=f"path: vault/journals/{journal_name}/")
+    if audit.audit_result.escalated:
+        report("audit still has escalated journal items after one regeneration pass")
+        return
 ```
 
 ## 断点续跑

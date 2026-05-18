@@ -6,11 +6,14 @@ Inlined from scripts/search/douban_direct.py and scripts/search/cndouban.py
 Combines two search paths:
     1. _direct_search_impl  — direct HTTP scraping (no dokobot), from douban_direct.py
     2. _cndouban_works_impl — works-page CJK enumeration via dokobot, from cndouban.py
+    3. related-version probe — search hit → subject page → other versions / works
 
 Path selection (internal, caller doesn't specify):
     - For non-CJK author / general query: primary direct path
     - For CJK author / explicit --subject zh / when direct returns nothing:
       fall back to works-page enumeration
+    - For explicit --subject zh/chinese/cn/translation/cndouban with direct hits:
+      inspect related versions and emit Chinese-like manifestations
 """
 
 from __future__ import annotations
@@ -47,6 +50,35 @@ _DOUBAN_BOOK_URL = "https://book.douban.com/subject/%s/"
 _DOUBAN_BOOK_BASE = "https://book.douban.com/"
 _DOUBAN_BOOK_CAT = "1001"
 _SUBJECT_URL_RE = re.compile(r".*/subject/(\d+)/?")
+_WORKS_URL_RE = re.compile(r"https?://book\.douban\.com/works/(\d+)/?")
+_ANY_SUBJECT_HREF_RE = re.compile(
+    r"""href=["']((?:https?:)?//book\.douban\.com/subject/\d+/?|/subject/\d+/?)["']""",
+    re.IGNORECASE,
+)
+_ANY_WORKS_HREF_RE = re.compile(
+    r"""href=["']((?:https?:)?//book\.douban\.com/works/\d+/?|/works/\d+/?)["']""",
+    re.IGNORECASE,
+)
+_DOKO_REF_RE = re.compile(r"^\s*\[(\d+)\]\s+(\S+)\s*$", re.MULTILINE)
+_DOKO_INLINE_REF_RE = re.compile(r"\[(\d+)\]")
+_DOKO_RATING_RE = re.compile(r"(\d{1,7})\s*人评价")
+_VERSION_SECTION_MARKERS = ("这本书的其他版本", "這本書的其他版本", "其他版本", "同一作品")
+_SECTION_END_MARKERS = (
+    "<h2",
+    "</aside",
+    '<div id="db-rec-section"',
+    '<div class="block5"',
+    '<div class="indent"',
+)
+_DOKO_META_LABELS = (
+    "作者", "译者", "出版社", "出版年", "ISBN",
+    "页数", "装帧", "定价", "丛书", "原作名",
+)
+_ZH_PUBLISHER_HINT_RE = re.compile(
+    r"(出版社|出版|书店|書店|印书馆|印書館|商务|商務|三联|三聯|人民|"
+    r"译林|譯林|中华|中華|中信|上海|北京|浙江|江苏|廣西|广西|"
+    r"台湾|臺灣|香港|聯經|时报|時報|麦田|麥田|遠流|天下|大学|大學|群學)"
+)
 
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -668,6 +700,314 @@ def _cndouban_works_impl(args_namespace) -> dict:
 
 
 # ==================================================================
+# Related-version probe: search hit → subject → other versions / works
+# ==================================================================
+
+def _normalise_subject_url(url: str) -> str:
+    if url.startswith("//"):
+        url = "https:" + url
+    elif url.startswith("/"):
+        url = urllib.parse.urljoin(_DOUBAN_BOOK_BASE, url)
+    m = re.search(r"(https?://book\.douban\.com/subject/\d+)/?", url)
+    return f"{m.group(1)}/" if m else url
+
+
+def _normalise_works_url(url: str) -> str:
+    if url.startswith("//"):
+        url = "https:" + url
+    elif url.startswith("/"):
+        url = urllib.parse.urljoin(_DOUBAN_BOOK_BASE, url)
+    m = re.search(r"(https?://book\.douban\.com/works/\d+)/?", url)
+    return f"{m.group(1)}/" if m else url
+
+
+def _subject_id_from_url(url: str) -> str:
+    m = _SUBJECT_URL_RE.match(_normalise_subject_url(url))
+    return m.group(1) if m else ""
+
+
+def _version_section_snippets(html: str) -> list[str]:
+    snippets = []
+    for marker in _VERSION_SECTION_MARKERS:
+        start = (html or "").find(marker)
+        if start < 0:
+            continue
+        search_from = start + len(marker)
+        end = len(html)
+        for end_marker in _SECTION_END_MARKERS:
+            pos = html.find(end_marker, search_from)
+            if pos > search_from:
+                end = min(end, pos)
+        snippets.append(html[start:end])
+    return snippets
+
+
+def _extract_related_version_urls(html: str, current_url: str | None = None) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    current = _normalise_subject_url(current_url or "")
+    for snippet in _version_section_snippets(html):
+        for m in _ANY_SUBJECT_HREF_RE.finditer(snippet):
+            url = _normalise_subject_url(m.group(1))
+            if not _subject_id_from_url(url):
+                continue
+            if current and url == current:
+                continue
+            if url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
+def _extract_related_works_urls(html: str) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    for snippet in _version_section_snippets(html):
+        for m in _ANY_WORKS_HREF_RE.finditer(snippet):
+            url = _normalise_works_url(m.group(1))
+            if not _WORKS_URL_RE.search(url):
+                continue
+            if url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
+def _decode_douban_url(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.netloc == "www.douban.com" and parsed.path.startswith("/link2/"):
+        params = dict(urllib.parse.parse_qsl(parsed.query))
+        return urllib.parse.unquote(params.get("url", "")) or url
+    return url
+
+
+def _parse_doko_references(body: str) -> dict[str, str]:
+    return {m.group(1): _decode_douban_url(m.group(2)) for m in _DOKO_REF_RE.finditer(body or "")}
+
+
+def _doko_version_windows(body: str) -> list[str]:
+    windows = []
+    for marker in _VERSION_SECTION_MARKERS:
+        start = (body or "").find(marker)
+        if start < 0:
+            continue
+        window = body[start:start + 3000]
+        sep = window.find("\n---", len(marker))
+        if sep > 0:
+            window = window[:sep]
+        windows.append(window)
+    return windows
+
+
+def _extract_related_version_urls_from_doko(body: str, current_url: str | None = None) -> list[str]:
+    refs = _parse_doko_references(body)
+    urls: list[str] = []
+    seen: set[str] = set()
+    current = _normalise_subject_url(current_url or "")
+    for window in _doko_version_windows(body):
+        for ref_id in _DOKO_INLINE_REF_RE.findall(window):
+            url = _normalise_subject_url(refs.get(ref_id, ""))
+            if not _subject_id_from_url(url):
+                continue
+            if current and url == current:
+                continue
+            if url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
+def _extract_related_works_urls_from_doko(body: str) -> list[str]:
+    refs = _parse_doko_references(body)
+    urls: list[str] = []
+    seen: set[str] = set()
+    for window in _doko_version_windows(body):
+        for ref_id in _DOKO_INLINE_REF_RE.findall(window):
+            url = _normalise_works_url(refs.get(ref_id, ""))
+            if not _WORKS_URL_RE.search(url):
+                continue
+            if url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
+def _extract_subject_urls_anywhere(html: str, current_url: str | None = None) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    current = _normalise_subject_url(current_url or "")
+    for m in _ANY_SUBJECT_HREF_RE.finditer(html or ""):
+        url = _normalise_subject_url(m.group(1))
+        if not _subject_id_from_url(url):
+            continue
+        if current and url == current:
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+    return urls
+
+
+def _extract_subject_urls_from_doko(body: str, current_url: str | None = None) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    current = _normalise_subject_url(current_url or "")
+    for url in _parse_doko_references(body).values():
+        url = _normalise_subject_url(url)
+        if not _subject_id_from_url(url):
+            continue
+        if current and url == current:
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+    return urls
+
+
+def _grab_doko_meta(body: str, label: str) -> str:
+    label_alt = "|".join(re.escape(item) for item in _DOKO_META_LABELS)
+    pattern = rf"{re.escape(label)}\s*[:：]\s*(.*?)(?=(?:{label_alt})\s*[:：]|\n|$)"
+    m = re.search(pattern, body or "", re.DOTALL)
+    if not m:
+        return ""
+    value = re.sub(r"\[\d+\]", "", m.group(1))
+    value = re.sub(r"\s+", " ", value).strip()
+    return value.strip("/")
+
+
+def _parse_doko_subject_page(body: str, url: str) -> dict | None:
+    title = ""
+    m = re.search(r"^#\s+(.+?)\s+\(豆瓣\)\s*$", body or "", re.MULTILINE)
+    if m:
+        title = m.group(1).strip()
+    if not title:
+        m = re.search(r"\*\*(.+?)\*\*", body or "")
+        if m:
+            title = m.group(1).strip()
+    if not title:
+        return None
+
+    author = _grab_doko_meta(body, "作者")
+    translator = _grab_doko_meta(body, "译者")
+    publisher = _grab_doko_meta(body, "出版社")
+    year_str = _grab_doko_meta(body, "出版年")
+    isbn = _grab_doko_meta(body, "ISBN")
+    isbn_clean = re.sub(r"[^0-9X]", "", (isbn or "").upper())
+    original_title = _grab_doko_meta(body, "原作名")
+    ratings_m = _DOKO_RATING_RE.search(body or "")
+
+    return {
+        "title": title,
+        "authors": [author] if author else [],
+        "translators": [translator] if translator else [],
+        "publisher": publisher or "",
+        "year": int(year_str[:4]) if year_str[:4].isdigit() else None,
+        "isbn_13": isbn_clean if len(isbn_clean) == 13 else None,
+        "isbn_10": isbn_clean if len(isbn_clean) == 10 else None,
+        "ratings_count": int(ratings_m.group(1)) if ratings_m else 0,
+        "douban_subject_id": _subject_id_from_url(url),
+        "douban_url": _normalise_subject_url(url),
+        "original_title": original_title or "",
+    }
+
+
+def _is_chinese_like_record(raw: dict) -> bool:
+    title = raw.get("title") or ""
+    publisher = raw.get("publisher") or ""
+    translators = " ".join(raw.get("translators") or ([raw.get("translator")] if raw.get("translator") else []))
+    authors = " ".join(raw.get("authors") or ([raw.get("author")] if raw.get("author") else []))
+    if _ZH_PUBLISHER_HINT_RE.search(publisher):
+        return True
+    if translators and _has_cjk(translators):
+        return True
+    return _has_cjk(title) and (_has_cjk(publisher) or _has_cjk(authors))
+
+
+def _fetch_works_subject_urls(
+    works_url: str,
+    *,
+    current_url: str | None = None,
+) -> list[str]:
+    ok, body = _dd_fetch(works_url)
+    if ok and not _is_blocked(body):
+        return _extract_subject_urls_anywhere(body, current_url=current_url)
+    ok, body = _doko_read(works_url)
+    if ok:
+        return _extract_subject_urls_from_doko(body, current_url=current_url)
+    return []
+
+
+def _fetch_subject_for_related(url: str) -> tuple[dict | None, list[str], list[str]]:
+    ok, body = _dd_fetch(url)
+    if ok and not _is_blocked(body):
+        return (
+            _parse_dd_subject_page(body, url),
+            _extract_related_version_urls(body, current_url=url),
+            _extract_related_works_urls(body),
+        )
+
+    ok, body = _doko_read(url)
+    if ok:
+        return (
+            _parse_doko_subject_page(body, url),
+            _extract_related_version_urls_from_doko(body, current_url=url),
+            _extract_related_works_urls_from_doko(body),
+        )
+    return None, [], []
+
+
+def _related_version_search(query: _s.BookQuery, direct_hits: list[dict]) -> list[dict]:
+    seed_urls = []
+    for hit in direct_hits:
+        url = hit.get("douban_url") or hit.get("preview_link")
+        if url and _subject_id_from_url(url):
+            seed_urls.append(_normalise_subject_url(url))
+
+    if not seed_urls:
+        q_text = " ".join(filter(None, [query.isbn, query.title, query.author, query.query]))
+        if q_text:
+            ok, body = _doko_read(_cn_search_url(q_text))
+            if ok:
+                seed_urls = _extract_subject_urls_from_doko(body)[:query.limit]
+
+    related_urls: list[str] = []
+    seen_urls: set[str] = set(seed_urls)
+    for seed_url in seed_urls[:query.limit]:
+        _, seed_related, works_urls = _fetch_subject_for_related(seed_url)
+        for url in seed_related:
+            if url not in seen_urls:
+                seen_urls.add(url)
+                related_urls.append(url)
+        for works_url in works_urls:
+            for url in _fetch_works_subject_urls(works_url, current_url=seed_url):
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    related_urls.append(url)
+
+    out: list[dict] = []
+    seen_ids: set[str] = set()
+    for url in related_urls:
+        raw, _, _ = _fetch_subject_for_related(url)
+        if not raw or not _is_chinese_like_record(raw):
+            continue
+        sid = raw.get("douban_subject_id") or raw.get("douban_id") or _subject_id_from_url(url)
+        if sid in seen_ids:
+            continue
+        seen_ids.add(sid)
+        out.append(raw)
+        if len(out) >= query.limit:
+            break
+    out.sort(key=lambda r: r.get("ratings_count") or 0, reverse=True)
+    return out
+
+
+# ==================================================================
 # Adapter glue: normalise + search wrappers
 # ==================================================================
 
@@ -677,6 +1017,7 @@ def _has_cjk_str(s: str | None) -> bool:
 
 def _normalise(raw: dict) -> dict:
     b = _s.BookRecord().to_dict()
+    isbn = re.sub(r"[^0-9X]", "", (raw.get("isbn") or "").upper()) or None
     b["title"]          = raw.get("title", "") or ""
     b["authors"]        = raw.get("authors") or ([raw.get("author")] if raw.get("author") else [])
     b["translators"]    = ([raw.get("translator")] if raw.get("translator") else []) \
@@ -684,8 +1025,8 @@ def _normalise(raw: dict) -> dict:
     b["original_title"] = raw.get("original_title", "") or ""
     b["year"]           = raw.get("year")
     b["publisher"]      = raw.get("publisher", "") or ""
-    b["isbn_13"]        = raw.get("isbn") if (raw.get("isbn") and len(raw["isbn"]) == 13) else None
-    b["isbn_10"]        = raw.get("isbn") if (raw.get("isbn") and len(raw["isbn"]) == 10) else None
+    b["isbn_13"]        = raw.get("isbn_13") or (isbn if isbn and len(isbn) == 13 else None)
+    b["isbn_10"]        = raw.get("isbn_10") or (isbn if isbn and len(isbn) == 10 else None)
     b["language"]       = "zh"
     b["ratings"]        = {"count": raw.get("ratings_count"),
                            "average": raw.get("douban_rating")}
@@ -723,16 +1064,25 @@ def _cndouban_works_page(query: _s.BookQuery) -> list[dict]:
         return []
 
 
+def _wants_chinese_versions(query: _s.BookQuery) -> bool:
+    return (query.subject or "").lower() in {
+        "zh", "cn", "chinese", "translation", "translations", "cndouban",
+    }
+
+
 def search_book(query: _s.BookQuery) -> _s.AdapterResult:
     if not any([query.isbn, query.title, query.author, query.query, query.subject]):
         return _s.AdapterResult(source=SOURCE_ID, success=False, error="No query")
     # Primary path
     direct = _direct_search(query)
     works = []
-    # Fallback when primary empty AND we have CJK author or subject 'zh'
-    if not direct and (_has_cjk_str(query.author) or (query.subject or "").lower() in ("zh", "chinese")):
+    # Explicit Chinese-translation lookup: inspect related versions for direct hits.
+    if direct and _wants_chinese_versions(query):
+        works = _related_version_search(query, direct)
+    # Fallback when primary empty AND we have CJK author or explicit Chinese subject.
+    if not works and not direct and (_has_cjk_str(query.author) or _wants_chinese_versions(query)):
         works = _cndouban_works_page(query)
-    all_raw = direct + works
+    all_raw = works if _wants_chinese_versions(query) and works else direct + works
     if not all_raw:
         return _s.AdapterResult(source=SOURCE_ID, success=True, entries=[])
     return _s.AdapterResult(source=SOURCE_ID, success=True,

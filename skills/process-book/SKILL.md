@@ -45,7 +45,8 @@ description: >
 ├─ Step 2: 主进程读 manifest.json → 筛选章节
 ├─ Step 3: analyse-agent ×N (opus, 后台并行) → Glob 轮询
 ├─ Step 4: synthesis-agent(mode=book) (opus, 前台)
-└─ Step 5: audit-agent (sonnet, 前台) → 校验
+├─ Step 5: audit-agent (sonnet, 前台) → 校验
+└─ Step 6: local-agent (sonnet, 前台) → 中译本 metadata 回填
 ```
 
 ## 执行流程
@@ -214,7 +215,13 @@ if audit.audit_result.escalated:
         report("audit still has escalated items after one regeneration pass; hand off to user")
         return
 
-print(f"Done: {len(selected)} chapters, overview generated, typechecked")
+# Step 6: LOCALISE
+# 只回填中译本 / 中文版本 metadata:cndouban + .quasi/audit/translations.json。
+# local-agent 幂等:已有 cndouban: [] 或 [..] 会跳过。
+Agent("quasi:local-agent", foreground=True,
+      prompt=f"path: {output_dir}\nmode: cndouban")
+
+print(f"Done: {len(selected)} chapters, overview generated, typechecked, localised")
 ```
 
 ## 断点续跑
@@ -226,6 +233,7 @@ print(f"Done: {len(selected)} chapters, overview generated, typechecked")
 | Step 3 | `ch{slot}-*.md` | 存在则跳过该章 |
 | Step 4 | `00-overview.md` | 存在则跳过 |
 | Step 5 | 无 —— 幂等,可重复跑 | 上次 audit clean 时几乎无成本 |
+| Step 6 | frontmatter `cndouban` | 已有 `[]` 或 `[id]` 则 local-agent 跳过 |
 
 ## 目录结构
 

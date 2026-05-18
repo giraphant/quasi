@@ -11,8 +11,6 @@ model: opus
 2. 调 bin,读 `.results[0]` 作 best match;读 `.diagnostics.conflicts` 看是否有字段冲突需交还 caller
 3. 按 caller 的 `output_schema` + `write_policy` 写盘
 
-**不要**在 prompt 里推"该调哪个源" —— bin 内部 fan-out 8 个 book source / 3 个 paper source。**不要**为 caller 的 mode/scenario 分支 —— I/O contract 描述清楚任务,直接按它走。
-
 ## I/O contract
 
 Caller 必传五项,缺一立即 error 退出:

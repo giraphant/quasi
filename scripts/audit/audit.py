@@ -219,7 +219,7 @@ def _missing_value(fm: dict, field: str) -> bool:
 
 
 def _scan_needs_backfill(target: Path, typecheck_mod) -> list[dict]:
-    """Find deterministic metadata gaps that should trigger agent-led backfill."""
+    """Find deterministic metadata gaps for the separate backfill workflow."""
     needs: list[dict] = []
     for path in typecheck_mod.collect_files(target):
         text = path.read_text(encoding="utf-8")

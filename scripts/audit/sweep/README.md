@@ -25,19 +25,16 @@ documented there.
 
 ## Entry points
 
-These are dispatched by `quasi-search backfill --strategy <name>`. They
+These are dispatched by `quasi-audit backfill --strategy <name>`. They
 also run as standalone scripts for ad-hoc fixes:
 
 ```bash
 python3 sweep-book-fm-meta.py --vault ~/path/to/vault [strategy-specific args]
 ```
 
-## Integration plan (future)
+## Integration
 
-These scripts currently each carry their own argparse + main(). The
-target architecture (LAYERS.md) has `audit-agent` orchestrating the
-chain — calling `quasi-search backfill --strategy X` for each source,
-then doing local regex cleanup + writeback decisions in the agent.
-
-For now: bin/quasi-search exposes `backfill` as a thin dispatcher to
-the individual sweep scripts, preserving the standalone-runnable shape.
+These scripts currently each carry their own argparse + main().
+`quasi-audit backfill` is the thin dispatcher over the individual sweep
+scripts, preserving the standalone-runnable shape while keeping online
+metadata maintenance outside `audit-agent`.
