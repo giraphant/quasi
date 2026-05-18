@@ -46,6 +46,61 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.27.0** (2026-05-18): **local-agent for cndouban backfill +
+  douban_cn related-version probe.** Splits "find the Chinese
+  translation of this book" out of the audit pipeline into its
+  own narrow-scope agent, and gives the douban_cn source the
+  capability to surface translations from a direct hit's other-versions
+  block.
+  - `agents/local-agent.md` (new): the only agent in quasi whose
+    job is filling `cndouban: [...]` onto book frontmatter and
+    maintaining `.quasi/audit/translations.json`. Reads
+    `quasi-audit run --mode check --json`, filters
+    `needs_backfill[]` to `type=book` + `missing=cndouban`, calls
+    `quasi-search book --subject cndouban`, writes back. Idempotent
+    on already-localised records (even `cndouban: []` is treated
+    as "user already decided no Chinese edition exists" and
+    skipped).
+  - `scripts/search/sources/douban_cn.py`: new related-version
+    probe path. When the caller passes `--subject
+    zh/chinese/cn/translation/cndouban` **and** the direct search
+    returns a hit, the source walks the subject page's `其他版本`
+    / `同一作品` block and emits Chinese-like manifestations. Hint
+    regex covers mainland presses (人民/三联/商务/译林/中信...)
+    plus HK/TW patterns (聯經/時報/麥田/遠流/天下/印書館). Subject
+    URL + works URL both normalised against `book.douban.com`.
+    Pure addition — non-`zh` queries are unchanged; CJK-author
+    fallback to works-page enumeration still triggers when direct
+    returns empty.
+  - `skills/process-book/SKILL.md`: new Step 6 LOCALISE, dispatched
+    foreground after audit. Resume table documents the
+    "frontmatter already has `cndouban` ⇒ skip" idempotency.
+  - `skills/process-journal/SKILL.md`: Step 6 grows the same
+    audit-escalation loop that `process-book` has had — items the
+    audit escalates get one regeneration pass via `analyse-agent`
+    (type B for journal papers), then re-audit; if still escalated,
+    report and bail. Brings the two skills into structural parity.
+  - `scripts/audit/audit.py` + `scripts/audit/sweep/README.md`:
+    docstring/prose updates reflecting that online metadata
+    backfill is its own workflow, not orchestrated by `audit-agent`.
+    Sweep README's "Integration plan (future)" section is now
+    just "Integration" — `quasi-audit backfill` is the actual
+    dispatcher.
+  - `agents/search-agent.md`: drop one redundant "不要在 prompt 里
+    推该调哪个源" paragraph — the I/O contract already covers this.
+  - `tests/test_douban_cn_en2zh.py` (new): end-to-end mock-driven
+    test for the English-title → Chinese-translation pipeline.
+    `test_source_douban_cn.py` grows a case proving the
+    related-version probe fires when `--subject zh` and direct hits
+    exist, and stays out of the way otherwise.
+  - `docs/`: delete four stale design docs —
+    `ADR-002-capability-layering.md`, `LAYERS.md`,
+    `EXPERIENCE-vault-metadata-backfill.md`,
+    `processing-schema.md`. The layered architecture they
+    described was simplified away in 0.18.0; keeping them around
+    misled both humans and Claude Code sessions opened in the
+    source tree.
+
 - **0.26.0** (2026-05-18): **artifact path discipline.** Sharpens the
   `processing/` vs `.quasi/` split on "would the user ever open this
   file?" Everything plumbing-shaped — manifests, indices, audit state,
