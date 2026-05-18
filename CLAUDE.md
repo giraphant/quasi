@@ -46,6 +46,32 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.25.1** (2026-05-18): **citation-agent vault-grounded judgment.**
+  Phase 2.2 of `quasi:wrap-up` historically had `citation-agent` judge
+  context-fit by reading `biblio.json` metadata fields
+  (`title / journal / themes / publisher`) plus LLM prior knowledge.
+  That meant judgments for obscure / non-English / idiosyncratically-read
+  works degraded into hallucination. Re-grounded:
+  - `agents/citation-agent.md` rewritten so each candidate is judged by
+    reading the user's actual vault summary file (`vault/papers/{slug}.md`
+    or `vault/books/{slug}/00-overview.md`) via `candidate.path` — already
+    present in manifest since 0.17.0. New "严禁仅凭 title / publisher /
+    LLM 先验知识判断" guard in the judgment guidance.
+  - `biblio.json` dropped from the agent's input contract.
+    `skills/wrap-up/SKILL.md` Phase 2.2 dispatch no longer passes
+    `biblio:` to the agent. `biblio.json` is still produced upstream and
+    consumed by `resolve.py` (for manifest building) and `emit_bib.py`
+    (for the final .bib) — those uses are unchanged.
+  - No Python script changes. `path` field on candidate was already
+    propagated from `biblio.py:230` → `resolve.py:101` since the 0.17.0
+    citation refactor; this release just starts using it.
+  - Token cost: net byte volume to the agent goes **down** (drops a
+    whole-vault frontmatter index, picks up a handful of scoped summary
+    reads per batch). Main-process context unaffected — same prompt
+    shape with one fewer path.
+  - Spec: `docs/superpowers/specs/2026-05-18-citation-agent-vault-grounded-judgment-design.md`.
+    Plan: `docs/superpowers/plans/2026-05-18-citation-agent-vault-grounded-judgment.md`.
+
 - **0.25.0** (2026-05-18): **agent surface cleanup post-search-refactor.**
   Lands the long-lived `quasi-arch-refactor` branch into main and tidies
   the agent file naming after 0.24.0's atomic search-bin cutover.
