@@ -68,6 +68,8 @@ else:
 
 按节切 → sonnet 节内多轮迭代到收敛 → codex 跨模型兜底。**改动直接累积在 draft 末尾的 `<!-- proofread:start -->...<!-- proofread:end -->` 块**。
 
+设 `pf_dir = .quasi/proofread/{draft-stem}/`。
+
 **Stage A — sonnet 节串行 + 节内多轮迭代**:
 
 1. `quasi-helpers proofread split <draft> -o {pf_dir}/sections.json` — 按 H2/H3 切节
@@ -387,14 +389,16 @@ quasi-helpers citation emit-bib {ct_dir}/manifest.json \
 
 - **触发词**: 用户说 "审完了" / "清理记录块" / "删掉校对记录" / "cleanup" / "proofread 收尾"
 - **执行**: `quasi-helpers proofread cleanup <draft-or-dir>` — 从每个 markdown 文件删除整个 `<!-- proofread:start -->...<!-- proofread:end -->` 块
-- **执行后**(可选): `rm -rf processing/proofread/{stem}/` 清掉 split 产物
+- **执行后**: `rm -rf .quasi/proofread/{stem}/` 清掉 split 产物
 
 ## 中间 / 终产物
 
 ```
+.quasi/
+└── proofread/{stem}/
+    └── sections.json
+
 processing/
-├── proofread/{stem}/
-│   └── sections.json
 ├── citation/{stem}/
 │   ├── biblio.json
 │   ├── parse.json
