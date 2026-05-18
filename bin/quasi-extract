@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# quasi-extract — file → MD pipeline (EPUB / OCR / split-by-TOC).
+#
+# Subcommands:
+#   quasi-extract epub  SOURCE_EPUB CHAPTERS_DIR
+#       Extract chapter-level plain text from an EPUB.
+#
+#   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE]
+#       OCR a scanned PDF into a searchable PDF.
+#
+#   quasi-extract split INPUT.pdf --output-dir DIR [--max-chapters N | --chapters JSON | --pages RANGE --title T]
+#       Split a PDF into per-chapter files.
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
+PYTHON="$DATA_DIR/.venv/bin/python"
+
+[ -x "$PYTHON" ] || "$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
+
+if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    exec "$PYTHON" "$PLUGIN_ROOT/scripts/extract/extract.py" "$@"
+fi
+
+SUBCMD="$1"
+shift
+
+case "$SUBCMD" in
+    epub)
+        exec "$PYTHON" "$PLUGIN_ROOT/scripts/extract/process_epub.py" "$@"
+        ;;
+    ocr)
+        exec bash "$PLUGIN_ROOT/scripts/extract/ocr_pdf.sh" "$@"
+        ;;
+    split)
+        exec "$PYTHON" "$PLUGIN_ROOT/scripts/extract/split_chapters.py" "$@"
+        ;;
+    *)
+        echo "quasi-extract: unknown subcommand: $SUBCMD" >&2
+        echo "valid subcommands: epub | ocr | split" >&2
+        exit 2
+        ;;
+esac

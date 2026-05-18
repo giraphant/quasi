@@ -65,6 +65,27 @@ table.main tbody tr.row td{padding:7px 10px;vertical-align:middle}
 .dec-btn.ok.active{background:#1d6b3a;color:#fff}
 .dec-btn.no.active{background:#8a1010;color:#fff}
 .dec-btn.pd.active{background:#888;color:#fff}
+.action-grp{display:inline-flex;border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#fff;white-space:nowrap}
+.act-btn{background:#fff;border:0;padding:4px 11px;cursor:pointer;font-size:12.5px;color:#888;font-family:inherit;border-right:1px solid #eee;font-weight:600}
+.act-btn:last-child{border-right:0}
+.act-btn:hover{background:#fafafa;color:#333}
+.act-btn.act-yes.active{background:#1d6b3a;color:#fff}
+.act-btn.act-no.active{background:#888;color:#fff}
+.action-badge{display:inline-block;padding:3px 10px;border-radius:14px;font-size:11.5px;white-space:nowrap}
+.action-ok{background:#e7f5ec;color:#1d6b3a}
+.action-pending{background:#eee;color:#888}
+.action-multi{background:#e5f0ff;color:#0a4a6e;font-size:11px}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;padding:8px 0;margin-top:6px;border-bottom:1px solid #e0e0e0}
+.tab-btn{background:#f0f0f0;border:1px solid #ddd;padding:5px 12px;border-radius:14px;cursor:pointer;font-family:inherit;font-size:12.5px;color:#555}
+.tab-btn:hover{background:#e8e8e8}
+.tab-btn.active{background:#1a4f8a;color:#fff;border-color:#1a4f8a}
+.tab-btn .count{background:rgba(255,255,255,0.3);padding:1px 7px;border-radius:10px;margin-left:5px;font-size:11px;color:inherit}
+.tab-btn:not(.active) .count{background:#fff;color:#777}
+.apply-bar{background:#fff;border:2px solid #1d6b3a;border-radius:6px;padding:14px 18px;margin:16px 0;font-size:13px}
+.apply-bar h3{margin:0 0 8px;color:#1d6b3a;font-size:14px}
+.apply-bar code{background:#f3f7f4;padding:2px 7px;border-radius:3px;font-size:12px;color:#333}
+.apply-bar button.execute{background:#1d6b3a;color:#fff;border:0;padding:8px 18px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;margin-right:8px}
+.apply-bar button.execute:hover{background:#155028}
 .detail-row td{font-size:13px;line-height:1.7}
 table.dtable{width:100%;border-collapse:collapse;margin:8px 0;font-size:12.5px}
 table.dtable th{background:#fff;color:#666;text-align:left;padding:4px 8px;font-weight:600;border-bottom:1px solid #ddd;font-size:11.5px}
@@ -87,6 +108,9 @@ label.bib-opt input{cursor:pointer;margin-top:3px}
 .propose-draft h4{color:#7a5a00;margin:0 0 6px;font-size:13px}
 .propose-hint{background:#eef6ff;border-color:#a8c8e8}
 .propose-hint h4{color:#1a4f8a;margin:0 0 6px;font-size:13px}
+.propose-recovery{background:#f5efff;border-color:#c8b0e8}
+.propose-recovery h4{color:#5a1080;margin:0 0 6px;font-size:13px}
+.propose-recovery code{background:rgba(90,16,128,0.08);padding:1px 5px;border-radius:3px;font-size:12px}
 """
 
 
@@ -119,10 +143,19 @@ STATUS_LABEL = {
 # ---- merge verdicts ----------------------------------------------------------
 
 def _load_verdicts(verdicts_dir: Path | None) -> dict[str, dict]:
-    """Read all batch-*.json files; return {key: verdict_dict}."""
+    """Read all batch-*.json and recovery-*.json files in verdicts_dir.
+
+    batch-*.json: citation-agent offline verdicts (Phase 2)
+    recovery-*.json: discover-agent online recovery for missing entries (Phase 2.5)
+
+    Merge shape: {key: verdict_dict} where verdict_dict may also include
+    an "online_recovery" field if Phase 2.5 ran for that key.
+    """
     out: dict[str, dict] = {}
     if not verdicts_dir or not verdicts_dir.is_dir():
         return out
+
+    # Phase 2: offline citation-agent verdicts
     for f in sorted(verdicts_dir.glob("batch-*.json")):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
@@ -132,6 +165,31 @@ def _load_verdicts(verdicts_dir: Path | None) -> dict[str, dict]:
             continue
         for v in data.get("verdicts", []):
             out[v["key"]] = v
+
+    # Phase 2.5: online discover-agent recovery (overlays online_recovery field)
+    for f in sorted(verdicts_dir.glob("recovery-*.json")):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            print(f"warn: {f.name} broken JSON ({e.msg} at line {e.lineno})",
+                  file=sys.stderr)
+            continue
+        key = data.get("key")
+        if not key:
+            continue
+        recovery = data.get("online_recovery")
+        if recovery is None:
+            continue
+        if key in out:
+            out[key]["online_recovery"] = recovery
+        else:
+            # No batch verdict but recovery exists — synthesize a minimal verdict.
+            out[key] = {
+                "key": key,
+                "verdict": "missing-from-vault",
+                "confidence": "medium",
+                "online_recovery": recovery,
+            }
     return out
 
 
@@ -270,6 +328,72 @@ def _propose_block_hint(verdict: dict | None) -> str:
     return "".join(parts)
 
 
+def _propose_block_recovery(verdict: dict | None) -> str:
+    """For missing-from-vault: Phase 2.5 discover-agent online recovery result."""
+    if not verdict:
+        return ""
+    recovery = verdict.get("online_recovery") or {}
+    if not recovery:
+        return ""
+
+    confidence = recovery.get("confidence", "unknown")
+    if confidence == "miss":
+        searched = ", ".join(recovery.get("searched") or [])
+        notes = _esc(recovery.get("notes") or "")
+        return ('<div class="propose-block propose-recovery" '
+                'style="border-color:#caa">'
+                '<h4>🔍 在线 recover — <span style="color:#a00">未找到</span></h4>'
+                f'<div style="color:#666">已查 {_esc(searched)}。{notes}</div>'
+                '</div>')
+
+    conf_color = {"high": "#1d6b3a", "medium": "#7a5a00", "low": "#8a4500"}.get(
+        confidence, "#666")
+    title = _esc(recovery.get("title") or "")
+    author = _esc(recovery.get("author") or "")
+    year = _esc(str(recovery.get("year") or ""))
+    publisher = _esc(recovery.get("publisher") or "")
+    isbn = _esc(recovery.get("isbn") or "")
+    doi = _esc(recovery.get("doi") or "")
+    sources = ", ".join(recovery.get("sources") or [])
+    cmd = recovery.get("process_book_cmd") or ""
+
+    bits = []
+    if title:
+        bits.append(f'<div><b>{title}</b></div>')
+    meta_bits = []
+    if author:
+        meta_bits.append(author)
+    if year:
+        meta_bits.append(year)
+    if publisher:
+        meta_bits.append(publisher)
+    if meta_bits:
+        bits.append(f'<div style="color:#666;font-size:12.5px">'
+                    f'{_esc(" · ".join(meta_bits))}</div>')
+    id_bits = []
+    if isbn:
+        id_bits.append(f'ISBN {isbn}')
+    if doi:
+        id_bits.append(f'DOI {doi}')
+    if id_bits:
+        bits.append(f'<div style="color:#888;font-size:11.5px;margin-top:2px">'
+                    f'{_esc(" · ".join(id_bits))}</div>')
+    if cmd:
+        bits.append(f'<div style="margin-top:6px"><b>建议:</b> '
+                    f'<code>{_esc(cmd)}</code></div>')
+
+    return (
+        f'<div class="propose-block propose-recovery">'
+        f'<h4>🔍 在线 recover '
+        f'<span style="color:{conf_color};font-weight:600">'
+        f'[{confidence} confidence]</span> '
+        f'<span style="color:#888;font-size:11.5px">来源: {_esc(sources)}</span>'
+        f'</h4>'
+        + "".join(bits) +
+        '</div>'
+    )
+
+
 def _candidates_table(entry: dict) -> str:
     cands = entry.get("candidates") or []
     if not cands:
@@ -339,7 +463,7 @@ def _row_html(entry: dict, verdict: dict | None) -> str:
         f'<td class="cell-ctx"><span style="color:#aaa">L{_esc(line)}</span> '
         f'<span style="color:#666">{_esc(context)}</span></td>',
         '<td>',
-        _decision_group(key, default_dec),
+        _action_widget(key, display_status, verdict),
         '</td>',
         f'<td class="cell-note"><input type="text" class="user-note" '
         f'data-key="{_esc(key)}" placeholder="…"></td>',
@@ -362,6 +486,7 @@ def _row_html(entry: dict, verdict: dict | None) -> str:
     detail.append(_candidates_table(entry))
     detail.append(_propose_block_draft(verdict))
     detail.append(_propose_block_hint(verdict))
+    detail.append(_propose_block_recovery(verdict))
 
     if verdict and verdict.get("rationale"):
         detail.append(
@@ -376,6 +501,8 @@ def _row_html(entry: dict, verdict: dict | None) -> str:
 
 
 def _decision_group(key: str, default: str) -> str:
+    """Legacy 3-state widget (kept for 全部 view compatibility). Most tabs
+    use _action_widget() below to render dimension-specific actions."""
     return (
         f'<div class="dec-grp" data-decision="accept" '
         f'data-key="{_esc(key)}" data-default="{default}">'
@@ -383,6 +510,97 @@ def _decision_group(key: str, default: str) -> str:
         f'<button class="dec-btn no" data-val="keep" title="拒绝">✗</button>'
         f'<button class="dec-btn pd" data-val="pending" title="待定">?</button>'
         f'</div>')
+
+
+# ---- per-dimension action widgets -------------------------------------------
+#
+# Each dimension (display_status) has its own action set with its own
+# side-effect target:
+#
+#   dim                  → action values        side-effect target
+#   ok                   → (read-only badge)    none
+#   context-mismatch     → apply | keep         draft text (rewrite)
+#   maybe-vault-typo     → rename | skip        vault filesystem (mv)
+#   missing-from-vault   → todo | skip          vault-todo.md
+#   multi-hit            → pick {slug}          bib output (which entry)
+#   pending              → (read-only badge)    none (agent not run yet)
+#
+# JS export groups these into 4 decision buckets:
+#   draft_rewrites   (from context-mismatch where action=apply)
+#   vault_renames    (from maybe-vault-typo where action=rename)
+#   vault_todo       (from missing-from-vault where action=todo)
+#   multi_hit_picks  (from multi-hit, picked slug)
+
+ACTION_DIMS = {
+    "context-mismatch":   "draft_rewrite",
+    "maybe-vault-typo":   "vault_rename",
+    "missing-from-vault": "vault_todo",
+    "multi-hit":          "multi_pick",
+}
+
+
+def _action_widget(key: str, display_status: str, verdict: dict | None) -> str:
+    """Render the per-row decision widget based on dimension."""
+    dim = ACTION_DIMS.get(display_status)
+
+    if display_status == "ok":
+        return ('<span class="action-badge action-ok" '
+                'data-key="{k}" data-dim="ok" data-action="approved">'
+                '✓ 通过</span>').format(k=_esc(key))
+
+    if display_status == "pending":
+        return ('<span class="action-badge action-pending" '
+                'data-key="{k}" data-dim="pending" data-action="pending">'
+                '⏳ 等 agent</span>').format(k=_esc(key))
+
+    if display_status == "context-mismatch":
+        # default: apply suggested rewrite
+        return _two_button_widget(key, dim, "draft_rewrite",
+                                  "✓ 应用", "draft_rewrite",
+                                  "✗ 保留原引", "skip",
+                                  default="draft_rewrite")
+
+    if display_status == "maybe-vault-typo":
+        # default: skip (rename is destructive)
+        return _two_button_widget(key, dim, "vault_rename",
+                                  "✓ 执行 rename", "vault_rename",
+                                  "✗ 忽略", "skip",
+                                  default="skip")
+
+    if display_status == "missing-from-vault":
+        # default: add to todo if Phase 2.5 recovery succeeded (high confidence)
+        recovery = (verdict or {}).get("online_recovery") or {}
+        rec_conf = recovery.get("confidence", "")
+        default = "vault_todo" if rec_conf in ("high", "medium") else "skip"
+        return _two_button_widget(key, dim, "vault_todo",
+                                  "✓ 加待跑", "vault_todo",
+                                  "✗ 忽略", "skip",
+                                  default=default)
+
+    if display_status == "multi-hit":
+        # render a hint pointing to the bib chooser in detail row
+        return ('<span class="action-badge action-multi" '
+                'data-key="{k}" data-dim="multi-hit" data-action="pick">'
+                '→ 展开,在 "📚 参考文献条目" 里选'
+                '</span>').format(k=_esc(key))
+
+    # Fallback (shouldn't happen)
+    return _decision_group(key, "pending")
+
+
+def _two_button_widget(key: str, dim: str, primary_val: str,
+                       yes_label: str, yes_val: str,
+                       no_label: str, no_val: str,
+                       default: str) -> str:
+    return (
+        f'<div class="action-grp" data-key="{_esc(key)}" '
+        f'data-dim="{_esc(dim or "")}" data-default="{_esc(default)}">'
+        f'<button class="act-btn act-yes" data-val="{_esc(yes_val)}">'
+        f'{_esc(yes_label)}</button>'
+        f'<button class="act-btn act-no" data-val="{_esc(no_val)}">'
+        f'{_esc(no_label)}</button>'
+        f'</div>'
+    )
 
 
 # ---- top banner --------------------------------------------------------------
@@ -464,13 +682,45 @@ def render_html(manifest: dict, verdicts_dir: Path | None,
     banner_html = (_banner_missing(entries, verdicts_by_key)
                    + _banner_typo(entries, verdicts_by_key))
 
+    # tab nav: 6 tabs with counts
+    tabs_html = _tabs_html(buckets, len(entries))
+
     return _HEAD_TMPL.format(
         css=_CSS,
         label=_esc(source_label),
         n_done=len(verdicts_by_key),
         total=len(entries),
         banner=banner_html,
+        tabs=tabs_html,
     ) + "\n".join(rows) + _TAIL_TMPL
+
+
+def _tabs_html(buckets: dict, total: int) -> str:
+    """Per-dimension tab nav with counters."""
+    n_ok = len(buckets.get("ok", []))
+    n_multi = len(buckets.get("multi-hit", []))
+    n_ctx = len(buckets.get("context-mismatch", []))
+    n_typo = len(buckets.get("maybe-vault-typo", []))
+    n_miss = len(buckets.get("missing-from-vault", []))
+    n_pend = len(buckets.get("pending", []))
+    return (
+        '<div class="tabs">'
+        f'<button class="tab-btn active" data-tab="all" onclick="applyTab(\'all\')">'
+        f'全部 <span class="count">{total}</span></button>'
+        f'<button class="tab-btn" data-tab="multi-hit" onclick="applyTab(\'multi-hit\')">'
+        f'挑候选 <span class="count">{n_multi}</span></button>'
+        f'<button class="tab-btn" data-tab="context-mismatch" onclick="applyTab(\'context-mismatch\')">'
+        f'修 draft <span class="count">{n_ctx}</span></button>'
+        f'<button class="tab-btn" data-tab="maybe-vault-typo" onclick="applyTab(\'maybe-vault-typo\')">'
+        f'修 vault <span class="count">{n_typo}</span></button>'
+        f'<button class="tab-btn" data-tab="missing-from-vault" onclick="applyTab(\'missing-from-vault\')">'
+        f'补 vault <span class="count">{n_miss}</span></button>'
+        f'<button class="tab-btn" data-tab="pending" onclick="applyTab(\'pending\')">'
+        f'等 agent <span class="count">{n_pend}</span></button>'
+        f'<button class="tab-btn" data-tab="ok" onclick="applyTab(\'ok\')">'
+        f'✓ 通过 <span class="count">{n_ok}</span></button>'
+        '</div>'
+    )
 
 
 _HEAD_TMPL = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
@@ -479,17 +729,26 @@ _HEAD_TMPL = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <div class="toolbar">
   <span class="title">引用审稿 · {label} · {n_done}/{total} verdict</span>
   <span id="progress"></span>
-  <div class="filters">
-    <button class="filter-btn active" data-filter="all" onclick="applyFilter('all')">全部</button>
-    <button class="filter-btn" data-filter="needs-action" onclick="applyFilter('needs-action')">需处理</button>
-    <button class="filter-btn" data-filter="ok" onclick="applyFilter('ok')">已通过</button>
-  </div>
-  <button class="export" onclick="exportDecisions()">导出 JSON</button>
+  <button class="export" onclick="exportDecisions()">⚙ 导出 decisions.json</button>
 </div>
 <div class="wrap">
 {banner}
+{tabs}
+<div class="apply-bar" id="apply-bar">
+  <h3>⚙ 全部审完后:导出 decisions + 跑 apply</h3>
+  <div>review 各 tab 后,点 <button class="execute" onclick="exportDecisions()">⚙ 导出 decisions.json</button> 拿到分组好的 4 类决策。</div>
+  <div style="margin-top:8px;color:#666;font-size:12px">然后跑:</div>
+  <div style="margin-top:4px"><code>quasi-helpers citation apply decisions.json --draft &lt;draft.md&gt; --ct-dir &lt;processing/citation/{{stem}}/&gt;</code></div>
+  <div style="margin-top:6px;color:#666;font-size:12px">apply 命令会按 4 个 group 派生产物:</div>
+  <ul style="margin:4px 0 0 22px;color:#444;font-size:12px;line-height:1.7">
+    <li><code>draft_rewrites</code> → 改 draft 文本 (context-mismatch 已勾"应用")</li>
+    <li><code>vault_renames</code> → 输出 <code>vault-renames.sh</code> (用户 review 后 bash)</li>
+    <li><code>vault_todo</code> → 输出 <code>vault-todo.md</code> (待跑 process-book 清单)</li>
+    <li><code>multi_hit_picks</code> + 上述 → 重出 <code>references.bib</code></li>
+  </ul>
+</div>
 <table class="main">
-<thead><tr><th style="width:18px"></th><th>状态</th><th>引用条目</th><th>(作者, 年份)</th><th>出处</th><th style="white-space:nowrap">接受 agent 建议?</th><th>备注</th></tr></thead>
+<thead><tr><th style="width:18px"></th><th>状态</th><th>引用条目</th><th>(作者, 年份)</th><th>出处</th><th style="white-space:nowrap">决策</th><th>备注</th></tr></thead>
 <tbody>
 """
 
@@ -498,16 +757,25 @@ _TAIL_TMPL = """</tbody></table>
 
 <script>
 function initDefaults() {
+  // Legacy 3-state widget (for any fallback rows)
   document.querySelectorAll('.dec-grp').forEach(g => {
+    const d = g.dataset.default;
+    const b = g.querySelector(`[data-val="${d}"]`);
+    if (b) b.classList.add('active');
+  });
+  // Per-dimension 2-button widgets
+  document.querySelectorAll('.action-grp').forEach(g => {
     const d = g.dataset.default;
     const b = g.querySelector(`[data-val="${d}"]`);
     if (b) b.classList.add('active');
   });
   updateProgress();
 }
-function setDecision(btn) {
-  const grp = btn.closest('.dec-grp');
-  grp.querySelectorAll('.dec-btn').forEach(b => b.classList.remove('active'));
+function setAction(btn) {
+  const grp = btn.closest('.action-grp, .dec-grp');
+  if (!grp) return;
+  const sel = grp.classList.contains('action-grp') ? '.act-btn' : '.dec-btn';
+  grp.querySelectorAll(sel).forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   updateProgress();
 }
@@ -520,53 +788,100 @@ function toggleDetail(row) {
   row.querySelector('.caret').textContent = open ? '▸' : '▾';
 }
 function updateProgress() {
-  let mod=0, keep=0, pd=0;
-  document.querySelectorAll('.row').forEach(r => {
-    const g = r.querySelector('.dec-grp .dec-btn.active');
-    const v = g ? g.dataset.val : null;
-    if (v==='modify') mod++; else if (v==='keep') keep++; else pd++;
+  // Count by dimension's chosen action
+  let counts = {draft_rewrite:0, vault_rename:0, vault_todo:0, multi_pick:0, skip:0};
+  document.querySelectorAll('.action-grp').forEach(g => {
+    const a = g.querySelector('.act-btn.active');
+    if (!a) return;
+    const v = a.dataset.val;
+    if (v in counts) counts[v]++;
   });
   document.getElementById('progress').innerHTML =
-    `<span>接受:✓${mod} 拒绝:✗${keep} 待定:?${pd}</span>`;
+    `<span>改 draft:${counts.draft_rewrite}</span>` +
+    `<span>vault rename:${counts.vault_rename}</span>` +
+    `<span>vault todo:${counts.vault_todo}</span>` +
+    `<span>跳过:${counts.skip}</span>`;
+}
+function readNote(k) {
+  const n = document.querySelector(`.user-note[data-key="${CSS.escape(k)}"]`);
+  return n ? n.value.trim() : "";
+}
+function readBibPick(k) {
+  const b = document.querySelector(`input[name="bib::${CSS.escape(k)}"]:checked`);
+  return b ? b.value : null;
 }
 function exportDecisions() {
-  const out = {};
+  // Group decisions into 4 buckets by dimension
+  const out = {
+    version: 1,
+    generated_at: new Date().toISOString(),
+    draft_rewrites: [],
+    vault_renames: [],
+    vault_todo: [],
+    multi_hit_picks: [],
+    skipped: [],
+    by_key: {},  // backward-compat flat view
+  };
   document.querySelectorAll('.row').forEach(r => {
     const k = r.dataset.key;
-    const g = r.querySelector('.dec-grp .dec-btn.active');
-    const note = document.querySelector(`.user-note[data-key="${CSS.escape(k)}"]`).value.trim();
-    const bib = document.querySelector(`input[name="bib::${CSS.escape(k)}"]:checked`);
-    out[k] = {
-      decision: g ? g.dataset.val : 'pending',
-      bib_source: bib ? bib.value : null,
-      note,
-    };
+    const status = r.dataset.status;
+    const dim = ACTION_DIM_MAP[status] || null;
+    const grp = r.querySelector('.action-grp');
+    const act = grp ? (grp.querySelector('.act-btn.active') || {}).dataset?.val : null;
+    const bib = readBibPick(k);
+    const note = readNote(k);
+
+    out.by_key[k] = { status, dim, action: act, bib_source: bib, note };
+
+    if (status === 'context-mismatch' && act === 'draft_rewrite') {
+      out.draft_rewrites.push({ key: k, bib_source: bib, note });
+    } else if (status === 'maybe-vault-typo' && act === 'vault_rename') {
+      out.vault_renames.push({ key: k, note });
+    } else if (status === 'missing-from-vault' && act === 'vault_todo') {
+      out.vault_todo.push({ key: k, note });
+    } else if (status === 'multi-hit' && bib) {
+      out.multi_hit_picks.push({ key: k, picked_slug: bib.replace(/^vault:/,''), note });
+    } else if (act === 'skip' || status === 'pending') {
+      out.skipped.push({ key: k, status, note });
+    }
   });
   const blob = new Blob([JSON.stringify(out, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = 'decisions.json'; a.click();
 }
-function applyFilter(f) {
-  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-  document.querySelector(`.filter-btn[data-filter="${f}"]`).classList.add('active');
+const ACTION_DIM_MAP = {
+  'context-mismatch':   'draft_rewrite',
+  'maybe-vault-typo':   'vault_rename',
+  'missing-from-vault': 'vault_todo',
+  'multi-hit':          'multi_pick',
+};
+function applyTab(t) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  const tabBtn = document.querySelector(`.tab-btn[data-tab="${t}"]`);
+  if (tabBtn) tabBtn.classList.add('active');
   document.querySelectorAll('.row').forEach(r => {
     const s = r.dataset.status;
-    let show = true;
-    if (f === 'needs-action') show = (s !== 'ok');
-    else if (f === 'ok') show = (s === 'ok');
+    const show = (t === 'all') || (s === t);
     r.style.display = show ? '' : 'none';
     const det = document.querySelector(`.detail-row[data-key="${CSS.escape(r.dataset.key)}"]`);
-    if (det && !show) { det.style.display = 'none'; r.querySelector('.caret').textContent = '▸'; }
+    if (det && !show) {
+      det.style.display = 'none';
+      const c = r.querySelector('.caret');
+      if (c) c.textContent = '▸';
+    }
   });
 }
 window.addEventListener('load', () => {
   initDefaults();
-  document.querySelectorAll('.dec-btn').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); setDecision(b); }));
+  document.querySelectorAll('.dec-btn, .act-btn').forEach(b =>
+    b.addEventListener('click', e => { e.stopPropagation(); setAction(b); }));
   document.querySelectorAll('.row').forEach(r => r.addEventListener('click', e => {
-    if (e.target.closest('.dec-btn') || e.target.closest('.user-note') || e.target.closest('label')) return;
+    if (e.target.closest('.dec-btn') || e.target.closest('.act-btn') ||
+        e.target.closest('.user-note') || e.target.closest('label')) return;
     toggleDetail(r);
   }));
-  document.querySelectorAll('.user-note').forEach(i => i.addEventListener('click', e => e.stopPropagation()));
+  document.querySelectorAll('.user-note').forEach(i =>
+    i.addEventListener('click', e => e.stopPropagation()));
 });
 </script>
 </body></html>

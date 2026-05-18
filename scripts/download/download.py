@@ -221,10 +221,109 @@ def _extract_epub_text(epub_path, max_items=3):
         return ""
 
 
+_YEAR_RE = r"\b(?:19|20)\d{2}\b"
+
+# Patterns that indicate the year is the *publication* year of this edition.
+# Order matters: earlier patterns win when assembling best_guess.
+_FIRST_PUBLISHED_PATTERNS = [
+    re.compile(r"first\s+published[^.]{0,40}?(" + _YEAR_RE + r")", re.IGNORECASE),
+    re.compile(r"first\s+edition[^.]{0,30}?(" + _YEAR_RE + r")", re.IGNORECASE),
+    re.compile(r"first\s+english(?:\s+language)?\s+edition[^.]{0,30}?(" + _YEAR_RE + r")", re.IGNORECASE),
+    # "Published 2023 by X" / "Published in 2023" — but NOT "Originally published"
+    re.compile(r"(?<!ly\s)(?<!originally\s)published\s+(?:in\s+)?(" + _YEAR_RE + r")", re.IGNORECASE),
+]
+
+# Patterns that indicate the year is the *copyright* year — often the
+# preceding calendar year for press books finalised in Q4.
+_COPYRIGHT_PATTERNS = [
+    re.compile(r"copyright\s*©?\s*(" + _YEAR_RE + r")", re.IGNORECASE),
+    re.compile(r"©\s*(" + _YEAR_RE + r")", re.IGNORECASE),
+]
+
+# Patterns that indicate the year is the *original* (pre-translation /
+# pre-reissue) year — never the year of *this* edition.
+_ORIGINAL_PATTERNS = [
+    re.compile(r"originally\s+published[^.]{0,80}?(" + _YEAR_RE + r")", re.IGNORECASE),
+    re.compile(r"translated\s+from[^.]{0,80}?(" + _YEAR_RE + r")", re.IGNORECASE),
+    re.compile(r"original(?:\s+french|\s+german|\s+spanish|\s+italian)?\s+edition[^.]{0,30}?(" + _YEAR_RE + r")", re.IGNORECASE),
+]
+
+
+def _extract_year_signals(text):
+    """Structurally extract year signals from front matter.
+
+    Returns dict with:
+      - first_published: int | None — "First published 2023" / "First edition 2023"
+      - copyright_year:  int | None — "Copyright 2022"
+      - original_year:   int | None — "Originally published in French as ... 2008"
+      - other_years:     list[int]  — every 1900-2099 hit, in text order, dedup
+      - best_guess:      int | None — first_published > copyright_year > other_years[-1]
+                                      (copyright_year+1 prefers the later year when
+                                       copyright year sits inside other_years and a
+                                       later year is also present — heuristic for
+                                       Q4-finalised press books)
+      - evidence_text:   short snippet quoting the matched fragment for best_guess
+    """
+    text = text or ""
+    lowered_for_search = text  # patterns are IGNORECASE
+
+    def _first_match(patterns):
+        for pat in patterns:
+            m = pat.search(lowered_for_search)
+            if m:
+                return int(m.group(1)), m.group(0)
+        return None, None
+
+    first_published, first_published_ctx = _first_match(_FIRST_PUBLISHED_PATTERNS)
+    copyright_year, copyright_ctx = _first_match(_COPYRIGHT_PATTERNS)
+    original_year, original_ctx = _first_match(_ORIGINAL_PATTERNS)
+
+    # All years in text order, deduped
+    raw_years = [int(y) for y in re.findall(_YEAR_RE, text)]
+    seen = set()
+    other_years: list[int] = []
+    for y in raw_years:
+        if y in seen:
+            continue
+        seen.add(y)
+        other_years.append(y)
+
+    best_guess = first_published or copyright_year
+    evidence = first_published_ctx or copyright_ctx or None
+
+    # Q4-finalised press heuristic: if copyright is in other_years and a
+    # strictly later year ≤ copyright+2 also appears (release lag), prefer
+    # the later one. Conservative — only nudges by 1-2 years.
+    if best_guess == copyright_year and copyright_year is not None:
+        candidate = next(
+            (y for y in other_years
+             if copyright_year < y <= copyright_year + 2 and y not in {original_year}),
+            None,
+        )
+        if candidate is not None:
+            best_guess = candidate
+            evidence = f"copyright {copyright_year}; release year {candidate} also present in front matter"
+
+    # Final fallback: nothing structurally tagged — take last year in text order
+    # (front matter usually leads with original/translation/copyright; the
+    # latest year mentioned is most likely the edition year).
+    if best_guess is None and other_years:
+        best_guess = max(other_years)
+        evidence = "fallback: no structural year tag found, using max(other_years)"
+
+    return {
+        "first_published": first_published,
+        "copyright_year": copyright_year,
+        "original_year": original_year,
+        "other_years": other_years,
+        "best_guess": best_guess,
+        "evidence_text": evidence,
+    }
+
+
 def _guess_year(text):
-    """Guess a publication year from extracted front text."""
-    matches = re.findall(r"\b(?:19|20)\d{2}\b", text or "")
-    return int(matches[0]) if matches else None
+    """Back-compat shim — returns just best_guess. Prefer _extract_year_signals."""
+    return _extract_year_signals(text)["best_guess"]
 
 
 def _title_keywords(title):
@@ -269,11 +368,13 @@ def verify_book_file(path, expected_author, expected_title):
     if not _text_mentions_title(text, expected_title):
         return {"status": "mismatch", "reason": "title_not_found"}
 
+    year_signals = _extract_year_signals(text)
     return {
         "status": "match",
         "author": expected_author,
         "title": expected_title,
-        "year": _guess_year(text),
+        "year": year_signals["best_guess"],
+        "year_signals": year_signals,
         "evidence": text[:500],
     }
 
@@ -1158,18 +1259,27 @@ def is_same_book(expected_author, expected_title, actual_author, actual_title):
     return bool(expected and actual and (expected in actual or actual in expected))
 
 
-def finalize_book_identity(manifest_book, actual_author, actual_title, actual_year):
-    """Return the corrected canonical book identity for a downloaded file."""
+def finalize_book_identity(manifest_book, actual_author, actual_title, actual_year,
+                           year_signals=None):
+    """Return the corrected canonical book identity for a downloaded file.
+
+    `year_signals` (optional) is the dict returned by `_extract_year_signals`.
+    When provided it is stored alongside `year` on the manifest entry so
+    downstream consumers / audits can see how the year was derived.
+    """
     final_year = actual_year or manifest_book.get("year")
     final_title = actual_title or manifest_book.get("title")
     final_author = actual_author or manifest_book.get("author")
-    return {
+    out = {
         **manifest_book,
         "author": final_author,
         "title": final_title,
         "year": final_year,
         "slug": build_book_slug(final_author, final_title, final_year),
     }
+    if year_signals is not None:
+        out["year_signals"] = year_signals
+    return out
 
 
 def finalize_downloaded_book(manifest_path, book_index, downloaded_path, expected_author):
@@ -1209,6 +1319,7 @@ def finalize_downloaded_book(manifest_path, book_index, downloaded_path, expecte
         actual_author=verification.get("author"),
         actual_title=verification.get("title"),
         actual_year=verification.get("year"),
+        year_signals=verification.get("year_signals"),
     )
 
     src = Path(downloaded_path)
@@ -1267,78 +1378,10 @@ def _stream_download(url, dest_path, headers=None):
 # CLI
 # ============================================================
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Academic file download — pure acquisition by identifier (MD5/DOI/URL)"
-    )
-
-    # Input modes
-    group = parser.add_argument_group("input (pick one)")
-    group.add_argument("--md5", help="AA download by MD5 (needs donator key)")
-    group.add_argument("--doi", help="Paper DOI (cascade: OA → EZProxy → Wayback)")
-    group.add_argument("--url", help="Direct PDF URL")
-    group.add_argument("--manifest", help="Manifest file for batch download")
-
-    # Options
-    parser.add_argument("--output-dir", "-o", default="sources", help="Output directory (default: sources)")
-    parser.add_argument("--filename", help="Output filename (without extension)")
-    parser.add_argument("--format", "-f", default="pdf", help="File format (default: pdf)")
-    parser.add_argument("--batch", action="store_true", help="Batch download all metadata_found in manifest")
-    parser.add_argument("--retry-wayback", action="store_true", help="Re-check Wayback for papers")
-    parser.add_argument("--verify-author", help="Expected author name (for post-download verification)")
-    parser.add_argument("--verify-title", help="Expected title (for post-download verification)")
-
-    # Post-download book finalization (separate mode)
-    parser.add_argument("--finalize-book", action="store_true",
-                        help="Verify a downloaded book against manifest, rename to canonical slug, rewrite manifest")
-    parser.add_argument("--book-index", type=int, help="Index into manifest['books'] for --finalize-book")
-    parser.add_argument("--downloaded-path", help="Path to the file just downloaded (for --finalize-book)")
-    parser.add_argument("--expected-author", help="Expected author full name (for --finalize-book)")
-
-    args = parser.parse_args()
-
-    # Route to appropriate handler
+def _handle_errors(fn, *args, **kwargs):
+    """Run fn, translate domain exceptions to exit codes consistently."""
     try:
-        if args.finalize_book:
-            missing = [n for n, v in [("--manifest", args.manifest),
-                                       ("--book-index", args.book_index),
-                                       ("--downloaded-path", args.downloaded_path),
-                                       ("--expected-author", args.expected_author)] if v is None]
-            if missing:
-                parser.error(f"--finalize-book requires {', '.join(missing)}")
-            result = finalize_downloaded_book(
-                manifest_path=args.manifest,
-                book_index=args.book_index,
-                downloaded_path=args.downloaded_path,
-                expected_author=args.expected_author,
-            )
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-        elif args.manifest and args.batch:
-            batch_download_manifest(args.manifest, retry_wayback=args.retry_wayback)
-        elif args.md5:
-            result = download_from_aa(
-                md5=args.md5, output_dir=args.output_dir,
-                filename=args.filename, fmt=args.format,
-                verify_author=args.verify_author,
-                verify_title=args.verify_title,
-            )
-            if result:
-                print(result)
-            else:
-                sys.exit(1)
-        elif args.doi or args.url:
-            result = download_paper(
-                doi=args.doi, url=args.url, output_dir=args.output_dir,
-                filename=args.filename, retry_wayback=args.retry_wayback,
-                verify_author=args.verify_author,
-                verify_title=args.verify_title,
-            )
-            if result:
-                print(result)
-            else:
-                sys.exit(1)
-        else:
-            parser.error("Need one of: --md5, --doi, --url, or --manifest --batch")
+        return fn(*args, **kwargs)
     except AAQuotaExhausted as e:
         print(f"\n*** AA QUOTA EXHAUSTED ***", file=sys.stderr)
         print(f"  {e}", file=sys.stderr)
@@ -1351,6 +1394,184 @@ def main():
         print(f"  CookieCloud extension will sync the new cookie automatically.", file=sys.stderr)
         print(f"  Stop all paper downloads until that's done.", file=sys.stderr)
         sys.exit(3)
+
+
+# ---- subcommand handlers ---------------------------------------------------
+
+def _cmd_paper(args) -> int:
+    if not (args.doi or args.url):
+        print("paper: need --doi or --url", file=sys.stderr)
+        return 2
+    result = _handle_errors(
+        download_paper,
+        doi=args.doi, url=args.url,
+        output_dir=args.output_dir, filename=args.filename,
+        retry_wayback=args.retry_wayback,
+        verify_author=args.verify_author,
+        verify_title=args.verify_title,
+    )
+    if result:
+        print(result)
+        return 0
+    return 1
+
+
+def _cmd_book(args) -> int:
+    if not args.md5:
+        print("book: need --md5", file=sys.stderr)
+        return 2
+    result = _handle_errors(
+        download_from_aa,
+        md5=args.md5, output_dir=args.output_dir,
+        filename=args.filename, fmt=args.format,
+        verify_author=args.verify_author,
+        verify_title=args.verify_title,
+    )
+    if result:
+        print(result)
+        return 0
+    return 1
+
+
+def _cmd_batch(args) -> int:
+    if not args.manifest:
+        print("batch: need --manifest", file=sys.stderr)
+        return 2
+    _handle_errors(
+        batch_download_manifest,
+        args.manifest, retry_wayback=args.retry_wayback,
+    )
+    return 0
+
+
+def _cmd_finalize(args) -> int:
+    missing = [n for n, v in [
+        ("--manifest", args.manifest),
+        ("--book-index", args.book_index),
+        ("--downloaded-path", args.downloaded_path),
+        ("--expected-author", args.expected_author),
+    ] if v is None]
+    if missing:
+        print(f"finalize: missing {', '.join(missing)}", file=sys.stderr)
+        return 2
+    result = _handle_errors(
+        finalize_downloaded_book,
+        manifest_path=args.manifest,
+        book_index=args.book_index,
+        downloaded_path=args.downloaded_path,
+        expected_author=args.expected_author,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+# ---- argparse: subcommand structure ----------------------------------------
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="quasi-download",
+        description="Academic file download by intent. "
+                    "Each subcommand runs its own fallback chain.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    # Shared options factory.
+    def _add_common_io(p, with_format=False):
+        p.add_argument("--output-dir", "-o", default="sources",
+                       help="Output directory (default: sources)")
+        p.add_argument("--filename", help="Output filename (without extension)")
+        if with_format:
+            p.add_argument("--format", "-f", default="pdf",
+                           help="File format (default: pdf)")
+
+    def _add_verify(p):
+        p.add_argument("--verify-author", help="Expected author name (post-download check)")
+        p.add_argument("--verify-title", help="Expected title (post-download check)")
+
+    # paper: by DOI/URL, runs OA → EZProxy → Wayback cascade
+    p_paper = sub.add_parser("paper",
+                              help="Download paper by DOI or URL (OA → EZProxy → Wayback)")
+    p_paper.add_argument("--doi", help="Paper DOI")
+    p_paper.add_argument("--url", help="Direct PDF URL")
+    p_paper.add_argument("--retry-wayback", action="store_true",
+                          help="Re-check Wayback if primary sources fail")
+    _add_common_io(p_paper)
+    _add_verify(p_paper)
+    p_paper.set_defaults(func=_cmd_paper)
+
+    # book: by MD5, fetches via Anna's Archive
+    p_book = sub.add_parser("book",
+                             help="Download book by MD5 (Anna's Archive, needs donator key)")
+    p_book.add_argument("--md5", help="Anna's Archive file MD5")
+    _add_common_io(p_book, with_format=True)
+    _add_verify(p_book)
+    p_book.set_defaults(func=_cmd_book)
+
+    # batch: from manifest
+    p_batch = sub.add_parser("batch",
+                              help="Batch download all metadata_found entries in a manifest")
+    p_batch.add_argument("--manifest", help="Manifest file path")
+    p_batch.add_argument("--retry-wayback", action="store_true",
+                          help="Re-check Wayback for papers")
+    p_batch.set_defaults(func=_cmd_batch)
+
+    # finalize: post-download book verification + manifest rewrite
+    p_fin = sub.add_parser("finalize",
+                            help="Verify downloaded book against manifest, rename, rewrite manifest")
+    p_fin.add_argument("--manifest", help="Manifest file path")
+    p_fin.add_argument("--book-index", type=int, help="Index into manifest['books']")
+    p_fin.add_argument("--downloaded-path", help="Path to the file just downloaded")
+    p_fin.add_argument("--expected-author", help="Expected author full name")
+    p_fin.set_defaults(func=_cmd_finalize)
+
+    return parser
+
+
+def _legacy_main(argv: list[str]) -> int:
+    """Pre-refactor flag-based interface, kept until callers migrate.
+
+    Triggered when first arg starts with '-' (e.g. `--doi X`). Routes to
+    the same subcommand handlers based on which flag is present.
+    """
+    parser = argparse.ArgumentParser(
+        prog="quasi-download (legacy flag mode)",
+        description="Legacy flag interface. Prefer subcommand form: "
+                    "paper / book / batch / finalize.",
+    )
+    g = parser.add_argument_group("input (pick one)")
+    g.add_argument("--md5"); g.add_argument("--doi"); g.add_argument("--url"); g.add_argument("--manifest")
+    parser.add_argument("--output-dir", "-o", default="sources")
+    parser.add_argument("--filename")
+    parser.add_argument("--format", "-f", default="pdf")
+    parser.add_argument("--batch", action="store_true")
+    parser.add_argument("--retry-wayback", action="store_true")
+    parser.add_argument("--verify-author"); parser.add_argument("--verify-title")
+    parser.add_argument("--finalize-book", action="store_true")
+    parser.add_argument("--book-index", type=int)
+    parser.add_argument("--downloaded-path"); parser.add_argument("--expected-author")
+    args = parser.parse_args(argv)
+
+    # Dispatch
+    if args.finalize_book:
+        return _cmd_finalize(args)
+    if args.manifest and args.batch:
+        return _cmd_batch(args)
+    if args.md5:
+        return _cmd_book(args)
+    if args.doi or args.url:
+        return _cmd_paper(args)
+    parser.error("Need one of: --md5, --doi, --url, or --manifest --batch")
+    return 2
+
+
+def main():
+    argv = sys.argv[1:]
+    if argv and argv[0].startswith("-") and argv[0] not in ("-h", "--help"):
+        # Legacy flag interface (old agent prompts, existing scripts).
+        sys.exit(_legacy_main(argv))
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    sys.exit(args.func(args))
 
 
 if __name__ == "__main__":

@@ -40,6 +40,17 @@ class BookSchema(BaseModel):
         description="书籍类别;BibTeX export 时驱动 @book vs @collection + author vs editor",
     )
 
+    # ─── 中译本索引(audit-agent Step 4B 回填)────────────────
+    cndouban: list[int] | None = Field(
+        default=None,
+        description=(
+            "豆瓣中译本 subject_id 列表。三态语义: "
+            "缺字段=尚未查询; [] = 已查、豆瓣无中译本; [id1, id2, ...] = "
+            "已发现的中译本(降序按豆瓣评分人数)。完整 metadata 存在 "
+            "$CLAUDE_PROJECT_DIR/processing/audit/translations.json"
+        ),
+    )
+
     # ─── 学术分析字段 ─────────────────────────────────────────
     themes: list[str] = Field(
         default_factory=list,

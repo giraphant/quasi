@@ -2,11 +2,8 @@
 # quasi-search — Search books / papers via OpenLibrary, Crossref, Anna's Archive, etc.
 #
 # Usage:
-#   quasi-search books --author "..." --limit N
-#   quasi-search papers --author "..." --limit N
-#   quasi-search books --source aa "TITLE" --author "AUTHOR" --limit N
-#   quasi-search validate --manifest PATH
-#   quasi-search metadata --manifest PATH --all
+#   quasi-search book  [--isbn|--title|--author|--subject|--query] [filter flags]
+#   quasi-search paper [--doi|--title|--author|--query] [filter flags]
 
 set -e
 

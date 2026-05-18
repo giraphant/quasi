@@ -11,36 +11,67 @@ description: >
 
 # Wrap-Up — 文章收尾
 
-一篇 draft 写完后的统一收尾入口。`proofread-agent` 改文字 + `citation-agent` 校引用,产出一份带末尾"校对记录"块的 draft 和一份 citation 报告。审完后再触发清理。
+一篇 draft 写完后的统一收尾入口。`proofread-agent` 改文字 + `citation-agent` 给引用打 context-fit 标注, 主进程驱动 TUI 走完引用审定, 产出 `decisions.json` + `references.bib`。审完后再触发清理。
 
 ## 调用方式
 
 ```
 /quasi:wrap-up vault/drafts/draft.md
 /quasi:wrap-up vault/drafts/                # 整目录
+
+# Flags:
+/quasi:wrap-up <draft> --no-recover         # Phase 2.3 跳过(不在线找 missing)
+/quasi:wrap-up <draft> --citation-only      # 跳 Phase 0/1, 只跑 Phase 2
+/quasi:wrap-up <draft> --audit-first        # 强制跑 Phase 0 (默认按 .quasi/audit/audit-state.json 判断)
 ```
+
+`--citation-only` 是"补完 vault 后增量重跑"的快捷入口: proofread 已经做过、draft 文本已经定稿、只是 vault 增量补了几本书想重新审引用 + 出 .bib。**直接跳过 Phase 0/1**, 从 Phase 2 进。
 
 ## 整体流程
 
 ```
-┌─ Phase 1 PROOFREAD ─ 三阶段:
-│   ├─ Stage A: sonnet 节内多轮 → 直接改正文 + 写记录
-│   ├─ Stage B: codex 整篇 2 轮 → 只提议(`? c{N}` 前缀),不改正文
-│   └─ Stage C: 主进程审稿 → 接受/拒绝 codex 提议,sanity-check sonnet 改动
-├─ Phase 2 CITATION  ─ 解析引用 + 在线交叉验证 → report.html + .bib
-├─ Phase 3 SUMMARY   ─ 单页汇总 summary.html,链接两份详细
-└─ Phase 4 CLEANUP   ─ 等用户审完触发("审完了" / "清理记录块"等)
-                       quasi-proofread cleanup 删 draft 末尾的记录块
+┌─ Phase 1  PROOFREAD   ─ sonnet 节内多轮 + codex 提议 + 主进程审稿
+├─ Phase 2  CITATION    ─ 解析 + LLM context-fit + 在线 recover + TUI 审定 + emit .bib
+│   ├─ 2.1 parse + resolve              (deterministic)
+│   ├─ 2.2 citation-agent 批 (single + multi only)  → flag ok/review + picked_slug
+│   ├─ 2.3 discover-agent 批 (miss)     → online recovery
+│   ├─ 2.4 TUI 审定 (主进程 AskUserQuestion 循环)    ← 新
+│   └─ 2.5 write decisions.json + emit references.bib
+└─ Phase 3  CLEANUP     ─ 等用户审完触发("审完了" 等)删 proofread 记录块
+```
+
+agent 只给一句 context-fit note, **主进程在主上下文里直接 AskUserQuestion 走一遍**, 一边走一边累积 `decisions.by_key` 写盘。
+
+`render.py` 保留为离线诊断工具 (`quasi-helpers citation render`),但 skill 不再调用。
+
+## Flag 解析
+
+主进程从 caller 提供的命令里解析 flag:
+
+```python
+draft_path = parse_positional()
+flags = parse_flags()  # --no-recover, --citation-only, --audit-first
+
+if flags.citation_only:
+    skip_phase_0 = True
+    skip_phase_1 = True
+    skip_phase_3 = True   # cleanup
+elif flags.audit_first:
+    skip_phase_0 = False
+else:
+    skip_phase_0 = audit_state_clean()  # 看 .quasi/audit/audit-state.json
 ```
 
 ## Phase 1 — PROOFREAD
+
+`--citation-only` 时全跳过。
 
 按节切 → sonnet 节内多轮迭代到收敛 → codex 跨模型兜底。**改动直接累积在 draft 末尾的 `<!-- proofread:start -->...<!-- proofread:end -->` 块**。
 
 **Stage A — sonnet 节串行 + 节内多轮迭代**:
 
-1. `quasi-proofread split <draft> -o {pf_dir}/sections.json` — 按 H2/H3 切节
-2. `quasi-proofread init <draft>` — 在 draft 末尾创建空记录块(已存在则跳过)
+1. `quasi-helpers proofread split <draft> -o {pf_dir}/sections.json` — 按 H2/H3 切节
+2. `quasi-helpers proofread init <draft>` — 在 draft 末尾创建空记录块(已存在则跳过)
 3. 对每节顺序处理(节间串行,避免并发改 draft 末尾块):
    ```
    for sec in sections:
@@ -52,15 +83,15 @@ description: >
 
 **Stage B — codex 提议(不改正文)**:
 
-sonnet 全部收敛后,跑 codex 2 轮整篇 draft 作为**提议者**。实测 sonnet 多轮收敛后仍可能漏同音错字 / 双重否定(`发文→发问`、`等等等等→等等`),codex 训练偏置不同,常常一发命中。**但 codex prompt-following 弱,频繁越界改用词 / 全角化 `/-`**,所以 codex 这一阶段**只能提议,不能直接改正文**。提议追加到记录块,Stage C 主进程审稿决定接受/拒绝。
+sonnet 全部收敛后,跑 codex 2 轮整篇 draft 作为**提议者**。codex prompt-following 弱常越界, 这里**只提议不改正文** (Stage C 主进程审稿决定接受/拒绝)。
 
-跨 draft 可并发(codex 实测同时跑 5 个互不冲突)。对每个 draft 顺序跑 `r = 1..2`。**必须**:
+跨 draft 可并发(5 个 codex 同时跑 ok)。对每个 draft 顺序跑 `r = 1..2`。**必须**:
 - 用绝对路径 `/opt/homebrew/bin/codex`(绕过 superset shim 的 notify hook 阻塞)
-- 重定向 stdin `< /dev/null`(`codex exec` 即使收到 prompt 参数也会等 stdin EOF,不关闭会永远卡住)
+- 重定向 stdin `< /dev/null`(`codex exec` 即使收到 prompt 参数也会等 stdin EOF)
 
 ```bash
 /opt/homebrew/bin/codex exec --sandbox workspace-write --skip-git-repo-check "$(cat <<'EOF'
-你是 draft 校对**提议者**。Read /path/to/draft.md,**不要修改正文**。
+你是 draft 校对**提议者**。Read /path/to/draft.md, **不要修改正文**。
 
 发现客观错(typo / punct-en-in-zh / punct-redundant / punct-pairing /
 spacing-around-punct / spacing-multiple / grammar-clear)就**提议**。
@@ -77,75 +108,305 @@ EOF
 )" < /dev/null
 ```
 
-**硬约束**:
-- codex 是**提议者**,不动正文。Stage C 主进程审稿才决定 apply 与否
-- 跨 draft 可并发(5 个 codex 同时跑 ok)
-- 同一 draft 内 r1 / r2 串行(都 Edit 同一个 `<!-- proofread:end -->`,race 风险)
+**Stage C — 主进程审稿**:
 
-## Phase 1 续 — Stage C 主进程审稿
-
-Stage A(sonnet 已改)+ Stage B(codex 已提议)都跑完后,主进程对每个 draft 进入审稿模式:
-
-**输入**:draft 文件(含正文 + 末尾记录块,块内 sonnet 已 applied、codex 是 `? ` 待审)。
-
-**对每条 `? c{N}` 提议**:
-
-1. Read 提议行的 `{old片段}`,确认它**仍在正文中**(verify codex 没有违规改正文 —— 若 old 找不到,说明 codex 越界了,需要进一步排查)
+对每条 `? c{N}` 提议:
+1. Read 提议行的 `{old片段}`,确认仍在正文中(verify codex 没越界)
 2. Read 正文 L{line} 周围上下文
-3. 判断:
-   - 是否真的是客观错(typo / punct / spacing / grammar-clear)
-   - 是否违反"不动"清单(用词、`/-`、CJK-Latin 空格、markdown 结构等)
-4. **Accept**(judgement = 合法客观错):
-   - Edit 正文:`{old片段}` → `{new片段}`
-   - Edit 记录块:把该行的 `? ` 前缀删除(变正式记录)
-5. **Reject**:
-   - Edit 记录块:删除该行
+3. 判断是否真客观错 / 是否违反"不动"清单
+4. **Accept**: Edit 正文 + Edit 记录块删 `? ` 前缀; **Reject**: 删该行
 
-**也顺手 review sonnet 改动**(`s{N}` 行,无 `?` 前缀):
-- 觉得明显错的(应该非常罕见,sonnet 严守 prompt):Edit 正文反向 + Edit 记录块删行 / 标 reverted
-- 觉得灰区可疑的:留着,在 review 总结里提
-
-**输出**:审稿结束后给用户一句话总结(每篇 draft:sonnet N 处 / codex 接受 M 提议 / codex 拒绝 K 提议 / sonnet 反向 R 处)。
+也顺手 review `s{N}` sonnet 行 (应该极少需要反向)。结束后一句话总结。
 
 **硬约束**:
-- 主进程**同时**持有正文 + 记录块,审稿是单 turn 内一次性完成(不要拆成多个 background)
-- 6 篇 draft 串行审(每篇约 1-2k 行 + ~10-30 条提议 + 长 context),避免上下文混淆
+- 主进程**同时**持有正文 + 记录块,审稿单 turn 内一次完成
+- 6 篇 draft 串行审
 
 ## Phase 2 — CITATION
 
-1. `quasi-citation parse <draft> -o {ct_dir}/parse.json`
-2. `quasi-citation resolve {ct_dir}/parse.json -o {ct_dir}/manifest.json`
-3. 把 manifest 里的 entries 按 8 条一批分组,每批并发 dispatch `quasi:citation-agent`(cap 4)
-4. `quasi-citation render` → `report.html` + `references.bib`
+设 `ct_dir = .quasi/citation/{draft-stem}/`。
 
-**硬约束**:Phase 1 全部完成才进入 Phase 2;否则改字会让 parse 行号失效。
+### 2.1 — parse + resolve (deterministic)
 
-## Phase 3 — SUMMARY
+```bash
+quasi-helpers citation parse <draft.md> -o {ct_dir}/parse.json
+quasi-helpers citation resolve {ct_dir}/parse.json \
+  --biblio {ct_dir}/biblio.json -o {ct_dir}/manifest.json
+```
 
-主进程 grep 每个 draft 末尾块的 `^- \*\*` 行数(proofread 改动总数) + 读 citation manifest stats,渲染单页 `processing/wrap-up/{stem}/summary.html`,链接到 citation 报告。**proofread 不需要单独 HTML 报告** — 改动直接在 draft 里。
+(若 `{ct_dir}/biblio.json` 不存在,先 `quasi-audit emit-bib -o {ct_dir}/biblio.json`。)
 
-## Phase 4 — CLEANUP
+manifest entries 每条带 `status ∈ {single-hit, multi-hit, miss}` 和 `candidates: [{slug, ...}]`。
 
-校对记录块是临时审阅工具。审完作者用 git 接受/拒收改动后,触发清理:
+### 2.2 — citation-agent 批 (single + multi only)
 
-- **触发词**:用户说 "审完了" / "清理记录块" / "删掉校对记录" / "cleanup" / "proofread 收尾"
-- **执行**:`quasi-proofread cleanup <draft-or-dir>` — 从每个 markdown 文件删除整个 `<!-- proofread:start -->...<!-- proofread:end -->` 块,无块的文件跳过
-- **执行后**(可选):`rm -rf processing/proofread/{stem}/` 清掉 split 产物
+主进程**过滤** manifest entries:
+
+```python
+todo = [e for e in manifest.entries if e.status in {"single-hit", "multi-hit"}]
+batches = chunk(todo, size=8)
+```
+
+并发 dispatch (cap 4):
+
+```
+Agent("quasi:citation-agent", background=True,
+      prompt=f"manifest: {ct_dir}/manifest.json\n"
+             f"biblio: {ct_dir}/biblio.json\n"
+             f"batch_keys: {batch_keys_json}\n"
+             f"verdict_out: {ct_dir}/verdicts/batch-{NNN}.json")
+```
+
+每批产出 `verdicts/batch-NNN.json`,每条 note 含 `{key, picked_slug, flag, note}` (flag ∈ ok/review)。
+
+**等所有 batch 完成** (foreground or `while` glob poll)。
+
+### 2.3 — discover-agent recover (miss only) — `--no-recover` 时跳过
+
+```python
+miss = [e for e in manifest.entries if e.status == "miss"]
+for v in miss:  # 并发, cap 4
+    Agent("quasi:new-discover-agent", background=True,
+          prompt=f"""
+task: recover the real source of this missing citation
+
+context:
+  key: {v.key}
+  author: {v.parsed_author}
+  year_hint: {v.parsed_year}
+  mention_context: {v.mention_snippet}
+
+constraints:
+  max_candidates: 5
+  year_tolerance: 1
+
+output_path: {ct_dir}/verdicts/recovery-{v.key}.json
+
+output_schema (example):
+{{
+  "key": "{v.key}",
+  "online_recovery": {{
+    "title": "...", "author": "...", "year": 0,
+    "isbn": null, "doi": null, "publisher": null,
+    "kind": "book | paper | unknown",
+    "confidence": "high | medium | low | miss",
+    "sources": ["..."],
+    "suggested_slug": "...",
+    "process_book_cmd": "/quasi:process-book ..."
+  }}
+}}
+""")
+```
+
+每条产出 `verdicts/recovery-{key}.json`,含 `online_recovery: {title, author, year, doi, isbn, suggested_slug, process_book_cmd, confidence}`。
+
+### 2.4 — TUI 审定 (主进程, 关键步骤)
+
+**主进程驱动**, **不要派 agent**。读所有 artifacts,按维度分箱,**按维度顺序** AskUserQuestion 走完。
+
+```python
+manifest = read({ct_dir}/manifest.json)
+notes = {}  # key → {picked_slug, flag, note}
+for f in glob({ct_dir}/verdicts/batch-*.json):
+    for n in read(f).notes:
+        notes[n.key] = n
+
+recoveries = {}  # key → online_recovery dict
+for f in glob({ct_dir}/verdicts/recovery-*.json):
+    r = read(f)
+    recoveries[r.key] = r.online_recovery
+
+bins = {
+  "auto_ok":       [],   # 不问用户, 直接接受
+  "review_single": [],   # single-hit + flag=review
+  "review_multi":  [],   # multi-hit (无论 flag, 都让用户确认; 但默认接受 agent picked)
+  "miss_recover":  [],   # miss + recoveries[key] 存在
+  "miss_orphan":   [],   # miss + 无 recovery
+}
+
+for e in manifest.entries:
+    n = notes.get(e.key)
+    if e.status == "single-hit":
+        if n and n.flag == "ok":
+            bins["auto_ok"].append((e, n))
+        else:
+            bins["review_single"].append((e, n))
+    elif e.status == "multi-hit":
+        bins["review_multi"].append((e, n))
+    elif e.status == "miss":
+        if e.key in recoveries:
+            bins["miss_recover"].append((e, recoveries[e.key]))
+        else:
+            bins["miss_orphan"].append(e)
+```
+
+**先打印一次 summary**: 让用户知道本轮要过多少条。
+
+```
+📊 Citation review:
+  ✓ 自动接受 (single-hit + agent ok):  {len(auto_ok)} 条
+  ⚠ 单候选可疑 (single-hit + review):  {len(review_single)} 条
+  🔀 多候选挑选 (multi-hit):           {len(review_multi)} 条
+  🔍 缺 + 在线找到候选:                {len(miss_recover)} 条
+  ❌ 缺 + 在线也没找到:                {len(miss_orphan)} 条
+  ─────────────────────────────────────
+  本轮需要你审:  {total - len(auto_ok)} 条
+```
+
+**然后按 bin 顺序走 TUI**:
+
+**A. review_single — single-hit 主题可疑**
+
+对每条,AskUserQuestion (一次问 1 条; 后续可优化为一次 1-4 条批问):
+
+- `header`: `"{key}"` (chip 显示 key)
+- `question`: 多行,含 mention 上下文摘录 (~200字截断) + agent note + 当前 vault candidate 标题
+- `options` (4 选 1):
+  - "接受 vault: {picked_slug}" (recommended; default 选这个) — `decision="single-hit-accept"`
+  - "改 draft 引用" (用 Other 填新 key 或描述) — `decision="draft-rewrite-todo"`
+  - "标 vault TODO (用户要去补对的 vault 条目)" — `decision="vault-todo"`
+  - "跳过本条 (不出 bib)" — `decision="skip"`
+
+**B. review_multi — 多候选挑选**
+
+对每条 AskUserQuestion:
+
+- `header`: `"{key}"`
+- `question`: mention 上下文 + agent picked_slug + agent note
+- `options`:
+  - "接受 agent 选的: {picked_slug}" (default; agent 通常对)
+  - "其他候选: {candidate2}" (列其他候选,1-2 个)
+  - "都不对, 我手填" (用 Other)
+  - "跳过本条"
+
+candidates 多于 3 个时, 显示前 2 + "其他...(用 Other 填 slug)"。
+
+**C. miss_recover — 缺 + 在线找到候选**
+
+对每条 AskUserQuestion:
+
+- `header`: `"{key}"`
+- `question`: mention 上下文 + recovery 给的 title/author/year + process_book_cmd + confidence
+- `options`:
+  - "加待跑列表: {process_book_cmd}" (default if confidence ≥ medium) — `decision="vault-todo-with-cmd"`
+  - "改 draft 引用" (Other 填) — `decision="draft-rewrite-todo"`
+  - "跳过本条" — `decision="skip"`
+
+**D. miss_orphan — 缺 + 在线也没找到**
+
+对每条 AskUserQuestion:
+
+- `header`: `"{key}"`
+- `question`: mention 上下文 + 提示 "在线也没找到"
+- `options`:
+  - "标 vault TODO (自己去查)" — `decision="vault-todo"`
+  - "改 draft 引用" (Other) — `decision="draft-rewrite-todo"`
+  - "跳过本条" — `decision="skip"`
+
+### 2.5 — 写 decisions.json + emit .bib
+
+走完所有 bin 后, 主进程把结果整成:
+
+```json
+{
+  "by_key": {
+    "fausto-sterling-2000": {
+      "bib_source": "vault:fausto-sterling-sexing-the-body-2000",
+      "decision": "single-hit-accept",
+      "note": "vault 候选契合, 接受"
+    },
+    "russell-2019": {
+      "bib_source": "new:russell-...-2019",
+      "decision": "vault-todo-with-cmd",
+      "note": "已加待跑列表"
+    },
+    "garbage-key": {
+      "bib_source": null,
+      "decision": "skip",
+      "note": "用户跳过"
+    }
+  },
+  "vault_todo": [
+    {"key": "russell-2019", "process_book_cmd": "/quasi:process-book ...", "title": "...", "author": "...", "year": ...}
+  ],
+  "draft_rewrites": [
+    {"old_key": "fausto-sterling-2000", "user_note": "改为 Sexing the Body 2000", "draft_snippet": "..."}
+  ],
+  "summary": {
+    "total": 168,
+    "auto_ok": 137,
+    "user_reviewed": 31,
+    "skipped": 4,
+    "vault_todo": 12,
+    "draft_rewrites": 3
+  }
+}
+```
+
+Write 到 `{ct_dir}/decisions.json`。
+
+然后 emit:
+
+```bash
+quasi-helpers citation emit-bib {ct_dir}/manifest.json \
+  --biblio {ct_dir}/biblio.json \
+  --decisions {ct_dir}/decisions.json \
+  -o {project_root}/references.bib
+```
+
+**最终打印**:
+
+```
+✅ Wrap-up done.
+
+  📄 draft:           {draft_path}
+  📋 decisions:       {ct_dir}/decisions.json
+  📚 references.bib:  {project_root}/references.bib
+
+  vault todos:    {len(vault_todo)} 条 ({ct_dir}/decisions.json 的 vault_todo 字段)
+  draft rewrites: {len(draft_rewrites)} 条 ({ct_dir}/decisions.json 的 draft_rewrites 字段)
+```
+
+如果有 vault_todo, 提示用户:
+```
+💡 加待跑书目: 把 decisions.json 里 vault_todo 的 process_book_cmd 复制到新 Claude 会话批跑。
+```
+
+如果有 draft_rewrites, 提示:
+```
+💡 改 draft 引用: decisions.json 里 draft_rewrites 列了 N 条 cite 你要回去改 draft, 改完跑 /quasi:wrap-up <draft> --citation-only 重新出 .bib。
+```
+
+**硬约束**:
+- Phase 1 必须全部完成才进入 Phase 2 (proofread 改字会让 parse 行号失效)
+- Phase 2.2 + 2.3 完成才进入 2.4 (TUI 需要全量数据)
+- TUI 是主进程串行驱动, 不要拆 agent (AskUserQuestion 必须在主上下文)
+
+## Phase 3 — CLEANUP
+
+校对记录块是临时工具。审完用 git 接受/拒收改动后, 触发清理:
+
+- **触发词**: 用户说 "审完了" / "清理记录块" / "删掉校对记录" / "cleanup" / "proofread 收尾"
+- **执行**: `quasi-helpers proofread cleanup <draft-or-dir>` — 从每个 markdown 文件删除整个 `<!-- proofread:start -->...<!-- proofread:end -->` 块
+- **执行后**(可选): `rm -rf processing/proofread/{stem}/` 清掉 split 产物
 
 ## 中间 / 终产物
 
 ```
 processing/
 ├── proofread/{stem}/
-│   └── sections.json              # split 产物(切节范围)— proofread 中间产物仅此一份
+│   └── sections.json
 ├── citation/{stem}/
+│   ├── biblio.json
 │   ├── parse.json
 │   ├── manifest.json
-│   ├── agents/batch-NNN.json
-│   ├── report.html                # ← 引用详细
-│   └── references.bib             # ← BibTeX
-└── wrap-up/{stem}/
-    └── summary.html               # ← 一页汇总
+│   ├── verdicts/
+│   │   ├── batch-001.json     # citation-agent context-fit notes
+│   │   ├── batch-002.json
+│   │   └── recovery-{key}.json # discover-agent online recoveries
+│   └── decisions.json         # ← TUI 收集的最终决策
+└── (project_root)/
+    └── references.bib         # ← 终产物
 ```
 
-**draft 文件本身**:Phase 1 in-place 修改正文 + 末尾累积 `<!-- proofread:start -->...<!-- proofread:end -->` 块,Phase 4 删整段记录块。**改动记录的 single source of truth = draft 末尾块**,无 sidecar / changelog 冗余。
+**draft 文件本身**:Phase 1 in-place 修改正文 + 末尾累积 `<!-- proofread:start -->...<!-- proofread:end -->` 块,Phase 3 删整段记录块。**改动记录的 single source of truth = draft 末尾块**, 无 sidecar / changelog 冗余。

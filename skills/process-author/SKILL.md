@@ -21,7 +21,7 @@ description: >
 
 - **禁止用 TaskOutput 检查后台 agent**：会报 "No task found"，导致卡住
 - **必须用 Glob 轮询输出文件**来判断完成
-- **每个文本独立 dispatch 一个 analyze-agent**：禁止把多章/多篇论文合并到一个 agent 调用中。一个文本 = 一个 Agent() 调用。
+- **每个文本独立 dispatch 一个 analyse-agent**：禁止把多章/多篇论文合并到一个 agent 调用中。一个文本 = 一个 Agent() 调用。
 - **Dispatcher context 卫生**：
   - Glob 轮询只关注完成数 vs 总数，不要逐一列举文件名
   - 后台 agent 完成通知是冗余信息，收到后不需要额外处理
@@ -31,17 +31,17 @@ description: >
 
 ```
 主进程 (dispatcher)
-├─ Phase 1: discover-agent (opus, 前台) → manifest
+├─ Phase 1: search-agent (opus, 前台) → manifest
 ├─ Phase 2: download-agent (sonnet, 前台) → 下载
 ├─ Phase 3: 书籍处理
 │   ├─ 逐本: extract-agent (sonnet, 前台)
 │   ├─ 主进程: 读 manifest → 全部章节
-│   ├─ analyze-agent ×N (opus, 后台, 跨书并行)
+│   ├─ analyse-agent ×N (opus, 后台, 跨书并行)
 │   ├─ Glob 轮询
-│   └─ 逐本: overview-agent (opus, 前台)
-├─ Phase 4: analyze-agent ×M (opus, 后台) → 论文
-├─ Phase 5: profile-agent (opus, 前台) → profile.md
-└─ Phase 6: typecheck-agent (sonnet, 前台) → 校验 + 修复所有生成文件
+│   └─ 逐本: synthesis-agent(mode=book) (opus, 前台)
+├─ Phase 4: analyse-agent ×M (opus, 后台) → 论文
+├─ Phase 5: synthesis-agent(mode=author) (opus, 前台) → profile.md
+└─ Phase 6: audit-agent (sonnet, 前台) → 校验 + 修复所有生成文件
 ```
 
 ## 执行流程
@@ -52,14 +52,55 @@ manifest_path = f"processing/authors/{author_name}/manifest.json"
 
 # 1. DISCOVER
 if not exists(manifest_path):
-    Agent("quasi:discover-agent", foreground=True,
-          prompt=f"author_name: {author_name}, full_name: {full_name}, topic: ...")
+    Agent("quasi:search-agent", foreground=True,
+          prompt=f"""
+task: discover this author's representative works on the given topic
+
+context:
+  author_name: {author_name}     # kebab slug
+  full_name: {full_name}
+  topic: ...                     # 主进程从 args / 对话收集，不要让 agent 猜
+
+constraints:
+  n_books: 5
+  n_papers: 10
+  sort_by: citations
+
+output_path: {manifest_path}
+
+output_schema (example):
+{{
+  "author": "{full_name}",
+  "slug": "{author_name}",
+  "discovered": "YYYY-MM-DD",
+  "books": [
+    {{"title": "...", "year": 0, "slug": "{author_name}-...-YYYY",
+      "isbn": "...", "md5": null, "status": "discovered", "reason": "..."}}
+  ],
+  "papers": [
+    {{"title": "...", "doi": "...", "year": 0, "citations": 0,
+      "oa_url": null, "status": "discovered", "reason": "..."}}
+  ]
+}}
+""")
 
 # 2. ACQUIRE
 manifest = read_json(manifest_path)
 if any(status == "discovered"):
     Agent("quasi:download-agent", foreground=True,
           prompt=f"manifest_path: {manifest_path}, mode: both")
+
+# 2a. DOI liveness (optional, caller-side)
+# If you want to verify every DOI in the manifest resolves, loop:
+# for key, paper in manifest['papers'].items():
+#     doi = paper.get('doi')
+#     if not doi:
+#         continue
+#     rc = subprocess.call(['curl', '-sI', '--max-time', '10',
+#                            f'https://doi.org/{doi}'],
+#                           stdout=subprocess.DEVNULL)
+#     paper['doi_status'] = 'live' if rc == 0 else 'dead'
+# bin 不再提供 batch validate;caller 自行决定 liveness 检查策略。
 
 # 3. PROCESS BOOKS
 # Phase 2 结束时 download-agent 已对每本书调用 --finalize-book，manifest 中
@@ -86,18 +127,18 @@ for ch in all_chapters:
     # slot: "01".."99" 真章 / "00a" 前言 / "99a" 后记 / "01b" 章间插曲
     # chapter_label: 由 slot + title 推导的人类可读标签（"第3章" / "前言" / "后记" / "第2章（附）"）
     if not exists(ch.output_path):
-        Agent("quasi:analyze-agent", background=True,
+        Agent("quasi:analyse-agent", background=True,
               prompt=f"type: A, book_title: ..., slot: {ch.slot}, chapter_label: ..., "
                      f"input: ..., output: ..., topic: ...")
 
 while not all_done:
     sleep(30)
 
-# 3c. 逐本概览
+# 3c. 逐本概览(走大一统 synthesis-agent, mode=book)
 for book in acquired_books:
     if not exists(f"vault/books/{book.slug}/00-overview.md"):
-        Agent("quasi:overview-agent", foreground=True,
-              prompt=f"output_dir: vault/books/{book.slug}/, book_title: ..., topic: ...")
+        Agent("quasi:synthesis-agent", foreground=True,
+              prompt=f"mode: book\noutput_dir: vault/books/{book.slug}/\nbook_title: ...\ntopic: ...")
 
 # 4. PROCESS PAPERS
 # paper.slug 必须形如 {author-surname}-{title}-{year}（全局唯一）
@@ -105,35 +146,73 @@ for book in acquired_books:
 for paper in manifest.papers where status == "acquired":
     output_path = f"vault/papers/{paper.slug}.md"
     if not exists(output_path):
-        Agent("quasi:analyze-agent", background=True,
+        Agent("quasi:analyse-agent", background=True,
               prompt=f"type: B, title: ..., doi: ..., input: ..., "
                      f"output: {output_path}, topic: ...")
 
 while not all_papers_done:
     sleep(30)
 
-# 5. SYNTHESIS
+# 5. SYNTHESIS (mode=author 走大一统 synthesis-agent)
 profile_path = f"vault/authors/{author_name}.md"
 if not exists(profile_path):
     paper_paths = [f"vault/papers/{p.slug}.md" for p in manifest.papers if status == "acquired"]
     book_overview_paths = [f"vault/books/{b.slug}/00-overview.md" for b in acquired_books]
-    Agent("quasi:profile-agent", foreground=True,
-          prompt=f"author_name: {author_name}, full_name: {full_name}, topic: ..., "
-                 f"output_path: {profile_path}, "
-                 f"book_overview_paths: {book_overview_paths}, paper_paths: {paper_paths}")
+    Agent("quasi:synthesis-agent", foreground=True,
+          prompt=f"mode: author\nauthor_name: {author_name}\nfull_name: {full_name}\ntopic: ...\n"
+                 f"output_path: {profile_path}\n"
+                 f"book_overview_paths: {book_overview_paths}\npaper_paths: {paper_paths}")
 
-# 6. TYPECHECK
+# 6. AUDIT
 # 校验 + 修复所有本次生成的文件,在源头止住 schema 漂移。
-# 每个 path 一个独立 Agent() 调用,顺序前台跑(typecheck-agent 单文件 ~30-60s)。
-typecheck_targets = [profile_path]
+# 每个 path 一个独立 Agent() 调用,顺序前台跑(audit-agent 单文件 ~30-60s)。
+audit_targets = [profile_path]
 for b in acquired_books:
-    typecheck_targets.append(f"vault/books/{b.slug}/")  # overview + 所有章节
+    audit_targets.append(f"vault/books/{b.slug}/")  # overview + 所有章节
 for p in manifest.papers where status == "acquired":
-    typecheck_targets.append(f"vault/papers/{p.slug}.md")
+    audit_targets.append(f"vault/papers/{p.slug}.md")
 
-for path in typecheck_targets:
-    Agent("quasi:typecheck-agent", foreground=True,
-          prompt=f"path: {path}\nmode: full")
+for path in audit_targets:
+    audit = Agent("quasi:audit-agent", foreground=True,
+                  prompt=f"path: {path}")
+
+    # audit-agent only performs local minimal repairs. Escalated items mean the
+    # owning generation step must redo the corresponding file/subtree.
+    if audit.audit_result.escalated:
+        for item in audit.audit_result.escalated:
+            p = item.path
+            if p == profile_path:
+                Agent("quasi:synthesis-agent", foreground=True,
+                      prompt=f"mode: author\nauthor_name: {author_name}\nfull_name: {full_name}\ntopic: ...\n"
+                             f"output_path: {profile_path}\n"
+                             f"book_overview_paths: {book_overview_paths}\npaper_paths: {paper_paths}\n"
+                             f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+            elif "/vault/books/" in p and p.endswith("/00-overview.md"):
+                b = find_book_for_overview(acquired_books, p)
+                Agent("quasi:synthesis-agent", foreground=True,
+                      prompt=f"mode: book\noutput_dir: vault/books/{b.slug}\nbook_title: {b.title}\ntopic: ...\n"
+                             f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+            elif "/vault/books/" in p and "/ch" in basename(p):
+                b, ch = find_book_chapter_for_output(acquired_books, p)
+                Agent("quasi:analyse-agent", foreground=True,
+                      prompt=f"type: A, book_title: {b.title}, slot: {ch.slot}, chapter_label: {chapter_label}, "
+                             f"input: processing/chapters/{b.slug}/{ch.filename}, "
+                             f"output: {p}, topic: ...\n"
+                             f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+            elif "/vault/papers/" in p:
+                paper = find_manifest_paper_for_output(manifest, p)
+                Agent("quasi:analyse-agent", foreground=True,
+                      prompt=f"type: B, title: {paper.title}, doi: {paper.doi}, "
+                             f"input: {paper.local_path}, output: {p}, topic: ...\n"
+                             f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+            else:
+                report(f"audit escalated unknown author-processing path: {p}")
+
+        audit = Agent("quasi:audit-agent", foreground=True,
+                      prompt=f"path: {path}")
+        if audit.audit_result.escalated:
+            report(f"audit still escalated for {path} after one regeneration pass")
+            return
 ```
 
 ## 断点续跑

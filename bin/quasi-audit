@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# quasi-audit — vault schema audit + mechanical fix + vault-level biblio emit.
+#
+# Subcommands:
+#   quasi-audit check [--path FILE_OR_DIR] [--quiet]
+#       Validate vault md files against quasi SPEC.
+#
+#   quasi-audit fix [--path FILE_OR_DIR] [--write] [--limit N]
+#       Apply mechanical fixes (fullwidth/halfwidth, whitespace, key ordering).
+#
+#   quasi-audit emit-bib -o PATH [--project-root DIR]
+#       Scan vault/{papers,books}/** frontmatter → biblio.json
+#       (single source of truth for citation pipeline downstream).
+#
+#   quasi-audit backfill --strategy STRATEGY [-- ARGS_TO_SWEEP_SCRIPT...]
+#       Run vault metadata backfill sweep scripts. STRATEGY ∈
+#       {auto, clean, crossref, aa-title, aa-md5, aa-from-slug,
+#        openalex, ol-search, ol-isbn-reverse}
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
+PYTHON="$DATA_DIR/.venv/bin/python"
+
+[ -x "$PYTHON" ] || "$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
+
+exec "$PYTHON" "$PLUGIN_ROOT/scripts/audit/audit.py" "$@"
