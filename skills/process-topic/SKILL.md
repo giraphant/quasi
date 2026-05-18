@@ -56,10 +56,10 @@ MAX_ROUNDS = 5
 # Phase 0: SEED
 if not exists(manifest_path):
     Agent("quasi:download-agent", foreground=True,
-          prompt=f"doi: {seed}, output_dir: /tmp/{topic_slug}-pdfs/, filename: seed")
+          prompt=f"doi: {seed}, output_dir: .quasi/temp/topic-pdfs/{topic_slug}/, filename: seed")
 
     Agent("quasi:analyse-agent", foreground=True,
-          prompt=f"type: B, input: /tmp/{topic_slug}-pdfs/seed.pdf, "
+          prompt=f"type: B, input: .quasi/temp/topic-pdfs/{topic_slug}/seed.pdf, "
                  f"output: vault/topics/{topic_slug}/seed.md, topic: {topic_desc}")
 
     analysis = Read(f"vault/topics/{topic_slug}/seed.md")
@@ -199,7 +199,7 @@ vault/topics/{topic-slug}/
 └── {paper-key}.md
 vault/topics/{topic-slug}-synthesis.md     ← 主题综述（与目录同级）
 vault/topics/{topic-slug}-reading-list.md  ← 阅读清单
-/tmp/{topic-slug}-pdfs/
+.quasi/temp/topic-pdfs/{topic-slug}/
 └── *.pdf
 ```
 

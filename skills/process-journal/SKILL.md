@@ -52,12 +52,12 @@ if not exists(f"vault/journals/{journal_name}-scan.md"):
 # 2. ACQUIRE
 Agent("quasi:download-agent", foreground=True,
       prompt=f"scan_path: vault/journals/{journal_name}-scan.md, "
-             f"threshold: {threshold}, output_dir: /tmp/{journal_name}-pdfs/, "
+             f"threshold: {threshold}, output_dir: .quasi/temp/journal-pdfs/{journal_name}/, "
              f"analysis_dir: vault/journals/{journal_name}/")
 
 # 3. 确定待分析列表
 scan = Read(f"vault/journals/{journal_name}-scan.md")
-pdfs = Glob(f"/tmp/{journal_name}-pdfs/*.pdf")
+pdfs = Glob(f".quasi/temp/journal-pdfs/{journal_name}/*.pdf")
 existing = Glob(f"vault/journals/{journal_name}/*.md")
 to_analyze = match_and_filter(scan, pdfs, existing, threshold)
 
@@ -65,7 +65,7 @@ to_analyze = match_and_filter(scan, pdfs, existing, threshold)
 for paper in to_analyze:
     Agent("quasi:analyse-agent", background=True,
           prompt=f"type: B, title: {paper.title}, doi: {paper.doi}, "
-                 f"input: /tmp/{journal_name}-pdfs/{paper.slug}.pdf, "
+                 f"input: .quasi/temp/journal-pdfs/{journal_name}/{paper.slug}.pdf, "
                  f"output: vault/journals/{journal_name}/{paper.slug}.md, topic: ...")
 
 while not all_done:
@@ -101,6 +101,6 @@ vault/journals/{journal-name}-synthesis.md
 vault/journals/{journal-name}-reading-list.md
 vault/journals/{journal-name}/
 └── {slug}.md
-/tmp/{journal-name}-pdfs/
+.quasi/temp/journal-pdfs/{journal-name}/
 └── *.pdf
 ```

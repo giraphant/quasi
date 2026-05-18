@@ -1093,7 +1093,7 @@ def batch_download_manifest(manifest_path, retry_wayback=False):
     with open(manifest_path, "r") as f:
         manifest = json.load(f)
 
-    pdf_dir = manifest.get("pdf_dir", "/tmp/snowball-pdfs")
+    pdf_dir = manifest.get("pdf_dir", ".quasi/temp/snowball-pdfs")
     os.makedirs(pdf_dir, exist_ok=True)
 
     to_process = [
