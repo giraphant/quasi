@@ -152,7 +152,6 @@ batches = chunk(todo, size=8)
 ```
 Agent("quasi:citation-agent", background=True,
       prompt=f"manifest: {ct_dir}/manifest.json\n"
-             f"biblio: {ct_dir}/biblio.json\n"
              f"batch_keys: {batch_keys_json}\n"
              f"verdict_out: {ct_dir}/verdicts/batch-{NNN}.json")
 ```
