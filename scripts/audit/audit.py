@@ -1,107 +1,39 @@
 #!/usr/bin/env python3
-"""quasi-audit — vault audit dispatcher.
+"""quasi-audit — agent-facing vault typecheck wrapper.
 
-Subcommands:
+Single contract:
 
-    run       local audit transaction harness (fix/check + JSON stdout summary)
-    emit-bib  scripts/citation/biblio.scan_vault()      (vault → biblio.json)
-    backfill  scripts/audit/backfill.py                 (vault metadata sweep)
-    localise  scripts/audit/localise.py                 (cndouban scan + write,
-              local-agent's helpers — runner stays decoupled from translations.json)
+    quasi-audit --path PATH
 
-This file is the L0 entry point for everything in the "vault consistency"
-capability domain. agent-side, audit-agent invokes via the quasi-audit shim;
-the dispatcher then routes to the appropriate worker module.
-
-Rationale (see plugins/quasi/docs/LAYERS.md):
-    - typecheck + autofix-mechanical + (vault-level) biblio emit are all
-      forms of "is the vault internally consistent?"
-    - they were three separate bins (quasi-typecheck, quasi-autofix-mechanical,
-      quasi-citation biblio). this dispatcher unifies them under quasi-audit.
+The command always runs mechanical autofix, then typecheck, then classifies
+residual issues for audit-agent. Stdout is always JSON.
 """
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
-import os
 import sys
+from collections import Counter
 from pathlib import Path
-from types import ModuleType
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS_ROOT = PLUGIN_ROOT / "scripts"
+sys.path.insert(0, str(PLUGIN_ROOT))
+sys.path.insert(0, str(SCRIPTS_ROOT))
 
+from core import load_script_module, print_json, project_root, resolve_project_path  # noqa: E402
 
 def _project_root() -> Path:
-    return Path(
-        os.environ.get("QUA_PROJECT_ROOT")
-        or os.environ.get("CLAUDE_PROJECT_DIR")
-        or os.getcwd()
-    ).resolve()
+    return project_root()
 
 
 def _resolve_target(path_arg: str, project_root: Path) -> Path:
-    target = Path(path_arg).expanduser()
-    if not target.is_absolute():
-        target = project_root / target
-    return target.resolve()
+    return resolve_project_path(path_arg, project_root)
 
 
-def _load(module_name: str, relative_path: str) -> ModuleType:
+def _load(module_name: str, relative_path: str):
     """Load a sibling script file as a module without touching sys.path globally."""
-    target = PLUGIN_ROOT / relative_path
-    spec = importlib.util.spec_from_file_location(module_name, target)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load {target}")
-    mod = importlib.util.module_from_spec(spec)
-    # Register in sys.modules BEFORE exec so @dataclass and other introspection
-    # (which calls sys.modules.get(cls.__module__)) sees the module.
-    sys.modules[module_name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _cmd_emit_bib() -> int:
-    """Vault-level biblio emit. Wraps scripts/citation/biblio.scan_vault."""
-    import argparse
-
-    ap = argparse.ArgumentParser(
-        prog="quasi-audit emit-bib",
-        description="Scan vault frontmatter → biblio.json (single source of truth).",
-    )
-    ap.add_argument(
-        "--project-root",
-        help="Vault root (default $CLAUDE_PROJECT_DIR / cwd)",
-    )
-    ap.add_argument(
-        "-o", "--output", required=True,
-        help="Output biblio.json path",
-    )
-    args = ap.parse_args(sys.argv[2:])
-
-    biblio_mod = _load("quasi_audit_biblio", "scripts/citation/biblio.py")
-    root_str = (
-        args.project_root
-        or os.environ.get("CLAUDE_PROJECT_DIR")
-        or os.getcwd()
-    )
-    root = Path(root_str).resolve()
-
-    result = biblio_mod.scan_vault(root)
-    out = Path(args.output)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    s = result["summary"]
-    print(
-        f"biblio: {s['total']} entries "
-        f"(papers {s['papers']}, books {s['books']}, "
-        f"with-issues {s['with_issues']})"
-    )
-    print(f"wrote {out}")
-    return 0
+    return load_script_module(module_name, PLUGIN_ROOT / relative_path)
 
 
 def _abs_result_path(path_value: str, project_root: Path) -> str:
@@ -117,6 +49,27 @@ def _violation_count(result: dict) -> int:
         + len(result.get("body_violations") or [])
         + (1 if result.get("type_rename") else 0)
     )
+
+
+def _run_mechanical_autofix(autofix_mod, target: Path) -> dict:
+    files = autofix_mod.collect_files(target)
+    modified = 0
+    change_counts: Counter[str] = Counter()
+    for path in files:
+        result = autofix_mod.fix_file(path)
+        if result is None:
+            continue
+        new_text, changes = result
+        path.write_text(new_text, encoding="utf-8")
+        modified += 1
+        for change in changes:
+            kind = change.split(":")[0].split("(")[0].split("→")[0].strip().split()[0]
+            change_counts[kind] += 1
+    return {
+        "files_scanned": len(files),
+        "files_modified": modified,
+        "change_counts": dict(change_counts),
+    }
 
 
 def _classify_results(results: list[dict], project_root: Path) -> tuple[list[dict], list[dict]]:
@@ -152,7 +105,7 @@ def _classify_results(results: list[dict], project_root: Path) -> tuple[list[dic
                 "path": path,
                 "kind": "type_rename",
                 "reason": f"type should be renamed from {tr.get('from')} to {tr.get('to')}",
-                "suggested_action": "run quasi-audit run --mode fix",
+                "suggested_action": "run quasi-audit --path <target>",
             })
 
         for violation in result.get("body_violations") or []:
@@ -190,95 +143,30 @@ def _classify_results(results: list[dict], project_root: Path) -> tuple[list[dic
     return llm_editable, escalated
 
 
-def _slug_for_metadata(path: Path, canon_type: str) -> str:
-    parts = path.parts
-    if canon_type == "book":
-        try:
-            return parts[parts.index("books") + 1]
-        except (ValueError, IndexError):
-            return path.parent.name
-    return path.stem
-
-
-def _missing_value(fm: dict, field: str) -> bool:
-    value = fm.get(field)
-    return value is None or value == "" or value == []
-
-
-def _scan_needs_backfill(target: Path, typecheck_mod) -> list[dict]:
-    """Find deterministic frontmatter gaps for the separate backfill workflow.
-
-    Reports only structural frontmatter fields the audit itself owns
-    (publisher / isbn / doi). The cndouban / translation index lives entirely
-    in `.quasi/audit/translations.json` under local-agent's ownership;
-    audit knows nothing about it.
-    """
-    needs: list[dict] = []
-    for path in typecheck_mod.collect_files(target):
-        text = path.read_text(encoding="utf-8")
-        fm, _body = typecheck_mod.split_frontmatter(text)
-        if not isinstance(fm, dict):
-            continue
-        canon = typecheck_mod.canonical_type(fm.get("type"))
-        if canon == "book":
-            missing: list[str] = []
-            for field in ("publisher", "isbn"):
-                if _missing_value(fm, field):
-                    missing.append(field)
-            if missing:
-                required = {"publisher"}
-                qualifier = "" if required.intersection(missing) else "optional "
-                needs.append({
-                    "path": str(path.resolve()),
-                    "slug": _slug_for_metadata(path, canon),
-                    "type": canon,
-                    "missing": missing,
-                    "reason": f"missing {qualifier}metadata fields: {', '.join(missing)}",
-                })
-        elif canon == "paper":
-            missing = [field for field in ("doi",) if _missing_value(fm, field)]
-            if missing:
-                needs.append({
-                    "path": str(path.resolve()),
-                    "slug": _slug_for_metadata(path, canon),
-                    "type": canon,
-                    "missing": missing,
-                    "reason": f"missing optional metadata fields: {', '.join(missing)}",
-                })
-
-    return needs
-
-
-def _cmd_run() -> int:
-    """Local audit transaction harness: mechanical fix/check + state + JSON."""
+def _run_audit(argv: list[str]) -> int:
+    """Mechanical autofix + typecheck + residual issue classification."""
     ap = argparse.ArgumentParser(
-        prog="quasi-audit run",
-        description="Run the local audit transaction and emit an agent-readable JSON summary.",
+        prog="quasi-audit",
+        description="Run mechanical autofix, typecheck, and emit audit-agent JSON.",
     )
     ap.add_argument("--path", default="vault", help="File or directory to audit")
-    ap.add_argument("--mode", choices=["check", "fix"], default="fix")
-    ap.add_argument("--json", action="store_true", help="Emit machine-readable JSON summary")
-    ap.add_argument("--limit", type=int, default=0, help="Limit mechanical fixes in fix mode")
-    args = ap.parse_args(sys.argv[2:])
+    args = ap.parse_args(argv)
 
-    project_root = _project_root()
-    target = _resolve_target(args.path, project_root)
+    root = _project_root()
+    target = _resolve_target(args.path, root)
     if not target.exists():
-        print(f"error: path does not exist: {target}", file=sys.stderr)
+        print_json({
+            "status": "error",
+            "path": str(target),
+            "error": f"path does not exist: {target}",
+        })
         return 2
 
-    fix_result = {"files_scanned": 0, "files_modified": 0, "change_counts": {}}
-    if args.mode != "check":
-        autofix_mod = _load(
-            "quasi_audit_autofix_run",
-            "scripts/typecheck/autofix_mechanical.py",
-        )
-        result = autofix_mod.run_autofix(target, write=True, limit=args.limit)
-        fix_result = {
-            "files_scanned": result.files_scanned,
-            "files_modified": result.files_modified,
-            "change_counts": result.change_counts,
-        }
+    autofix_mod = _load(
+        "quasi_audit_autofix_run",
+        "scripts/typecheck/autofix_mechanical.py",
+    )
+    fix_result = _run_mechanical_autofix(autofix_mod, target)
 
     typecheck_mod = _load(
         "quasi_audit_typecheck_run",
@@ -290,98 +178,29 @@ def _cmd_run() -> int:
 
     remaining = sum(_violation_count(r) for r in results)
     files_with_violations = sum(1 for r in results if _violation_count(r) > 0)
-    llm_editable, escalated = _classify_results(results, project_root)
-    needs_backfill = _scan_needs_backfill(target, typecheck_mod)
+    llm_editable, escalated = _classify_results(results, root)
     status = "clean" if remaining == 0 else "partial"
     summary = {
         "status": status,
         "path": str(target),
-        "mode": args.mode,
         "files_checked": len(results),
         "files_with_violations": files_with_violations,
         "files_modified": fix_result["files_modified"],
         "remaining_violations": remaining,
         "fix_counts": fix_result["change_counts"],
         "llm_editable": llm_editable,
-        "needs_backfill": needs_backfill,
         "escalated": escalated,
         "artifacts": {
             "typecheck_results": ".quasi/audit/typecheck-results.json",
         },
     }
 
-    if args.json:
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
-    else:
-        print(
-            f"audit run: {status}; {len(results)} files checked; "
-            f"{fix_result['files_modified']} modified; {remaining} remaining violations"
-        )
+    print_json(summary)
     return 0 if status == "clean" else 1
 
 
-def _print_help() -> int:
-    sys.stdout.write(__doc__ or "")
-    sys.stdout.write(
-        "\n"
-        "Usage:\n"
-        "  quasi-audit run       [--path FILE_OR_DIR] [--mode check|fix] [--json]\n"
-        "  quasi-audit emit-bib  -o PATH [--project-root DIR]\n"
-        "  quasi-audit backfill  --strategy STRATEGY [-- ARGS_TO_SWEEP_SCRIPT...]\n"
-        "  quasi-audit localise  scan [--path FILE_OR_DIR] [--json]\n"
-        "  quasi-audit localise  write --slug SLUG (--results-json '[...]' | --results-file PATH)\n"
-    )
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
-    if argv is not None:
-        sys.argv = ["quasi-audit", *argv]
-
-    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
-        return _print_help()
-
-    subcmd = sys.argv[1]
-
-    if subcmd == "run":
-        return _cmd_run()
-    if subcmd == "emit-bib":
-        return _cmd_emit_bib()
-    if subcmd == "localise":
-        localise_mod = _load("quasi_audit_localise", "scripts/audit/localise.py")
-        return localise_mod.main(sys.argv[2:])
-
-    if subcmd == "backfill":
-        import argparse as _ap
-        _STRATEGIES = [
-            "auto", "clean", "crossref", "aa-title", "aa-md5",
-            "aa-from-slug", "openalex", "ol-search", "ol-isbn-reverse",
-        ]
-        bp = _ap.ArgumentParser(
-            prog="quasi-audit backfill",
-            description="Run vault metadata backfill sweep scripts.",
-        )
-        bp.add_argument(
-            "--strategy",
-            required=True,
-            choices=_STRATEGIES,
-            help="Backfill strategy (or 'auto' to run the default chain)",
-        )
-        bp.add_argument(
-            "extra",
-            nargs=_ap.REMAINDER,
-            help="Extra args forwarded to the sweep script (use -- to separate)",
-        )
-        bargs = bp.parse_args(sys.argv[2:])
-        from backfill import run_backfill
-        extra = bargs.extra or []
-        if extra and extra[0] == "--":
-            extra = extra[1:]
-        sys.exit(run_backfill(bargs.strategy, extra))
-
-    print(f"quasi-audit: unknown subcommand: {subcmd}", file=sys.stderr)
-    _print_help()
-    return 2
+    return _run_audit(list(sys.argv[1:] if argv is None else argv))
 
 
 if __name__ == "__main__":

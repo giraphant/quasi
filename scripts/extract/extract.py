@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """quasi-extract — file → MD pipeline.
 
-Subcommands (each is dispatched by the bin/quasi-extract shim to a
-sibling worker, so this file exists only for `--help` discoverability):
+This is the unified extraction entrypoint. Worker scripts stay as sibling
+implementation files, but callers route through this file via bin/quasi-extract.
 
     epub   process_epub.py        EPUB → chapter md
     ocr    ocr_pdf.sh             PDF → searchable PDF (OCR)
@@ -10,7 +10,9 @@ sibling worker, so this file exists only for `--help` discoverability):
 """
 from __future__ import annotations
 
+import subprocess
 import sys
+from pathlib import Path
 
 
 HELP = """\
@@ -35,14 +37,18 @@ def main() -> int:
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         sys.stdout.write(HELP)
         return 0
-    # Subcommand dispatch happens in the bin/quasi-extract bash shim
-    # (cheaper than re-execing python for OCR which is a bash script).
-    # If someone runs this python file directly with a subcmd, route them.
-    print(
-        f"quasi-extract: invoke via bin/quasi-extract shim, not this script "
-        f"directly (subcommand {sys.argv[1]!r} not handled here).",
-        file=sys.stderr,
-    )
+
+    here = Path(__file__).resolve().parent
+    subcmd, rest = sys.argv[1], sys.argv[2:]
+    if subcmd == "epub":
+        return subprocess.call([sys.executable, str(here / "process_epub.py"), *rest])
+    if subcmd == "ocr":
+        return subprocess.call(["bash", str(here / "ocr_pdf.sh"), *rest])
+    if subcmd == "split":
+        return subprocess.call([sys.executable, str(here / "split_chapters.py"), *rest])
+
+    print(f"quasi-extract: unknown subcommand: {subcmd}", file=sys.stderr)
+    print("valid subcommands: epub | ocr | split", file=sys.stderr)
     return 2
 
 

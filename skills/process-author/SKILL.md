@@ -42,7 +42,7 @@ description: >
 ├─ Phase 4: analyse-agent ×M (opus, 后台) → 论文
 ├─ Phase 5: synthesis-agent(mode=author) (opus, 前台) → profile.md
 ├─ Phase 6: audit-agent (sonnet, 前台) → 校验 + 修复所有生成文件
-└─ Phase 7: local-agent (sonnet, 前台) → 中译本 metadata 回填
+└─ Phase 7: search-agent + quasi-helpers localise → 中译本 metadata 回填
 ```
 
 ## 执行流程
@@ -51,17 +51,16 @@ description: >
 author_name, full_name = parse_args()
 manifest_path = f".quasi/authors/{author_name}/manifest.json"
 
-# 1. DISCOVER — two structured search-agent calls (kind=book + kind=paper),
-# skill main process merges results into the manifest the existing Phase 2+
-# code expects. search-agent contract since 0.25.0 demands {task, context,
-# constraints, output_path, output_schema} as structured fields;
-# narrative prompts no longer parse.
+# 1. DISCOVER — two structured search-agent calls (kind=book + kind=paper).
+# search-agent only returns curated JSON; it never writes files. The skill main
+# process may cache those JSON payloads, then merges them into the manifest that
+# Phase 2+ expects.
 if not exists(manifest_path):
     books_path  = f".quasi/authors/{author_name}/books.json"
     papers_path = f".quasi/authors/{author_name}/papers.json"
 
     if not exists(books_path):
-        Agent("quasi:search-agent", foreground=True, prompt=f"""\
+        books_search = Agent("quasi:search-agent", foreground=True, prompt=f"""\
 task: find top representative books by {full_name} on topic {topic}, sorted by citations
 context:
   kind: book
@@ -70,20 +69,11 @@ context:
 constraints:
   count: 5
   sort: citations
-  write_policy: create
-output_path: {books_path}
-output_schema:
-  - slug         # canonical {{author-surname}}-{{short-title}}-{{year}}
-  - title
-  - year
-  - isbn_13
-  - authors
-  - citation_count
-  - reason       # 一行 curation 理由 (代表作判断)
 """)
+        write_json(books_path, books_search)
 
     if not exists(papers_path):
-        Agent("quasi:search-agent", foreground=True, prompt=f"""\
+        papers_search = Agent("quasi:search-agent", foreground=True, prompt=f"""\
 task: find top representative papers by {full_name} on topic {topic}, sorted by citations
 context:
   kind: paper
@@ -92,18 +82,8 @@ context:
 constraints:
   count: 10
   sort: citations
-  write_policy: create
-output_path: {papers_path}
-output_schema:
-  - slug         # canonical {{author-surname}}-{{short-title}}-{{year}}
-  - title
-  - year
-  - doi
-  - journal
-  - authors
-  - citation_count
-  - reason
 """)
+        write_json(papers_path, papers_search)
 
     # Merge into the manifest shape Phase 2+ expects.
     # (Pseudocode — at runtime: Read books_path + papers_path with Read tool,
@@ -117,11 +97,11 @@ output_schema:
         "discovered": today_iso(),
         "books": [
             {**b, "status": "discovered", "md5": None}
-            for b in (books_raw if isinstance(books_raw, list) else books_raw.get("results", []))
+            for b in (books_raw if isinstance(books_raw, list) else books_raw.get("candidates") or books_raw.get("results", []))
         ],
         "papers": [
             {**p, "status": "discovered", "oa_url": None}
-            for p in (papers_raw if isinstance(papers_raw, list) else papers_raw.get("results", []))
+            for p in (papers_raw if isinstance(papers_raw, list) else papers_raw.get("candidates") or papers_raw.get("results", []))
         ],
     }
     write_json(manifest_path, manifest)
@@ -154,9 +134,9 @@ output_dir: sources/
         if item["status"] == "ok":
             manifest["books"][i]["status"] = "acquired"
         elif item["status"] in ("year_mismatch", "year_ambiguous"):
-            # Override agent's "keep as tmp" — batch mode finalizes anyway,
+            # Override agent's "keep as tmp" — batch mode accepts into sources anyway,
             # records the year_evidence for offline review.
-            Bash(f"mv {item['tmp_path']} sources/{item['slug']}." + extension_of(item["tmp_path"]))
+            Bash(f"quasi-download accept --path {item['tmp_path']} --slug {item['slug']} --kind book --json")
             manifest["books"][i]["status"] = item["status"]
             manifest["books"][i]["year_evidence"] = item["year_evidence"]
             manifest["books"][i]["year_warning"] = (
@@ -211,7 +191,7 @@ if n_year_warned or n_paper_failed:
 # `curl -sI --max-time 10 https://doi.org/{doi}` per entry.
 
 # 3. PROCESS BOOKS
-# Phase 2 结束时 download-agent 已对每本书调用 --finalize-book，manifest 中
+# Phase 2 结束时 download-agent 已对每本书调用 `quasi-download accept`，manifest 中
 # books[*].slug 与 sources/{slug}.{ext} 均已是 canonical。Phase 3 起所有路径
 # 直接复用 book.slug，不再重新派生。
 manifest = read_json(manifest_path)
@@ -324,11 +304,18 @@ for path in audit_targets:
 
 # 7. LOCALISE
 # 只对本次获得的 book overview 回填中译本 / 中文版本 metadata。
-# 结果全外挂写进 .quasi/audit/translations.json,不动 book frontmatter。
-# local-agent 幂等:by_book[slug] 已有 entry(verdict found/none)则跳过。
+# search-agent 返回核验过的 localisations.zh.candidates;顶层调用 helper
+# 写入 .quasi/localise/cndouban.json。helper 按原书 ISBN 幂等。
 for b in acquired_books:
-    Agent("quasi:local-agent", foreground=True,
-          prompt=f"path: vault/books/{b.slug}/\nmode: cndouban")
+    scan = Bash(f"quasi-helpers localise scan --path vault/books/{b.slug}/ --json")
+    if scan.pending == 0:
+        continue
+    search = Agent("quasi:search-agent", foreground=True,
+                   prompt=f"kind: book\ncontext: read vault/books/{b.slug}/00-overview.md and search metadata/localisations")
+    candidates_file = write_temp_json(search.localisations.zh.candidates)
+    Bash("quasi-helpers localise write "
+         f"--book-path vault/books/{b.slug}/00-overview.md "
+         f"--candidates-file {candidates_file}")
 ```
 
 ## 断点续跑
@@ -343,7 +330,7 @@ for b in acquired_books:
 | Phase 4 | `vault/papers/{paper.slug}.md` | 存在则跳过 |
 | Phase 5 | `vault/authors/{author-name}.md` | 存在则跳过 |
 | Phase 6 | 无 —— 幂等,可重复跑 | 上次 typecheck clean 时几乎无成本 |
-| Phase 7 | `.quasi/audit/translations.json#by_book[slug]` | 已存在 entry(verdict found/none)则 local-agent 跳过 |
+| Phase 7 | `.quasi/localise/cndouban.json#by_isbn[isbn]` | 已存在 entry(status found/none)则 helper scan 跳过 |
 
 ## 目录结构
 

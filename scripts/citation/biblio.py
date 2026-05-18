@@ -8,9 +8,8 @@ The biblio is the *single source of truth* for citation resolution downstream:
     resolve.py   reads parse.json + biblio.json to produce manifest.json
     emit_bib.py  reads biblio.json + manifest → references.bib
 
-This file is the temporary home for vault-scanning. Once `quasi-audit emit`
-lands, this logic moves there and citation just consumes the biblio.json
-produced by audit.
+This is exposed through `quasi-helpers citation biblio`; audit remains a
+typecheck-only agent-facing command.
 
 Vault layout (observed in bts/):
     vault/papers/{author-slug}-{title-words}-{year}.md
@@ -32,13 +31,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
+PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PLUGIN_ROOT))
+
+from core import read_frontmatter as core_read_frontmatter  # noqa: E402
 
 
 PAPERS_GLOB = "vault/papers/*.md"
 BOOKS_OVERVIEW_GLOB = "vault/books/*/00-overview.md"
 
-_FM_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 _YEAR_TAIL_RE = re.compile(r"-(\d{4})$")
 
 
@@ -46,17 +47,10 @@ _YEAR_TAIL_RE = re.compile(r"-(\d{4})$")
 
 def read_frontmatter(path: Path) -> dict[str, Any]:
     try:
-        text = path.read_text(encoding="utf-8")
+        doc = core_read_frontmatter(path)
     except OSError:
         return {}
-    m = _FM_RE.match(text)
-    if not m:
-        return {}
-    try:
-        data = yaml.safe_load(m.group(1)) or {}
-    except yaml.YAMLError:
-        return {}
-    return data if isinstance(data, dict) else {}
+    return doc.frontmatter or {}
 
 
 def _first_author_field(fm: dict) -> str:

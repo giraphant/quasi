@@ -42,7 +42,7 @@ vault 中的"实体文档"使用 5 个 canonical type:
 
 ## 2. 共享原语 (`primitives.py`)
 
-定义在 `$CLAUDE_PLUGIN_ROOT/schemas/primitives.py`。**这不是继承基类** —— 是值层面的 Pydantic 验证器原语,被各 type schema 按需复用。每个 type schema 结构独立。
+定义在 `$CLAUDE_PLUGIN_ROOT/scripts/schemas/primitives.py`。**这不是继承基类** —— 是值层面的 Pydantic 验证器原语,被各 type schema 按需复用。每个 type schema 结构独立。
 
 > **实现说明**:本 SPEC 的 schema 代码示例使用 Zod 风格记号(写起来短),
 > 实际实现是 Pydantic V2 类。形状一一对应,语法不同。真代码见 `schemas/*.py`。

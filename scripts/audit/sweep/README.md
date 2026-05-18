@@ -25,8 +25,7 @@ documented there.
 
 ## Entry points
 
-These are dispatched by `quasi-audit backfill --strategy <name>`. They
-also run as standalone scripts for ad-hoc fixes:
+These are maintenance scripts. They run standalone for ad-hoc fixes:
 
 ```bash
 python3 sweep-book-fm-meta.py --vault ~/path/to/vault [strategy-specific args]
@@ -34,7 +33,6 @@ python3 sweep-book-fm-meta.py --vault ~/path/to/vault [strategy-specific args]
 
 ## Integration
 
-These scripts currently each carry their own argparse + main().
-`quasi-audit backfill` is the thin dispatcher over the individual sweep
-scripts, preserving the standalone-runnable shape while keeping online
-metadata maintenance outside `audit-agent`.
+These scripts currently each carry their own argparse + main(). Keep online
+metadata maintenance outside `audit-agent` and outside the active
+`quasi-audit` CLI.

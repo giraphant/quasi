@@ -14,15 +14,18 @@ AA 兜底第二轮 — 对仍缺 publisher 的书,用 **slug** 反构 title 来�
 from __future__ import annotations
 
 import argparse
-import json
 import pathlib
 import re
-import subprocess
 import sys
 import time
 import urllib.request
 
 import yaml
+
+DOWNLOAD_DIR = pathlib.Path(__file__).resolve().parents[2] / "download"
+sys.path.insert(0, str(DOWNLOAD_DIR))
+
+from aa import search_aa  # noqa: E402
 
 
 FM_RE = re.compile(r"\A(---\n)(.*?)(\n---\n?)", re.DOTALL)
@@ -109,24 +112,13 @@ def author_match(needle: str, haystack: str) -> bool:
 
 
 def query_aa(title: str, author: str, limit: int = 5, timeout: int = 60) -> list[dict]:
-    cmd = ["quasi-search", "books", "--source", "aa", title, "--limit", str(limit), "--json"]
-    if author:
-        cmd += ["--author", author]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
+        result = search_aa(" ".join(x for x in (title, author) if x), limit=limit)
+    except Exception:
         return []
-    out = r.stdout
-    i = out.find("[")
-    if i < 0:
+    if not result.get("success"):
         return []
-    try:
-        data = json.loads(out[i:])
-    except json.JSONDecodeError:
-        return []
-    if not data:
-        return []
-    return data[0].get("results", []) or []
+    return result.get("results", []) or []
 
 
 def fetch_aa_md5_meta(md5: str, mirrors: list[str], timeout: int = 25) -> dict:

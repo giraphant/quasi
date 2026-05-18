@@ -164,14 +164,8 @@ def test_normalise_zh_translation_to_book_record():
     assert "douban_cn" in norm["_sources"]
 
 
-def test_normalise_drops_isbn_from_direct_path():
-    """BUG: _normalise reads raw["isbn"] but direct path returns raw["isbn_13"].
-
-    _parse_dd_subject_page sets isbn_13/isbn_10 directly. _normalise only
-    reads raw.get("isbn"). So ISBN from the direct search path is lost
-    during normalisation. The cndouban (works-page) path sets "isbn" so
-    it works there.
-    """
+def test_normalise_keeps_isbn_from_direct_path():
+    """_normalise preserves ISBN from both direct and cndouban paths."""
     raw_from_direct = {
         "title": "与麻烦同在",
         "isbn_13": "9787576048971",
@@ -179,8 +173,7 @@ def test_normalise_drops_isbn_from_direct_path():
         "douban_subject_id": "123",
     }
     norm = douban_cn._normalise(raw_from_direct)
-    # This SHOULD be "9787576048971" but _normalise doesn't read isbn_13
-    assert norm["isbn_13"] is None, "Expected None due to _normalise only reading raw['isbn']"
+    assert norm["isbn_13"] == "9787576048971"
 
     # Contrast: cndouban path uses "isbn" key — this works
     raw_from_cndouban = {
@@ -237,10 +230,7 @@ def test_search_book_english_title_returns_zh_translation():
     assert "与麻烦同在" in zh["title"]
     assert zh["original_title"] == "Staying with the Trouble: Making Kin in the Chthulucene"
     assert len(zh["translators"]) > 0
-    # NOTE: isbn_13 is None here because _normalise reads raw.get("isbn")
-    # but _parse_dd_subject_page returns "isbn_13"/"isbn_10" directly.
-    # This is a known gap — see test_normalise_drops_isbn_from_direct_path.
-    assert zh["isbn_13"] is None
+    assert zh["isbn_13"] == "9787576048971"
 
 
 def test_search_book_with_subject_zh_triggers_works_fallback():

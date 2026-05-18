@@ -46,7 +46,7 @@ description: >
 ├─ Step 3: analyse-agent ×N (opus, 后台并行) → Glob 轮询
 ├─ Step 4: synthesis-agent(mode=book) (opus, 前台)
 ├─ Step 5: audit-agent (sonnet, 前台) → 校验
-└─ Step 6: local-agent (sonnet, 前台) → 中译本 metadata 回填
+└─ Step 6: search-agent + quasi-helpers localise → 中译本 metadata 回填
 ```
 
 ## 执行流程
@@ -54,7 +54,7 @@ description: >
 ```python
 # 0. 使用已定稿 slug
 # 输入约定：book_slug 必须是 canonical 格式 {author-surname}-{short-title}-{year}
-# - 通过 process-author 调用：上游 download-agent 已 finalize，slug 在 manifest 中定稿
+# - 通过 process-author 调用：上游 download-agent 已 accept 入库，slug 在 manifest 中定稿
 # - 用户直接调用：用户给定的 book_slug 即视为 canonical，sources/ 文件名应同名
 # 本 skill 不再重新派生 slug，所有路径直接基于 book_slug。
 book_slug = parse_args()
@@ -86,10 +86,10 @@ output_dir: sources/
 
     item = result.per_item[0]
     if item.status == "ok":
-        source_file = item.path        # agent 已 mv tmp → final
+        source_file = item.path        # agent 已 accept temp → sources/{slug}.{ext}
     elif item.status in ("year_mismatch", "year_ambiguous"):
         # 把 year_evidence 整块原样递给用户（含 tmp_path），让用户拍板：
-        # 1) 改 slug 中的 year 重跑（slug 重命名 → 触发 download-agent 重新 finalize）
+        # 1) 改 slug 中的 year 重跑（slug 重命名 → 触发 download-agent 重新 accept）
         # 2) 接受 recommended_year，手动 mv tmp_path → 正式名 + 重跑（跳过 Step 0）
         report(f"""\
 YEAR_TRIAGE for {book_slug}: verdict={item.year_evidence.verdict}
@@ -174,11 +174,17 @@ if audit.audit_result.escalated:
         return
 
 # Step 6: LOCALISE
-# 只回填中译本 / 中文版本 metadata,全外挂写进 .quasi/audit/translations.json
-# (by_book + by_douban_id),不动 book frontmatter。
-# local-agent 幂等:audit needs_backfill 已基于 by_book[slug] 判定,已查过的书不会再跑。
-Agent("quasi:local-agent", foreground=True,
-      prompt=f"path: {output_dir}\nmode: cndouban")
+# 只回填中译本 / 中文版本 metadata。search-agent 返回核验过的
+# localisations.zh.candidates,顶层用 helper 写入 .quasi/localise/cndouban.json。
+# helper 按原书 ISBN 幂等:已查过的 ISBN 不重复跑。
+localise_scan = Bash(f"quasi-helpers localise scan --path {output_dir} --json")
+if localise_scan.pending > 0:
+    search = Agent("quasi:search-agent", foreground=True,
+                   prompt=f"kind: book\ncontext: read {output_dir}/00-overview.md and search metadata/localisations")
+    candidates_file = write_temp_json(search.localisations.zh.candidates)
+    Bash("quasi-helpers localise write "
+         f"--book-path {output_dir}/00-overview.md "
+         f"--candidates-file {candidates_file}")
 
 print(f"Done: {len(selected)} chapters, overview generated, typechecked, localised")
 ```
@@ -192,7 +198,7 @@ print(f"Done: {len(selected)} chapters, overview generated, typechecked, localis
 | Step 3 | `ch{slot}-*.md` | 存在则跳过该章 |
 | Step 4 | `00-overview.md` | 存在则跳过 |
 | Step 5 | 无 —— 幂等,可重复跑 | 上次 audit clean 时几乎无成本 |
-| Step 6 | `.quasi/audit/translations.json#by_book[slug]` | 已存在 entry(verdict found/none)则 local-agent 跳过 |
+| Step 6 | `.quasi/localise/cndouban.json#by_isbn[isbn]` | 已存在 entry(status found/none)则 helper scan 跳过 |
 
 ## 目录结构
 

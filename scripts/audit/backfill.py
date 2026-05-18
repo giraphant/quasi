@@ -1,17 +1,12 @@
-"""quasi-audit backfill — vault metadata backfill dispatcher.
+"""Maintenance dispatcher for vault metadata backfill sweeps.
 
 Runs sweep scripts from scripts/audit/sweep/ to backfill vault
 frontmatter from various sources (Crossref / AA / OpenLibrary /
 OpenAlex / dokobot-Douban).
 
-Migrated from scripts/search/search.py:1815-1866 (run_backfill /
-_run_one_backfill) and re-rooted under quasi-audit.
-
-CLI surface:
-    quasi-audit backfill --strategy {auto|clean|crossref|aa-title|aa-md5|
-                                     aa-from-slug|openalex|ol-search|
-                                     ol-isbn-reverse}
-                          [-- ARGS_TO_SWEEP_SCRIPT...]
+Migrated from scripts/search/search.py:1815-1866. This module is not exposed
+through the active `quasi-audit` CLI; run individual sweep scripts directly for
+maintenance work.
 """
 
 from __future__ import annotations

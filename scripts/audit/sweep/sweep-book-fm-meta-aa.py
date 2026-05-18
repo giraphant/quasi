@@ -1,32 +1,35 @@
 #!/usr/bin/env python3
 """
 Anna's Archive 兜底 — 对 vault/books/*/00-overview.md 中仍缺 publisher 的书,
-通过 `quasi-search books --source aa --json` 取 md5 与 publisher,
+通过 `scripts/download/aa.py` 取 md5 与 publisher,
 必要时再抓 `/md5/<hash>` 详情页解析 metadata-comments 中的 JSON 拿 ISBN/publisher。
 
 工作流:
   1. 自动扫描 vault/books,找仍缺 publisher 或 isbn 的 slug
-  2. 对每个: quasi-search aa → 取最佳候选 (year ±2)
+  2. 对每个: Anna's Archive file search → 取最佳候选 (year ±2)
   3. 拿 publisher (取多版本叠加字符串第一段) + year + md5
   4. 如果 publisher 仍空 或 isbn 缺,curl 详情页拿结构化 JSON
   5. 写回 frontmatter (publisher / isbn / source: book)
 
 写入只补缺失字段,绝不覆盖已有非空值。
 
-依赖: 标准库 + pyyaml + quasi-search (plugin) 在 PATH
+依赖: 标准库 + pyyaml + scripts/download/aa.py
 """
 from __future__ import annotations
 
 import argparse
-import json
 import pathlib
 import re
-import subprocess
 import sys
 import time
 import urllib.request
 
 import yaml
+
+DOWNLOAD_DIR = pathlib.Path(__file__).resolve().parents[2] / "download"
+sys.path.insert(0, str(DOWNLOAD_DIR))
+
+from aa import search_aa  # noqa: E402
 
 
 FM_RE = re.compile(r"\A(---\n)(.*?)(\n---\n?)", re.DOTALL)
@@ -97,26 +100,13 @@ def title_match(fm_title: str, ol_title: str, threshold: float = 0.55) -> bool:
 
 
 def query_aa(title: str, author: str, limit: int = 5, timeout: int = 60) -> list[dict]:
-    """Invoke quasi-search wrapper so plugin hook injects QUASI_ANNA_DONATOR_KEY."""
-    cmd = ["quasi-search", "books", "--source", "aa", title, "--limit", str(limit), "--json"]
-    if author:
-        cmd += ["--author", author]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
+        result = search_aa(" ".join(x for x in (title, author) if x), limit=limit)
+    except Exception:
         return []
-    out = r.stdout
-    # quasi-search prints status text before the JSON array; find the first '['
-    i = out.find("[")
-    if i < 0:
+    if not result.get("success"):
         return []
-    try:
-        data = json.loads(out[i:])
-    except json.JSONDecodeError:
-        return []
-    if not data:
-        return []
-    return data[0].get("results", []) or []
+    return result.get("results", []) or []
 
 
 def fetch_aa_md5_meta(md5: str, mirrors: list[str], timeout: int = 25) -> dict:

@@ -17,28 +17,22 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Locate the plugin root (this script lives at quasi/scripts/typecheck/typecheck.py).
+# Locate roots (this script lives at quasi/scripts/typecheck/typecheck.py).
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS_ROOT = PLUGIN_ROOT / "scripts"
 sys.path.insert(0, str(PLUGIN_ROOT))
-
-# Vault root = $CLAUDE_PROJECT_DIR (the user's project, where they invoke from).
-# Priority: explicit QUA_PROJECT_ROOT override > Claude Code's CLAUDE_PROJECT_DIR > cwd.
-PROJECT_ROOT = Path(
-    os.environ.get("QUA_PROJECT_ROOT")
-    or os.environ.get("CLAUDE_PROJECT_DIR")
-    or os.getcwd()
-).resolve()
+sys.path.insert(0, str(SCRIPTS_ROOT))
 
 import yaml  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
+from core import project_root  # noqa: E402
 from schemas import (  # noqa: E402
     BodySchema,
     canonical_type,
@@ -46,6 +40,7 @@ from schemas import (  # noqa: E402
 )
 
 
+PROJECT_ROOT = project_root()
 VAULT_DEFAULT = PROJECT_ROOT / "vault"
 OUT_DIR = PROJECT_ROOT / ".quasi" / "audit"
 

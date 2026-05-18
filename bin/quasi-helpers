@@ -6,17 +6,19 @@
 # Called from skill main process; never called from inside an agent.
 #
 # Nested subcommand:
-#   quasi-helpers proofread {split|init|cleanup} [args...]
-#       split   draft.md → sections.json (前置切节,准备 dispatch)
-#       init    建 draft 末尾 <!-- proofread:* --> 记录块
+#   quasi-helpers proofread {prepare|cleanup} [args...]
+#       prepare draft.md → sections.json + 末尾 <!-- proofread:* --> 记录块
 #       cleanup 审完后清记录块
 #
-#   quasi-helpers citation {biblio|parse|resolve|render|emit-bib} [args...]
-#       biblio    扫 vault → biblio.json  (deprecated: prefer quasi-audit emit-bib)
+#   quasi-helpers citation {parse|biblio|resolve|emit-bib} [args...]
 #       parse     draft.md → parse.json
+#       biblio    vault frontmatter → biblio.json
 #       resolve   parse.json + biblio.json → manifest.json
-#       render    manifest.json (+ verdicts) → review.html
 #       emit-bib  manifest.json + biblio.json → references.bib (draft-level)
+#
+#   quasi-helpers localise {scan|write} [args...]
+#       scan    book overviews → ISBN-keyed cndouban pending state
+#       write   search result localisations.zh → .quasi/localise/cndouban.json
 #
 # Each nested subcommand has its own --help.
 
@@ -37,12 +39,14 @@ Aggregates deterministic setup/teardown operations around map-reduce
 LLM agent dispatches. Called from skill main process; never from agents.
 
 Usage:
-  quasi-helpers proofread {split|init|cleanup} [args...]
-  quasi-helpers citation  {biblio|parse|resolve|render|emit-bib} [args...]
+  quasi-helpers proofread {prepare|cleanup} [args...]
+  quasi-helpers citation  {parse|biblio|resolve|emit-bib} [args...]
+  quasi-helpers localise  {scan|write} [args...]
 
 Each nested subcommand has its own --help, e.g.:
-  quasi-helpers proofread split --help
+  quasi-helpers proofread prepare --help
   quasi-helpers citation parse --help
+  quasi-helpers localise scan --help
 HELP
     exit 0
 fi
@@ -57,9 +61,12 @@ case "$DOMAIN" in
     citation)
         exec "$PYTHON" "$PLUGIN_ROOT/scripts/citation/citation.py" "$@"
         ;;
+    localise)
+        exec "$PYTHON" "$PLUGIN_ROOT/scripts/localise/localise.py" "$@"
+        ;;
     *)
         echo "quasi-helpers: unknown domain: $DOMAIN" >&2
-        echo "valid: proofread | citation" >&2
+        echo "valid: proofread | citation | localise" >&2
         exit 2
         ;;
 esac

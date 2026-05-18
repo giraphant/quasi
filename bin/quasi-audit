@@ -1,32 +1,11 @@
 #!/usr/bin/env bash
-# quasi-audit — vault schema audit + vault-level biblio emit + metadata backfill.
+# quasi-audit — agent-facing vault typecheck wrapper.
 #
-# Subcommands:
-#   quasi-audit run [--path FILE_OR_DIR] [--mode check|fix] [--json]
-#       Run the local audit transaction (typecheck + optional mechanical fix)
-#       and emit a structured JSON summary to stdout when --json is set.
-#       This is the entry point agents use.
+# Usage:
+#   quasi-audit [--path FILE_OR_DIR]
 #
-#   quasi-audit emit-bib -o PATH [--project-root DIR]
-#       Scan vault/{papers,books}/** frontmatter → biblio.json
-#       (single source of truth for citation pipeline downstream).
-#
-#   quasi-audit backfill --strategy STRATEGY [-- ARGS_TO_SWEEP_SCRIPT...]
-#       Run vault metadata backfill sweep scripts. STRATEGY ∈
-#       {auto, clean, crossref, aa-title, aa-md5, aa-from-slug,
-#        openalex, ol-search, ol-isbn-reverse}
-#
-#   quasi-audit localise scan [--path FILE_OR_DIR] [--json]
-#       Enumerate book overviews under PATH and report which have
-#       already been localised (have a by_book[slug] entry in
-#       .quasi/audit/translations.json). local-agent's work-list driver.
-#
-#   quasi-audit localise write --slug SLUG
-#                              (--results-json '[...]' | --results-file PATH)
-#                              [--checked-at YYYY-MM-DD]
-#       Merge one book's cndouban search result into translations.json.
-#       Empty results → verdict=none. Non-empty → verdict=found + merge
-#       per-id metadata, preserving first_seen on existing keys.
+# Always runs mechanical autofix, typecheck, residual issue classification,
+# then emits JSON to stdout. This is the entry point audit-agent uses.
 
 set -e
 

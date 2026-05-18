@@ -3,6 +3,8 @@
 Also tracks deprecated type aliases for autofix migration.
 """
 
+from __future__ import annotations
+
 from typing import Type
 from pydantic import BaseModel
 

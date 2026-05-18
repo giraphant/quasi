@@ -37,29 +37,28 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
 from collections import Counter
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS_ROOT = PLUGIN_ROOT / "scripts"
 sys.path.insert(0, str(PLUGIN_ROOT))
-
-PROJECT_ROOT = Path(
-    os.environ.get("QUA_PROJECT_ROOT")
-    or os.environ.get("CLAUDE_PROJECT_DIR")
-    or os.getcwd()
-).resolve()
+sys.path.insert(0, str(SCRIPTS_ROOT))
 
 import yaml  # noqa: E402
 
+from core import project_root  # noqa: E402
 from schemas import (  # noqa: E402
     BodySchema,
     TYPE_REGISTRY,
     canonical_type,
     schema_for_type,
 )
+
+
+PROJECT_ROOT = project_root()
 
 
 def reorder_frontmatter(fm: dict, type_name: str) -> dict:

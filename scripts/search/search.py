@@ -12,7 +12,7 @@ This file is sectioned, top-to-bottom:
     4. PAPER    — paper_search() main function
     5. CLI      — argparse, main()
 
-See docs/superpowers/specs/2026-05-17-search-refactor-design.md for design.
+Historical migration plans are intentionally not part of the active tree.
 """
 
 from __future__ import annotations
@@ -131,6 +131,7 @@ class SearchResponse:
     kind: str  # "book" | "paper"
     query: dict
     results: list[dict] = field(default_factory=list)
+    localisations: dict = field(default_factory=dict)
     diagnostics: dict = field(default_factory=lambda: {
         "sources_attempted": [],
         "sources_hit": [],
@@ -402,6 +403,117 @@ from sources import BOOK_ADAPTERS, PAPER_ADAPTERS
 DEFAULT_BOOK_SOURCES = list(BOOK_ADAPTERS)
 DEFAULT_PAPER_SOURCES = list(PAPER_ADAPTERS)
 
+_ZH_SUBJECTS = {"zh", "cn", "chinese", "translation", "translations", "cndouban"}
+
+
+def _has_cjk_text(value: Any) -> bool:
+    if isinstance(value, list):
+        return any(_has_cjk_text(item) for item in value)
+    return any("一" <= ch <= "鿿" for ch in str(value or ""))
+
+
+def _looks_zh_localisation(entry: dict) -> bool:
+    return any(
+        _has_cjk_text(entry.get(field))
+        for field in ("title", "authors", "translators", "publisher")
+    )
+
+
+def _join_people(names: list[str] | None) -> str:
+    return " / ".join(name for name in (names or []) if name)
+
+
+def _localisation_candidate_from_entry(entry: dict) -> dict | None:
+    source_ids = entry.get("source_ids") or {}
+    douban_id = source_ids.get("douban_cn") or entry.get("douban_id")
+    if not douban_id:
+        return None
+    isbn = entry.get("isbn_13") or entry.get("isbn_10") or entry.get("isbn")
+    ratings = entry.get("ratings") or {}
+    authors = entry.get("authors") or []
+    translators = entry.get("translators") or []
+    return {
+        "source": "douban_cn",
+        "id": f"douban_cn:{douban_id}",
+        "douban_id": str(douban_id),
+        "title": entry.get("title") or "",
+        "authors": authors,
+        "author": _join_people(authors),
+        "translators": translators,
+        "translator": _join_people(translators),
+        "publisher": entry.get("publisher") or "",
+        "year": entry.get("year"),
+        "isbn": isbn,
+        "isbn_13": entry.get("isbn_13"),
+        "isbn_10": entry.get("isbn_10"),
+        "original_title": entry.get("original_title") or "",
+        "ratings_count": ratings.get("count") or entry.get("ratings_count"),
+        "douban_url": entry.get("preview_link") or entry.get("douban_url") or "",
+    }
+
+
+def _localisation_query(query: BookQuery) -> BookQuery:
+    return BookQuery(
+        isbn=query.isbn,
+        title=query.title,
+        author=query.author,
+        subject="zh",
+        query=query.query,
+        year_from=query.year_from,
+        year_to=query.year_to,
+        limit=query.limit,
+    )
+
+
+def _query_requests_zh(query: BookQuery) -> bool:
+    return (query.subject or "").lower() in _ZH_SUBJECTS
+
+
+def _book_localisations_zh(
+    query: BookQuery,
+    sources: list[str],
+    existing_douban_entries: list[dict] | None = None,
+) -> dict:
+    """Return Chinese-version candidates as a sidecar, never part of metadata merge."""
+    if "douban_cn" not in sources:
+        return {}
+    if not any([query.isbn, query.title, query.author, query.query]):
+        return {}
+
+    if existing_douban_entries and _query_requests_zh(query):
+        result = AdapterResult(source="douban_cn", success=True, entries=existing_douban_entries)
+    else:
+        result = _adapter_search_book("douban_cn", _localisation_query(query))
+
+    sidecar = {
+        "zh": {
+            "source": "douban_cn",
+            "status": "none",
+            "candidates": [],
+        }
+    }
+    if not result.success:
+        sidecar["zh"]["status"] = "error"
+        sidecar["zh"]["error"] = result.error or "unknown"
+        return sidecar
+
+    seen: set[str] = set()
+    candidates: list[dict] = []
+    for entry in result.entries:
+        if not _looks_zh_localisation(entry):
+            continue
+        candidate = _localisation_candidate_from_entry(entry)
+        if not candidate:
+            continue
+        if candidate["id"] in seen:
+            continue
+        seen.add(candidate["id"])
+        candidates.append(candidate)
+
+    sidecar["zh"]["status"] = "found" if candidates else "none"
+    sidecar["zh"]["candidates"] = candidates
+    return sidecar
+
 
 def _adapter_search_book(source_id: str, query: BookQuery) -> AdapterResult:
     """Look up sources/<source_id>.py and call its search_book."""
@@ -445,6 +557,11 @@ def book_search(query: BookQuery, sources: list[str] | None = None) -> SearchRes
                 diagnostics["raw_doko_excerpts"] = (diagnostics["raw_doko_excerpts"] or {})
                 diagnostics["raw_doko_excerpts"].update(result.raw_excerpts)
 
+    localisations = _book_localisations_zh(
+        query,
+        sources,
+        existing_douban_entries=by_source.get("douban_cn"),
+    )
     merged, conflicts = match_and_priority_merge_with_conflicts(by_source, kind="book")
     diagnostics["conflicts"] = conflicts
 
@@ -452,6 +569,7 @@ def book_search(query: BookQuery, sources: list[str] | None = None) -> SearchRes
         kind="book",
         query=asdict(query),
         results=merged,
+        localisations=localisations,
         diagnostics=diagnostics,
     )
 

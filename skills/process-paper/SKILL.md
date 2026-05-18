@@ -37,8 +37,8 @@ description: >
 ├─ Step 0: ENSURE METADATA + SOURCED
 │   ├─ 若 --slug 且 sources/{slug}.pdf 已存在 → 跳过 search/download
 │   │   ├─ 若 vault/papers/{slug}.md 存在 → 读 frontmatter 拿 metadata
-│   │   └─ 否则 → search-agent (write_policy=verify-only) 取 metadata
-│   └─ 否则 → search-agent (create) + download-agent (kind=paper, items=[1])
+│   │   └─ 否则 → search-agent 返回 metadata,主进程可写 `.quasi/papers/{slug}.search.json` 缓存
+│   └─ 否则 → search-agent 返回 metadata + download-agent (kind=paper, items=[1])
 ├─ Step 1: analyse-agent (type=B, 前台) → vault/papers/{slug}.md
 ├─ Step 2: audit-agent (前台) → 校验 + 一次重做循环
 └─ Step 3: translate-agent (前台, 仅 --translate)
@@ -57,54 +57,31 @@ if args.slug and Glob(f"sources/{args.slug}.pdf"):
         # 已有 vault 文件 → frontmatter 拿 metadata（题目/作者/年/doi/journal）
         paper_meta = read_frontmatter(f"vault/papers/{slug}.md")
     else:
-        # 没 vault 文件 → search-agent verify-only 取 metadata（不写 vault；
-        # 写一份临时对比 JSON 到 .quasi/papers/{slug}.search.json 供下游读）
-        Agent("quasi:search-agent", foreground=True, prompt=f"""\
+        # 没 vault 文件 → search-agent 只返回 metadata；落盘缓存由本 skill 写。
+        search = Agent("quasi:search-agent", foreground=True, prompt=f"""\
 task: fetch metadata for paper with slug {slug}
 context:
   kind: paper
   slug: {slug}                         # search-agent 从 slug 反解 author/title/year
 constraints:
   count: 1
-  write_policy: verify-only
-output_path: .quasi/papers/{slug}.search.json
-output_schema:
-  - slug
-  - title
-  - authors
-  - year
-  - doi
-  - journal
 """)
-        paper_meta = read_json(f".quasi/papers/{slug}.search.json")["observed"]
+        paper_meta = search.picked
+        write_json(f".quasi/papers/{slug}.search.json", search)
     source_pdf = f"sources/{slug}.pdf"
 else:
     # 完整 search + download 路径
-    # 用临时 search 输出路径，因 slug 在 search 结果里才定稿
-    provisional_key = args.doi.replace("/", "_") if args.doi else hash_short(args.title + args.author)
-    search_out = f".quasi/papers/_pending-{provisional_key}.search.json"
-
-    Agent("quasi:search-agent", foreground=True, prompt=f"""\
+    search = Agent("quasi:search-agent", foreground=True, prompt=f"""\
 task: find this paper by {'doi=' + args.doi if args.doi else 'title+author=' + args.title + ' / ' + args.author}
 context:
   kind: paper
 {'  doi: ' + args.doi if args.doi else '  title: ' + args.title + chr(10) + '  author: ' + args.author}
 constraints:
   count: 1
-  write_policy: create
-output_path: {search_out}
-output_schema:
-  - slug
-  - title
-  - authors
-  - year
-  - doi
-  - journal
 """)
-    paper_meta = read_json(search_out)
-    if isinstance(paper_meta, list):
-        paper_meta = paper_meta[0]
+    paper_meta = search.picked
     slug = paper_meta["slug"]
+    write_json(f".quasi/papers/{slug}.search.json", search)
 
     # download-agent kind=paper, items=[1]
     download_result = Agent("quasi:download-agent", foreground=True, prompt=f"""\
@@ -121,9 +98,6 @@ output_dir: sources/
     if item["status"] != "ok":
         report(f"download failed for {slug}: {item.get('verdict_note', 'no details')}"); return
     source_pdf = item["path"]
-
-    # 把 search 临时输出迁到 canonical 命名（清理 _pending-）
-    Bash(f"mv {search_out} .quasi/papers/{slug}.search.json")
 
 # Step 1: ANALYSE
 output_path = f"vault/papers/{slug}.md"

@@ -62,10 +62,51 @@ def test_failed_adapter_recorded_in_errors_not_raises():
     assert any(e["source"] == "googlebooks" for e in resp.diagnostics["errors"])
 
 
+def test_book_search_exposes_zh_localisations_sidecar():
+    original = _adapter_result("openalex", [{
+        "title": "Staying with the Trouble",
+        "authors": ["Donna Haraway"],
+        "isbn_13": "9780822373780",
+        "year": 2016,
+        "_sources": ["openalex"],
+    }])
+    zh = _adapter_result("douban_cn", [{
+        "title": "与麻烦共处",
+        "authors": ["唐娜·哈拉维"],
+        "translators": ["译者甲"],
+        "publisher": "某出版社",
+        "year": 2024,
+        "isbn_13": "9787000000001",
+        "preview_link": "https://book.douban.com/subject/1234567/",
+        "ratings": {"count": 100, "average": None},
+        "source_ids": {"douban_cn": "1234567"},
+        "_sources": ["douban_cn"],
+    }])
+
+    def fake(src, q):
+        if src == "openalex":
+            return original
+        if src == "douban_cn" and q.subject == "zh":
+            return zh
+        return _adapter_result(src, [])
+
+    with patch("search._adapter_search_book", side_effect=fake):
+        resp = search.book_search(
+            search.BookQuery(isbn="9780822373780", title="Staying with the Trouble"),
+            sources=["openalex", "douban_cn"],
+        )
+
+    assert resp.results[0]["title"] == "Staying with the Trouble"
+    assert resp.localisations["zh"]["status"] == "found"
+    assert resp.localisations["zh"]["candidates"][0]["douban_id"] == "1234567"
+    assert resp.localisations["zh"]["candidates"][0]["translator"] == "译者甲"
+
+
 def main():
     tests = [test_book_search_fan_out_and_merge,
              test_paper_search_returns_paper_envelope,
-             test_failed_adapter_recorded_in_errors_not_raises]
+             test_failed_adapter_recorded_in_errors_not_raises,
+             test_book_search_exposes_zh_localisations_sidecar]
     failed = 0
     for t in tests:
         try: t(); print(f"  PASS  {t.__name__}")

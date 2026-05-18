@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
-"""quasi-proofread — orchestration helpers for the proofread-agent.
+"""quasi-helpers proofread — orchestration helpers for the proofread-agent.
 
 The agent does the actual editing. This script provides the deterministic
 pieces around it:
 
-    split           draft.md → sections.json      (主进程 dispatch 时用)
-    merge-records   sidecar/*.records.md → 合并到 draft 末尾 <!-- proofread:* --> 块
+    prepare         draft.md → sections.json + proofread records block
     cleanup         审完后从 draft 删除整个记录块(保留正文)
 
 No "run" subcommand — agent dispatch happens in the Claude main loop, this
 Python script can't summon agents. The wrap-up skill (or any main loop) calls
-split → dispatches agents → calls merge-records → (审完触发) cleanup.
+prepare → dispatches agents → (审完触发) cleanup.
 """
 from __future__ import annotations
 
-import html
 import json
-import os
 import re
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
@@ -91,26 +88,35 @@ def split_sections(text: str, depth: int = 2) -> list[Section]:
     return sections
 
 
-def cmd_split(args) -> int:
-    draft = Path(args.draft).resolve()
+def write_sections_json(draft: Path, output: Path, depth: int) -> dict:
     text = draft.read_text(encoding="utf-8")
-    sections = split_sections(text, depth=args.depth)
+    sections = split_sections(text, depth=depth)
 
     out = {
         "draft": str(draft),
         "total_lines": len(text.splitlines()),
-        "depth": args.depth,
+        "depth": depth,
         "sections": [asdict(s) for s in sections],
     }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(out, ensure_ascii=False, indent=2),
+                      encoding="utf-8")
+    return out
+
+
+def cmd_prepare(args) -> int:
+    draft = Path(args.draft).resolve()
+    if not draft.is_file():
+        print(f"error: draft not found: {draft}", file=sys.stderr)
+        return 2
+
     out_path = Path(args.output)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2),
-                        encoding="utf-8")
-    print(f"split into {len(sections)} section(s) (depth={args.depth}):")
-    for s in sections:
-        n = s.end_line - s.start_line + 1
-        print(f"  {s.id:50s}  L{s.start_line:>4}-{s.end_line:<4} ({n} lines)")
-    print(f"\nwrote {out_path}")
+    out = write_sections_json(draft, out_path, args.depth)
+    added_records = ensure_records_block(draft)
+
+    print(f"prepared {len(out['sections'])} section(s) (depth={args.depth})")
+    print(f"sections: {out_path}")
+    print(f"records_block: {'added' if added_records else 'existing'}")
     return 0
 
 
@@ -135,18 +141,6 @@ def ensure_records_block(draft: Path) -> bool:
              f"{_RECORDS_END}\n")
     draft.write_text(text + block, encoding="utf-8")
     return True
-
-
-def cmd_init(args) -> int:
-    draft = Path(args.draft).resolve()
-    if not draft.is_file():
-        print(f"error: draft not found: {draft}", file=sys.stderr)
-        return 2
-    if ensure_records_block(draft):
-        print(f"  inited records block in {draft.name}")
-    else:
-        print(f"  records block already exists in {draft.name}")
-    return 0
 
 
 # ---- cleanup (delete records block post-review) ------------------------------
@@ -200,24 +194,20 @@ def cmd_cleanup(args) -> int:
 def main(argv: list[str]) -> int:
     import argparse
     ap = argparse.ArgumentParser(
-        prog="quasi-proofread",
-        description="Section splitting + post-review cleanup. "
+        prog="quasi-helpers proofread",
+        description="Proofread preparation + post-review cleanup. "
                     "The proofread-agent edits draft in-place — no sidecars.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p_split = sub.add_parser("split", help="draft.md → sections.json")
-    p_split.add_argument("draft")
-    p_split.add_argument("--depth", type=int, default=3,
-                         help="Split at heading levels ≤ depth (default 3 — "
-                              "## draft title + ### sections)")
-    p_split.add_argument("-o", "--output", required=True)
-    p_split.set_defaults(func=cmd_split)
-
-    p_init = sub.add_parser(
-        "init",
-        help="确保 draft 末尾有空的 <!-- proofread:start --> 块(供 agent 追加)")
-    p_init.add_argument("draft", help="draft 文件绝对或相对路径")
-    p_init.set_defaults(func=cmd_init)
+    p_prepare = sub.add_parser(
+        "prepare",
+        help="draft.md → sections.json,并确保 draft 末尾有记录块")
+    p_prepare.add_argument("draft")
+    p_prepare.add_argument("--depth", type=int, default=3,
+                           help="Split at heading levels ≤ depth (default 3 — "
+                                "## draft title + ### sections)")
+    p_prepare.add_argument("-o", "--output", required=True)
+    p_prepare.set_defaults(func=cmd_prepare)
 
     p_cleanup = sub.add_parser(
         "cleanup",

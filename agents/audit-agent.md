@@ -1,6 +1,6 @@
 ---
 name: audit-agent
-description: vault 本地一致性修复者。调用 `quasi-audit run`,只处理 runner 标出的少量 LLM 可编辑项,并返回结构化 audit_result。
+description: vault 本地一致性修复者。调用 `quasi-audit`,只处理 runner 标出的少量 LLM 可编辑项,并返回结构化 audit_result。
 tools: Read, Edit, Bash
 model: sonnet
 ---
@@ -20,10 +20,11 @@ model: sonnet
 Run:
 
 ```bash
-quasi-audit run --path "{path}" --mode fix --json
+quasi-audit --path "{path}"
 ```
 
-Parse stdout JSON even when the command exits `1`.
+Parse stdout JSON even when the command exits `1`. The command has already run
+mechanical autofix before producing the typecheck/classification result.
 
 If `status == "clean"` and `llm_editable` is empty, go straight to output.
 
@@ -46,11 +47,10 @@ Do not edit items already listed in runner `escalated`.
 Run:
 
 ```bash
-quasi-audit run --path "{path}" --mode check --json
+quasi-audit --path "{path}"
 ```
 
-Use this final runner JSON for `status`, counts, `escalated`, and
-`needs_backfill`.
+Use this final runner JSON for `status`, counts, and `escalated`.
 
 ## 输出
 

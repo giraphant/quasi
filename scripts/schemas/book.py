@@ -6,7 +6,9 @@ SPEC: ../SPEC.md § 3.2
 字段对齐 BibTeX `@book` / `@collection` 以便未来一键导出引文。
 """
 
-from typing import Literal
+from __future__ import annotations
+
+from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from .primitives import Name, Title, ShortString, Year, Rating
@@ -25,13 +27,13 @@ class BookSchema(BaseModel):
         min_length=1,
         description="作者或编者数组;角色由 category 区分;永远数组(单作者也包成 1 元素)",
     )
-    year: Year | None = Field(description="出版年")
+    year: Optional[Year] = Field(description="出版年")
     publisher: ShortString = Field(
         description="出版社;Phase 1 lint warn,Phase 2 严格必填"
     )
 
     # ─── 唯一识别码 + 类别 ───────────────────────────────────
-    isbn: str | None = Field(
+    isbn: Optional[str] = Field(
         default=None,
         description="ISBN;schema 不强制格式,lint 单独检查",
     )
@@ -41,12 +43,12 @@ class BookSchema(BaseModel):
     )
 
     # 中译本索引不在 frontmatter,完全外挂在
-    # $CLAUDE_PROJECT_DIR/.quasi/audit/translations.json 的 `by_book[slug]` 块,
-    # 由 local-agent 维护。frontmatter 不写 `cndouban` 字段。
+    # $CLAUDE_PROJECT_DIR/.quasi/localise/cndouban.json 的 `by_isbn` 块,
+    # 由 quasi-helpers localise 维护。frontmatter 不写 `cndouban` 字段。
 
     # ─── 学术分析字段 ─────────────────────────────────────────
     themes: list[str] = Field(
         default_factory=list,
         description="主题标签数组",
     )
-    rating: Rating | None = Field(default=None)
+    rating: Optional[Rating] = Field(default=None)

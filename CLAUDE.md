@@ -46,6 +46,29 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.31.0** (2026-05-18): **quasi-audit becomes a single
+  agent-facing typecheck wrapper.** The active CLI is now
+  `quasi-audit --path PATH`. It always runs mechanical autofix,
+  typecheck, residual issue classification, and emits JSON. Removed
+  the agent-facing `run` verb, `--mode`, and `--json`; there is no
+  check-only path in the active workflow. `emit-bib` moved to
+  `quasi-helpers citation biblio`, and metadata backfill sweeps are
+  maintenance scripts rather than `quasi-audit` subcommands.
+
+- **0.30.0** (2026-05-18): **localise becomes a scale-facing helper,
+  keyed by original ISBN.** This supersedes the 0.27/0.29
+  local-agent/audit-localise shape. Book search now returns
+  `localisations.zh` sidecar candidates; search-agent filters and
+  passes those candidates upward but does not write files. The top-level
+  skill decides whether to persist them via
+  `quasi-helpers localise scan|write`, which writes
+  `.quasi/localise/cndouban.json`:
+  - `by_isbn[{normalized_original_isbn}]` stores checked state,
+    current book path snapshots, and curated `cndouban_ids`.
+  - `by_douban_id[{id}]` stores Chinese-edition metadata.
+  - `quasi-audit localise` and `agents/local-agent.md` are removed from
+    the active surface; audit is back to vault consistency only.
+
 - **0.29.0** (2026-05-18): **cndouban fully externalised + audit
   reverts to a stateless typechecker.** Two intertwined cleanups landed
   together. First: continues 0.26.0's `.quasi/` artifact discipline by
@@ -59,7 +82,7 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
   local-agent's domain entirely.
 
   **Externalising cndouban:**
-  - `schemas/book.py`: `cndouban` field removed. Comment in its place
+  - `scripts/schemas/book.py`: `cndouban` field removed. Comment in its place
     points readers to the external file.
   - `.quasi/audit/translations.json` schema bumped v1 → v2:
     ```json
@@ -210,10 +233,9 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
     `vault/papers/{slug}.md` indistinguishable from
     `process-author` Phase 4 output. Trigger phrases: "处理这篇论文",
     "process paper", "跑这篇 paper", "summarize this paper".
-  - Spec:
-    `docs/superpowers/specs/2026-05-18-process-book-author-paper-reorchestration-design.md`.
-    Plan:
-    `docs/superpowers/plans/2026-05-18-process-book-author-paper-reorchestration.md`.
+  - Historical implementation plan docs were removed after completion; the
+    active contract is captured in `README.md`, `docs/ARCHITECTURE.md`, and
+    the skill / agent files.
   - No bin changes, no Python changes, no user-disk migration.
     process-author manifests with `status: acquired` from earlier
     runs are consumed unchanged; new `status: year_mismatch` /
@@ -291,7 +313,7 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
     `scripts/typecheck/typecheck.py` `OUT_DIR` moves from `.quasi/`
     top-level to `.quasi/audit/`. `agents/audit-agent.md` doc paths
     fixed across multiple stale references (state.json,
-    translations.json, typecheck-*). `schemas/book.py` description
+    translations.json, typecheck-*). `scripts/schemas/book.py` description
     string + `docs/ARCHITECTURE.md` echo updated.
   - Group E: `processing/authors/{name}/manifest.json` →
     `.quasi/authors/{name}/manifest.json`. Driver file for the
@@ -308,8 +330,9 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
     Other stale dirs (`processing/citation/`, `processing/proofread/`,
     `processing/audit/`, top-level `.quasi/typecheck-*`) become
     harmless orphans the user can `rm -rf` at leisure.
-  - Spec: `docs/superpowers/specs/2026-05-18-artifact-paths-design.md`.
-    Plan: `docs/superpowers/plans/2026-05-18-artifact-paths.md`.
+  - Historical implementation plan docs were removed after completion; the
+    active contract is captured in `README.md`, `docs/ARCHITECTURE.md`, and
+    the skill / agent files.
 
 - **0.25.2** (2026-05-18): **rename citation-agent → citecheck-agent.**
   Naming consistency pass: most agents in quasi are verb-form
@@ -354,8 +377,9 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
     whole-vault frontmatter index, picks up a handful of scoped summary
     reads per batch). Main-process context unaffected — same prompt
     shape with one fewer path.
-  - Spec: `docs/superpowers/specs/2026-05-18-citation-agent-vault-grounded-judgment-design.md`.
-    Plan: `docs/superpowers/plans/2026-05-18-citation-agent-vault-grounded-judgment.md`.
+  - Historical implementation plan docs were removed after completion; the
+    active contract is captured in `README.md`, `docs/ARCHITECTURE.md`, and
+    the skill / agent files.
 
 - **0.25.0** (2026-05-18): **agent surface cleanup post-search-refactor.**
   Lands the long-lived `quasi-arch-refactor` branch into main and tidies
@@ -377,8 +401,9 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
   - No bin-layer change. Pure agent file rename + caller rewire.
 
 - **0.24.0** (2026-05-17): **search bin complete refactor (BREAKING).**
-  Spec: `docs/superpowers/specs/2026-05-17-search-refactor-design.md`.
-  Plan: `docs/superpowers/plans/2026-05-17-search-refactor.md`.
+  Historical implementation plan docs were removed after completion; the
+  active contract is captured in `README.md`, `docs/ARCHITECTURE.md`, and
+  the skill / agent files.
   - 2137-line `scripts/search/search.py` replaced by sectioned ~700-line
     `search.py` + 9 per-platform adapters in `sources/`.
   - CLI: only two verbs left — `quasi-search book` / `quasi-search paper`.

@@ -33,7 +33,7 @@ description: >
 ├─ Phase 2  CITATION    ─ 解析 + LLM context-fit + 在线 recover + TUI 审定 + emit .bib
 │   ├─ 2.1 parse + resolve              (deterministic)
 │   ├─ 2.2 citecheck-agent 批 (single + multi only)  → flag ok/review + picked_slug
-│   ├─ 2.3 discover-agent 批 (miss)     → online recovery
+│   ├─ 2.3 search-agent 批 (miss)       → online recovery
 │   ├─ 2.4 TUI 审定 (主进程 AskUserQuestion 循环)    ← 新
 │   └─ 2.5 write decisions.json + emit references.bib
 └─ Phase 3  CLEANUP     ─ 等用户审完触发("审完了" 等)删 proofread 记录块
@@ -41,7 +41,7 @@ description: >
 
 agent 只给一句 context-fit note, **主进程在主上下文里直接 AskUserQuestion 走一遍**, 一边走一边累积 `decisions.by_key` 写盘。
 
-`render.py` 保留为离线诊断工具 (`quasi-helpers citation render`),但 skill 不再调用。
+旧 `render.py` 仅作为源码归档参考,skill 不再调用。
 
 ## Flag 解析
 
@@ -66,9 +66,8 @@ if flags.citation_only:
 
 **Stage A — sonnet 节串行 + 节内多轮迭代**:
 
-1. `quasi-helpers proofread split <draft> -o {pf_dir}/sections.json` — 按 H2/H3 切节
-2. `quasi-helpers proofread init <draft>` — 在 draft 末尾创建空记录块(已存在则跳过)
-3. 对每节顺序处理(节间串行,避免并发改 draft 末尾块):
+1. `quasi-helpers proofread prepare <draft> -o {pf_dir}/sections.json` — 按 H2/H3 切节,并在 draft 末尾创建空记录块(已存在则跳过)
+2. 对每节顺序处理(节间串行,避免并发改 draft 末尾块):
    ```
    for sec in sections:
      for r in 1..5:
@@ -130,7 +129,7 @@ quasi-helpers citation resolve {ct_dir}/parse.json \
   --biblio {ct_dir}/biblio.json -o {ct_dir}/manifest.json
 ```
 
-(若 `{ct_dir}/biblio.json` 不存在,先 `quasi-audit emit-bib -o {ct_dir}/biblio.json`。)
+(若 `{ct_dir}/biblio.json` 不存在,先 `quasi-helpers citation biblio -o {ct_dir}/biblio.json`。)
 
 manifest entries 每条带 `status ∈ {single-hit, multi-hit, miss}` 和 `candidates: [{slug, ...}]`。
 
@@ -156,12 +155,12 @@ Agent("quasi:citecheck-agent", background=True,
 
 **等所有 batch 完成** (foreground or `while` glob poll)。
 
-### 2.3 — discover-agent recover (miss only) — `--no-recover` 时跳过
+### 2.3 — search-agent recover (miss only) — `--no-recover` 时跳过
 
 ```python
 miss = [e for e in manifest.entries if e.status == "miss"]
 for v in miss:  # 并发, cap 4
-    Agent("quasi:new-discover-agent", background=True,
+    Agent("quasi:search-agent", background=True,
           prompt=f"""
 task: recover the real source of this missing citation
 

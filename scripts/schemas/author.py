@@ -4,7 +4,9 @@
 SPEC: ../SPEC.md § 3.1
 """
 
-from typing import Literal
+from __future__ import annotations
+
+from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from .primitives import Name, Rating
@@ -33,7 +35,7 @@ class AuthorSchema(BaseModel):
         description="研究方向标签数组;允许空但 lint warn '0 themes 可能漏写'",
     )
 
-    rating: Rating | None = Field(
+    rating: Optional[Rating] = Field(
         default=None,
         description="整体学术评分(1..5,reader 渲染为 ★);可选",
     )

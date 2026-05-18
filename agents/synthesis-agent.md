@@ -59,7 +59,7 @@ model: opus
 读 mode →
   book      → §B1 + §B2 templates
   author    → §A1 + §A2 templates
-  journal   → §J1 templates,执行 quasi-synthesize-refs 拿 reading list
+  journal   → §J1 templates,从 analysis_dir 内联整理 reading list
   topic     → §T1 templates,同上
   kb-update → §K1 templates
 ```
@@ -144,11 +144,8 @@ H1 = `# {full_name}` (**无装饰后缀**)。
 
 ### J1. 步骤
 
-1. 聚合参考文献:
-   ```bash
-   quasi-synthesize-refs {analysis_dir} --output {reading_list_path}
-   ```
-2. Read `{analysis_dir}` 下所有 .md 分析。
+1. Read `{analysis_dir}` 下所有 .md 分析。
+2. 若提供 `reading_list_path`,从已读 frontmatter 和 H1 信息整理 reading list 并写入该路径。
 3. 按下方模板生成 `{output_path}`。
 
 ### 综合报告模板

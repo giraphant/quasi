@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
-"""Unified academic file download — pure acquisition, no search logic.
+"""Unified academic file download — acquisition CLI for agents.
 
-Accepts a resolved identifier (MD5, DOI, URL) and downloads the file.
-For search/discovery, use search.py first.
+Agent-facing public flow:
+    book candidates  -> candidate metadata from Anna's Archive file search
+    book fetch       -> download by MD5 to temp + automatic diagnostics
+    paper fetch      -> DOI/URL cascade to temp + automatic diagnostics
+    accept           -> move accepted temp file into sources/{slug}.{ext}
 
 Usage:
-    # Download book by MD5 (Anna's Archive Fast API)
-    python3 download.py --md5 abc123def456 --filename poggi-durkheim
+    python3 download.py book candidates --title "..." --author "..." --json
+    python3 download.py book fetch --md5 abc123 --slug poggi-durkheim --json
+    python3 download.py paper fetch --doi "10.x/y" --slug author-title-2024 --json
+    python3 download.py accept --path .quasi/temp/downloads/x.pdf --slug final-slug --json
 
-    # Download paper by DOI (cascade: OA → EZProxy → Wayback)
-    python3 download.py --doi "10.1080/1600910X.2019.1641121"
-
-    # Download from direct URL
-    python3 download.py --url "https://discovery.ucl.ac.uk/paper.pdf" --filename author-2023
-
-    # Batch: download all metadata_found papers in a manifest
-    python3 download.py --manifest manifest.json --batch
+Batch mode remains for existing manifest-driven maintenance workflows.
 
 Config: all from QUASI_* env vars injected by the PreToolUse hook
 (see `scripts/hooks/inject-userconfig.py`). Plugin `userConfig` defines the
@@ -24,31 +22,32 @@ shell command. Sensitive values stay in the system keychain — they only
 materialise in the hook+bash subprocess env for one tool call at a time.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
-import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
+PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PLUGIN_ROOT))
+
 import requests
+from aa import get_aa_base_url, load_aa_config, search_aa  # noqa: E402
+from core import print_json, project_root, resolve_project_path  # noqa: E402
 
 # --- Config ---
 
-_PROJECT_DIR = Path.cwd()  # caller's research project root — output dir, no config
+_PROJECT_DIR = project_root()  # caller's research project root — output dir, no config
 # All credentials come from QUASI_* env vars (injected by PreToolUse hook).
-
-DEFAULT_AA_MIRRORS = [
-    "https://annas-archive.gl",
-    "https://annas-archive.pk",
-    "https://annas-archive.gd",
-]
 
 HEADERS_BROWSER = {
     "User-Agent": (
@@ -321,64 +320,6 @@ def _extract_year_signals(text):
     }
 
 
-def _guess_year(text):
-    """Back-compat shim — returns just best_guess. Prefer _extract_year_signals."""
-    return _extract_year_signals(text)["best_guess"]
-
-
-def _title_keywords(title):
-    """Return meaningful normalized title words for evidence checks."""
-    return [word for word in _normalize_book_title(title).split() if len(word) >= 4]
-
-
-def _text_mentions_author(text, expected_author):
-    """Check whether extracted text contains the expected author surname."""
-    surname = _author_surname(expected_author)
-    if not surname:
-        return False
-    return re.search(rf"\b{re.escape(surname)}\b", (text or "").lower()) is not None
-
-
-def _text_mentions_title(text, expected_title):
-    """Check whether extracted text contains enough expected title words."""
-    lowered = (text or "").lower()
-    keywords = _title_keywords(expected_title)
-    if not keywords:
-        return False
-    hits = sum(1 for word in keywords if word in lowered)
-    required_hits = min(len(keywords), max(1, min(3, len(keywords))))
-    return hits >= required_hits
-
-
-def verify_book_file(path, expected_author, expected_title):
-    """Verify a downloaded book file using front-text evidence only."""
-    file_path = Path(path)
-    suffix = file_path.suffix.lower()
-    if suffix == ".pdf":
-        text = _extract_pdf_text(str(file_path), max_pages=4, allow_raw_fallback=False)
-    elif suffix == ".epub":
-        text = _extract_epub_text(file_path)
-    else:
-        return {"status": "needs_review", "reason": "unsupported_format"}
-
-    if not text or len(text.strip()) < 40:
-        return {"status": "needs_review", "reason": "weak_evidence"}
-    if not _text_mentions_author(text, expected_author):
-        return {"status": "mismatch", "reason": "author_not_found"}
-    if not _text_mentions_title(text, expected_title):
-        return {"status": "mismatch", "reason": "title_not_found"}
-
-    year_signals = _extract_year_signals(text)
-    return {
-        "status": "match",
-        "author": expected_author,
-        "title": expected_title,
-        "year": year_signals["best_guess"],
-        "year_signals": year_signals,
-        "evidence": text[:500],
-    }
-
-
 def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
                        min_keyword_matches=2):
     """Verify downloaded PDF matches expected paper.
@@ -566,56 +507,6 @@ def try_ezproxy_download(doi, output_path):
 # ============================================================
 # Anna's Archive — MD5 → file (no search)
 # ============================================================
-
-def load_aa_config():
-    """Resolve Anna's Archive config from QUASI_ANNA_* env vars.
-
-    Env is injected by the PreToolUse hook (see scripts/hooks/inject-userconfig.py).
-    `QUASI_ANNA_MIRRORS` is a JSON array string (hook uses shlex.quote on the
-    multiple-typed userConfig value). Empty/missing mirrors → DEFAULT_AA_MIRRORS.
-    """
-    donator_key = os.environ.get("QUASI_ANNA_DONATOR_KEY", "").strip()
-    if not donator_key:
-        return None
-    raw_mirrors = os.environ.get("QUASI_ANNA_MIRRORS", "").strip()
-    mirrors: list[str] = []
-    if raw_mirrors:
-        try:
-            parsed = json.loads(raw_mirrors)
-            if isinstance(parsed, list):
-                mirrors = [str(m).strip().rstrip("/") for m in parsed if str(m).strip()]
-            elif isinstance(parsed, str) and parsed.strip():
-                mirrors = [parsed.strip().rstrip("/")]
-        except (ValueError, TypeError):
-            mirrors = [raw_mirrors.rstrip("/")]
-    if not mirrors:
-        mirrors = list(DEFAULT_AA_MIRRORS)
-    return {"donator_key": donator_key, "mirrors": mirrors}
-
-
-def get_aa_base_url(config):
-    """Find a reachable AA mirror."""
-    config_mirrors = config.get("mirrors", [])
-    seen = set()
-    all_mirrors = []
-    for m in config_mirrors + DEFAULT_AA_MIRRORS:
-        m = m.rstrip("/")
-        if m not in seen:
-            seen.add(m)
-            all_mirrors.append(m)
-
-    for mirror in all_mirrors:
-        try:
-            r = requests.head(mirror, headers=HEADERS_BROWSER, timeout=10, allow_redirects=True)
-            if r.status_code < 400:
-                return mirror
-        except requests.RequestException:
-            print(f"  {mirror} -- unreachable", file=sys.stderr)
-            continue
-
-    print("Error: No AA mirror reachable.", file=sys.stderr)
-    return None
-
 
 def aa_fast_download_url(base_url, md5, donator_key,
                          path_index=None, domain_index=None):
@@ -1214,135 +1105,6 @@ def batch_download_manifest(manifest_path, retry_wayback=False):
     return acquired
 
 
-# ============================================================
-# Utilities
-# ============================================================
-
-def _normalize_book_title(title):
-    """Normalize a book title for loose identity matching."""
-    text = (title or "").replace("–", " - ").replace("—", " - ")
-    text = unicodedata.normalize("NFKD", text)
-    text = text.encode("ascii", "ignore").decode("ascii")
-    text = text.lower().strip()
-    text = re.sub(r"\(.*?edition.*?\)", "", text)
-    text = re.split(r"\s*:\s*|\s+[\-\u2013\u2014]\s+", text, maxsplit=1)[0]
-    text = re.sub(r"[^a-z0-9\s]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _author_surname(author):
-    """Return a stable lowercase surname-like token for an author."""
-    normalized = unicodedata.normalize("NFKD", author or "")
-    normalized = normalized.encode("ascii", "ignore").decode("ascii")
-    parts = re.findall(r"[a-zA-Z]+", normalized.lower())
-    return parts[-1] if parts else "unknown"
-
-
-def build_book_slug(author, title, year):
-    """Build a canonical book slug in author-title-year format."""
-    short_title = _normalize_book_title(title)
-    words = short_title.split()[:4]
-    year_suffix = f"-{year}"
-    base = slugify(f"{_author_surname(author)}-{' '.join(words)}")
-    max_base_length = max(1, 80 - len(year_suffix))
-    base = base[:max_base_length].rstrip("-")
-    return f"{base}{year_suffix}"
-
-
-def is_same_book(expected_author, expected_title, actual_author, actual_title):
-    """Check whether two book descriptions refer to the same book."""
-    if _author_surname(expected_author) != _author_surname(actual_author):
-        return False
-
-    expected = _normalize_book_title(expected_title)
-    actual = _normalize_book_title(actual_title)
-    return bool(expected and actual and (expected in actual or actual in expected))
-
-
-def finalize_book_identity(manifest_book, actual_author, actual_title, actual_year,
-                           year_signals=None):
-    """Return the corrected canonical book identity for a downloaded file.
-
-    `year_signals` (optional) is the dict returned by `_extract_year_signals`.
-    When provided it is stored alongside `year` on the manifest entry so
-    downstream consumers / audits can see how the year was derived.
-    """
-    final_year = actual_year or manifest_book.get("year")
-    final_title = actual_title or manifest_book.get("title")
-    final_author = actual_author or manifest_book.get("author")
-    out = {
-        **manifest_book,
-        "author": final_author,
-        "title": final_title,
-        "year": final_year,
-        "slug": build_book_slug(final_author, final_title, final_year),
-    }
-    if year_signals is not None:
-        out["year_signals"] = year_signals
-    return out
-
-
-def finalize_downloaded_book(manifest_path, book_index, downloaded_path, expected_author):
-    """Verify a downloaded book file, rename to canonical slug, and rewrite manifest in place.
-
-    On verify match: derives final canonical identity, renames the source file
-    to {final_slug}{suffix}, sets status="acquired", writes manifest.
-    On verify miss: records the verification status on the book and writes manifest;
-    leaves the source file untouched.
-    Returns the (possibly updated) book entry.
-    """
-    manifest_file = Path(manifest_path)
-    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-    book = manifest["books"][book_index]
-
-    verification = verify_book_file(
-        Path(downloaded_path),
-        expected_author=expected_author,
-        expected_title=book["title"],
-    )
-
-    def _save():
-        manifest_file.write_text(
-            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-
-    if verification["status"] != "match":
-        book["status"] = verification["status"]
-        if "reason" in verification:
-            book["verification_reason"] = verification["reason"]
-        _save()
-        return book
-
-    final = finalize_book_identity(
-        manifest_book=book,
-        actual_author=verification.get("author"),
-        actual_title=verification.get("title"),
-        actual_year=verification.get("year"),
-        year_signals=verification.get("year_signals"),
-    )
-
-    src = Path(downloaded_path)
-    new_path = src.with_name(f"{final['slug']}{src.suffix}")
-    if new_path != src and not new_path.exists():
-        src.rename(new_path)
-
-    final["source"] = str(new_path)
-    final["status"] = "acquired"
-    manifest["books"][book_index] = final
-    _save()
-    return final
-
-
-def slugify(text):
-    """Convert text to kebab-case filename."""
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
-    text = re.sub(r"-+", "-", text)
-    return text[:80].rstrip("-")
-
-
 def _stream_download(url, dest_path, headers=None):
     """Stream-download file with progress."""
     r = requests.get(url, headers=headers or HEADERS_BROWSER, stream=True, timeout=120)
@@ -1374,6 +1136,51 @@ def _stream_download(url, dest_path, headers=None):
     return True
 
 
+def _default_temp_dir() -> Path:
+    return project_root() / ".quasi" / "temp" / "downloads"
+
+
+def _download_filename(slug: str, token: str | None = None) -> str:
+    if token:
+        token = re.sub(r"[^a-zA-Z0-9]+", "", token)[:12]
+    return f"{slug}-{token}" if token else slug
+
+
+def _inspect_downloaded_file(path: Path) -> dict:
+    """Return lightweight diagnostics for the downloaded file.
+
+    This is intentionally internal. Fetch always includes these diagnostics, so
+    agents should not call a separate inspect command for the same file.
+    """
+
+    suffix = path.suffix.lower().lstrip(".") or "unknown"
+    front_text = ""
+    if suffix == "pdf":
+        front_text = _extract_pdf_text(str(path), max_pages=4, allow_raw_fallback=False)
+    elif suffix == "epub":
+        front_text = _extract_epub_text(path, max_items=4)
+
+    clean_text = (front_text or "").strip()
+    if len(clean_text) >= 80:
+        readability = "text"
+    elif clean_text:
+        readability = "weak_text"
+    else:
+        readability = "unreadable"
+
+    return {
+        "format": suffix,
+        "size_bytes": path.stat().st_size if path.exists() else 0,
+        "readability": readability,
+        "front_text": clean_text[:6000] if clean_text else None,
+        "year_signals": _extract_year_signals(clean_text) if clean_text else None,
+        "fallback_hint": (
+            None if readability == "text"
+            else "diagnostics are weak; use Read/pdftotext or inspect the first pages manually"
+        ),
+    }
+
+
 # ============================================================
 # CLI
 # ============================================================
@@ -1398,39 +1205,151 @@ def _handle_errors(fn, *args, **kwargs):
 
 # ---- subcommand handlers ---------------------------------------------------
 
-def _cmd_paper(args) -> int:
-    if not (args.doi or args.url):
-        print("paper: need --doi or --url", file=sys.stderr)
+def _cmd_book_candidates(args) -> int:
+    query = args.query or " ".join(
+        part for part in (args.title, args.author, str(args.year or "")) if part
+    ).strip()
+    if not query:
+        print("book candidates: need --query or --title/--author", file=sys.stderr)
         return 2
+    result = search_aa(query, fmt=args.format, lang=args.lang, limit=args.limit)
+    print_json({
+        "status": "ok" if result.get("success") else "failed",
+        "kind": "book",
+        "query": query,
+        "source": result.get("source", "anna_archive"),
+        "count": result.get("count", 0),
+        "candidates": result.get("results", []),
+    })
+    return 0 if result.get("success") else 1
+
+
+def _cmd_book_fetch(args) -> int:
+    if not args.md5:
+        print("book fetch: need --md5", file=sys.stderr)
+        return 2
+    if not args.slug:
+        print("book fetch: need --slug", file=sys.stderr)
+        return 2
+
+    temp_dir = resolve_project_path(args.temp_dir or _default_temp_dir())
+    filename = _download_filename(args.slug, args.md5)
+    path = _handle_errors(
+        download_from_aa,
+        md5=args.md5,
+        output_dir=str(temp_dir),
+        filename=filename,
+        fmt=args.format,
+    )
+    if not path:
+        print_json({
+            "status": "download_failed",
+            "kind": "book",
+            "md5": args.md5,
+            "reason": "all_sources_failed",
+        })
+        return 1
+
+    path_obj = Path(path).resolve()
+    print_json({
+        "status": "ok",
+        "kind": "book",
+        "md5": args.md5,
+        "temp_path": str(path_obj),
+        "source": "anna_archive",
+        "inspect": _inspect_downloaded_file(path_obj),
+    })
+    return 0
+
+
+def _cmd_paper_fetch(args) -> int:
+    if not (args.doi or args.url):
+        print("paper fetch: need --doi or --url", file=sys.stderr)
+        return 2
+    if not args.slug:
+        print("paper fetch: need --slug", file=sys.stderr)
+        return 2
+
+    temp_dir = resolve_project_path(args.temp_dir or _default_temp_dir())
     result = _handle_errors(
         download_paper,
         doi=args.doi, url=args.url,
-        output_dir=args.output_dir, filename=args.filename,
+        output_dir=str(temp_dir), filename=args.slug,
         retry_wayback=args.retry_wayback,
-        verify_author=args.verify_author,
-        verify_title=args.verify_title,
     )
     if result:
-        print(result)
+        path_obj = Path(result).resolve()
+        print_json({
+            "status": "ok",
+            "kind": "paper",
+            "doi": args.doi,
+            "url": args.url,
+            "temp_path": str(path_obj),
+            "source": "direct_url" if args.url else "doi_cascade",
+            "inspect": _inspect_downloaded_file(path_obj),
+        })
         return 0
+    print_json({
+        "status": "download_failed",
+        "kind": "paper",
+        "doi": args.doi,
+        "url": args.url,
+        "reason": "all_sources_failed",
+    })
     return 1
 
 
-def _cmd_book(args) -> int:
-    if not args.md5:
-        print("book: need --md5", file=sys.stderr)
+def _cmd_accept(args) -> int:
+    if not args.path:
+        print("accept: need --path", file=sys.stderr)
         return 2
-    result = _handle_errors(
-        download_from_aa,
-        md5=args.md5, output_dir=args.output_dir,
-        filename=args.filename, fmt=args.format,
-        verify_author=args.verify_author,
-        verify_title=args.verify_title,
-    )
-    if result:
-        print(result)
+    if not args.slug:
+        print("accept: need --slug", file=sys.stderr)
+        return 2
+
+    src = resolve_project_path(args.path)
+    if not src.exists() or not src.is_file():
+        print_json({
+            "status": "not_found",
+            "path": str(src),
+        })
+        return 1
+
+    out_dir = resolve_project_path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = (out_dir / f"{args.slug}{src.suffix.lower()}").resolve()
+
+    if src == dest:
+        print_json({
+            "status": "ok",
+            "kind": args.kind,
+            "path": str(dest),
+            "moved": False,
+            "reason": "already_at_destination",
+        })
         return 0
-    return 1
+
+    if dest.exists() and not args.overwrite:
+        print_json({
+            "status": "conflict",
+            "kind": args.kind,
+            "path": str(dest),
+            "temp_path": str(src),
+            "reason": "destination_exists",
+        })
+        return 1
+
+    if dest.exists() and args.overwrite:
+        dest.unlink()
+    shutil.move(str(src), str(dest))
+    print_json({
+        "status": "ok",
+        "kind": args.kind,
+        "path": str(dest),
+        "temp_path": str(src),
+        "moved": True,
+    })
+    return 0
 
 
 def _cmd_batch(args) -> int:
@@ -1444,68 +1363,64 @@ def _cmd_batch(args) -> int:
     return 0
 
 
-def _cmd_finalize(args) -> int:
-    missing = [n for n, v in [
-        ("--manifest", args.manifest),
-        ("--book-index", args.book_index),
-        ("--downloaded-path", args.downloaded_path),
-        ("--expected-author", args.expected_author),
-    ] if v is None]
-    if missing:
-        print(f"finalize: missing {', '.join(missing)}", file=sys.stderr)
-        return 2
-    result = _handle_errors(
-        finalize_downloaded_book,
-        manifest_path=args.manifest,
-        book_index=args.book_index,
-        downloaded_path=args.downloaded_path,
-        expected_author=args.expected_author,
-    )
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
-
-
 # ---- argparse: subcommand structure ----------------------------------------
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="quasi-download",
-        description="Academic file download by intent. "
-                    "Each subcommand runs its own fallback chain.",
+        description="Academic file acquisition for agents.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    # Shared options factory.
-    def _add_common_io(p, with_format=False):
-        p.add_argument("--output-dir", "-o", default="sources",
-                       help="Output directory (default: sources)")
-        p.add_argument("--filename", help="Output filename (without extension)")
-        if with_format:
-            p.add_argument("--format", "-f", default="pdf",
-                           help="File format (default: pdf)")
+    # book: candidates + fetch.
+    p_book = sub.add_parser("book", help="Book acquisition")
+    book_sub = p_book.add_subparsers(dest="book_cmd", required=True)
 
-    def _add_verify(p):
-        p.add_argument("--verify-author", help="Expected author name (post-download check)")
-        p.add_argument("--verify-title", help="Expected title (post-download check)")
+    p_bc = book_sub.add_parser("candidates", help="Find downloadable book candidates")
+    p_bc.add_argument("--query", help="Raw AA query")
+    p_bc.add_argument("--title", help="Expected title")
+    p_bc.add_argument("--author", help="Expected author")
+    p_bc.add_argument("--year", type=int, help="Optional year hint")
+    p_bc.add_argument("--format", "-f", default="pdf", help="File format (default: pdf)")
+    p_bc.add_argument("--lang", help="Language filter, e.g. en")
+    p_bc.add_argument("--limit", type=int, default=5)
+    p_bc.add_argument("--json", action="store_true", help="Accepted for contract clarity; output is always JSON")
+    p_bc.set_defaults(func=_cmd_book_candidates)
 
-    # paper: by DOI/URL, runs OA → EZProxy → Wayback cascade
-    p_paper = sub.add_parser("paper",
-                              help="Download paper by DOI or URL (OA → EZProxy → Wayback)")
-    p_paper.add_argument("--doi", help="Paper DOI")
-    p_paper.add_argument("--url", help="Direct PDF URL")
-    p_paper.add_argument("--retry-wayback", action="store_true",
-                          help="Re-check Wayback if primary sources fail")
-    _add_common_io(p_paper)
-    _add_verify(p_paper)
-    p_paper.set_defaults(func=_cmd_paper)
+    p_bf = book_sub.add_parser("fetch", help="Download one book candidate to temp and diagnose")
+    p_bf.add_argument("--md5", required=True, help="Anna's Archive file MD5")
+    p_bf.add_argument("--slug", required=True, help="Target work slug for temp filename")
+    p_bf.add_argument("--format", "-f", default="pdf", help="File format (default: pdf)")
+    p_bf.add_argument("--temp-dir", default=str(_default_temp_dir()),
+                      help="Temp output directory (default: .quasi/temp/downloads)")
+    p_bf.add_argument("--json", action="store_true", help="Accepted for contract clarity; output is always JSON")
+    p_bf.set_defaults(func=_cmd_book_fetch)
 
-    # book: by MD5, fetches via Anna's Archive
-    p_book = sub.add_parser("book",
-                             help="Download book by MD5 (Anna's Archive, needs donator key)")
-    p_book.add_argument("--md5", help="Anna's Archive file MD5")
-    _add_common_io(p_book, with_format=True)
-    _add_verify(p_book)
-    p_book.set_defaults(func=_cmd_book)
+    # paper: DOI/URL fetch.
+    p_paper = sub.add_parser("paper", help="Paper acquisition")
+    paper_sub = p_paper.add_subparsers(dest="paper_cmd", required=True)
+
+    p_pf = paper_sub.add_parser("fetch", help="Download a paper to temp and diagnose")
+    p_pf.add_argument("--doi", help="Paper DOI")
+    p_pf.add_argument("--url", help="Direct PDF URL")
+    p_pf.add_argument("--slug", required=True, help="Target work slug for temp filename")
+    p_pf.add_argument("--retry-wayback", action="store_true",
+                      help="Re-check Wayback if primary sources fail")
+    p_pf.add_argument("--temp-dir", default=str(_default_temp_dir()),
+                      help="Temp output directory (default: .quasi/temp/downloads)")
+    p_pf.add_argument("--json", action="store_true", help="Accepted for contract clarity; output is always JSON")
+    p_pf.set_defaults(func=_cmd_paper_fetch)
+
+    # accept: move judged temp file into stable sources/{slug}.{ext}.
+    p_accept = sub.add_parser("accept", help="Move accepted temp file into sources/{slug}.{ext}")
+    p_accept.add_argument("--path", required=True, help="Temp file path returned by fetch")
+    p_accept.add_argument("--slug", required=True, help="Final artifact slug")
+    p_accept.add_argument("--kind", choices=("book", "paper"), default="book")
+    p_accept.add_argument("--output-dir", "-o", default="sources",
+                          help="Final output directory (default: sources)")
+    p_accept.add_argument("--overwrite", action="store_true")
+    p_accept.add_argument("--json", action="store_true", help="Accepted for contract clarity; output is always JSON")
+    p_accept.set_defaults(func=_cmd_accept)
 
     # batch: from manifest
     p_batch = sub.add_parser("batch",
@@ -1515,60 +1430,11 @@ def _build_parser() -> argparse.ArgumentParser:
                           help="Re-check Wayback for papers")
     p_batch.set_defaults(func=_cmd_batch)
 
-    # finalize: post-download book verification + manifest rewrite
-    p_fin = sub.add_parser("finalize",
-                            help="Verify downloaded book against manifest, rename, rewrite manifest")
-    p_fin.add_argument("--manifest", help="Manifest file path")
-    p_fin.add_argument("--book-index", type=int, help="Index into manifest['books']")
-    p_fin.add_argument("--downloaded-path", help="Path to the file just downloaded")
-    p_fin.add_argument("--expected-author", help="Expected author full name")
-    p_fin.set_defaults(func=_cmd_finalize)
-
     return parser
-
-
-def _legacy_main(argv: list[str]) -> int:
-    """Pre-refactor flag-based interface, kept until callers migrate.
-
-    Triggered when first arg starts with '-' (e.g. `--doi X`). Routes to
-    the same subcommand handlers based on which flag is present.
-    """
-    parser = argparse.ArgumentParser(
-        prog="quasi-download (legacy flag mode)",
-        description="Legacy flag interface. Prefer subcommand form: "
-                    "paper / book / batch / finalize.",
-    )
-    g = parser.add_argument_group("input (pick one)")
-    g.add_argument("--md5"); g.add_argument("--doi"); g.add_argument("--url"); g.add_argument("--manifest")
-    parser.add_argument("--output-dir", "-o", default="sources")
-    parser.add_argument("--filename")
-    parser.add_argument("--format", "-f", default="pdf")
-    parser.add_argument("--batch", action="store_true")
-    parser.add_argument("--retry-wayback", action="store_true")
-    parser.add_argument("--verify-author"); parser.add_argument("--verify-title")
-    parser.add_argument("--finalize-book", action="store_true")
-    parser.add_argument("--book-index", type=int)
-    parser.add_argument("--downloaded-path"); parser.add_argument("--expected-author")
-    args = parser.parse_args(argv)
-
-    # Dispatch
-    if args.finalize_book:
-        return _cmd_finalize(args)
-    if args.manifest and args.batch:
-        return _cmd_batch(args)
-    if args.md5:
-        return _cmd_book(args)
-    if args.doi or args.url:
-        return _cmd_paper(args)
-    parser.error("Need one of: --md5, --doi, --url, or --manifest --batch")
-    return 2
 
 
 def main():
     argv = sys.argv[1:]
-    if argv and argv[0].startswith("-") and argv[0] not in ("-h", "--help"):
-        # Legacy flag interface (old agent prompts, existing scripts).
-        sys.exit(_legacy_main(argv))
     parser = _build_parser()
     args = parser.parse_args(argv)
     sys.exit(args.func(args))
