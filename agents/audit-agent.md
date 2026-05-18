@@ -1,6 +1,6 @@
 ---
 name: audit-agent
-description: vault 本地一致性修复者。调用 `quasi-audit`,只处理 runner 标出的少量 LLM 可编辑项,并返回结构化 audit_result。
+description: Worker for running quasi-audit on a file or directory, applying only local minimal fixes, and returning structured audit_result.
 tools: Read, Edit, Bash
 model: sonnet
 ---

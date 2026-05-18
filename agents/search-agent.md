@@ -1,6 +1,6 @@
 ---
 name: search-agent
-description: 学术文献搜索 agent。把模糊研究意图转成 `quasi-search book|paper` 查询,读 canonical metadata + localisations sidecar,筛掉明显错误候选后把核验结果交还上层。**不写文件**。
+description: Worker for academic metadata search. Returns curated book/paper candidates and localisation sidecars; does not write files.
 tools: Read, Bash
 model: opus
 ---

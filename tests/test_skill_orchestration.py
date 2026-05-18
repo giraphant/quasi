@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -8,6 +9,20 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 def active_skill_files() -> list[Path]:
     return sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md"))
+
+
+def active_agent_files() -> list[Path]:
+    return sorted((PLUGIN_ROOT / "agents").glob("*.md"))
+
+
+def frontmatter_description(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r"^description:\s*(?:>\s*)?\n(?P<body>(?:  .*\n)+)", text, re.MULTILINE)
+    if match:
+        return " ".join(line.strip() for line in match.group("body").splitlines())
+
+    match = re.search(r"^description:\s*(?P<body>.+)$", text, re.MULTILINE)
+    return match.group("body").strip() if match else ""
 
 
 def test_skill_orchestration_contract_doc_exists():
@@ -45,5 +60,33 @@ def test_active_skills_follow_runtime_schema():
         for forbidden in ("## 调用方式", "## 编排契约", "docs/SKILL_ORCHESTRATION.md"):
             if forbidden in text:
                 offenders.append(f"{rel}: runtime skill contains maintainer-only text {forbidden!r}")
+
+    assert offenders == []
+
+
+def test_frontmatter_descriptions_are_routing_hints():
+    offenders: list[str] = []
+
+    for path in active_skill_files():
+        desc = frontmatter_description(path)
+        rel = path.relative_to(PLUGIN_ROOT)
+        if not desc.startswith("Use when the user wants to "):
+            offenders.append(f"{rel}: skill description should be user-intent facing")
+        if len(desc) > 220:
+            offenders.append(f"{rel}: skill description too long")
+        for forbidden in ("user says", "前身", "Phase", "→"):
+            if forbidden in desc:
+                offenders.append(f"{rel}: description contains {forbidden!r}")
+
+    for path in active_agent_files():
+        desc = frontmatter_description(path)
+        rel = path.relative_to(PLUGIN_ROOT)
+        if not desc.startswith("Worker for "):
+            offenders.append(f"{rel}: agent description should be worker-facing")
+        if len(desc) > 220:
+            offenders.append(f"{rel}: agent description too long")
+        for forbidden in ("由 ", "Phase", "前身", "→"):
+            if forbidden in desc:
+                offenders.append(f"{rel}: description contains {forbidden!r}")
 
     assert offenders == []

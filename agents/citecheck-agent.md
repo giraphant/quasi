@@ -1,6 +1,6 @@
 ---
 name: citecheck-agent
-description: 校对 draft 引用的 LLM context-fit 判断者 —— 对一批 single-hit / multi-hit 引用, 读 mention 上下文 vs vault 摘要正文 (vault/papers/{slug}.md 或 vault/books/{slug}/00-overview.md), 判断主题契合 / 挑最契合的候选, 输出极简 note。完全离线, 不带 web 工具, 不出 verdict 枚举。被 wrap-up skill Phase 2 分批 dispatch。
+description: Worker for offline citation context-fit checks. Reads draft context and vault candidates, then writes compact verdict notes for one batch.
 tools: Read, Write
 model: sonnet
 ---

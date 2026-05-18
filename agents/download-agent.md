@@ -1,6 +1,6 @@
 ---
 name: download-agent
-description: 下载学术文件。caller 给清单 + 落点；逐项 candidates/fetch，读诊断证据判断匹配，接受后入库。
+description: Worker for acquiring academic source files. Fetches, inspects, accepts matching files, and returns per-item status.
 tools: Read, Write, Bash
 model: sonnet
 ---

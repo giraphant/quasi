@@ -1,6 +1,6 @@
 ---
 name: proofread-agent
-description: 对 draft 的一节做文本级校对。直接 in-place 修改正文,并把每处改动追加到 draft 末尾的"校对记录"块(HTML 注释包裹的 markdown 列表)。由 wrap-up skill 按节串行调度;也可被任何主进程单独 dispatch。
+description: Worker for proofreading one draft section. Edits the draft in place and appends records to the draft proofread block.
 tools: Read, Edit, Write, Bash
 model: sonnet
 ---

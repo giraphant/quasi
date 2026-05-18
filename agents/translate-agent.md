@@ -1,6 +1,6 @@
 ---
 name: translate-agent
-description: 使用沉浸式翻译的 Zotero API 翻译本地 PDF。由 workflow 或用户按 slug 调用，输出单文件 split 双语 PDF 到用户项目的 processing/。
+description: Worker for translating an existing PDF through the configured translation backend. Writes translated PDF output.
 tools: Read, Write, Bash, Glob
 model: sonnet
 ---

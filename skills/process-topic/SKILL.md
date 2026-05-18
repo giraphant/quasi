@@ -1,9 +1,8 @@
 ---
 name: quasi:process-topic
 description: >
-  Use when the user says "滚雪球", "process topic", "topic corpus", "citation chain",
-  "expand references", or wants to build a topic-centred reading corpus by iteratively
-  tracing citations from a seed paper. (前身: /quasi:citation-snowball, 2026-05-17 重命名)
+  Use when the user wants to grow a topic corpus from a seed paper, citation
+  trail, or research question and synthesize the resulting literature.
 ---
 
 # Process Topic — 主题语料(原: citation snowball)

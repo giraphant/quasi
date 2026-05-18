@@ -46,6 +46,25 @@ Agent / Helper 合同  The local worker contracts this skill actually calls.
 `wrap-up` is allowed to be longer because it contains human review, but it
 should still follow the same ownership rules.
 
+## Frontmatter Description
+
+Frontmatter `description` is a routing hint, not a mini README.
+
+Skill descriptions are user-intent facing:
+
+```text
+Use when the user wants to {core task} from/with {likely inputs}.
+```
+
+Agent descriptions are worker-facing:
+
+```text
+Worker for {single specialist action}. Reads/writes/returns {main contract}.
+```
+
+Keep descriptions short. Do not put phase names, historical rename notes, long
+trigger-word lists, or detailed workflow steps in frontmatter.
+
 `任务` should not explain orchestration, state, worker ownership, or negative
 scope. Those belong in later sections. For example: "搜索、下载和分析用户提供的
 论文。" is enough for a paper skill.

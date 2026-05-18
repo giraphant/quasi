@@ -1,9 +1,8 @@
 ---
 name: quasi:process-paper
 description: >
-  Use when the user says "处理这篇论文", "process paper", "跑这篇 paper",
-  "summarize this paper", or wants to process a single academic paper
-  (search → download → analyse) into vault/papers/{slug}.md.
+  Use when the user wants to search, download, and analyse a single academic
+  paper from a DOI, title, author, or existing PDF.
 ---
 
 # Process Paper — 单论文处理

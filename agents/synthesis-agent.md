@@ -1,6 +1,6 @@
 ---
 name: synthesis-agent
-description: 大一统综合代理。接 mode 参数,把多份分析合成一份结构化输出。支持 book(全书概览) / author(学者档案) / journal(期刊综合) / topic(主题语料综合) / kb-update(知识库更新)。由 process-book / process-author / process-journal / process-topic 在合成阶段前台调用。
+description: Worker for synthesizing existing analyses into one higher-level output. Called with mode=book, author, journal, topic, or kb-update.
 tools: Read, Write, Bash, Glob
 model: opus
 ---

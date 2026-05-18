@@ -1,12 +1,8 @@
 ---
 name: quasi:wrap-up
 description: >
-  Use when the user says "收尾", "wrap up", "整理这篇", "我写完了帮我过一遍",
-  or wants to finalise a draft — proofread typos/punctuation/spacing
-  AND verify every citation against vault + online — in one shot.
-  ALSO use when user says "审完了", "清理记录块", "删掉校对记录",
-  "proofread cleanup", "proofread 收尾" — to remove the
-  `<!-- proofread:start -->...<!-- proofread:end -->` block from drafts after review.
+  Use when the user wants to finalise a draft by proofreading text and checking
+  citations, or clean up proofread records after review.
 ---
 
 # Wrap-Up — 文章收尾

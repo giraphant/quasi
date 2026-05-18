@@ -33,6 +33,11 @@ of `调用方式` unless the skill has a real machine-facing invocation API. In 
 plugin use, the frontmatter description and natural language trigger the skill;
 the body should define variable extraction and workflow contracts.
 
+Frontmatter `description` is only a routing hint. Skill descriptions should
+describe user intent; agent descriptions should describe one worker action and
+its main output. Do not put trigger-word lists, history notes, or phase
+walkthroughs in descriptions.
+
 ## Release checklist
 
 1. Update `.claude-plugin/plugin.json`.
@@ -70,6 +75,20 @@ the venv is missing — so shims work even when SessionStart hasn't fired yet
 To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the diff.
 
 ## Recent Changes
+
+- **0.32.1** (2026-05-18): **frontmatter description discipline.**
+  Treats `description:` as a routing hint, not a mini-README.
+  Skill descriptions normalised to user-intent shape — `Use when
+  the user wants to {core task} from/with {likely inputs}.`
+  Agent descriptions normalised to worker shape — `Worker for
+  {single specialist action}. {Main contract.}` Trigger-word piles,
+  history notes (`前身: ...`), and phase walkthroughs (`Phase X →
+  ...`) removed across all 5 active skills and all 9 active agents.
+  `AGENTS.md`, `CLAUDE.md`, and `docs/SKILL_ORCHESTRATION.md`
+  carry the maintainer-facing convention. Enforcement landed as
+  `tests/test_skill_orchestration.py::test_frontmatter_descriptions_are_routing_hints`
+  (length cap 220, required prefix per kind, forbidden tokens
+  `user says / 前身 / Phase / → / 由 ` per kind).
 
 - **0.32.0** (2026-05-18): **skill orchestration schema + bin
   surface trim.** All five active skills rewritten to the

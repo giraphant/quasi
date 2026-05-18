@@ -1,6 +1,6 @@
 ---
 name: extract-agent
-description: 从 EPUB/PDF 提取章节级纯文本。由 process-book/process-author 在提取阶段前台调用。自包含提取+验证+修复。
+description: Worker for extracting chapter text from one EPUB/PDF book source. Writes a chapter manifest and text files.
 tools: Read, Bash, Glob
 model: sonnet
 ---

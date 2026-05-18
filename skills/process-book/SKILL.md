@@ -1,8 +1,8 @@
 ---
 name: quasi:process-book
 description: >
-  Use when the user says "处理这本书", "跑一下这本handbook", "总结这本",
-  or wants to process an EPUB/PDF book into structured chapter summaries.
+  Use when the user wants to process a book from title, author, ISBN, or source
+  file into chapter analyses and a book overview.
 ---
 
 # Process Book — 书籍处理
