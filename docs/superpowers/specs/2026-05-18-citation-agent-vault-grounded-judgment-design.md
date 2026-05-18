@@ -72,7 +72,6 @@ metadata`) with:
 1. Read manifest, extract entries with key ∈ batch_keys
 2. For each entry:
    a. For each candidate, Read vault summary at candidate.path
-      (default limit=200 lines; expand a further range only if needed)
    b. Compare mention context vs actual summary content
    c. picked_slug = candidate whose summary best matches mention topic
    d. flag = ok (clear match) | review (ambiguous / weak match)
@@ -174,12 +173,6 @@ prompt structure (one path fewer) and reads the same outputs.
   an existing file, the agent records `flag=review` with a note like
   "vault 摘要文件 {path} 读不到, 无法判断契合". Should be rare — the
   path comes from `biblio.py` which discovered the file via glob.
-- **Very long book overviews.** Some `00-overview.md` files exceed
-  500 lines. Agent default: `Read(path, limit=200)` — the first 200
-  lines almost always cover the curated summary, key argument, and
-  theme tags. Agent may Read additional ranges if context fit looks
-  unclear from the first slice. This is guidance in the agent prompt
-  (Step 2a above), not enforced by tooling.
 - **Empty / placeholder summary.** Some entries have only frontmatter
   + a TODO body. Agent treats as "summary unavailable" → flag=review,
   note explains.
