@@ -46,6 +46,25 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.25.0** (2026-05-18): **agent surface cleanup post-search-refactor.**
+  Lands the long-lived `quasi-arch-refactor` branch into main and tidies
+  the agent file naming after 0.24.0's atomic search-bin cutover.
+  - `agents/new-discover-agent.md` → `agents/search-agent.md` (146 → 119
+    lines). Frontmatter `name:` updated; content rewritten against the
+    new bin: dropped the trust/priority table (bin does
+    `match_and_priority` internally), dropped per-source fallback table
+    (bin internal fallback handles douban_cn works-page / etc), fixed
+    envelope shape to `{kind, query, results, diagnostics}`, corrected
+    source counts (8 book + 3 paper), confidence heuristic now keyed on
+    `sources_hit` + `conflicts`, output protocol renamed
+    `DISCOVER_RESULT` → `SEARCH_RESULT`.
+  - `agents/discover-agent.md` deleted — superseded by `search-agent`;
+    all callers (process-author, wrap-up Phase 2.5, process-book Step 0)
+    migrated on the refactor branch.
+  - `process-author/SKILL.md` and `scripts/search/context.md` rename
+    references updated.
+  - No bin-layer change. Pure agent file rename + caller rewire.
+
 - **0.24.0** (2026-05-17): **search bin complete refactor (BREAKING).**
   Spec: `docs/superpowers/specs/2026-05-17-search-refactor-design.md`.
   Plan: `docs/superpowers/plans/2026-05-17-search-refactor.md`.
