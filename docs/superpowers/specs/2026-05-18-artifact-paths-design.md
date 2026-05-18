@@ -2,9 +2,13 @@
 
 Date: 2026-05-18
 Affects: `skills/wrap-up/SKILL.md`, `skills/process-journal/SKILL.md`,
-`skills/process-topic/SKILL.md`, `scripts/download/download.py`,
-`scripts/proofread/proofread.py`, `scripts/citation/*.py`,
-`agents/citecheck-agent.md`, `agents/audit-agent.md`
+`skills/process-topic/SKILL.md`, `skills/process-author/SKILL.md`,
+`scripts/download/download.py`, `scripts/proofread/proofread.py`,
+`scripts/typecheck/typecheck.py`, `scripts/citation/*.py`,
+`schemas/book.py`,
+`agents/citecheck-agent.md`, `agents/audit-agent.md`,
+`agents/search-agent.md`, `agents/download-agent.md`,
+`agents/analyse-agent.md`, `agents/synthesis-agent.md`
 Version target: 0.26.0 (minor — interim-artifact path move; no script API
 change; user-disk migration is soft — old files become harmless orphans)
 
@@ -23,17 +27,23 @@ Those are not in scope.
 
 ## Problem
 
-Two audit passes confirm the principle drifted in practice:
+Two audit passes plus a third revision (re-grounding the principle on
+"would a user ever open this file?") confirm the layout drifted in
+several places:
 
-1. **Run-internal artifacts living in `processing/`.** The entire
-   `processing/citation/{stem}/` tree — `parse.json`, `manifest.json`,
-   `biblio.json`, `decisions.json`, and the `verdicts/` subdirectory —
-   is read only within a single `quasi:wrap-up` invocation and
-   regenerated on every re-run (including `--citation-only`). Same
-   for `processing/proofread/{stem}/sections.json`. None of these
-   survive their producing run in any meaningful sense; they sit in
-   `processing/` only because that root got picked early without a
-   sharp survival criterion in place.
+1. **Plumbing artifacts living in `processing/`.** Files that are pure
+   metadata — manifests, indices, audit state, dispatch scratch — are
+   scattered across `processing/`:
+   - The entire `processing/citation/{stem}/` tree (parse, manifest,
+     biblio, decisions, verdicts) — regenerated on every wrap-up run.
+   - `processing/proofread/{stem}/sections.json` — section index for
+     Phase 1 dispatch.
+   - `processing/authors/{name}/manifest.json` — process-author phase
+     state machine driver; user never opens.
+   - `processing/audit/state.json` and `processing/audit/translations.json`
+     per the agent doc and `schemas/book.py:50` — although `audit.py`
+     code actually writes `audit-state.json` to `.quasi/audit/` already,
+     so the doc/code mismatch alone is a bug.
 
 2. **Two skills bypass project-local discipline entirely.** Both
    `process-journal` and `process-topic` write downloaded PDFs into
@@ -43,74 +53,96 @@ Two audit passes confirm the principle drifted in practice:
    project-level cleanup, and (on some macOS configs) gets reaped by
    the OS at unpredictable times.
 
-3. **One documentation inconsistency.** `audit.py` and `typecheck.py`
-   actually write `.quasi/audit/typecheck-results.json`, but
-   `agents/audit-agent.md` references the file at `.quasi/typecheck-results.json`
-   (one level up). Caller behaviour is fine; the doc lies.
+3. **`.quasi/` internal inconsistency.** `typecheck.py` writes
+   `typecheck-results.json` + `typecheck-report.md` at `.quasi/` top
+   level, while the sibling `audit-state.json` lives at `.quasi/audit/`.
+   Same root, different depths, no reason for the split.
+
+4. **Doc/code drift in audit-agent.** `agents/audit-agent.md` lines 14
+   / 43 / 241 / 253-255 reference paths that don't match
+   `scripts/audit/audit.py` and `scripts/typecheck/typecheck.py`. Some
+   say `processing/audit/...`, some say `.quasi/typecheck-...`. The
+   doc is the canonical instruction the LLM follows at runtime, so
+   doc drift = runtime drift.
 
 There are no hidden log / lock / cache mechanisms — quasi has no
 runtime state daemon, every "state" file is a serialised JSON written
-by an explicit `Write` call. This is why the fix is purely a string-swap
-exercise with no runtime migration.
+by an explicit `Write` call. Most fixes are string-swaps; only one
+(typecheck `OUT_DIR`) is a real Python edit, and even that is one line.
 
 ## Principle (the rule we'll enforce going forward)
 
 A project-local interim artifact belongs in:
 
-- **`processing/`** if and only if **it outlives the skill run that
-  produced it** — i.e. a sibling skill consumes it later, a future
-  run re-reads it (not regenerates), or the user inspects it as a
-  durable record. "Read by a later phase of the same skill run" is
-  **not** sufficient: that artifact is still internal to one run, even
-  if multiple steps touch it.
-- **`.quasi/`** for everything else internal to a single skill run:
-  parse buffers, dispatch scratch, per-phase JSON intermediates,
-  regenerated indices, audit-trail snapshots, downloaded temp PDFs,
-  status flags for the next quasi invocation.
+- **`processing/`** if and only if **it is content the user might
+  actually open and read as part of their research workflow** — extracted
+  chapter text they fall back to when a PDF is unclear, a translated PDF
+  they read alongside the original. "Survives the run" is necessary but
+  not sufficient; the test is whether the file has substantive existence
+  to the user as readable matter.
+- **`.quasi/`** for **everything else**: manifests, indices,
+  status flags, parse buffers, dispatch scratch, audit-trail JSON,
+  downloaded temp PDFs that get analysed and then have no further use.
+  Even when a manifest spans many phases or many runs, if the user
+  never opens it, it's plumbing — and plumbing belongs hidden.
 
-The key test: **if this skill run failed catastrophically and the file
-got nuked, would a future re-run lose anything?** If yes → `processing/`.
-If the next run would just rebuild it from upstream sources → `.quasi/`.
+The key test (sharpened): **would the user ever cat / open this file
+in their normal workflow?** If yes → `processing/`. If it exists only
+as input to other quasi steps → `.quasi/`.
+
+This is stricter than a pure "survives the run" rule. A discovery
+manifest like `authors/{name}/manifest.json` survives many phases and
+many runs, but the user never reads it — it's a driver file for
+process-author's internal state machine. It belongs in `.quasi/`.
 
 `vault/` and `sources/` are out of scope — they hold user-facing /
 authored artifacts and are not "interim".
 
 ## Decision — classification table
 
-Applying the principle: an artifact survives its skill run only if a
-**different** skill, a **future** run, or the **user** consumes it.
-"Multiple phases of the same run read it" is not survival — that's just
-internal plumbing.
+Apply the user-readable test to every interim artifact:
 
-| Path | Producer | Consumer | Survives run? | Action |
-|---|---|---|---|---|
-| `processing/chapters/{slug}/` (txt + manifest) | extract-agent | analyse-agent across many later runs; re-analysis without re-extract | **yes** | stay |
-| `processing/authors/{name}/manifest.json` | process-author Phase 1 | Phases 2–6 + user re-runs to add new works | **yes** | stay |
-| `processing/translations/{slug}-{lang}.pdf` | translate-agent | user keeps as durable output | **yes** | stay |
-| `processing/citation/{stem}/manifest.json` | wrap-up Phase 2.1 | Phase 2.2–2.5 same run only; `--citation-only` regenerates from scratch | no | **move to `.quasi/citation/{stem}/`** |
-| `processing/citation/{stem}/biblio.json` | wrap-up Phase 2.1 | resolve + emit-bib same run only; regenerated each run | no | **move to `.quasi/citation/{stem}/`** |
-| `processing/citation/{stem}/decisions.json` | wrap-up Phase 2.5 TUI | emit-bib same run only; re-run TUI overwrites | no | **move to `.quasi/citation/{stem}/`** |
-| `processing/citation/{stem}/parse.json` | wrap-up Phase 2.1 | resolve same run only | no | **move to `.quasi/citation/{stem}/`** |
-| `processing/citation/{stem}/verdicts/batch-*.json` | citecheck-agent | Phase 2.4 TUI input same run only | no | **move to `.quasi/citation/{stem}/verdicts/`** |
-| `processing/citation/{stem}/verdicts/recovery-*.json` | search-agent (recover mode) | Phase 2.4 TUI input same run only | no | **move to `.quasi/citation/{stem}/verdicts/`** |
-| `processing/proofread/{stem}/sections.json` | wrap-up Phase 1 split | Phase 1 dispatch same run only | no | **move to `.quasi/proofread/{stem}/`** |
-| `/tmp/{name}-pdfs/` (journal) | process-journal | analyse-agent same run only | no | **move to `.quasi/temp/journal-pdfs/{name}/`** |
-| `/tmp/{name}-pdfs/` (topic) | process-topic | analyse-agent same run only | no | **move to `.quasi/temp/topic-pdfs/{name}/`** |
-| `/tmp/snowball-pdfs/` (download.py default) | scripts/download/download.py | caller same run only | no | **change default to `.quasi/temp/snowball-pdfs/`** |
-| `.quasi/audit/audit-state.json` | audit-agent | wrap-up Phase 0 gating in **future** runs | **yes (cross-call)** | stay |
-| `.quasi/audit/typecheck-results.json` | typecheck.py | audit-agent same call only | no | stay (path already correct in code; **fix audit-agent.md doc**) |
-| `.quasi/audit/typecheck-report.md` | typecheck.py | user inspects after audit | no | stay |
+| Path | Producer | Is this user-readable content? | Action |
+|---|---|---|---|
+| `processing/chapters/{slug}/ch*.txt` | extract-agent | **Yes.** User opens when PDF is unclear or for keyword search. | stay |
+| `processing/chapters/{slug}/manifest.json` | extract-agent | No — pure index. But co-located with the .txt content it indexes; splitting the directory makes both halves harder to reason about. | stay (rides with content) |
+| `processing/translations/{slug}-{lang}.pdf` | translate-agent | **Yes.** This is the user's translated PDF. | stay |
+| `processing/authors/{name}/manifest.json` | process-author Phase 1 | No — driver file for the phase state machine; user never opens. | **move to `.quasi/authors/{name}/`** |
+| `processing/citation/{stem}/*` (all six files) | wrap-up Phase 2.x | No — pipeline scratch + audit-trail JSON. | **move to `.quasi/citation/{stem}/`** |
+| `processing/proofread/{stem}/sections.json` | wrap-up Phase 1 split | No — section index for dispatch. | **move to `.quasi/proofread/{stem}/`** |
+| `processing/audit/state.json` (per docs) / actually written as `.quasi/audit/audit-state.json` (per code) | audit-agent | No — vault-wide audit status flag. | **canonicalise at `.quasi/audit/audit-state.json`; fix stale docs** |
+| `processing/audit/translations.json` (per docs + schema) | audit-agent backfill mode | No — list of book↔translation associations the agent maintains. | **move to `.quasi/audit/translations.json`** |
+| `/tmp/{name}-pdfs/` (journal) | process-journal | No — downloaded PDFs are inputs for analyse-agent, then disposable. | **move to `.quasi/temp/journal-pdfs/{name}/`** |
+| `/tmp/{name}-pdfs/` (topic) | process-topic | No (same as above). | **move to `.quasi/temp/topic-pdfs/{name}/`** |
+| `/tmp/snowball-pdfs/` (download.py default) | scripts/download/download.py | No. | **change default to `.quasi/temp/snowball-pdfs/`** |
+| `.quasi/typecheck-results.json` (per code, top-level) | typecheck.py | No — diagnostic JSON. But sits at `.quasi/` top level instead of `.quasi/audit/` alongside the other audit files. | **move within `.quasi/` to `.quasi/audit/typecheck-results.json`** |
+| `.quasi/typecheck-report.md` (per code, top-level) | typecheck.py | Borderline — user *can* read it post-audit, but it's a transient diagnostic, not part of the workflow. | **move within `.quasi/` to `.quasi/audit/typecheck-report.md`** |
 
-The **entire `processing/citation/` directory tree disappears** — all
-six citation-pipeline JSON files are wrap-up-run-internal. `processing/`
-becomes a clean three-namespace home for genuinely durable interim
-output: `chapters/`, `authors/`, `translations/`.
+After all moves, `processing/` holds **only user-readable content**:
 
-`.quasi/audit/audit-state.json` is the only "stays in `.quasi/` but
-survives across runs" file — it's a status flag that wrap-up's next
-invocation reads to skip Phase 0. That's not a durable artifact in the
-user's sense; it's a daemon-style flag, which is why `.quasi/` is still
-the right home.
+```
+processing/
+├── chapters/{slug}/               # ch*.txt (content) + manifest.json (rides along)
+└── translations/                  # {slug}-{lang}.pdf
+```
+
+Everything plumbing-shaped — manifests, indices, audit state, dispatch
+scratch, temp downloads — lives under `.quasi/`. The cognitive rule
+for users becomes simple: "anything I might want to open lives in
+`processing/` or `vault/`; `.quasi/` is the program's working space."
+
+### Note on `processing/papers/`
+
+You mentioned `papers/` as a third user-readable category alongside
+chapters/ and translations/. As of 0.25.x there is no
+`processing/papers/` directory — papers are processed without an
+intermediate extracted-text stage; analyse-agent reads the PDF directly,
+and the analysis goes straight to `vault/papers/{slug}.md`.
+
+If we later decide to mirror book chapter-extraction for papers (so
+the user has a fallback when the PDF is unreadable), `processing/papers/`
+would be the natural home and the principle above admits it cleanly.
+**Out of scope** for 0.26.0.
 
 ## `.quasi/` internal layout
 
@@ -120,32 +152,34 @@ exist, freestanding subdirs where unique**:
 ```
 .quasi/
 ├── audit/
-│   ├── audit-state.json           # cross-call status flag
-│   ├── typecheck-results.json     # per-call diagnostic
-│   └── typecheck-report.md        # user-readable
+│   ├── audit-state.json           # cross-call vault audit status
+│   ├── translations.json          # vault book↔translation associations
+│   ├── typecheck-results.json     # per-call diagnostic (moves from .quasi/ top-level)
+│   └── typecheck-report.md        # per-call diagnostic (moves from .quasi/ top-level)
+├── authors/{name}/
+│   └── manifest.json              # process-author discovery + phase state
 ├── proofread/{stem}/
 │   └── sections.json
 ├── citation/{stem}/
-│   ├── parse.json                 # raw cite parse
-│   ├── manifest.json              # resolved candidates + status
-│   ├── biblio.json                # vault frontmatter index
-│   ├── decisions.json             # TUI verdicts (audit trail)
+│   ├── parse.json
+│   ├── manifest.json
+│   ├── biblio.json
+│   ├── decisions.json
 │   └── verdicts/
-│       ├── batch-*.json           # citecheck-agent context-fit notes
-│       └── recovery-*.json        # search-agent recover-mode output
+│       ├── batch-*.json
+│       └── recovery-*.json
 └── temp/
     ├── journal-pdfs/{name}/
     ├── topic-pdfs/{name}/
     └── snowball-pdfs/
 ```
 
-The matching `processing/` shape ends up clean:
+`processing/` ends up minimal and entirely user-readable:
 
 ```
 processing/
-├── chapters/{slug}/               # extracted ch*.txt + manifest.json
-├── authors/{name}/                # discovery manifest.json
-└── translations/                  # final {slug}-{lang}.pdf
+├── chapters/{slug}/               # ch*.txt + manifest.json (manifest rides with content)
+└── translations/                  # {slug}-{lang}.pdf
 ```
 
 Rationale: the parallel naming (`.quasi/citation/foo/` ↔
@@ -164,7 +198,7 @@ Alternatives considered:
 
 ## Per-change file list (the actual edits)
 
-Four logical change-groups. Each group commits atomically; groups can
+Five logical change-groups. Each group commits atomically; groups can
 ship as one PR or in separate commits, but all should land before
 0.26.0 is tagged.
 
@@ -224,22 +258,69 @@ Verification: `rg "processing/proofread" plugins/quasi/` returns zero.
 
 Verification: `rg '/tmp/.*pdfs' plugins/quasi/` returns zero.
 
-### Group D — audit-agent doc consistency fix
+### Group D — audit pipeline consolidation under `.quasi/audit/`
 
-- **`agents/audit-agent.md`** — change the documented path from
-  `.quasi/typecheck-results.json` to `.quasi/audit/typecheck-results.json`.
-  Doc-only.
+Two issues to clean up in one group:
+
+1. **typecheck output location.** `scripts/typecheck/typecheck.py`
+   currently writes to `.quasi/typecheck-{results.json,report.md}`
+   at the `.quasi/` top level (line 50: `OUT_DIR = PROJECT_ROOT / ".quasi"`).
+   These belong in `.quasi/audit/` alongside `audit-state.json`. Edit
+   `OUT_DIR = PROJECT_ROOT / ".quasi" / "audit"` and remove the
+   `audit/` segment from any downstream path joins that were
+   compensating.
+
+2. **audit-agent doc paths.** `agents/audit-agent.md` has multiple
+   stale references that pre-date the `.quasi/audit/` convention:
+   - line 14: `processing/audit/state.json` → `.quasi/audit/audit-state.json`
+   - lines 43, 78, 462 (all `typecheck-results.json` references):
+     `.quasi/typecheck-results.json` → `.quasi/audit/typecheck-results.json`
+   - lines 241, 253-255 (translations.json section):
+     `processing/audit/translations.json` → `.quasi/audit/translations.json`
+   - `schemas/book.py:50` (description string): same translations.json
+     path → `.quasi/audit/translations.json`
+   - `docs/ARCHITECTURE.md:317`: stale doc reference to
+     `processing/audit/state.json`
+
+   Implementer should grep `rg "(processing/audit|\.quasi/typecheck-)" plugins/quasi/`
+   for the full list rather than rely on line numbers above (they may
+   drift before this lands).
+
+Note on `translations.json`: this file is **written by audit-agent
+at runtime** when called with `backfill=true` (via the Write tool, per
+agent doc section 4B.5). The path it writes is dictated by the agent
+doc instructions — so changing the doc changes the runtime behaviour.
+There's no separate Python-side write site to update.
+
+Verification: `rg "processing/audit" plugins/quasi/` must return zero
+matches (modulo this spec and the implementation plan).
+
+### Group E — process-author discovery manifest move
+
+- **`skills/process-author/SKILL.md`** — every reference to
+  `processing/authors/{name}/manifest.json` →
+  `.quasi/authors/{name}/manifest.json`. Update the Phase 1 write
+  site and every later phase's read site.
+- **`agents/search-agent.md`** — if the agent doc references the
+  manifest path in its example dispatch shape, update.
+- **`agents/download-agent.md`** — same.
+- **`agents/analyse-agent.md`** — same.
+- **`agents/synthesis-agent.md`** — same (the author-mode synthesis
+  consumes the manifest).
+
+Verification: `rg "processing/authors" plugins/quasi/` returns zero.
 
 ### Cross-cutting check (post all groups)
 
 Run once at the end:
 
 ```
-rg -l "processing/(citation|proofread)" plugins/quasi/
+rg -l "processing/(citation|proofread|authors|audit)" plugins/quasi/
 rg -l "/tmp/(snowball|journal|topic)" plugins/quasi/
+rg -n "\.quasi/typecheck-(results|report)" plugins/quasi/  # top-level path must be gone
 ```
 
-Both should return only this spec file (and the implementation plan if
+Each should return only this spec file (and the implementation plan if
 already written), nothing else.
 
 ## Side-effect / risk analysis
@@ -263,31 +344,50 @@ Per group:
   caught. Mitigation: the `rg '/tmp/.*pdfs'` check above is the
   authoritative verification.
 
-- **Group D (audit-agent doc)** — risk: low. Doc-only.
+- **Group D (audit consolidation)** — risk: medium. Mix of a small
+  code change (`typecheck.py` `OUT_DIR`) and several doc fixes plus
+  a runtime-write path change for `translations.json`. The code change
+  is one-line and well-contained. Risk lives in the runtime path:
+  audit-agent's behaviour for `translations.json` is dictated by its
+  prompt; changing the prompt changes what the LLM writes. Mitigation:
+  smoke-test `quasi-audit --backfill` on a small vault subset and
+  confirm `translations.json` lands at `.quasi/audit/`.
+
+- **Group E (authors manifest move)** — risk: medium. Touches one
+  skill plus four agent docs; multiple read/write sites within
+  process-author's phase chain. Mitigation: smoke-test
+  `quasi:process-author` end-to-end on a small author (≤3 works) to
+  confirm Phase 1 → Phase 6 chain still finds the manifest at each
+  step.
 
 ### User-disk migration
 
-Users may have existing `processing/proofread/` and
-`processing/citation/{stem}/` directories from past runs. These
-contain files that, under the new layout, would be produced in
-`.quasi/`.
+After 0.26.0 lands, users may have stale dirs from prior runs:
+`processing/citation/`, `processing/proofread/`, `processing/authors/`,
+`processing/audit/`, and `.quasi/typecheck-{results.json,report.md}`
+at the `.quasi/` top level. Under the new layout these are all
+orphans.
 
 **No automated migration.** Rationale:
 
-- All migrated files are run-internal (the Group A move clarified
-  this: even manifest / biblio / decisions are run-internal — they're
-  rebuilt on every wrap-up invocation including `--citation-only`).
-  Old leftovers therefore have no consumer.
-- A new wrap-up run produces fresh files in `.quasi/citation/{stem}/`
-  and ignores any stale copies under `processing/citation/{stem}/`.
-  The stale dirs become harmless orphans.
-- Users who want a clean tree can `rm -rf processing/citation
-  processing/proofread` themselves at their leisure. Documenting this
-  in the 0.26.0 release notes is sufficient.
+- Every relocated file is regenerated on the next run of its
+  producing skill. Old copies have no consumer.
+- The big risk would be `processing/authors/{name}/manifest.json` —
+  it's the only relocated file whose state was previously assumed to
+  survive across runs (process-author resumes phases from it). To
+  keep `--resume` semantics intact, the 0.26.0 release notes should
+  explicitly tell users mid-flight on an author run to **finish or
+  abandon** before upgrading. The skill will start the next author from
+  scratch under the new path. This is the only user-visible migration
+  caveat.
+- Other stale dirs (`processing/citation/`, `processing/proofread/`,
+  `processing/audit/`, top-level `.quasi/typecheck-*`) are pure
+  orphans the user can `rm -rf` at leisure. Release notes mention
+  this as a one-liner.
 
-The `wrap-up` Phase 0 audit step is **not** extended to warn about
-stale paths. (Considered and rejected: noise-to-signal too low; most
-users don't care; those who do will see the orphans on first `ls`.)
+No skill is extended to auto-warn about stale paths. (Considered and
+rejected: noise-to-signal too low; users who care will see the orphans
+on first `ls`.)
 
 ### `.gitignore`
 
@@ -314,20 +414,26 @@ shows up.
 
 ## Migration order (for the implementation plan)
 
-Low-risk, isolated groups first; the big citation move last:
+Low-risk, isolated groups first; the larger / more ramified moves last:
 
-1. **Group D** — `agents/audit-agent.md` doc fix. Independent, doc-only.
-2. **Group B** — proofread sections move. Two files, narrow surface.
-3. **Group C** — temp PDF moves (process-journal + process-topic +
-   download.py default). Three files, independent of citation work.
-4. **Group A** — citation directory move. Largest blast radius;
+1. **Group B** — proofread sections move. Two files, narrow surface.
+2. **Group C** — temp PDF moves (process-journal + process-topic +
+   download.py default). Independent of everything else.
+3. **Group D** — audit pipeline consolidation. One small code change
+   in typecheck.py plus doc fixes; smoke-test `quasi-audit --backfill`
+   on a small vault to confirm `translations.json` lands at the new
+   path.
+4. **Group E** — process-author manifest move. Touches one skill +
+   four agent docs in lockstep; smoke-test a small author end-to-end.
+5. **Group A** — citation directory move. Largest blast radius;
    land last so prior groups have stabilised.
-5. **End-to-end smoke test** — run `quasi:wrap-up` on a real draft
-   (full pipeline + `--citation-only` re-run); run `quasi:process-topic`
-   on a small snowball; spot-check `.quasi/` shape matches the layout
-   diagram. Required before tagging 0.26.0.
+6. **End-to-end smoke test** — `quasi:wrap-up` on a real draft (full
+   pipeline + `--citation-only` re-run), `quasi:process-topic` on a
+   small snowball, `quasi:process-author` on a small author,
+   `quasi-audit` on the user's vault. Spot-check `.quasi/` shape
+   matches the layout diagram. Required before tagging 0.26.0.
 
-Each group is committable on its own; no inter-group ordering constraint
-matters for correctness, only for blast-radius isolation if something
-goes wrong. The implementation plan should keep groups as separate
-commits even if they ship in one PR.
+Each group is committable on its own; no inter-group ordering
+constraint matters for correctness, only for blast-radius isolation
+if something goes wrong. The implementation plan should keep groups
+as separate commits even if they ship in one PR.
