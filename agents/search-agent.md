@@ -45,6 +45,8 @@ quasi-search paper \
 `quasi-search book` 总是额外尝试 `douban_cn` 来填充 `localisations.zh`
 sidecar,即使主 metadata 查询用了 `--source` 限定其他 source。`--subject zh`
 只用于明确要求中文版本检索或调试豆瓣路径时;普通 book search 不需要手动加。
+内部豆瓣本地化会先走 ISBN 直达和 Google `site:book.douban.com/subject`
+发现 subject,最后才降级到豆瓣站内搜索;不要在 agent 里额外手写豆瓣搜索重试。
 
 ## 判断规则
 

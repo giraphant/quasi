@@ -49,6 +49,7 @@ _DOUBAN_SEARCH_URL = "https://www.douban.com/search"
 _DOUBAN_BOOK_URL = "https://book.douban.com/subject/%s/"
 _DOUBAN_BOOK_BASE = "https://book.douban.com/"
 _DOUBAN_BOOK_CAT = "1001"
+_GOOGLE_SEARCH_URL = "https://www.google.com/search"
 _SUBJECT_URL_RE = re.compile(r".*/subject/(\d+)/?")
 _WORKS_URL_RE = re.compile(r"https?://book\.douban\.com/works/(\d+)/?")
 _ANY_SUBJECT_HREF_RE = re.compile(
@@ -59,6 +60,7 @@ _ANY_WORKS_HREF_RE = re.compile(
     r"""href=["']((?:https?:)?//book\.douban\.com/works/\d+/?|/works/\d+/?)["']""",
     re.IGNORECASE,
 )
+_ANY_HREF_RE = re.compile(r"""href=["']([^"']+)["']""", re.IGNORECASE)
 _DOKO_REF_RE = re.compile(r"^\s*\[(\d+)\]\s+(\S+)\s*$", re.MULTILINE)
 _DOKO_INLINE_REF_RE = re.compile(r"\[(\d+)\]")
 _DOKO_RATING_RE = re.compile(r"(\d{1,7})\s*人评价")
@@ -410,6 +412,11 @@ def _cn_search_url(query: str) -> str:
             + urllib.parse.urlencode({"search_text": query}))
 
 
+def _google_site_subject_search_url(query: str) -> str:
+    return (_GOOGLE_SEARCH_URL + "?"
+            + urllib.parse.urlencode({"q": f"site:book.douban.com/subject {query} 豆瓣读书"}))
+
+
 def _subject_url(subject_id: str) -> str:
     return f"https://book.douban.com/subject/{subject_id}/"
 
@@ -562,6 +569,29 @@ def _find_cndouban(*, isbn: Optional[str] = None,
         else:
             diagnostics["warnings"].append(f"isbn-direct: {body[:120]}")
 
+    if primary_subject is None and (title or author):
+        q = " ".join(filter(None, [
+            title,
+            author,
+            str(year) if year else None,
+        ]))
+        diagnostics["routing"].append("google-site-title-author")
+        urls, warnings, used_doko = _google_site_subject_urls(q, limit=5)
+        diagnostics["warnings"].extend(warnings)
+        if used_doko:
+            diagnostics["doko_calls"] += 1
+        for url in urls:
+            cand = _subject_id_from_url(url)
+            if not cand:
+                continue
+            diagnostics["doko_calls"] += 1
+            ok2, body2 = _doko_read(_subject_url(cand))
+            if ok2:
+                primary_subject = cand
+                primary_body = body2
+                break
+            diagnostics["warnings"].append(f"subject-fetch {cand}: {body2[:120]}")
+
     if primary_subject is None and title and author:
         q = f"{title} {author}"
         diagnostics["routing"].append("search-title-author")
@@ -622,6 +652,22 @@ def _find_cndouban(*, isbn: Optional[str] = None,
             diagnostics["warnings"].append(f"works-page {works_id}: {body[:120]}")
 
     if not manifestations:
+        related_urls = _extract_related_version_urls_from_doko(
+            primary_body,
+            current_url=_subject_url(primary_subject),
+        )
+        if related_urls:
+            diagnostics["routing"].append("related-version-links")
+            for url in related_urls:
+                sid = _subject_id_from_url(url)
+                if sid:
+                    manifestations.append({
+                        "subject_id": sid,
+                        "publisher_hint": None,
+                        "year_hint": None,
+                    })
+
+    if not manifestations:
         manifestations = [{
             "subject_id": primary_subject,
             "publisher_hint": primary_meta.get("publisher"),
@@ -632,6 +678,8 @@ def _find_cndouban(*, isbn: Optional[str] = None,
     # ----- Step 3: filter Chinese candidates -----
     chinese_candidates = [m for m in manifestations
                           if _has_cjk(m.get("publisher_hint") or "")]
+    unknown_candidates = [m for m in manifestations
+                          if not (m.get("publisher_hint") or "")]
 
     if _has_cjk(primary_meta.get("publisher") or ""):
         if not any(m["subject_id"] == primary_subject for m in chinese_candidates):
@@ -641,7 +689,7 @@ def _find_cndouban(*, isbn: Optional[str] = None,
                 "year_hint": primary_meta.get("year"),
             })
 
-    if not chinese_candidates:
+    if not chinese_candidates and not unknown_candidates:
         return {
             "status": "no-translations",
             "primary_subject": {
@@ -656,17 +704,29 @@ def _find_cndouban(*, isbn: Optional[str] = None,
 
     # ----- Step 4: scrape each Chinese candidate for full metadata -----
     translations: list[dict] = []
-    for cand in chinese_candidates:
+    candidate_pool: list[dict] = []
+    seen_candidate_ids: set[str] = set()
+    for cand in chinese_candidates + unknown_candidates:
+        sid = cand["subject_id"]
+        if sid in seen_candidate_ids:
+            continue
+        seen_candidate_ids.add(sid)
+        candidate_pool.append(cand)
+
+    for cand in candidate_pool:
         sid = cand["subject_id"]
         if sid == primary_subject:
-            translations.append(primary_meta)
+            if _is_chinese_like_record(primary_meta):
+                translations.append(primary_meta)
             continue
         diagnostics["doko_calls"] += 1
         ok, body = _doko_read(_subject_url(sid))
         if not ok:
             diagnostics["warnings"].append(f"candidate {sid}: {body[:120]}")
             continue
-        translations.append(_parse_cn_subject_page(body, sid))
+        parsed = _parse_cn_subject_page(body, sid)
+        if cand.get("publisher_hint") or _is_chinese_like_record(parsed):
+            translations.append(parsed)
 
     translations.sort(key=lambda t: t.get("ratings_count") or 0, reverse=True)
 
@@ -780,7 +840,53 @@ def _decode_douban_url(url: str) -> str:
     if parsed.netloc == "www.douban.com" and parsed.path.startswith("/link2/"):
         params = dict(urllib.parse.parse_qsl(parsed.query))
         return urllib.parse.unquote(params.get("url", "")) or url
+    if parsed.netloc.endswith("google.com") and parsed.path == "/url":
+        params = dict(urllib.parse.parse_qsl(parsed.query))
+        return urllib.parse.unquote(params.get("q") or params.get("url") or "") or url
     return url
+
+
+def _extract_google_subject_urls(body: str, limit: int = 5) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    for m in _ANY_HREF_RE.finditer(body or ""):
+        href = unescape(m.group(1)).replace("&amp;", "&")
+        if href.startswith("/url?"):
+            href = urllib.parse.urljoin(_GOOGLE_SEARCH_URL, href)
+        decoded = _decode_douban_url(href)
+        sm = re.search(r"https?://book\.douban\.com/subject/\d+/?", decoded)
+        if not sm:
+            continue
+        url = _normalise_subject_url(sm.group(0))
+        if url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+        if len(urls) >= limit:
+            break
+    return urls
+
+
+def _google_site_subject_urls(query: str, limit: int = 5) -> tuple[list[str], list[str], bool]:
+    """Find Douban subject URLs via Google. Returns (urls, warnings, used_doko)."""
+    url = _google_site_subject_search_url(query)
+    ok, body = _dd_fetch(url, timeout=15)
+    warnings: list[str] = []
+    if ok:
+        urls = _extract_google_subject_urls(body, limit=limit)
+        if urls:
+            return urls, warnings, False
+    else:
+        warnings.append(f"google-site-fetch: {body[:120]}")
+
+    ok, body = _doko_read(url)
+    if not ok:
+        warnings.append(f"google-site-doko: {body[:120]}")
+        return [], warnings, True
+    urls = _extract_subject_urls_from_doko(body)[:limit]
+    if not urls:
+        urls = _extract_google_subject_urls(body, limit=limit)
+    return urls, warnings, True
 
 
 def _parse_doko_references(body: str) -> dict[str, str]:
@@ -972,6 +1078,8 @@ def _related_version_search(query: _s.BookQuery, direct_hits: list[dict]) -> lis
     if not seed_urls:
         q_text = " ".join(filter(None, [query.isbn, query.title, query.author, query.query]))
         if q_text:
+            seed_urls, _, _ = _google_site_subject_urls(q_text, limit=query.limit)
+        if not seed_urls and q_text:
             ok, body = _doko_read(_cn_search_url(q_text))
             if ok:
                 seed_urls = _extract_subject_urls_from_doko(body)[:query.limit]
@@ -1094,10 +1202,12 @@ def search_book(query: _s.BookQuery) -> _s.AdapterResult:
     wants_zh = _wants_chinese_versions(query)
 
     if wants_zh:
-        # Localisation lookup needs the browser-rendered Douban path. The direct
-        # HTTP scraper is frequently blocked and often misses "other versions".
+        # Localisation lookup starts with direct ISBN / Google site discovery,
+        # leaving Douban's own search endpoint as the last fallback.
         payload = _cndouban_works_payload(query)
         works = payload.get("translations") or []
+        if not works:
+            works = _related_version_search(query, [])
         if not works:
             direct = _direct_search(query)
             works = _related_version_search(query, direct) if direct else []

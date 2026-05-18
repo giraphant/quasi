@@ -61,14 +61,84 @@ def test_subject_zh_uses_cndouban_works_page_first():
     assert r.entries[0]["isbn_13"] == "9787564906962"
 
 
+def test_find_cndouban_uses_google_site_before_douban_search():
+    """Title/author localisation discovers Douban subjects through Google first."""
+    urls: list[str] = []
+
+    def fake_doko_read(url, timeout=60):
+        urls.append(url)
+        if "book.douban.com/subject/2/" in url:
+            return True, """
+原书中文版
+作者: Example Author
+译者: 译者甲
+出版社: 河南大学出版社
+出版年: 2012
+ISBN: 9787564906962
+"""
+        return False, "unexpected"
+
+    with patch("sources.douban_cn._google_site_subject_urls",
+               return_value=(["https://book.douban.com/subject/2/"], [], False)) as mock_google, \
+         patch("sources.douban_cn._doko_read", side_effect=fake_doko_read):
+        result = douban_cn._find_cndouban(title="Original", author="Example Author")
+
+    assert result["status"] == "ok"
+    assert result["translations"][0]["douban_id"] == "2"
+    assert result["diagnostics"]["doko_calls"] == 1
+    mock_google.assert_called_once()
+    assert not any("search.douban.com" in url for url in urls)
+
+
+def test_find_cndouban_follows_related_version_link_after_google_subject():
+    """After Google finds the original subject, localisation follows version links directly."""
+    urls: list[str] = []
+
+    def fake_doko_read(url, timeout=60):
+        urls.append(url)
+        if "book.douban.com/subject/1/" in url:
+            return True, """
+# Original (豆瓣)
+作者: Example Author
+出版社: Example Press
+出版年: 2001
+ISBN: 9780000000001
+其他版本
+原书中文版 [2]
+[2] https://book.douban.com/subject/2/
+"""
+        if "book.douban.com/subject/2/" in url:
+            return True, """
+# 原书中文版 (豆瓣)
+作者: Example Author
+译者: 译者甲
+出版社: 河南大学出版社
+出版年: 2012
+ISBN: 9787564906962
+123人评价
+"""
+        return False, "unexpected"
+
+    with patch("sources.douban_cn._google_site_subject_urls",
+               return_value=(["https://book.douban.com/subject/1/"], [], False)) as mock_google, \
+         patch("sources.douban_cn._doko_read", side_effect=fake_doko_read):
+        result = douban_cn._find_cndouban(title="Original", author="Example Author")
+
+    assert result["status"] == "ok"
+    assert result["translations"][0]["douban_id"] == "2"
+    assert result["diagnostics"]["routing"] == [
+        "google-site-title-author",
+        "related-version-links",
+    ]
+    assert result["diagnostics"]["doko_calls"] == 2
+    mock_google.assert_called_once()
+    assert any("book.douban.com/subject/1/" in url for url in urls)
+    assert any("book.douban.com/subject/2/" in url for url in urls)
+    assert not any("search.douban.com" in url for url in urls)
+
+
 def test_subject_zh_falls_back_to_related_versions_when_cndouban_empty():
-    """If Doko works-page lookup is empty, direct hits still feed related-version probe."""
-    fake_direct = [{
-        "title": "Original",
-        "year": 1990,
-        "douban_subject_id": "1",
-        "preview_link": "https://book.douban.com/subject/1/",
-    }]
+    """If Doko works-page lookup is empty, Google-seeded related probe runs before direct search."""
     fake_related = [{
         "title": "原书中文版",
         "publisher": "河南大学出版社",
@@ -77,14 +147,60 @@ def test_subject_zh_falls_back_to_related_versions_when_cndouban_empty():
         "douban_url": "https://book.douban.com/subject/2/",
     }]
     with patch("sources.douban_cn._cndouban_works_payload", return_value={"status": "no-translations", "translations": []}) as mock_fb, \
-         patch("sources.douban_cn._direct_search", return_value=fake_direct) as mock_direct, \
+         patch("sources.douban_cn._direct_search", return_value=[]) as mock_direct, \
          patch("sources.douban_cn._related_version_search", return_value=fake_related) as mock_related:
         r = douban_cn.search_book(search.BookQuery(title="Original", subject="zh"))
     assert r.success is True
     assert mock_fb.called
-    assert mock_direct.called
+    assert not mock_direct.called
     assert mock_related.called
     assert r.entries[0]["title"] == "原书中文版"
+
+
+def test_related_version_search_uses_google_seed_before_douban_search():
+    urls: list[str] = []
+
+    def fake_doko_read(url, timeout=60):
+        urls.append(url)
+        if "book.douban.com/subject/1/" in url:
+            return True, """
+# Original (豆瓣)
+作者: Example Author 出版社: Example Press 出版年: 2001 ISBN: 9780000000001
+其他版本
+原书中文版 [2]
+[2] https://book.douban.com/subject/2/
+"""
+        if "book.douban.com/subject/2/" in url:
+            return True, """
+# 原书中文版 (豆瓣)
+作者: Example Author 译者: 译者甲 出版社: 河南大学出版社 出版年: 2012 ISBN: 9787564906962
+123人评价
+"""
+        return False, "unexpected"
+
+    with patch("sources.douban_cn._dd_fetch", return_value=(False, "skip direct")), \
+         patch("sources.douban_cn._google_site_subject_urls",
+               return_value=(["https://book.douban.com/subject/1/"], [], False)) as mock_google, \
+         patch("sources.douban_cn._doko_read", side_effect=fake_doko_read):
+        results = douban_cn._related_version_search(
+            search.BookQuery(title="Original", author="Example Author", limit=5),
+            direct_hits=[],
+        )
+
+    assert results[0]["douban_subject_id"] == "2"
+    mock_google.assert_called_once()
+    assert not any("search.douban.com" in url for url in urls)
+
+
+def test_extract_google_subject_urls_decodes_redirects():
+    html = '''
+    <a href="/url?q=https%3A%2F%2Fbook.douban.com%2Fsubject%2F12345%2F&sa=U">x</a>
+    <a href="https://book.douban.com/subject/67890/">y</a>
+    '''
+    assert douban_cn._extract_google_subject_urls(html) == [
+        "https://book.douban.com/subject/12345/",
+        "https://book.douban.com/subject/67890/",
+    ]
 
 
 def test_subject_zh_reports_doko_unavailable_when_no_fallback_result():
@@ -94,6 +210,7 @@ def test_subject_zh_reports_doko_unavailable_when_no_fallback_result():
         "diagnostics": {"warnings": ["isbn-direct: DOKO_NOT_AVAILABLE"]},
     }
     with patch("sources.douban_cn._cndouban_works_payload", return_value=payload), \
+         patch("sources.douban_cn._related_version_search", return_value=[]), \
          patch("sources.douban_cn._direct_search", return_value=[]):
         r = douban_cn.search_book(search.BookQuery(title="Original", subject="zh"))
     assert r.success is False
@@ -132,7 +249,11 @@ def main():
         test_general_metadata_query_uses_direct_path_first,
         test_cjk_author_triggers_works_page,
         test_subject_zh_uses_cndouban_works_page_first,
+        test_find_cndouban_uses_google_site_before_douban_search,
+        test_find_cndouban_follows_related_version_link_after_google_subject,
         test_subject_zh_falls_back_to_related_versions_when_cndouban_empty,
+        test_related_version_search_uses_google_seed_before_douban_search,
+        test_extract_google_subject_urls_decodes_redirects,
         test_subject_zh_reports_doko_unavailable_when_no_fallback_result,
         test_parse_doko_references_decodes_link2_subject_url,
         test_parse_doko_subject_page_handles_inline_metadata,
