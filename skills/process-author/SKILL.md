@@ -41,14 +41,15 @@ description: >
 │   └─ 逐本: synthesis-agent(mode=book) (opus, 前台)
 ├─ Phase 4: analyse-agent ×M (opus, 后台) → 论文
 ├─ Phase 5: synthesis-agent(mode=author) (opus, 前台) → profile.md
-└─ Phase 6: audit-agent (sonnet, 前台) → 校验 + 修复所有生成文件
+├─ Phase 6: audit-agent (sonnet, 前台) → 校验 + 修复所有生成文件
+└─ Phase 7: local-agent (sonnet, 前台) → 中译本 metadata 回填
 ```
 
 ## 执行流程
 
 ```python
 author_name, full_name = parse_args()
-manifest_path = f"processing/authors/{author_name}/manifest.json"
+manifest_path = f".quasi/authors/{author_name}/manifest.json"
 
 # 1. DISCOVER
 if not exists(manifest_path):
@@ -213,6 +214,13 @@ for path in audit_targets:
         if audit.audit_result.escalated:
             report(f"audit still escalated for {path} after one regeneration pass")
             return
+
+# 7. LOCALISE
+# 只对本次获得的 book overview 回填中译本 / 中文版本 metadata。
+# local-agent 幂等:已有 cndouban: [] 或 [..] 会跳过。
+for b in acquired_books:
+    Agent("quasi:local-agent", foreground=True,
+          prompt=f"path: vault/books/{b.slug}/\nmode: cndouban")
 ```
 
 ## 断点续跑
@@ -227,11 +235,12 @@ for path in audit_targets:
 | Phase 4 | `vault/papers/{paper.slug}.md` | 存在则跳过 |
 | Phase 5 | `vault/authors/{author-name}.md` | 存在则跳过 |
 | Phase 6 | 无 —— 幂等,可重复跑 | 上次 typecheck clean 时几乎无成本 |
+| Phase 7 | book frontmatter `cndouban` | 已有 `[]` 或 `[id]` 则 local-agent 跳过 |
 
 ## 目录结构
 
 ```
-processing/authors/{author-name}/
+.quasi/authors/{author-name}/
 └── manifest.json                    ← 采集状态机 + curation reason
 vault/authors/{author-name}.md       ← 单文件 profile（扁平）
 vault/papers/{paper-slug}.md         ← 该作者所有论文分析（与全库扁平共享）
