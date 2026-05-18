@@ -51,39 +51,80 @@ description: >
 author_name, full_name = parse_args()
 manifest_path = f".quasi/authors/{author_name}/manifest.json"
 
-# 1. DISCOVER
+# 1. DISCOVER — two structured search-agent calls (kind=book + kind=paper),
+# skill main process merges results into the manifest the existing Phase 2+
+# code expects. search-agent contract since 0.25.0 demands {task, context,
+# constraints, output_path, output_schema} as structured fields;
+# narrative prompts no longer parse.
 if not exists(manifest_path):
-    Agent("quasi:search-agent", foreground=True,
-          prompt=f"""
-task: discover this author's representative works on the given topic
+    books_path  = f".quasi/authors/{author_name}/books.json"
+    papers_path = f".quasi/authors/{author_name}/papers.json"
 
+    if not exists(books_path):
+        Agent("quasi:search-agent", foreground=True, prompt=f"""\
+task: find top representative books by {full_name} on topic {topic}, sorted by citations
 context:
-  author_name: {author_name}     # kebab slug
-  full_name: {full_name}
-  topic: ...                     # 主进程从 args / 对话收集，不要让 agent 猜
-
+  kind: book
+  author: {full_name}
+  topic: {topic}
 constraints:
-  n_books: 5
-  n_papers: 10
-  sort_by: citations
-
-output_path: {manifest_path}
-
-output_schema (example):
-{{
-  "author": "{full_name}",
-  "slug": "{author_name}",
-  "discovered": "YYYY-MM-DD",
-  "books": [
-    {{"title": "...", "year": 0, "slug": "{author_name}-...-YYYY",
-      "isbn": "...", "md5": null, "status": "discovered", "reason": "..."}}
-  ],
-  "papers": [
-    {{"title": "...", "doi": "...", "year": 0, "citations": 0,
-      "oa_url": null, "status": "discovered", "reason": "..."}}
-  ]
-}}
+  count: 5
+  sort: citations
+  write_policy: create
+output_path: {books_path}
+output_schema:
+  - slug         # canonical {{author-surname}}-{{short-title}}-{{year}}
+  - title
+  - year
+  - isbn_13
+  - authors
+  - citation_count
+  - reason       # 一行 curation 理由 (代表作判断)
 """)
+
+    if not exists(papers_path):
+        Agent("quasi:search-agent", foreground=True, prompt=f"""\
+task: find top representative papers by {full_name} on topic {topic}, sorted by citations
+context:
+  kind: paper
+  author: {full_name}
+  topic: {topic}
+constraints:
+  count: 10
+  sort: citations
+  write_policy: create
+output_path: {papers_path}
+output_schema:
+  - slug         # canonical {{author-surname}}-{{short-title}}-{{year}}
+  - title
+  - year
+  - doi
+  - journal
+  - authors
+  - citation_count
+  - reason
+""")
+
+    # Merge into the manifest shape Phase 2+ expects.
+    # (Pseudocode — at runtime: Read books_path + papers_path with Read tool,
+    #  parse JSON, build manifest dict, Write to manifest_path.)
+    books_raw  = read_json(books_path)
+    papers_raw = read_json(papers_path)
+
+    manifest = {
+        "author": full_name,
+        "slug":   author_name,
+        "discovered": today_iso(),
+        "books": [
+            {**b, "status": "discovered", "md5": None}
+            for b in (books_raw if isinstance(books_raw, list) else books_raw.get("results", []))
+        ],
+        "papers": [
+            {**p, "status": "discovered", "oa_url": None}
+            for p in (papers_raw if isinstance(papers_raw, list) else papers_raw.get("results", []))
+        ],
+    }
+    write_json(manifest_path, manifest)
 
 # 2. ACQUIRE
 manifest = read_json(manifest_path)
