@@ -216,8 +216,9 @@ if audit.audit_result.escalated:
         return
 
 # Step 6: LOCALISE
-# 只回填中译本 / 中文版本 metadata:cndouban + .quasi/audit/translations.json。
-# local-agent 幂等:已有 cndouban: [] 或 [..] 会跳过。
+# 只回填中译本 / 中文版本 metadata,全外挂写进 .quasi/audit/translations.json
+# (by_book + by_douban_id),不动 book frontmatter。
+# local-agent 幂等:audit needs_backfill 已基于 by_book[slug] 判定,已查过的书不会再跑。
 Agent("quasi:local-agent", foreground=True,
       prompt=f"path: {output_dir}\nmode: cndouban")
 
@@ -233,7 +234,7 @@ print(f"Done: {len(selected)} chapters, overview generated, typechecked, localis
 | Step 3 | `ch{slot}-*.md` | 存在则跳过该章 |
 | Step 4 | `00-overview.md` | 存在则跳过 |
 | Step 5 | 无 —— 幂等,可重复跑 | 上次 audit clean 时几乎无成本 |
-| Step 6 | frontmatter `cndouban` | 已有 `[]` 或 `[id]` 则 local-agent 跳过 |
+| Step 6 | `.quasi/audit/translations.json#by_book[slug]` | 已存在 entry(verdict found/none)则 local-agent 跳过 |
 
 ## 目录结构
 

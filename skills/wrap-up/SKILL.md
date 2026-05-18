@@ -21,11 +21,10 @@ description: >
 
 # Flags:
 /quasi:wrap-up <draft> --no-recover         # Phase 2.3 跳过(不在线找 missing)
-/quasi:wrap-up <draft> --citation-only      # 跳 Phase 0/1, 只跑 Phase 2
-/quasi:wrap-up <draft> --audit-first        # 强制跑 Phase 0 (默认按 .quasi/audit/audit-state.json 判断)
+/quasi:wrap-up <draft> --citation-only      # 跳 Phase 1, 只跑 Phase 2
 ```
 
-`--citation-only` 是"补完 vault 后增量重跑"的快捷入口: proofread 已经做过、draft 文本已经定稿、只是 vault 增量补了几本书想重新审引用 + 出 .bib。**直接跳过 Phase 0/1**, 从 Phase 2 进。
+`--citation-only` 是"补完 vault 后增量重跑"的快捷入口: proofread 已经做过、draft 文本已经定稿、只是 vault 增量补了几本书想重新审引用 + 出 .bib。**直接跳过 Phase 1**, 从 Phase 2 进。
 
 ## 整体流程
 
@@ -50,16 +49,11 @@ agent 只给一句 context-fit note, **主进程在主上下文里直接 AskUser
 
 ```python
 draft_path = parse_positional()
-flags = parse_flags()  # --no-recover, --citation-only, --audit-first
+flags = parse_flags()  # --no-recover, --citation-only
 
 if flags.citation_only:
-    skip_phase_0 = True
     skip_phase_1 = True
     skip_phase_3 = True   # cleanup
-elif flags.audit_first:
-    skip_phase_0 = False
-else:
-    skip_phase_0 = audit_state_clean()  # 看 .quasi/audit/audit-state.json
 ```
 
 ## Phase 1 — PROOFREAD

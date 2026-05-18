@@ -217,7 +217,8 @@ for path in audit_targets:
 
 # 7. LOCALISE
 # 只对本次获得的 book overview 回填中译本 / 中文版本 metadata。
-# local-agent 幂等:已有 cndouban: [] 或 [..] 会跳过。
+# 结果全外挂写进 .quasi/audit/translations.json,不动 book frontmatter。
+# local-agent 幂等:by_book[slug] 已有 entry(verdict found/none)则跳过。
 for b in acquired_books:
     Agent("quasi:local-agent", foreground=True,
           prompt=f"path: vault/books/{b.slug}/\nmode: cndouban")
@@ -235,7 +236,7 @@ for b in acquired_books:
 | Phase 4 | `vault/papers/{paper.slug}.md` | 存在则跳过 |
 | Phase 5 | `vault/authors/{author-name}.md` | 存在则跳过 |
 | Phase 6 | 无 —— 幂等,可重复跑 | 上次 typecheck clean 时几乎无成本 |
-| Phase 7 | book frontmatter `cndouban` | 已有 `[]` 或 `[id]` 则 local-agent 跳过 |
+| Phase 7 | `.quasi/audit/translations.json#by_book[slug]` | 已存在 entry(verdict found/none)则 local-agent 跳过 |
 
 ## 目录结构
 

@@ -46,6 +46,117 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.28.0** (2026-05-18): **cndouban fully externalised + audit
+  reverts to a stateless typechecker.** Two intertwined cleanups landed
+  together. First: continues 0.26.0's `.quasi/` artifact discipline by
+  evicting `cndouban` from book frontmatter — it was the last
+  user-facing field that was actually plumbing (an index into
+  `.quasi/audit/translations.json`); now both the per-book state
+  machine and the per-id metadata cache live in that file. Second:
+  audit-agent has no persistent state of its own — it's structurally
+  a unit-like typechecker — so its disk-write surface contracts to
+  zero, and the cndouban backfill knowledge moves out of audit into
+  local-agent's domain entirely.
+
+  **Externalising cndouban:**
+  - `schemas/book.py`: `cndouban` field removed. Comment in its place
+    points readers to the external file.
+  - `.quasi/audit/translations.json` schema bumped v1 → v2:
+    ```json
+    {
+      "version": 2,
+      "by_book": {
+        "{slug}": {
+          "checked_at": "YYYY-MM-DD",
+          "verdict": "found" | "none",
+          "douban_ids": [12345, 67890]
+        }
+      },
+      "by_douban_id": {
+        "12345": { ...per-id metadata, as before... }
+      }
+    }
+    ```
+    `verdict="none"` replaces the old `cndouban: []` semantic (查过、无中
+    译本). `by_book[slug]` absent ⇒ 未查 (replaces `cndouban` field-absent
+    semantic). v1 flat files are migrated by the script — readers do
+    not need to handle v1 directly.
+  - `scripts/migrations/cndouban_externalise.py` (new): one-shot
+    user-disk migration. Scans `vault/books/**/00-overview.md`,
+    converts each `cndouban: [...] / [] / null` field into a
+    `by_book` entry (or for the null case, just strips the line —
+    "not yet queried" needs no entry), reformats existing
+    `translations.json` from v1 flat to v2 if needed, then strips
+    the `cndouban:` line from frontmatter. Idempotent on
+    already-migrated vaults. Invoke with
+    `CLAUDE_PROJECT_DIR=/path/to/vault python "$CLAUDE_PLUGIN_ROOT/scripts/migrations/cndouban_externalise.py"`,
+    optionally `--dry-run` first.
+  - `agents/audit-agent.md`: book frontmatter `optional` list drops
+    `cndouban` with a pointer comment to the external file.
+
+  **Audit runner ⟂ translations.json decoupling + helper subcommands
+  for local-agent:**
+  - `scripts/audit/audit.py:_scan_needs_backfill` no longer flags
+    `cndouban` at all; only structural frontmatter fields
+    (publisher/isbn/doi) are reported. The runner doesn't open
+    translations.json; cross-domain coupling that briefly slipped
+    into `needs_backfill` is gone.
+  - `scripts/audit/localise.py` (new) + `quasi-audit localise`
+    subcommand: gives local-agent the script support it needs without
+    a whole new bin. Two verbs:
+    - `quasi-audit localise scan [--path X] [--json]` — enumerate
+      `00-overview.md` files under PATH, emit per-book `{slug, path,
+      has_entry, title, authors, year, isbn}`. `has_entry=true` means
+      `by_book[slug]` is present in translations.json — the agent
+      uses this for idempotent gating.
+    - `quasi-audit localise write --slug SLUG (--results-json '[...]'
+      | --results-file PATH)` — merge one book's localise outcome
+      into translations.json. Empty results ⇒ `verdict=none`;
+      non-empty ⇒ `verdict=found` + merge per-id metadata
+      (`first_seen` preserved on existing keys). v1 flat cache
+      auto-migrates to v2 on first write.
+
+    These verbs live under `quasi-audit` purely as the natural home
+    for small vault-touching helpers; the runner's analytical output
+    stays domain-pure (cf. `feedback_audit_stateless` — runner stays
+    decoupled even though bin can ship related helpers).
+  - `agents/local-agent.md` rewritten: agent calls
+    `quasi-audit localise scan --json` for the work list, dispatches
+    `quasi-search book --source douban_cn --subject zh` per pending
+    book, and writes results back via `quasi-audit localise write`.
+    Agent no longer touches the JSON cache or vault frontmatter
+    directly — tool surface trimmed to `Read, Bash`.
+  - `skills/{process-book,process-author}/SKILL.md`: Step 6 / Phase 7
+    LOCALISE comments + resume tables updated to reference
+    `.quasi/audit/translations.json#by_book[slug]`; local-agent's
+    self-contained gating noted.
+
+  **Audit CLI dead-code cleanup — audit becomes effectively stateless:**
+  - `scripts/audit/audit.py`: `_write_state()` deleted along with its
+    `.quasi/audit/audit-state.json` artifact. Nothing programmatic
+    read it; the wrap-up SKILL referenced it in pseudocode
+    (`audit_state_clean()`) for a Phase 0 gating that was never
+    actually implemented.
+  - `quasi-audit check` and `quasi-audit fix` subcommands removed —
+    they thin-delegated to typecheck.py / autofix_mechanical.py and
+    had zero callers (agents use `quasi-audit run --mode {check,fix}`,
+    which carries the structured JSON envelope). The `_delegate`
+    helper goes with them. `bin/quasi-audit` shim help block rewritten.
+  - `skills/wrap-up/SKILL.md`: `--audit-first` flag + the
+    `audit_state_clean()` pseudocode block stripped (Phase 0 was never
+    real; the only real audit consumers are inside process-book /
+    process-author skills which dispatch audit-agent directly).
+  - Post-cleanup, audit's only disk side-effect is
+    `.quasi/audit/typecheck-results.json` (the in-process round-trip
+    artifact left behind by typecheck.py). audit-agent itself is now
+    truly stateless — runs, returns JSON, done.
+
+  **Tests**: no test changes — existing `test_douban_cn_en2zh.py` /
+    `test_source_douban_cn.py` cover the data-source layer
+    (HTML parsing, search, normalisation), not the agent writeback
+    path or the translations.json schema, so they're untouched by
+    this refactor.
+
 - **0.27.0** (2026-05-18): **local-agent for cndouban backfill +
   douban_cn related-version probe.** Splits "find the Chinese
   translation of this book" out of the audit pipeline into its
