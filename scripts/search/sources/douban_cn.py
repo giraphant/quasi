@@ -5,12 +5,12 @@ Inlined from scripts/search/douban_direct.py and scripts/search/cndouban.py
 
 Combines two search paths:
     1. _direct_search_impl  — direct HTTP scraping (no dokobot), from douban_direct.py
-    2. _cndouban_works_impl — works-page CJK enumeration via dokobot, from cndouban.py
-    3. related-version probe — search hit → subject page → other versions / works
+    2. _cndouban_works_impl — cndouban lookup wrapper, from cndouban.py
+    3. related-version probe — search hit → subject page → other versions
 
 Path selection (internal, caller doesn't specify):
-    - For explicit zh/localisation lookup: Doko works-page enumeration first
-      (ISBN/search → subject → other versions / works → Chinese manifestations),
+    - For explicit zh/localisation lookup: Doko subject-page enumeration first
+      (ISBN/search → subject → other versions → Chinese manifestations),
       with direct/related probe only as fallback.
     - For general metadata lookup: direct path first, then Doko fallback when
       direct returns nothing and the query looks Chinese.
@@ -576,10 +576,8 @@ def _find_cndouban(*, isbn: Optional[str] = None,
             str(year) if year else None,
         ]))
         diagnostics["routing"].append("google-site-title-author")
-        urls, warnings, used_doko = _google_site_subject_urls(q, limit=5)
+        urls, warnings = _google_site_subject_urls(q, limit=5)
         diagnostics["warnings"].extend(warnings)
-        if used_doko:
-            diagnostics["doko_calls"] += 1
         for url in urls:
             cand = _subject_id_from_url(url)
             if not cand:
@@ -639,33 +637,22 @@ def _find_cndouban(*, isbn: Optional[str] = None,
 
     primary_meta = _parse_cn_subject_page(primary_body, primary_subject)
 
-    # ----- Step 2: works-page enumeration -----
+    # ----- Step 2: related-version links from the primary subject page -----
     manifestations: list[dict] = []
-    works_id = _extract_works_id(primary_body)
-    if works_id:
-        diagnostics["routing"].append("works-page")
-        diagnostics["doko_calls"] += 1
-        ok, body = _doko_read(_works_url(works_id))
-        if ok:
-            manifestations = _extract_manifestations_from_works_page(body)
-        else:
-            diagnostics["warnings"].append(f"works-page {works_id}: {body[:120]}")
-
-    if not manifestations:
-        related_urls = _extract_related_version_urls_from_doko(
-            primary_body,
-            current_url=_subject_url(primary_subject),
-        )
-        if related_urls:
-            diagnostics["routing"].append("related-version-links")
-            for url in related_urls:
-                sid = _subject_id_from_url(url)
-                if sid:
-                    manifestations.append({
-                        "subject_id": sid,
-                        "publisher_hint": None,
-                        "year_hint": None,
-                    })
+    related_urls = _extract_related_version_urls_from_doko(
+        primary_body,
+        current_url=_subject_url(primary_subject),
+    )
+    if related_urls:
+        diagnostics["routing"].append("related-version-links")
+        for url in related_urls:
+            sid = _subject_id_from_url(url)
+            if sid:
+                manifestations.append({
+                    "subject_id": sid,
+                    "publisher_hint": None,
+                    "year_hint": None,
+                })
 
     if not manifestations:
         manifestations = [{
@@ -673,7 +660,7 @@ def _find_cndouban(*, isbn: Optional[str] = None,
             "publisher_hint": primary_meta.get("publisher"),
             "year_hint": primary_meta.get("year"),
         }]
-        diagnostics["warnings"].append("works-page absent — using primary subject only")
+        diagnostics["warnings"].append("related-version links absent — using primary subject only")
 
     # ----- Step 3: filter Chinese candidates -----
     chinese_candidates = [m for m in manifestations
@@ -760,7 +747,7 @@ def _cndouban_works_impl(args_namespace) -> dict:
 
 
 # ==================================================================
-# Related-version probe: search hit → subject → other versions / works
+# Related-version probe: search hit → subject → other versions
 # ==================================================================
 
 def _normalise_subject_url(url: str) -> str:
@@ -820,21 +807,6 @@ def _extract_related_version_urls(html: str, current_url: str | None = None) -> 
     return urls
 
 
-def _extract_related_works_urls(html: str) -> list[str]:
-    urls: list[str] = []
-    seen: set[str] = set()
-    for snippet in _version_section_snippets(html):
-        for m in _ANY_WORKS_HREF_RE.finditer(snippet):
-            url = _normalise_works_url(m.group(1))
-            if not _WORKS_URL_RE.search(url):
-                continue
-            if url in seen:
-                continue
-            seen.add(url)
-            urls.append(url)
-    return urls
-
-
 def _decode_douban_url(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
     if parsed.netloc == "www.douban.com" and parsed.path.startswith("/link2/"):
@@ -867,26 +839,19 @@ def _extract_google_subject_urls(body: str, limit: int = 5) -> list[str]:
     return urls
 
 
-def _google_site_subject_urls(query: str, limit: int = 5) -> tuple[list[str], list[str], bool]:
-    """Find Douban subject URLs via Google. Returns (urls, warnings, used_doko)."""
+def _google_site_subject_urls(query: str, limit: int = 5) -> tuple[list[str], list[str]]:
+    """Find Douban subject URLs via Google HTTP. Never invokes Doko."""
     url = _google_site_subject_search_url(query)
     ok, body = _dd_fetch(url, timeout=15)
     warnings: list[str] = []
     if ok:
         urls = _extract_google_subject_urls(body, limit=limit)
         if urls:
-            return urls, warnings, False
+            return urls, warnings
+        warnings.append("google-site-fetch: no subject urls")
     else:
         warnings.append(f"google-site-fetch: {body[:120]}")
-
-    ok, body = _doko_read(url)
-    if not ok:
-        warnings.append(f"google-site-doko: {body[:120]}")
-        return [], warnings, True
-    urls = _extract_subject_urls_from_doko(body)[:limit]
-    if not urls:
-        urls = _extract_google_subject_urls(body, limit=limit)
-    return urls, warnings, True
+    return [], warnings
 
 
 def _parse_doko_references(body: str) -> dict[str, str]:
@@ -918,22 +883,6 @@ def _extract_related_version_urls_from_doko(body: str, current_url: str | None =
             if not _subject_id_from_url(url):
                 continue
             if current and url == current:
-                continue
-            if url in seen:
-                continue
-            seen.add(url)
-            urls.append(url)
-    return urls
-
-
-def _extract_related_works_urls_from_doko(body: str) -> list[str]:
-    refs = _parse_doko_references(body)
-    urls: list[str] = []
-    seen: set[str] = set()
-    for window in _doko_version_windows(body):
-        for ref_id in _DOKO_INLINE_REF_RE.findall(window):
-            url = _normalise_works_url(refs.get(ref_id, ""))
-            if not _WORKS_URL_RE.search(url):
                 continue
             if url in seen:
                 continue
@@ -1035,27 +984,12 @@ def _is_chinese_like_record(raw: dict) -> bool:
     return _has_cjk(title) and (_has_cjk(publisher) or _has_cjk(authors))
 
 
-def _fetch_works_subject_urls(
-    works_url: str,
-    *,
-    current_url: str | None = None,
-) -> list[str]:
-    ok, body = _dd_fetch(works_url)
-    if ok and not _is_blocked(body):
-        return _extract_subject_urls_anywhere(body, current_url=current_url)
-    ok, body = _doko_read(works_url)
-    if ok:
-        return _extract_subject_urls_from_doko(body, current_url=current_url)
-    return []
-
-
-def _fetch_subject_for_related(url: str) -> tuple[dict | None, list[str], list[str]]:
+def _fetch_subject_for_related(url: str) -> tuple[dict | None, list[str]]:
     ok, body = _dd_fetch(url)
     if ok and not _is_blocked(body):
         return (
             _parse_dd_subject_page(body, url),
             _extract_related_version_urls(body, current_url=url),
-            _extract_related_works_urls(body),
         )
 
     ok, body = _doko_read(url)
@@ -1063,9 +997,8 @@ def _fetch_subject_for_related(url: str) -> tuple[dict | None, list[str], list[s
         return (
             _parse_doko_subject_page(body, url),
             _extract_related_version_urls_from_doko(body, current_url=url),
-            _extract_related_works_urls_from_doko(body),
         )
-    return None, [], []
+    return None, []
 
 
 def _related_version_search(query: _s.BookQuery, direct_hits: list[dict]) -> list[dict]:
@@ -1078,7 +1011,7 @@ def _related_version_search(query: _s.BookQuery, direct_hits: list[dict]) -> lis
     if not seed_urls:
         q_text = " ".join(filter(None, [query.isbn, query.title, query.author, query.query]))
         if q_text:
-            seed_urls, _, _ = _google_site_subject_urls(q_text, limit=query.limit)
+            seed_urls, _ = _google_site_subject_urls(q_text, limit=query.limit)
         if not seed_urls and q_text:
             ok, body = _doko_read(_cn_search_url(q_text))
             if ok:
@@ -1087,21 +1020,16 @@ def _related_version_search(query: _s.BookQuery, direct_hits: list[dict]) -> lis
     related_urls: list[str] = []
     seen_urls: set[str] = set(seed_urls)
     for seed_url in seed_urls[:query.limit]:
-        _, seed_related, works_urls = _fetch_subject_for_related(seed_url)
+        _, seed_related = _fetch_subject_for_related(seed_url)
         for url in seed_related:
             if url not in seen_urls:
                 seen_urls.add(url)
                 related_urls.append(url)
-        for works_url in works_urls:
-            for url in _fetch_works_subject_urls(works_url, current_url=seed_url):
-                if url not in seen_urls:
-                    seen_urls.add(url)
-                    related_urls.append(url)
 
     out: list[dict] = []
     seen_ids: set[str] = set()
     for url in related_urls:
-        raw, _, _ = _fetch_subject_for_related(url)
+        raw, _ = _fetch_subject_for_related(url)
         if not raw or not _is_chinese_like_record(raw):
             continue
         sid = raw.get("douban_subject_id") or raw.get("douban_id") or _subject_id_from_url(url)
@@ -1159,13 +1087,13 @@ def _direct_search(query: _s.BookQuery) -> list[dict]:
 
 
 def _cndouban_works_page(query: _s.BookQuery) -> list[dict]:
-    """Wrap _cndouban_works_impl (works-page enumeration via dokobot)."""
+    """Wrap _cndouban_works_impl (subject-page localisation via dokobot)."""
     payload = _cndouban_works_payload(query)
     return payload.get("translations") or []
 
 
 def _cndouban_works_payload(query: _s.BookQuery) -> dict:
-    """Run Doko works-page lookup and keep diagnostics for caller decisions."""
+    """Run Doko subject-page lookup and keep diagnostics for caller decisions."""
     import argparse
     args = argparse.Namespace(
         isbn=query.isbn, title=query.title, author=query.author,

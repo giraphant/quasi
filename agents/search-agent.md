@@ -28,7 +28,7 @@ model: opus
 3. 读 `results`、`diagnostics.conflicts`、`localisations.zh.candidates`。
 4. 筛掉明显不属于该书/论文的候选或字段,返回核验过的数据给上层。
 
-不要写 vault、不要 backfill、不要更新 cndouban cache、不要移动文件。落盘由顶层 skill / `quasi-helpers` 负责。
+所有落盘由顶层 skill / `quasi-helpers` 负责;本 agent 的产物只有最终 JSON。
 
 ## 调用
 
@@ -42,11 +42,21 @@ quasi-search paper \
   [--year-from N] [--top N] --json
 ```
 
-`quasi-search book` 总是额外尝试 `douban_cn` 来填充 `localisations.zh`
-sidecar,即使主 metadata 查询用了 `--source` 限定其他 source。`--subject zh`
-只用于明确要求中文版本检索或调试豆瓣路径时;普通 book search 不需要手动加。
-内部豆瓣本地化会先走 ISBN 直达和 Google `site:book.douban.com/subject`
-发现 subject,最后才降级到豆瓣站内搜索;不要在 agent 里额外手写豆瓣搜索重试。
+`quasi-search book` 会自动填充 `localisations.zh`。第一次调用只用 caller/context
+里已有的原始书目信息: ISBN、原文 title、原文 author、year、原始 query。
+
+额外中文本检查需要显式标记,且最多一次:
+
+```bash
+quasi-search book \
+  [同一组 ISBN/title/author/query/year 参数] \
+  --subject cndouban --json
+```
+
+这次 probe 仍然使用原始字段,只是在 `--subject cndouban` 上标记“只检查中文版本”。
+不要自行翻译书名、猜中文书名/出版社/译者,也不要把这类猜测塞进 `--title`
+或 `--query` 一口气查。需要看具体豆瓣页面时,只读取已经返回的 `douban_url`
+或 `preview_link`;不要手写豆瓣搜索 URL。
 
 ## 判断规则
 
