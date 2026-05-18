@@ -76,7 +76,7 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
-- **0.32.2** (2026-05-18): **book localisation sidecar becomes
+- **0.32.3** (2026-05-18): **book localisation sidecar becomes
   Doko-first and source-independent.** `quasi-search book` now always
   attempts the `localisations.zh` Douban sidecar, even when the caller
   limits canonical metadata search with `--source`. Chinese localisation
