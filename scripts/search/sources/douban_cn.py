@@ -9,11 +9,11 @@ Combines two search paths:
     3. related-version probe — search hit → subject page → other versions / works
 
 Path selection (internal, caller doesn't specify):
-    - For non-CJK author / general query: primary direct path
-    - For CJK author / explicit --subject zh / when direct returns nothing:
-      fall back to works-page enumeration
-    - For explicit --subject zh/chinese/cn/translation/cndouban with direct hits:
-      inspect related versions and emit Chinese-like manifestations
+    - For explicit zh/localisation lookup: Doko works-page enumeration first
+      (ISBN/search → subject → other versions / works → Chinese manifestations),
+      with direct/related probe only as fallback.
+    - For general metadata lookup: direct path first, then Doko fallback when
+      direct returns nothing and the query looks Chinese.
 """
 
 from __future__ import annotations
@@ -1052,16 +1052,34 @@ def _direct_search(query: _s.BookQuery) -> list[dict]:
 
 def _cndouban_works_page(query: _s.BookQuery) -> list[dict]:
     """Wrap _cndouban_works_impl (works-page enumeration via dokobot)."""
+    payload = _cndouban_works_payload(query)
+    return payload.get("translations") or []
+
+
+def _cndouban_works_payload(query: _s.BookQuery) -> dict:
+    """Run Doko works-page lookup and keep diagnostics for caller decisions."""
     import argparse
     args = argparse.Namespace(
         isbn=query.isbn, title=query.title, author=query.author,
         slug=None, year=query.year_from,
     )
     try:
-        payload = _cndouban_works_impl(args)
-        return payload.get("translations") or []
-    except Exception:
-        return []
+        return _cndouban_works_impl(args)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "translations": [],
+            "diagnostics": {"warnings": [f"{type(exc).__name__}: {exc}"]},
+        }
+
+
+def _doko_unavailable_from_payload(payload: dict) -> str | None:
+    diagnostics = payload.get("diagnostics") or {}
+    warnings = diagnostics.get("warnings") or []
+    for warning in warnings:
+        if "DOKO_" in str(warning) or "No local bridge" in str(warning) or "API key required" in str(warning):
+            return str(warning)
+    return None
 
 
 def _wants_chinese_versions(query: _s.BookQuery) -> bool:
@@ -1073,16 +1091,28 @@ def _wants_chinese_versions(query: _s.BookQuery) -> bool:
 def search_book(query: _s.BookQuery) -> _s.AdapterResult:
     if not any([query.isbn, query.title, query.author, query.query, query.subject]):
         return _s.AdapterResult(source=SOURCE_ID, success=False, error="No query")
-    # Primary path
-    direct = _direct_search(query)
-    works = []
-    # Explicit Chinese-translation lookup: inspect related versions for direct hits.
-    if direct and _wants_chinese_versions(query):
-        works = _related_version_search(query, direct)
-    # Fallback when primary empty AND we have CJK author or explicit Chinese subject.
-    if not works and not direct and (_has_cjk_str(query.author) or _wants_chinese_versions(query)):
-        works = _cndouban_works_page(query)
-    all_raw = works if _wants_chinese_versions(query) and works else direct + works
+    wants_zh = _wants_chinese_versions(query)
+
+    if wants_zh:
+        # Localisation lookup needs the browser-rendered Douban path. The direct
+        # HTTP scraper is frequently blocked and often misses "other versions".
+        payload = _cndouban_works_payload(query)
+        works = payload.get("translations") or []
+        if not works:
+            direct = _direct_search(query)
+            works = _related_version_search(query, direct) if direct else []
+        if not works:
+            doko_error = _doko_unavailable_from_payload(payload)
+            if doko_error:
+                return _s.AdapterResult(source=SOURCE_ID, success=False, error=doko_error)
+        all_raw = works
+    else:
+        direct = _direct_search(query)
+        works = []
+        if not direct and _has_cjk_str(query.author):
+            works = _cndouban_works_page(query)
+        all_raw = direct + works
+
     if not all_raw:
         return _s.AdapterResult(source=SOURCE_ID, success=True, entries=[])
     return _s.AdapterResult(source=SOURCE_ID, success=True,

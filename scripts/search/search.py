@@ -475,8 +475,6 @@ def _book_localisations_zh(
     existing_douban_entries: list[dict] | None = None,
 ) -> dict:
     """Return Chinese-version candidates as a sidecar, never part of metadata merge."""
-    if "douban_cn" not in sources:
-        return {}
     if not any([query.isbn, query.title, query.author, query.query]):
         return {}
 

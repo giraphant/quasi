@@ -76,6 +76,17 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.32.2** (2026-05-18): **book localisation sidecar becomes
+  Doko-first and source-independent.** `quasi-search book` now always
+  attempts the `localisations.zh` Douban sidecar, even when the caller
+  limits canonical metadata search with `--source`. Chinese localisation
+  lookup now prefers the Doko-rendered path (ISBN/search → Douban subject
+  → other versions / works page → Chinese manifestation subject) before
+  falling back to direct HTTP + related-version probing. Doko failures are
+  surfaced as `localisations.zh.status="error"` instead of the previous
+  false-negative `none`, so callers do not cache "no translation" when the
+  browser bridge/API path was unavailable.
+
 - **0.32.1** (2026-05-18): **frontmatter description discipline.**
   Treats `description:` as a routing hint, not a mini-README.
   Skill descriptions normalised to user-intent shape — `Use when

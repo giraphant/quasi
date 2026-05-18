@@ -42,7 +42,9 @@ quasi-search paper \
   [--year-from N] [--top N] --json
 ```
 
-通常不要使用 `--subject zh`:中文备选已经由 `quasi-search book` 的 `localisations.zh` sidecar 返回。只有 caller 明确要求调试 douban source 时才使用 `--source douban_cn`。
+`quasi-search book` 总是额外尝试 `douban_cn` 来填充 `localisations.zh`
+sidecar,即使主 metadata 查询用了 `--source` 限定其他 source。`--subject zh`
+只用于明确要求中文版本检索或调试豆瓣路径时;普通 book search 不需要手动加。
 
 ## 判断规则
 

@@ -244,7 +244,7 @@ def test_search_book_with_subject_zh_triggers_works_fallback():
     }]
 
     with patch("sources.douban_cn._direct_search", return_value=[]), \
-         patch("sources.douban_cn._cndouban_works_page", return_value=works_result) as mock_fb:
+         patch("sources.douban_cn._cndouban_works_payload", return_value={"status": "ok", "translations": works_result}) as mock_fb:
         q = search.BookQuery(title="Simians Cyborgs and Women", subject="zh", limit=5)
         result = douban_cn.search_book(q)
 
