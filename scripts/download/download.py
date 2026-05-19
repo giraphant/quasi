@@ -25,6 +25,7 @@ materialise in the hook+bash subprocess env for one tool call at a time.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
@@ -175,11 +176,15 @@ PUBLISHER_PDF_PATTERNS = [
     ("oup.com",      "/doi/pdf/{doi}"),
     ("academic.oup", "/doi/pdf/{doi}"),
     ("wiley",        "/doi/pdfdirect/{doi}"),
+    ("wiley",        "/doi/pdfdirect/{doi}?download=true"),
     ("tandfonline",  "/doi/pdf/{doi}"),
+    ("tandfonline",  "/doi/pdf/{doi}?download=true"),
     ("springer",     "/content/pdf/{doi}.pdf"),  # reeder uses /article/{doi}/fulltext.pdf
     ("nature.com",   "/content/pdf/{doi}.pdf"),
     ("uchicago",     "/doi/pdf/{doi}"),
+    ("uchicago",     "/doi/pdf/{doi}?download=true"),
     ("uchicago",     "/doi/pdfplus/{doi}"),
+    ("uchicago",     "/doi/pdfplus/{doi}?download=true"),
     ("mit.edu",      "/doi/pdf/{doi}"),
     ("mitpress",     "/doi/pdf/{doi}"),
     ("pubsonline.informs", "/doi/pdf/{doi}"),
@@ -187,21 +192,25 @@ PUBLISHER_PDF_PATTERNS = [
 
 _EPDF_PUBLISHER_PATTERNS = [
     ("uchicago", "/doi/epdf/{doi}"),
+    ("tandfonline", "/doi/epdf/{doi}?needAccess=true"),
+    ("wiley", "/doi/epdf/{doi}"),
 ]
 
-_RE_CITATION_PDF = re.compile(
-    rb'<meta\s+(?:name=["\']citation_pdf_url["\']\s+content=["\'](.*?)["\']'
-    rb'|content=["\'](.*?)["\']\s+name=["\']citation_pdf_url["\'])',
-    re.IGNORECASE,
-)
+_RE_META_TAG = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+_RE_HTML_ATTR = re.compile(r"""([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*([\"'])(.*?)\2""", re.DOTALL)
 
 
 def _extract_citation_pdf_url(html_bytes):
-    """Extract citation_pdf_url from HTML meta tags. Returns URL string or None."""
-    m = _RE_CITATION_PDF.search(html_bytes)
-    if m:
-        raw = (m.group(1) or m.group(2)).decode("utf-8", errors="ignore")
-        return raw.strip() if raw.strip() else None
+    text = html_bytes[:200000].decode("utf-8", errors="ignore")
+    for tag in _RE_META_TAG.findall(text):
+        attrs = {
+            name.lower(): html.unescape(value.strip())
+            for name, _quote, value in _RE_HTML_ATTR.findall(tag)
+        }
+        if attrs.get("name", "").lower() == "citation_pdf_url":
+            url = attrs.get("content", "").strip()
+            if url:
+                return url
     return None
 
 
@@ -991,14 +1000,17 @@ def find_wayback_url(doi):
         pdf_urls.append(f"https://link.springer.com/content/pdf/{doi}.pdf")
     elif doi.startswith("10.1086/"):
         pdf_urls.append(f"https://www.journals.uchicago.edu/doi/pdf/{doi}")
-    elif doi.startswith("10.1002/"):
+        pdf_urls.append(f"https://www.journals.uchicago.edu/doi/pdf/{doi}?download=true")
+    elif doi.startswith(("10.1002/", "10.1111/")):
         pdf_urls.append(f"https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}")
+        pdf_urls.append(f"https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}?download=true")
     elif doi.startswith("10.1093/"):
         pdf_urls.append(f"https://academic.oup.com/doi/pdf/{doi}")
     elif doi.startswith("10.1162/"):
         pdf_urls.append(f"https://direct.mit.edu/doi/pdf/{doi}")
     elif doi.startswith("10.1080/"):
         pdf_urls.append(f"https://www.tandfonline.com/doi/pdf/{doi}")
+        pdf_urls.append(f"https://www.tandfonline.com/doi/pdf/{doi}?download=true")
     elif doi.startswith("10.1177/"):
         pdf_urls.append(f"https://journals.sagepub.com/doi/pdf/{doi}")
     elif doi.startswith("10.1353/"):
@@ -1069,11 +1081,17 @@ def download_pdf_from_url(url, output_path, timeout=60):
 
 _PUBLISHER_DIRECT_URLS = [
     ("10.1086/",  "https://www.journals.uchicago.edu/doi/pdf/{doi}"),
+    ("10.1086/",  "https://www.journals.uchicago.edu/doi/pdf/{doi}?download=true"),
     ("10.1086/",  "https://www.journals.uchicago.edu/doi/pdfplus/{doi}"),
+    ("10.1086/",  "https://www.journals.uchicago.edu/doi/pdfplus/{doi}?download=true"),
     ("10.1080/",  "https://www.tandfonline.com/doi/pdf/{doi}"),
+    ("10.1080/",  "https://www.tandfonline.com/doi/pdf/{doi}?download=true"),
     ("10.1177/",  "https://journals.sagepub.com/doi/pdf/{doi}"),
     ("10.1093/",  "https://academic.oup.com/doi/pdf/{doi}"),
     ("10.1002/",  "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}"),
+    ("10.1002/",  "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}?download=true"),
+    ("10.1111/",  "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}"),
+    ("10.1111/",  "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}?download=true"),
     ("10.1007/",  "https://link.springer.com/content/pdf/{doi}.pdf"),
     ("10.1038/",  "https://www.nature.com/articles/{suffix}.pdf"),
     ("10.1162/",  "https://direct.mit.edu/doi/pdf/{doi}"),

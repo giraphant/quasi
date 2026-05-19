@@ -76,6 +76,13 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.33.2** (2026-05-19): **Publisher PDF download query variants.**
+  - EZProxy direct PDF patterns now try `?download=true` variants for Taylor & Francis, Wiley, and UChicago before falling back to embedded viewer scraping.
+  - EZProxy epdf fallback now covers Taylor & Francis (`/doi/epdf/{doi}?needAccess=true`) and Wiley (`/doi/epdf/{doi}`), matching proxied viewer URLs observed for Social Epistemology and British Journal of Sociology papers.
+  - Publisher Direct and Wayback URL construction now include `?download=true` variants for Taylor & Francis, Wiley, and UChicago; Wiley `10.1111/` DOI prefixes are included alongside `10.1002/`.
+  - `citation_pdf_url` meta extraction is now attribute-order tolerant, so viewer pages with extra `<meta>` attributes still resolve to the underlying PDF URL.
+  - Tests: full suite 23/23 passing.
+
 - **0.33.1** (2026-05-19): **UChicago EZProxy PDF discovery.**
   - EZProxy publisher-pattern download now tries all matching publisher
     patterns instead of stopping after the first match. This lets UChicago
