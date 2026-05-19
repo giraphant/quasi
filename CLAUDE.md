@@ -76,6 +76,13 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.33.5** (2026-05-19): **EZProxy CookieCloud domain matching handles OCLC subdomains.**
+  - CookieCloud filtering now keeps cookies across the configured EZProxy domain tree instead of requiring exact-domain equality. Configuring `oclc.org` now preserves usable cookies from `idm.oclc.org` and publisher-specific proxied subdomains.
+  - EZProxy sessions preserve each CookieCloud cookie's original domain/path, so parent-domain and subdomain cookies are scoped the same way the browser scoped them.
+  - Direct proxied PDF downloads build a Cookie header from only the cookie records matching the requested proxied host, avoiding stale or unrelated sibling-domain cookies.
+  - Live validation: Taylor & Francis proxied direct PDF for DOI `10.1080/02691728.2025.2480274` succeeds with configured domain `oclc.org`.
+  - Tests: full suite 25/25 passing.
+
 - **0.33.4** (2026-05-19): **Fix proxied direct URL cookie injection.**
   - `download_pdf_from_url()` now supports CookieCloud's multi-cookie EZProxy config (`cookies` dict) when downloading already-proxied direct PDF URLs.
   - Fixes a `KeyError: 'cookie'` path introduced after CookieCloud moved from a single cookie value to domain-filtered cookie dictionaries.

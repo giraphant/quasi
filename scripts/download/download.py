@@ -160,12 +160,39 @@ def _try_ezproxy_with_refresh(doi, output_path):
         raise
 
 
+def _host_matches_domain(host: str, domain: str) -> bool:
+    host = host.lower().strip(".")
+    domain = domain.lower().lstrip(".")
+    return host == domain or host.endswith(f".{domain}")
+
+
 def _url_matches_ezproxy(url, ezproxy_config):
     """Check if a URL belongs to the EZProxy domain."""
     if not ezproxy_config:
         return False
-    domain = ezproxy_config["domain"].lstrip(".")
-    return domain in url
+    host = urllib.parse.urlparse(url).hostname or ""
+    if _host_matches_domain(host, ezproxy_config["domain"]):
+        return True
+    for rec in ezproxy_config.get("cookie_records", []):
+        if _host_matches_domain(host, rec.get("domain", "")):
+            return True
+    return False
+
+
+def _ezproxy_cookie_header(ezproxy_config, url):
+    host = urllib.parse.urlparse(url).hostname or ""
+    parts = []
+    for rec in ezproxy_config.get("cookie_records", []):
+        if _host_matches_domain(host, rec.get("domain", "")):
+            parts.append(f"{rec['name']}={rec['value']}")
+    if parts:
+        return "; ".join(parts)
+    if "cookies" in ezproxy_config:
+        return "; ".join(
+            f"{name}={value}" for name, value in ezproxy_config["cookies"].items()
+        )
+    cookie_name = ezproxy_config.get("cookie_name", "ezproxy")
+    return f"{cookie_name}={ezproxy_config['cookie']}"
 
 
 # Publisher PDF URL patterns: given a proxied landing page URL,
@@ -477,14 +504,23 @@ def _build_ezproxy_session(config):
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     })
 
+    cookie_records = config.get("cookie_records", [])
+    if cookie_records:
+        for rec in cookie_records:
+            session.cookies.set(
+                rec["name"],
+                rec["value"],
+                domain=rec["domain"],
+                path=rec.get("path", "/"),
+            )
+        return session
+
     domain = config.get("domain", ".eux.idm.oclc.org")
-    # Multi-cookie: {"cookies": {"name1": "val1", "name2": "val2"}}
     cookies = config.get("cookies", {})
     if cookies:
         for name, value in cookies.items():
             session.cookies.set(name, value, domain=domain)
     else:
-        # Single cookie: {"cookie_name": "name", "cookie": "value"}
         cookie_name = config.get("cookie_name", "ezproxy")
         session.cookies.set(cookie_name, config["cookie"], domain=domain)
 
@@ -1046,13 +1082,7 @@ def download_pdf_from_url(url, output_path, timeout=60):
         # Auto-inject EZProxy cookie if URL matches
         ezproxy = load_ezproxy_config()
         if _url_matches_ezproxy(url, ezproxy):
-            if "cookies" in ezproxy:
-                headers["Cookie"] = "; ".join(
-                    f"{name}={value}" for name, value in ezproxy["cookies"].items()
-                )
-            else:
-                cookie_name = ezproxy.get("cookie_name", "ezproxy")
-                headers["Cookie"] = f"{cookie_name}={ezproxy['cookie']}"
+            headers["Cookie"] = _ezproxy_cookie_header(ezproxy, url)
 
         def _do():
             req = urllib.request.Request(url, headers=headers)
