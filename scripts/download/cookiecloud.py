@@ -12,6 +12,7 @@ the next `get_ezproxy_config()` call.
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 import requests
@@ -24,16 +25,25 @@ def _env_config() -> dict | None:
     uuid      = os.environ.get("QUASI_COOKIECLOUD_UUID", "").strip()
     password  = os.environ.get("QUASI_COOKIECLOUD_PASSWORD", "").strip()
     domain    = os.environ.get("QUASI_COOKIECLOUD_EZPROXY_DOMAIN", "").strip()
-    login_url = os.environ.get("QUASI_COOKIECLOUD_LOGIN_URL", "").strip()
-    if not all([server, uuid, password, domain, login_url]):
+    base_url  = os.environ.get("QUASI_COOKIECLOUD_EZPROXY_BASE_URL", "").strip()
+    if not all([server, uuid, password, domain, base_url]):
         return None
     return {
         "server": server,
         "uuid": uuid,
         "password": password,
         "ezproxy_domain": domain,
-        "login_url": login_url,
+        "login_url": _ezproxy_login_url(base_url),
     }
+
+
+def _ezproxy_login_url(base_url: str) -> str:
+    base = base_url.strip().rstrip("/")
+    if not base:
+        return ""
+    if not re.match(r"^https?://", base, re.IGNORECASE):
+        base = f"https://{base}"
+    return f"{base}/login?url="
 
 
 def _fetch(cfg: dict, timeout: int = 15) -> dict | None:

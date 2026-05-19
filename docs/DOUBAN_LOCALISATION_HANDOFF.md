@@ -85,9 +85,11 @@ All in `scripts/search/sources/douban_cn.py`:
   - top-level: Kagi → strict URL filter → bs4 fetch → Chinese filter →
     sort by ratings_count desc.
 
-Kagi CLI is expected to be available as `kagi` on `PATH`. The user's
-workspace stores credentials in `.kagi.toml` at CWD (untracked); the
-plugin reads no Kagi config of its own.
+Kagi CLI is expected to be available as `kagi` on `PATH`. Authentication
+uses plugin `userConfig`: set `kagi_session_token` via `/plugin` →
+Configure options. The hook exposes it as `QUASI_KAGI_SESSION_TOKEN`, and
+the adapter passes it to `kagi-cli` as `KAGI_SESSION_TOKEN` for the
+subprocess. The plugin does not rely on CWD `.kagi.toml`.
 
 ## Agent Rules
 
@@ -123,9 +125,9 @@ Latest local results:
 
 ## End-to-end validation (2026-05-19)
 
-Kagi 0.5.4 installed and authenticated via `.kagi.toml` in CWD. Atomic
-operation `_kagi_subject_urls(query)` returns real Douban subject URLs;
-five-case run end-to-end:
+Kagi 0.5.4 installed and authenticated via session token. Atomic operation
+`_kagi_subject_urls(query)` returns real Douban subject URLs; five-case run
+end-to-end:
 
 | Case | Result |
 |------|--------|

@@ -95,6 +95,7 @@ sources/
 | 服务 | 配置字段 |
 |---|---|
 | Anna's Archive | `anna_donator_key`, `anna_mirrors` |
-| CookieCloud / EZProxy | `cookiecloud_*` |
+| CookieCloud / EZProxy | `cookiecloud_server`, `cookiecloud_uuid`, `cookiecloud_password`, `cookiecloud_ezproxy_domain`, `cookiecloud_ezproxy_base_url` |
 | Immersive Translate | `immersive_auth_key` |
+| Kagi | `kagi_session_token` |
 | Google Scholar proxy | `google_scholar_proxy_url` |

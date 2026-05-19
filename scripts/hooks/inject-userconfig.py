@@ -34,8 +34,9 @@ _KEYS = [
     "COOKIECLOUD_UUID",
     "COOKIECLOUD_PASSWORD",
     "COOKIECLOUD_EZPROXY_DOMAIN",
-    "COOKIECLOUD_LOGIN_URL",
+    "COOKIECLOUD_EZPROXY_BASE_URL",
     "IMMERSIVE_AUTH_KEY",
+    "KAGI_SESSION_TOKEN",
 ]
 
 # Match `quasi-` as a bare command word: at start of line/string or after

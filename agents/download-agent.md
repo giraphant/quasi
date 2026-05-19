@@ -82,7 +82,7 @@ quasi-download accept --path {temp_path} --slug {slug} --kind book -o sources --
 ## 凭据故障
 
 - `Anna's Archive donator key not set` → 让用户 `/plugin` → Configure options → `anna_donator_key`。
-- `EZPROXY COOKIE EXPIRED` → 让用户在 Chrome 打开任一论文链接走一次 SSO+2FA，CookieCloud 扩展会自动推新 cookie，然后重跑；没装 CookieCloud 就 `/plugin` 填 `cookiecloud_*` 5 字段。
+- `EZPROXY COOKIE EXPIRED` → 让用户在 Chrome 打开任一论文链接走一次 SSO+2FA，CookieCloud 扩展会自动推新 cookie，然后重跑；没装 CookieCloud 就 `/plugin` 填 CookieCloud / EZProxy 5 字段，其中 `cookiecloud_ezproxy_base_url` 只填干净 base URL。
 - `AA QUOTA EXHAUSTED` → 当天 quota 用完，停止所有书下载，等次日重置。
 
 ## 输出

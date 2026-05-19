@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import json
+import os
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -148,6 +149,16 @@ def test_kagi_subject_urls_invokes_kagi_with_site_limiter():
     assert "--format" in args and "json" in args
     assert any("site:book.douban.com/subject" in a for a in args)
     assert any('"Strange Encounters" 原作名' in a for a in args)
+
+
+def test_kagi_subject_urls_passes_plugin_session_token_env():
+    payload = {"data": []}
+    with patch.dict(os.environ, {"QUASI_KAGI_SESSION_TOKEN": "session-token"}, clear=False), \
+         patch("sources.douban_cn.subprocess.run",
+               return_value=_completed(payload)) as mock_run:
+        douban_cn._kagi_subject_urls("Example")
+    env = mock_run.call_args.kwargs["env"]
+    assert env["KAGI_SESSION_TOKEN"] == "session-token"
 
 
 def test_kagi_subject_urls_missing_cli_returns_warning():

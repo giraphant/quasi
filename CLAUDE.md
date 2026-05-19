@@ -76,6 +76,39 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.32.13** (2026-05-19): **EZProxy config takes a base URL, not a
+  half login prefix.**
+  - Breaking config rename: `cookiecloud_login_url` is removed and
+    replaced by `cookiecloud_ezproxy_base_url`.
+  - Users now enter a clean base such as `https://ezproxy.example.edu` or
+    `ezproxy.example.edu`. `scripts/download/cookiecloud.py` normalises it
+    to `https://.../login?url=` internally.
+  - Removed the last hard-coded EZProxy login-prefix fallback from
+    `download.py`; EZProxy only runs when the new base URL and the rest of
+    the CookieCloud config are present.
+
+- **0.32.12** (2026-05-19): **Configure Options copy cleanup for
+  CookieCloud / EZProxy.**
+  - Removed the hard-coded Harvard EZProxy default from
+    `cookiecloud_login_url`; users should provide their own institution's
+    redirect prefix if they want EZProxy downloads.
+  - Clarified the three distinct values: CookieCloud endpoint, EZProxy
+    cookie domain, and EZProxy login URL prefix. The CookieCloud endpoint
+    is only used to fetch browser cookies; the EZProxy fields describe the
+    institution proxy itself.
+
+- **0.32.11** (2026-05-19): **Kagi auth moves into plugin userConfig.**
+  - Added sensitive `kagi_session_token` to `.claude-plugin/plugin.json`.
+    Users configure it via `/plugin` → Configure options, matching the
+    existing Anna's Archive / CookieCloud / Immersive Translate credential
+    flow.
+  - `scripts/hooks/inject-userconfig.py` now propagates it as
+    `QUASI_KAGI_SESSION_TOKEN` for `quasi-*` Bash commands.
+  - `scripts/search/sources/douban_cn.py` maps `QUASI_KAGI_SESSION_TOKEN`
+    to `KAGI_SESSION_TOKEN` only for the `kagi` subprocess. This uses
+    kagi-cli's documented env-var override and avoids relying on CWD
+    `.kagi.toml`.
+
 - **0.32.9** (2026-05-19): **Douban subject discovery tightened and
   query variants broadened.**
   - URL admission now uses the exact book-subject policy:

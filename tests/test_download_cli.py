@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 DOWNLOAD = PLUGIN_ROOT / "scripts" / "download" / "download.py"
+COOKIECLOUD = PLUGIN_ROOT / "scripts" / "download" / "cookiecloud.py"
 
 
 def run_download(*args: str) -> subprocess.CompletedProcess[str]:
@@ -83,3 +85,17 @@ def test_accept_moves_temp_file_to_sources(tmp_path):
     assert Path(payload["path"]).name == "author-title-2024.pdf"
     assert Path(payload["path"]).exists()
     assert not src.exists()
+
+
+def test_ezproxy_base_url_normalises_to_login_prefix():
+    spec = importlib.util.spec_from_file_location("cookiecloud_under_test", COOKIECLOUD)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+
+    assert mod._ezproxy_login_url("https://ezproxy.example.edu") == (
+        "https://ezproxy.example.edu/login?url="
+    )
+    assert mod._ezproxy_login_url("ezproxy.example.edu/") == (
+        "https://ezproxy.example.edu/login?url="
+    )

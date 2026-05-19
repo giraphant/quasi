@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "quasi",
   "description": "Academic research toolkit — search, download, extract, analyze, synthesize",
-  "version": "0.32.10",
+  "version": "0.32.13",
   "author": {
     "name": "ramu"
   },
@@ -18,8 +18,8 @@
   "userConfig": {
     "cookiecloud_server": {
       "type": "string",
-      "title": "CookieCloud server URL",
-      "description": "Self-hosted CookieCloud endpoint (https://github.com/easychen/CookieCloud), e.g. https://cookiecloud.example.com. Leave empty to disable EZProxy entirely — papers will only resolve via OA / Sci-Hub / Wayback."
+      "title": "CookieCloud endpoint",
+      "description": "Endpoint of your CookieCloud server used to pull browser cookies for EZProxy downloads, e.g. https://cookiecloud.example.com. Leave empty to disable EZProxy entirely."
     },
     "cookiecloud_uuid": {
       "type": "string",
@@ -35,13 +35,12 @@
     "cookiecloud_ezproxy_domain": {
       "type": "string",
       "title": "EZProxy cookie domain",
-      "description": "Domain where the EZProxy auth cookie is set, e.g. '.idm.oclc.org'. Only cookies on this exact domain are kept; tracking cookies on rewritten publisher subdomains are dropped."
+      "description": "Cookie domain used by your institution's EZProxy after login, e.g. .idm.oclc.org or ezproxy.example.edu. This is not the login URL; only cookies on this exact domain are kept."
     },
-    "cookiecloud_login_url": {
+    "cookiecloud_ezproxy_base_url": {
       "type": "string",
-      "title": "EZProxy login URL prefix",
-      "description": "EZProxy login redirector that DOIs are wrapped through. Example: http://ezp-prod1.hul.harvard.edu/login?url= (Harvard) or your institution's equivalent.",
-      "default": "http://ezp-prod1.hul.harvard.edu/login?url="
+      "title": "EZProxy base URL",
+      "description": "Base URL of your institution's EZProxy, e.g. https://ezproxy.example.edu. quasi appends /login?url= internally."
     },
     "anna_donator_key": {
       "type": "string",
@@ -64,6 +63,12 @@
       "type": "string",
       "title": "Immersive Translate Zotero auth key",
       "description": "Auth key for the Immersive Translate Zotero PDF translation API. Used by the translate skill. Stored in the system keychain.",
+      "sensitive": true
+    },
+    "kagi_session_token": {
+      "type": "string",
+      "title": "Kagi session token",
+      "description": "Kagi Session Link URL or raw session token for Douban Chinese-edition discovery. Stored in the system keychain and passed to kagi-cli as KAGI_SESSION_TOKEN.",
       "sensitive": true
     }
   }

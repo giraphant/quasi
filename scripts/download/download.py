@@ -421,7 +421,7 @@ def try_ezproxy_download(doi, output_path):
     if not config:
         return False
 
-    login_url = config.get("login_url", "https://login.eux.idm.oclc.org/login?url=")
+    login_url = config["login_url"]
     session = _build_ezproxy_session(config)
 
     # Step 1: Follow EZProxy redirect to proxied publisher landing page

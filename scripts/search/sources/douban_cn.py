@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 import random
 import re
 import subprocess
@@ -230,6 +231,14 @@ def _canonical_subject_url(raw: str) -> str | None:
     return f"https://book.douban.com/subject/{m.group(1)}/"
 
 
+def _kagi_env() -> dict[str, str]:
+    env = os.environ.copy()
+    token = os.environ.get("QUASI_KAGI_SESSION_TOKEN", "").strip()
+    if token:
+        env["KAGI_SESSION_TOKEN"] = token
+    return env
+
+
 def _kagi_subject_urls(query: str, limit: int = 10) -> tuple[list[str], list[str]]:
     """Run `kagi search site:book.douban.com/subject {query}`.
 
@@ -241,6 +250,7 @@ def _kagi_subject_urls(query: str, limit: int = 10) -> tuple[list[str], list[str
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=20, check=False,
+            env=_kagi_env(),
         )
     except FileNotFoundError:
         return [], ["kagi-search: kagi CLI not on PATH"]
