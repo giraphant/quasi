@@ -241,18 +241,21 @@ def test_search_book_empty_query_returns_error():
     assert result.success is False or len(result.entries) == 0
 
 
-def test_search_book_blocked_returns_empty():
+def test_search_book_blocked_returns_error():
     blocked_html = "<html><head><title>禁止访问</title></head><body>检测到有异常请求</body></html>"
 
     def mock_dd_fetch(url, cookie=None, timeout=20):
         return True, blocked_html
 
-    with patch("sources.douban_cn._dd_fetch", side_effect=mock_dd_fetch):
+    with patch("sources.douban_cn._kagi_subject_urls",
+               return_value=([("https://book.douban.com/subject/9999/", "Some Book (豆瓣)")], [])), \
+         patch("sources.douban_cn._dd_fetch", side_effect=mock_dd_fetch):
         q = search.BookQuery(title="Some Book", limit=5)
         result = douban_cn.search_book(q)
 
-    assert result.success is True
-    assert len(result.entries) == 0
+    assert result.success is False
+    assert "subject-fetch failed" in (result.error or "")
+    assert result.entries == []
 
 
 # ── Helper functions ──

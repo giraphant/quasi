@@ -60,6 +60,20 @@ def test_subject_zh_returns_empty_when_no_chinese_editions():
     assert r.entries == []
 
 
+def test_subject_zh_surfaces_discovery_warning_as_error():
+    """Kagi/Douban discovery failures must not look like true no-result searches."""
+    with patch("sources.douban_cn._zh_localisation_search",
+               return_value=([], [
+                   "kagi-search: rc=1: missing credentials",
+                   "kagi-search: rc=1: missing credentials",
+               ])):
+        r = douban_cn.search_book(search.BookQuery(title="Resonance", subject="zh"))
+    assert r.success is False
+    assert "kagi-search" in (r.error or "")
+    assert r.error.count("kagi-search") == 1
+    assert r.entries == []
+
+
 def test_empty_query_returns_error():
     r = douban_cn.search_book(search.BookQuery())
     assert r.success is False
@@ -194,10 +208,11 @@ def test_kagi_subject_urls_missing_cli_returns_warning():
 
 def test_kagi_subject_urls_nonzero_rc_returns_warning():
     with patch("sources.douban_cn.subprocess.run",
-               return_value=_completed({}, rc=2, stderr="auth required")):
+               return_value=_completed({}, rc=2, stderr="\x1b[31mERROR\x1b[0m auth required")):
         urls, warnings = douban_cn._kagi_subject_urls("anything")
     assert urls == []
     assert any("rc=2" in w for w in warnings)
+    assert all("\x1b" not in w for w in warnings)
 
 
 # ── _compact_external_book_query ──

@@ -69,6 +69,7 @@ _NON_ZH_ASIAN_ISBN_PREFIXES = ("9784", "97889", "97811", "978604")
 # Kana / Hangul ranges — presence in title / publisher / translator means
 # it's clearly not Chinese.
 _KANA_HANGUL_RE = re.compile(r"[぀-ゟ゠-ヿᄀ-ᇿ㄰-㆏가-힯]")
+_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -159,6 +160,10 @@ def _dedupe_keep_order(items: list[str]) -> list[str]:
         seen.add(item)
         out.append(item)
     return out
+
+
+def _clean_cli_text(value: str) -> str:
+    return _ANSI_RE.sub("", value or "").strip()
 
 
 def _external_book_queries(
@@ -283,7 +288,7 @@ def _kagi_subject_urls(query: str, limit: int = 20) -> tuple[list[tuple[str, str
 
     if result.returncode != 0:
         return [], [f"kagi-search: rc={result.returncode}: "
-                    f"{(result.stderr or result.stdout)[:160]}"]
+                    f"{_clean_cli_text(result.stderr or result.stdout)[:160]}"]
 
     try:
         payload = json.loads(result.stdout or "{}")
@@ -571,10 +576,17 @@ def search_book(query: _s.BookQuery) -> _s.AdapterResult:
         return _s.AdapterResult(source=SOURCE_ID, success=False, error="No query")
 
     if _wants_chinese_versions(query):
-        records, _warnings = _zh_localisation_search(query)
+        records, warnings = _zh_localisation_search(query)
     else:
-        records, _warnings = _kagi_book_search(query)
+        records, warnings = _kagi_book_search(query)
     if not records:
+        warnings = _dedupe_keep_order(warnings)
+        if warnings:
+            return _s.AdapterResult(
+                source=SOURCE_ID,
+                success=False,
+                error="; ".join(warnings),
+            )
         return _s.AdapterResult(source=SOURCE_ID, success=True, entries=[])
     return _s.AdapterResult(
         source=SOURCE_ID, success=True,
