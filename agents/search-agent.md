@@ -42,18 +42,6 @@ quasi-search paper \
   [--year-from N] [--top N] --json
 ```
 
-`quasi-search book` 会自动填充 `localisations.zh`。第一次调用只用 caller/context
-里已有的原始书目信息: ISBN、原文 title、原文 author、year、原始 query。
-
-如需额外检查中文本,最多重跑一次同一组原始字段。不要自行翻译书名、猜中文书名
-/出版社/译者,也不要把这类猜测塞进 `--title` 或 `--query` 一口气查。
-需要看具体豆瓣页面时,只读取已经返回的 `douban_url` 或 `preview_link`;
-不要手写豆瓣搜索 URL。
-内部中文本发现会用 Kagi CLI 做 `site:book.douban.com/subject` 查询,
-认证走插件配置里的 `kagi_session_token`。然后用 BeautifulSoup 直接解析每个豆瓣页面,
-过滤出中文版条目。不需要 Doko / 浏览器桥。Kagi 不可用或未配置时,
-`localisations.zh.candidates` 为空。
-
 ## 判断规则
 
 - `results` 已经按 bin 内部 priority 合并;不要重排字段优先级。
