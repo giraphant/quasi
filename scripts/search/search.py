@@ -413,9 +413,16 @@ def _has_cjk_text(value: Any) -> bool:
 
 
 def _looks_zh_localisation(entry: dict) -> bool:
+    """Heuristic for whether a Douban entry is a Chinese-language edition.
+
+    Authors is intentionally excluded — Douban often lists a Chinese
+    transliteration of the author name on English-edition pages too
+    (e.g. "Sara Ahmed / 萨拉·艾哈迈德"), which would otherwise let
+    English editions slip through as fake Chinese candidates.
+    """
     return any(
         _has_cjk_text(entry.get(field))
-        for field in ("title", "authors", "translators", "publisher")
+        for field in ("title", "translators", "publisher")
     )
 
 
@@ -474,43 +481,49 @@ def _book_localisations_zh(
     sources: list[str],
     existing_douban_entries: list[dict] | None = None,
 ) -> dict:
-    """Return Chinese-version candidates as a sidecar, never part of metadata merge."""
+    """Return Chinese-version candidates as a sidecar by filtering the
+    general douban_cn search results.
+
+    douban_cn now uses Kagi as its only discovery path (see
+    sources/douban_cn.py); a `language="zh"` field on the canonical entry
+    marks ones that passed the Chinese-edition filter. The sidecar simply
+    surfaces those — no second adapter call.
+
+    If the general search wasn't allowed to hit douban_cn at all (e.g.
+    caller passed `--source openalex`), the sidecar runs the adapter once
+    on its own.
+    """
     if not any([query.isbn, query.title, query.author, query.query]):
         return {}
 
-    if existing_douban_entries and _query_requests_zh(query):
-        result = AdapterResult(source="douban_cn", success=True, entries=existing_douban_entries)
-    else:
+    entries = list(existing_douban_entries or [])
+    if not entries:
         result = _adapter_search_book("douban_cn", _localisation_query(query))
+        if not result.success:
+            return {"zh": {
+                "source": "douban_cn",
+                "status": "error",
+                "error": result.error or "unknown",
+                "candidates": [],
+            }}
+        entries = result.entries
 
-    sidecar = {
-        "zh": {
-            "source": "douban_cn",
-            "status": "none",
-            "candidates": [],
-        }
-    }
-    if not result.success:
-        sidecar["zh"]["status"] = "error"
-        sidecar["zh"]["error"] = result.error or "unknown"
-        return sidecar
-
-    seen: set[str] = set()
     candidates: list[dict] = []
-    for entry in result.entries:
+    seen: set[str] = set()
+    for entry in entries:
         if not _looks_zh_localisation(entry):
             continue
-        candidate = _localisation_candidate_from_entry(entry)
-        if not candidate:
+        cand = _localisation_candidate_from_entry(entry)
+        if not cand or cand["id"] in seen:
             continue
-        if candidate["id"] in seen:
-            continue
-        seen.add(candidate["id"])
-        candidates.append(candidate)
+        seen.add(cand["id"])
+        candidates.append(cand)
 
-    sidecar["zh"]["status"] = "found" if candidates else "none"
-    sidecar["zh"]["candidates"] = candidates
-    return sidecar
+    return {"zh": {
+        "source": "douban_cn",
+        "status": "found" if candidates else "none",
+        "candidates": candidates,
+    }}
 
 
 def _adapter_search_book(source_id: str, query: BookQuery) -> AdapterResult:

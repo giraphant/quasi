@@ -19,12 +19,14 @@ For book localisation (`subject=zh` sidecar or explicit Chinese-version
 lookup), implemented in `_zh_localisation_search`:
 
 ```text
-compact_external_book_query(title, author, year)
-  -> kagi search --format json "site:book.douban.com/subject {q}"
+external_book_queries(title, author, query, isbn)
+  -> for each ordered query variant:
+       kagi search --format json "site:book.douban.com/subject {q}"
   -> filter Kagi `data[].url` with strict canonical regex:
-        ^https?://book\.douban\.com/subject/(\d+)/*(?:\?[^#]*)?$
-     drops /comments, /blockquotes, /doulists, /reviews/..., etc.
-     normalises `/subject/ID//` and `?_dtcc=...` to `/subject/ID/`
+        ^https?://book\.douban\.com/subject/(\d+)/?$
+     accepts only /subject/ID and /subject/ID/
+     rejects /comments, /blockquotes, /annotation, /doulists,
+     /reviews/..., query strings, double slashes, etc.
   -> for each canonical URL (limit 10):
         requests.get with browser User-Agent + Accept-Language
         BeautifulSoup parse:
@@ -50,10 +52,18 @@ no Douban-search fallback, no `/works/{id}/` aggregate pages.
 All in `scripts/search/sources/douban_cn.py`:
 
 - `_compact_external_book_query(title, author, query, year, ...)`
-  - flattens whitespace, drops subtitle after `:` / `：`, caps title to
-    6 tokens and author to 4 tokens.
-  - example: `Strange Encounters: Embodied Others in\nPost-Coloniality` +
-    `Sara Ahmed` → `Strange Encounters Sara Ahmed`.
+  - returns the first query variant for callers/tests that need to inspect
+    the primary query.
+
+- `_external_book_queries(title, author, query, isbn)`
+  - flattens whitespace and returns ordered Kagi variants.
+  - searches exact original title first, then exact-title variants with
+    `原作名` / `译者`, then title-head variants for subtitled books, then
+    author-qualified fallbacks.
+  - example: `My Mother Was a Computer` + `N. Katherine Hayles` starts with:
+    `"My Mother Was a Computer"`,
+    `"My Mother Was a Computer" 原作名`,
+    `"My Mother Was a Computer" 译者`.
 
 - `_kagi_subject_urls(query, limit=10) -> (urls, warnings)`
   - calls `kagi search --format json "site:book.douban.com/subject {query}"`
@@ -106,16 +116,15 @@ pytest plugins/quasi/tests/test_search_cli.py -q
 
 Latest local results:
 
-- `test_source_douban_cn.py`: 17/17 passed
-- `test_douban_cn_en2zh.py`: 21/21 passed
-- paired pytest: 38 passed
-- full search tests: 84 passed, 1 urllib/OpenSSL environment warning
-- CLI sidecar tests: 3 passed
+- `test_source_douban_cn.py`: 33/33 passed
+- `test_douban_cn_en2zh.py`: 12/12 passed
+- `pytest` not available in the active Python 3.14 environment during the
+  0.32.9 pass; direct Python test runners were used.
 
 ## End-to-end validation (2026-05-19)
 
 Kagi 0.5.4 installed and authenticated via `.kagi.toml` in CWD. Atomic
-operation `_kagi_site_subject_urls(query)` returns real Douban subject URLs;
+operation `_kagi_subject_urls(query)` returns real Douban subject URLs;
 five-case run end-to-end:
 
 | Case | Result |
@@ -172,4 +181,3 @@ five-case run end-to-end:
   detection above, false positives are gone, but irrelevant English
   related-version pages still get fetched. Could prune by requiring seed
   matches the query (re-use `_score_primary_match`).
-

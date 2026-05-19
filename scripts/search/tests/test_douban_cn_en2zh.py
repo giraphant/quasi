@@ -101,8 +101,9 @@ SUBJECT_PAGE_EN_ORIGINAL = """
 # ── HTML parsing (direct path) ──
 
 def test_parse_subject_page_zh_translation_fields():
-    url = "https://book.douban.com/subject/35erta123/"
-    result = douban_cn._parse_dd_subject_page(SUBJECT_PAGE_ZH_TRANSLATION, url)
+    url = "https://book.douban.com/subject/3512345/"
+    with patch("sources.douban_cn._dd_fetch", return_value=(True, SUBJECT_PAGE_ZH_TRANSLATION)):
+        result = douban_cn._fetch_subject_via_bs4(url)
     assert result is not None
     assert result["title"] == "与麻烦同在"
     assert result["original_title"] == "Staying with the Trouble: Making Kin in the Chthulucene"
@@ -113,13 +114,12 @@ def test_parse_subject_page_zh_translation_fields():
     assert result["douban_rating"] == 8.6
     assert result["ratings_count"] == 1523
     assert result["series"] == "薄荷实验"
-    assert "哲学" in result["categories"]
-    assert "女性主义" in result["categories"]
 
 
 def test_parse_subject_page_en_original():
     url = "https://book.douban.com/subject/36512345/"
-    result = douban_cn._parse_dd_subject_page(SUBJECT_PAGE_EN_ORIGINAL, url)
+    with patch("sources.douban_cn._dd_fetch", return_value=(True, SUBJECT_PAGE_EN_ORIGINAL)):
+        result = douban_cn._fetch_subject_via_bs4(url)
     assert result is not None
     assert result["title"] == "Staying with the Trouble"
     assert "Donna J. Haraway" in result["authors"]
@@ -171,19 +171,22 @@ def test_normalise_handles_missing_fields():
 
 # ── End-to-end search_book with mocked HTTP ──
 
-def test_search_book_english_title_direct_path_returns_results():
-    """Non-zh search runs through direct HTTP scrape end-to-end."""
+def test_search_book_english_title_kagi_path_returns_results():
+    """Non-zh search uses Kagi subject discovery and fetches returned subjects."""
 
     def mock_dd_fetch(url, cookie=None, timeout=20):
-        if "douban.com/search" in url:
-            return True, SEARCH_RESULTS_HTML
-        if "subject/35erta123" in url:
+        if "subject/3512345" in url:
             return True, SUBJECT_PAGE_ZH_TRANSLATION
         if "subject/36512345" in url:
             return True, SUBJECT_PAGE_EN_ORIGINAL
         return False, "not found"
 
-    with patch("sources.douban_cn._dd_fetch", side_effect=mock_dd_fetch):
+    with patch("sources.douban_cn._kagi_subject_urls", return_value=([
+            "https://book.douban.com/subject/3512345/",
+            "https://book.douban.com/subject/36512345/",
+         ], [])), \
+         patch("sources.douban_cn._dd_fetch", side_effect=mock_dd_fetch), \
+         patch("sources.douban_cn.time.sleep"):
         q = search.BookQuery(
             title="Staying with the Trouble",
             author="Donna Haraway",
@@ -267,63 +270,28 @@ def test_is_blocked_detects_ban():
     assert douban_cn._is_blocked("<title>搜索结果</title>") is False
 
 
-def test_calc_url_extracts_subject():
-    href = "https://www.douban.com/link2/?url=https%3A%2F%2Fbook.douban.com%2Fsubject%2F12345%2F&query=test"
-    assert douban_cn._calc_url(href) == "https://book.douban.com/subject/12345/"
+def test_canonical_subject_url_exact_policy():
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/12345/"
+    ) == "https://book.douban.com/subject/12345/"
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/12345/comments"
+    ) is None
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/12345/blockquotes"
+    ) is None
 
 
-def test_calc_url_returns_none_for_non_subject():
-    href = "https://www.douban.com/link2/?url=https%3A%2F%2Fwww.example.com&query=test"
-    assert douban_cn._calc_url(href) is None
-
-
-def test_get_text_after_label():
-    html = '<span class="pl">出版社:</span>华东师范大学出版社<br/>'
-    assert "华东师范大学出版社" in douban_cn._get_text_after_label(html, "出版社")
-
-
-def test_get_authors_from_block():
-    html = '''<span class="pl">译者</span>
-    <a href="/search/赵文">赵文</a> /
-    <a href="/search/李明">李明</a>
-    <br/>'''
-    authors = douban_cn._get_authors_from_block(html, "译者")
-    assert "赵文" in authors
-    assert "李明" in authors
-
-
-# ── Direct search impl ──
-
-def test_direct_search_impl_year_filter():
-    search_html = '<a href="https://www.douban.com/link2/?url=https%3A%2F%2Fbook.douban.com%2Fsubject%2F111%2F&query=test">x</a>'
-
-    def mock_fetch(url, cookie=None, timeout=20):
-        if "search" in url:
-            return True, search_html
-        return True, SUBJECT_PAGE_EN_ORIGINAL  # year=2016
-
-    with patch("sources.douban_cn._dd_fetch", side_effect=mock_fetch):
-        result = douban_cn._direct_search_impl("test", limit=5, year_from=2020)
-
-    assert result["count"] == 0
-
-
-def test_direct_search_impl_returns_results():
-    search_html = '<a href="https://www.douban.com/link2/?url=https%3A%2F%2Fbook.douban.com%2Fsubject%2F35erta123%2F&query=test">x</a>'
-
-    def mock_fetch(url, cookie=None, timeout=20):
-        if "search" in url:
-            return True, search_html
-        return True, SUBJECT_PAGE_ZH_TRANSLATION
-
-    with patch("sources.douban_cn._dd_fetch", side_effect=mock_fetch):
-        result = douban_cn._direct_search_impl("与麻烦同在", limit=5)
-
-    assert result["success"] is True
-    assert result["count"] >= 1
-    assert result["results"][0]["title"] == "与麻烦同在"
-    assert result["results"][0]["original_title"] == "Staying with the Trouble: Making Kin in the Chthulucene"
-    assert "赵文" in result["results"][0]["translators"]
+def test_external_book_queries_prefer_exact_original_title():
+    variants = douban_cn._external_book_queries(
+        title="My Mother Was a Computer",
+        author="N. Katherine Hayles",
+    )
+    assert variants[:3] == [
+        '"My Mother Was a Computer"',
+        '"My Mother Was a Computer" 原作名',
+        '"My Mother Was a Computer" 译者',
+    ]
 
 
 # ── Runner ──

@@ -76,6 +76,25 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.32.9** (2026-05-19): **Douban subject discovery tightened and
+  query variants broadened.**
+  - URL admission now uses the exact book-subject policy:
+    `^https?://book\.douban\.com/subject/(\d+)/?$`. Only canonical
+    `/subject/<digits>` and `/subject/<digits>/` pages survive; child
+    pages such as `/comments`, `/blockquotes`, `/annotation`,
+    `/doulists`, `/reviews/...`, query-string URLs, and double-slash
+    variants are rejected instead of being normalised into candidates.
+  - Kagi discovery now tries ordered query variants instead of one weak
+    `title-head + author` string. It first searches the exact original
+    title, then exact-title variants with Douban metadata hints
+    (`原作名`, `译者`), then title-head variants for subtitled books, and
+    only then author-qualified fallbacks.
+  - Restored `_zh_localisation_search(query)` as a thin wrapper around the
+    Kagi path for test and maintainer clarity: it fetches subject pages,
+    filters Chinese editions, and sorts them by `ratings_count`.
+  - Tests updated to the Kagi-only adapter surface:
+    `test_source_douban_cn.py` 33/33 and `test_douban_cn_en2zh.py` 12/12.
+
 - **0.32.8** (2026-05-19): **Douban localisation: Doko walk removed,
   Kagi + BeautifulSoup is the only path.** 10/10 live test books (Foucault
   / Butler / Latour / Anderson / Said / Arendt / Bourdieu / Haraway etc.)

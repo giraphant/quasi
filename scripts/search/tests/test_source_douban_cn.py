@@ -18,19 +18,20 @@ def test_supports():
 
 # ── search_book branching ──
 
-def test_general_metadata_query_uses_direct_path():
-    """Non-zh queries hit the direct HTTP path only — no Kagi."""
-    fake_direct = [{"title": "X", "year": 2020, "douban_subject_id": "1"}]
-    with patch("sources.douban_cn._direct_search", return_value=fake_direct), \
+def test_general_metadata_query_uses_kagi_book_search():
+    """Non-zh queries use Kagi subject discovery without zh filtering."""
+    fake_records = [{"title": "X", "year": 2020, "douban_subject_id": "1"}]
+    with patch("sources.douban_cn._kagi_book_search", return_value=(fake_records, [])) as mock_kagi, \
          patch("sources.douban_cn._zh_localisation_search") as mock_zh:
         r = douban_cn.search_book(search.BookQuery(title="X"))
     assert r.success is True
     assert len(r.entries) == 1
+    assert mock_kagi.called
     assert not mock_zh.called
 
 
 def test_subject_zh_uses_localisation_path():
-    """subject='zh' triggers _zh_localisation_search instead of direct."""
+    """subject='zh' triggers _zh_localisation_search instead of raw Kagi search."""
     fake_zh = ([{
         "title": "原书中文版",
         "publisher": "河南大学出版社",
@@ -40,11 +41,11 @@ def test_subject_zh_uses_localisation_path():
         "isbn_13": "9787564906962",
     }], [])
     with patch("sources.douban_cn._zh_localisation_search", return_value=fake_zh) as mock_zh, \
-         patch("sources.douban_cn._direct_search") as mock_direct:
+         patch("sources.douban_cn._kagi_book_search") as mock_kagi:
         r = douban_cn.search_book(search.BookQuery(title="Original", subject="zh"))
     assert r.success is True
     assert mock_zh.called
-    assert not mock_direct.called
+    assert not mock_kagi.called
     assert r.entries[0]["title"] == "原书中文版"
     assert r.entries[0]["isbn_13"] == "9787564906962"
     assert r.entries[0]["language"] == "zh"
@@ -89,10 +90,32 @@ def test_kagi_subject_urls_returns_canonical_only():
     assert urls == [
         "https://book.douban.com/subject/12345/",
         "https://book.douban.com/subject/67890/",
-        "https://book.douban.com/subject/77777/",
-        "https://book.douban.com/subject/55555/",
     ]
     assert warnings == []
+
+
+def test_canonical_subject_url_rejects_child_pages():
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/2482832/"
+    ) == "https://book.douban.com/subject/2482832/"
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/2482832"
+    ) == "https://book.douban.com/subject/2482832/"
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/2482832/comments"
+    ) is None
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/2482832/blockquotes"
+    ) is None
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/20384337/annotation"
+    ) is None
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/55555/?_dtcc=1"
+    ) is None
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/77777//"
+    ) is None
 
 
 def test_kagi_subject_urls_respects_limit():
@@ -119,12 +142,12 @@ def test_kagi_subject_urls_invokes_kagi_with_site_limiter():
     payload = {"data": []}
     with patch("sources.douban_cn.subprocess.run",
                return_value=_completed(payload)) as mock_run:
-        douban_cn._kagi_subject_urls("Strange Encounters Sara Ahmed")
+        douban_cn._kagi_subject_urls('"Strange Encounters" 原作名')
     args = mock_run.call_args[0][0]
     assert args[0] == "kagi"
     assert "--format" in args and "json" in args
     assert any("site:book.douban.com/subject" in a for a in args)
-    assert any("Strange Encounters Sara Ahmed" in a for a in args)
+    assert any('"Strange Encounters" 原作名' in a for a in args)
 
 
 def test_kagi_subject_urls_missing_cli_returns_warning():
@@ -144,23 +167,33 @@ def test_kagi_subject_urls_nonzero_rc_returns_warning():
 
 # ── _compact_external_book_query ──
 
-def test_compact_external_book_query_removes_subtitle_and_newline():
+def test_external_book_queries_search_exact_title_before_author():
     q = douban_cn._compact_external_book_query(
         title="Strange Encounters: Embodied Others in\n         Post-Coloniality",
         author="Sara Ahmed",
     )
-    assert q == "Strange Encounters Sara Ahmed"
+    assert q == '"Strange Encounters: Embodied Others in Post-Coloniality"'
     assert "\n" not in q
-    assert "Post-Coloniality" not in q
-
-
-def test_compact_external_book_query_limits_tokens():
-    q = douban_cn._compact_external_book_query(
-        title="a b c d e f g h i j",
-        author="x y z aa bb cc dd",
+    variants = douban_cn._external_book_queries(
+        title="My Mother Was a Computer",
+        author="N. Katherine Hayles",
     )
-    # max 6 title tokens, max 4 author tokens
-    assert q == "a b c d e f x y z aa"
+    assert variants[:3] == [
+        '"My Mother Was a Computer"',
+        '"My Mother Was a Computer" 原作名',
+        '"My Mother Was a Computer" 译者',
+    ]
+    assert '"My Mother Was a Computer" "N. Katherine Hayles"' in variants
+    assert '"My Mother Was a Computer" Hayles' in variants
+
+
+def test_external_book_queries_include_title_head_fallback():
+    variants = douban_cn._external_book_queries(
+        title="Strange Encounters: Embodied Others in Post-Coloniality",
+        author="Sara Ahmed",
+    )
+    assert '"Strange Encounters"' in variants
+    assert '"Strange Encounters" 原作名' in variants
 
 
 # ── _is_chinese_edition: registry + CJK signals ──
