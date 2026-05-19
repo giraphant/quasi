@@ -3,72 +3,81 @@
 ## Current Goal
 
 `quasi-search book` fills `localisations.zh` with Chinese-edition candidates.
-The desired path is:
+
+Hard constraints:
 
 1. Use original bibliographic fields only.
-2. Avoid agent-invented Chinese titles, publishers, translators, or query terms.
-3. Use an external search engine to discover Douban `subject` URLs before falling
-   back to Douban's own search.
-4. Read concrete Douban pages through Doko.
+2. Avoid agent-invented Chinese titles, publishers, translators, or query
+   terms.
+3. Use an external search engine to discover Douban `subject` URLs;
+   filter aggressively to canonical subject pages.
+4. Parse pages with plain HTTP + BeautifulSoup. No Doko / browser bridge.
 
 ## Current Flow
 
-For book localisation (`subject=zh` sidecar or explicit Chinese-version lookup):
+For book localisation (`subject=zh` sidecar or explicit Chinese-version
+lookup), implemented in `_zh_localisation_search`:
 
 ```text
-ISBN direct
-  -> Doko read https://book.douban.com/isbn/{isbn}/
-  -> if subject found, read that subject page
-
-If no primary subject:
-  -> compact title/author into a short external query
-  -> Kagi CLI search:
-       site:book.douban.com/subject {short query}
-  -> extract book.douban.com/subject/{id}/ URLs
-  -> Doko read candidate subject page
-
-If still no primary subject:
-  -> fallback to Douban search.douban.com via Doko
-
-After primary subject:
-  -> parse subject page "other versions" links only
-  -> do not read /works/{id}/ aggregate pages
-  -> Doko read candidate subject pages
-  -> keep records that look Chinese
+compact_external_book_query(title, author, year)
+  -> kagi search --format json "site:book.douban.com/subject {q}"
+  -> filter Kagi `data[].url` with strict canonical regex:
+        ^https?://book\.douban\.com/subject/(\d+)/*(?:\?[^#]*)?$
+     drops /comments, /blockquotes, /doulists, /reviews/..., etc.
+     normalises `/subject/ID//` and `?_dtcc=...` to `/subject/ID/`
+  -> for each canonical URL (limit 10):
+        requests.get with browser User-Agent + Accept-Language
+        BeautifulSoup parse:
+          - title: <span property="v:itemreviewed"> (fallback h1)
+          - #info block: 作者/译者/出版社/出版年/ISBN/原作名/副标题/丛书
+          - rating: <strong property="v:average">
+          - votes: <span property="v:votes">
+        apply _is_chinese_edition filter:
+          1. ISBN agency 978-7 / 957/986 / 988/962  ⇒ accept
+          2. ISBN agency 978-4 / 89/11 / 604         ⇒ reject (JP/KR/VN)
+          3. Kana / Hangul anywhere                  ⇒ reject
+          4. CJK in publisher | translator-with-CJK | title ⇒ accept
+          5. otherwise reject
+  -> sort by ratings_count desc
+  -> return as `localisations.zh.candidates[]`
 ```
 
-`works` pages were removed from the active path because English and Chinese
-editions were observed not to reliably share the same Douban works aggregate.
+No Doko walking, no `_find_cndouban`, no related-version graph traversal,
+no Douban-search fallback, no `/works/{id}/` aggregate pages.
 
-## Kagi Integration
+## Implementation surface
 
-Implementation file:
+All in `scripts/search/sources/douban_cn.py`:
 
-- `scripts/search/sources/douban_cn.py`
+- `_compact_external_book_query(title, author, query, year, ...)`
+  - flattens whitespace, drops subtitle after `:` / `：`, caps title to
+    6 tokens and author to 4 tokens.
+  - example: `Strange Encounters: Embodied Others in\nPost-Coloniality` +
+    `Sara Ahmed` → `Strange Encounters Sara Ahmed`.
 
-Relevant functions:
+- `_kagi_subject_urls(query, limit=10) -> (urls, warnings)`
+  - calls `kagi search --format json "site:book.douban.com/subject {query}"`
+  - walks `payload["data"]`, applies `_RE_DOUBAN_SUBJECT_CLEAN`, dedupes,
+    returns canonical `https://book.douban.com/subject/{id}/` URLs only.
 
-- `_compact_external_book_query(...)`
-  - flattens whitespace
-  - drops subtitle after `:` / `：`
-  - limits title and author token count
-  - example:
-    `Strange Encounters: Embodied Others in\n Post-Coloniality` + `Sara Ahmed`
-    becomes `Strange Encounters Sara Ahmed`
+- `_fetch_subject_via_bs4(url, cookie=None) -> dict | None`
+  - uses `_dd_fetch` (urllib with browser headers) + `BeautifulSoup`.
+  - returns None on fetch failure or block, otherwise a raw dict with
+    keys: title, authors, translators, publisher, year, isbn_13/10,
+    original_title, subtitle, series, douban_rating, ratings_count,
+    douban_subject_id, douban_url.
 
-- `_kagi_site_subject_query(query)`
-  - returns `site:book.douban.com/subject {query}`
-  - no extra `豆瓣读书` suffix
+- `_is_chinese_edition(rec) -> bool`
+  - ISBN-prefix gate first (CN/TW/HK accept; JP/KR/VN reject), then
+    kana/hangul reject, then CJK in publisher/translator/title.
 
-- `_kagi_site_subject_urls(query, limit=5)`
-  - calls `kagi search --format json`
-  - extracts `book.douban.com/subject/...` URLs from JSON
-  - does not invoke Doko
-  - if Kagi is missing or returns no subjects, returns warnings and lets caller
-    proceed to Douban fallback
+- `_zh_localisation_search(query) -> (records, warnings)`
+  - top-level: Kagi → strict URL filter → bs4 fetch → Chinese filter →
+    sort by ratings_count desc.
 
-Kagi CLI is expected to be available as `kagi` on `PATH`. The current local
-workspace has an untracked `.kagi.toml` with credentials; do not commit it.
+Kagi CLI is expected to be available as `kagi` on `PATH`. The user's
+workspace stores credentials in `.kagi.toml` at CWD (untracked); the
+plugin reads no Kagi config of its own.
 
 ## Agent Rules
 

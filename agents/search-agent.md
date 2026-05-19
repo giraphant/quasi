@@ -49,8 +49,9 @@ quasi-search paper \
 /出版社/译者,也不要把这类猜测塞进 `--title` 或 `--query` 一口气查。
 需要看具体豆瓣页面时,只读取已经返回的 `douban_url` 或 `preview_link`;
 不要手写豆瓣搜索 URL。
-内部中文本发现会先用 Kagi CLI 做 `site:book.douban.com/subject` 查询;
-Kagi 不可用或无结果时,bin 会自行走豆瓣兜底。
+内部中文本发现会用 Kagi CLI 做 `site:book.douban.com/subject` 查询,
+然后用 BeautifulSoup 直接解析每个豆瓣页面,过滤出中文版条目。
+不需要 Doko / 浏览器桥。Kagi 不可用时, `localisations.zh.candidates` 为空。
 
 ## 判断规则
 

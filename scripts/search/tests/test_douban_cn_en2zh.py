@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """Unit tests: English book title → Chinese translation metadata via douban_cn.
 
-Tests the full pipeline: query with English title/author → Douban search →
-parse subject page → normalise to BookRecord → verify Chinese translation
-fields (translators, original_title, publisher, etc.).
+Tests the full pipeline: query with English title/author → Kagi
+discovery + BeautifulSoup parsing → normalised BookRecord → verify
+Chinese translation fields (translators, original_title, publisher,
+ISBN agency prefix, etc.).
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import search
@@ -96,14 +98,11 @@ SUBJECT_PAGE_EN_ORIGINAL = """
 """
 
 
-# ── Tests: HTML parsing ──
+# ── HTML parsing (direct path) ──
 
 def test_parse_subject_page_zh_translation_fields():
-    """Verify _parse_dd_subject_page extracts all Chinese translation metadata."""
     url = "https://book.douban.com/subject/35erta123/"
-    result = douban_cn._parse_dd_subject_page(
-        SUBJECT_PAGE_ZH_TRANSLATION, url
-    )
+    result = douban_cn._parse_dd_subject_page(SUBJECT_PAGE_ZH_TRANSLATION, url)
     assert result is not None
     assert result["title"] == "与麻烦同在"
     assert result["original_title"] == "Staying with the Trouble: Making Kin in the Chthulucene"
@@ -119,11 +118,8 @@ def test_parse_subject_page_zh_translation_fields():
 
 
 def test_parse_subject_page_en_original():
-    """Verify parsing an original English edition returns no translators."""
     url = "https://book.douban.com/subject/36512345/"
-    result = douban_cn._parse_dd_subject_page(
-        SUBJECT_PAGE_EN_ORIGINAL, url
-    )
+    result = douban_cn._parse_dd_subject_page(SUBJECT_PAGE_EN_ORIGINAL, url)
     assert result is not None
     assert result["title"] == "Staying with the Trouble"
     assert "Donna J. Haraway" in result["authors"]
@@ -133,10 +129,9 @@ def test_parse_subject_page_en_original():
     assert result["original_title"] == ""
 
 
-# ── Tests: normalisation ──
+# ── Normalisation ──
 
 def test_normalise_zh_translation_to_book_record():
-    """Verify _normalise maps raw douban result to BookRecord schema with language=zh."""
     raw = {
         "title": "与麻烦同在",
         "authors": ["[美] 唐娜·哈拉维"],
@@ -144,9 +139,9 @@ def test_normalise_zh_translation_to_book_record():
         "original_title": "Staying with the Trouble",
         "year": 2024,
         "publisher": "华东师范大学出版社",
-        "isbn": "9787576048971",
+        "isbn_13": "9787576048971",
         "douban_url": "https://book.douban.com/subject/35erta123/",
-        "douban_id": "35erta123",
+        "douban_subject_id": "35erta123",
         "ratings_count": 1523,
         "douban_rating": 8.6,
     }
@@ -164,30 +159,8 @@ def test_normalise_zh_translation_to_book_record():
     assert "douban_cn" in norm["_sources"]
 
 
-def test_normalise_keeps_isbn_from_direct_path():
-    """_normalise preserves ISBN from both direct and cndouban paths."""
-    raw_from_direct = {
-        "title": "与麻烦同在",
-        "isbn_13": "9787576048971",
-        "isbn_10": None,
-        "douban_subject_id": "123",
-    }
-    norm = douban_cn._normalise(raw_from_direct)
-    assert norm["isbn_13"] == "9787576048971"
-
-    # Contrast: cndouban path uses "isbn" key — this works
-    raw_from_cndouban = {
-        "title": "与麻烦同在",
-        "isbn": "9787576048971",
-        "douban_id": "123",
-    }
-    norm2 = douban_cn._normalise(raw_from_cndouban)
-    assert norm2["isbn_13"] == "9787576048971"
-
-
 def test_normalise_handles_missing_fields():
-    """_normalise should not crash on sparse raw dicts."""
-    raw = {"title": "测试书", "douban_id": "999"}
+    raw = {"title": "测试书", "douban_subject_id": "999"}
     norm = douban_cn._normalise(raw)
     assert norm["title"] == "测试书"
     assert norm["translators"] == []
@@ -196,14 +169,12 @@ def test_normalise_handles_missing_fields():
     assert norm["language"] == "zh"
 
 
-# ── Tests: end-to-end search_book with mocked HTTP ──
+# ── End-to-end search_book with mocked HTTP ──
 
-def test_search_book_english_title_returns_zh_translation():
-    """Full pipeline: English title → direct search → parse → normalised BookRecord."""
-    call_count = {"n": 0}
+def test_search_book_english_title_direct_path_returns_results():
+    """Non-zh search runs through direct HTTP scrape end-to-end."""
 
     def mock_dd_fetch(url, cookie=None, timeout=20):
-        call_count["n"] += 1
         if "douban.com/search" in url:
             return True, SEARCH_RESULTS_HTML
         if "subject/35erta123" in url:
@@ -222,46 +193,52 @@ def test_search_book_english_title_returns_zh_translation():
 
     assert result.success is True
     assert len(result.entries) >= 1
-
     zh_entries = [e for e in result.entries if e.get("language") == "zh"]
     assert len(zh_entries) >= 1
-
     zh = zh_entries[0]
     assert "与麻烦同在" in zh["title"]
-    assert zh["original_title"] == "Staying with the Trouble: Making Kin in the Chthulucene"
-    assert len(zh["translators"]) > 0
     assert zh["isbn_13"] == "9787576048971"
 
 
-def test_search_book_with_subject_zh_triggers_works_fallback():
-    """When subject='zh' and direct returns empty, works-page fallback is tried."""
-    works_result = [{
-        "title": "类人猿、赛博格和女人",
-        "year": 2022,
-        "douban_subject_id": "9999",
-        "translator": "翻译者A",
-        "publisher": "南京大学出版社",
-    }]
+def test_search_book_with_subject_zh_uses_kagi_then_bs4():
+    """When subject='zh' is set, the Kagi-driven localisation path runs."""
 
-    with patch("sources.douban_cn._direct_search", return_value=[]), \
-         patch("sources.douban_cn._cndouban_works_payload", return_value={"status": "ok", "translations": works_result}) as mock_fb:
+    def mock_kagi(query, limit=10):
+        return (["https://book.douban.com/subject/9999/"], [])
+
+    def mock_fetch(url, cookie=None, timeout=20):
+        if "subject/9999" in url:
+            return True, """
+            <html><h1><span property="v:itemreviewed">类人猿、赛博格和女人</span></h1>
+            <div id="info">
+              <span class="pl">作者:</span> 唐娜·哈拉维<br/>
+              <span class="pl">译者:</span> 翻译者A<br/>
+              <span class="pl">出版社:</span> 南京大学出版社<br/>
+              <span class="pl">出版年:</span> 2022<br/>
+              <span class="pl">ISBN:</span> 9787305256240<br/>
+            </div></html>
+            """
+        return False, "not found"
+
+    with patch("sources.douban_cn._kagi_subject_urls", side_effect=mock_kagi), \
+         patch("sources.douban_cn._dd_fetch", side_effect=mock_fetch), \
+         patch("sources.douban_cn.time.sleep"):
         q = search.BookQuery(title="Simians Cyborgs and Women", subject="zh", limit=5)
         result = douban_cn.search_book(q)
 
-    assert mock_fb.called
     assert result.success is True
     assert len(result.entries) >= 1
     assert result.entries[0]["title"] == "类人猿、赛博格和女人"
+    assert result.entries[0]["translators"] == ["翻译者A"]
+    assert result.entries[0]["isbn_13"] == "9787305256240"
 
 
-def test_search_book_empty_query_returns_no_results():
-    """No query params → no results, no crash."""
+def test_search_book_empty_query_returns_error():
     result = douban_cn.search_book(search.BookQuery())
     assert result.success is False or len(result.entries) == 0
 
 
 def test_search_book_blocked_returns_empty():
-    """When Douban blocks the request, should return empty results gracefully."""
     blocked_html = "<html><head><title>禁止访问</title></head><body>检测到有异常请求</body></html>"
 
     def mock_dd_fetch(url, cookie=None, timeout=20):
@@ -275,7 +252,7 @@ def test_search_book_blocked_returns_empty():
     assert len(result.entries) == 0
 
 
-# ── Tests: helper functions ──
+# ── Helper functions ──
 
 def test_has_cjk_detects_chinese():
     assert douban_cn._has_cjk("华东师范大学出版社") is True
@@ -315,71 +292,9 @@ def test_get_authors_from_block():
     assert "李明" in authors
 
 
-# ── Tests: cndouban works-page pipeline ──
-
-def test_find_cndouban_no_inputs():
-    """No inputs returns error status."""
-    result = douban_cn._find_cndouban()
-    assert result["status"] == "error"
-    assert result["primary_subject"] is None
-
-
-def test_find_cndouban_with_kagi_unavailable_falls_back_to_douban_search():
-    """Automatic lookup falls back to Douban search when Kagi discovery is unavailable."""
-    with patch("shutil.which", return_value=None):
-        result = douban_cn._find_cndouban(
-            title="Staying with the Trouble",
-            author="Donna Haraway",
-        )
-    assert result["status"] == "no-douban-entry"
-    assert "kagi CLI not available" in str(result["diagnostics"]["warnings"])
-    assert "DOKO_NOT_AVAILABLE" in str(result["diagnostics"]["warnings"])
-
-
-def test_parse_cn_subject_page_from_doko_text():
-    """Verify _parse_cn_subject_page extracts from dokobot-rendered plain text."""
-    body = """
-与麻烦同在
-作者: [美] 唐娜·哈拉维
-译者: 赵文
-出版社: 华东师范大学出版社
-出版年: 2024
-ISBN: 9787576048971
-原作名: Staying with the Trouble
-1523人评价
-"""
-    result = douban_cn._parse_cn_subject_page(body, "35erta123")
-    assert result["title"] == "与麻烦同在"
-    assert result["author"] == "[美] 唐娜·哈拉维"
-    assert result["translator"] == "赵文"
-    assert result["publisher"] == "华东师范大学出版社"
-    assert result["year"] == 2024
-    assert result["isbn"] == "9787576048971"
-    assert result["original_title"] == "Staying with the Trouble"
-    assert result["ratings_count"] == 1523
-
-
-def test_extract_manifestations_from_works_page():
-    """Verify works-page parsing extracts subject IDs with publisher/year hints."""
-    body = """
-全部版本(5)
-上海人民出版社 (2022)
-https://book.douban.com/subject/11111111/
-Duke University Press (2016)
-https://book.douban.com/subject/22222222/
-华东师范大学出版社 (2024)
-https://book.douban.com/subject/33333333/
-"""
-    results = douban_cn._extract_manifestations_from_works_page(body)
-    assert len(results) == 3
-    ids = [r["subject_id"] for r in results]
-    assert "11111111" in ids
-    assert "22222222" in ids
-    assert "33333333" in ids
-
+# ── Direct search impl ──
 
 def test_direct_search_impl_year_filter():
-    """_direct_search_impl respects year_from/year_to filters."""
     search_html = '<a href="https://www.douban.com/link2/?url=https%3A%2F%2Fbook.douban.com%2Fsubject%2F111%2F&query=test">x</a>'
 
     def mock_fetch(url, cookie=None, timeout=20):
@@ -394,7 +309,6 @@ def test_direct_search_impl_year_filter():
 
 
 def test_direct_search_impl_returns_results():
-    """_direct_search_impl returns parsed results for valid pages."""
     search_html = '<a href="https://www.douban.com/link2/?url=https%3A%2F%2Fbook.douban.com%2Fsubject%2F35erta123%2F&query=test">x</a>'
 
     def mock_fetch(url, cookie=None, timeout=20):
@@ -415,29 +329,9 @@ def test_direct_search_impl_returns_results():
 # ── Runner ──
 
 def main():
-    tests = [
-        test_parse_subject_page_zh_translation_fields,
-        test_parse_subject_page_en_original,
-        test_normalise_zh_translation_to_book_record,
-        test_normalise_keeps_isbn_from_direct_path,
-        test_normalise_handles_missing_fields,
-        test_search_book_english_title_returns_zh_translation,
-        test_search_book_with_subject_zh_triggers_works_fallback,
-        test_search_book_empty_query_returns_no_results,
-        test_search_book_blocked_returns_empty,
-        test_has_cjk_detects_chinese,
-        test_is_blocked_detects_ban,
-        test_calc_url_extracts_subject,
-        test_calc_url_returns_none_for_non_subject,
-        test_get_text_after_label,
-        test_get_authors_from_block,
-        test_find_cndouban_no_inputs,
-        test_find_cndouban_with_kagi_unavailable_falls_back_to_douban_search,
-        test_parse_cn_subject_page_from_doko_text,
-        test_extract_manifestations_from_works_page,
-        test_direct_search_impl_year_filter,
-        test_direct_search_impl_returns_results,
-    ]
+    import inspect
+    tests = [obj for name, obj in inspect.getmembers(sys.modules[__name__])
+             if name.startswith("test_") and callable(obj)]
     failed = 0
     for t in tests:
         try:

@@ -10,267 +10,139 @@ import search
 from sources import douban_cn
 
 
+# ── Module surface ──
+
 def test_supports():
     assert douban_cn.SUPPORTS == ["book"]
 
 
-def test_general_metadata_query_uses_direct_path_first():
-    """General metadata lookup keeps direct path first."""
+# ── search_book branching ──
+
+def test_general_metadata_query_uses_direct_path():
+    """Non-zh queries hit the direct HTTP path only — no Kagi."""
     fake_direct = [{"title": "X", "year": 2020, "douban_subject_id": "1"}]
     with patch("sources.douban_cn._direct_search", return_value=fake_direct), \
-         patch("sources.douban_cn._cndouban_works_page", return_value=[]) as mock_fb, \
-         patch("sources.douban_cn._related_version_search", return_value=[]) as mock_related:
+         patch("sources.douban_cn._zh_localisation_search") as mock_zh:
         r = douban_cn.search_book(search.BookQuery(title="X"))
     assert r.success is True
     assert len(r.entries) == 1
-    assert not mock_fb.called
-    assert not mock_related.called
+    assert not mock_zh.called
 
 
-def test_cjk_author_triggers_works_page():
-    """When --author contains CJK, also enumerate works page for translations."""
-    with patch("sources.douban_cn._direct_search", return_value=[]), \
-         patch("sources.douban_cn._cndouban_works_page", return_value=[
-             {"title": "原书中文版", "year": 2022, "douban_subject_id": "2"}
-         ]) as mock_fb:
-        r = douban_cn.search_book(search.BookQuery(author="哈拉维"))
-    assert r.success is True
-    assert mock_fb.called
-    assert r.entries[0]["title"] == "原书中文版"
-
-
-def test_subject_zh_uses_cndouban_subject_page_first():
-    """--subject zh uses Doko subject-page lookup before the direct scraper."""
-    fake_works = [{
+def test_subject_zh_uses_localisation_path():
+    """subject='zh' triggers _zh_localisation_search instead of direct."""
+    fake_zh = ([{
         "title": "原书中文版",
         "publisher": "河南大学出版社",
         "year": 2012,
         "douban_subject_id": "2",
         "douban_url": "https://book.douban.com/subject/2/",
         "isbn_13": "9787564906962",
-    }]
-    with patch("sources.douban_cn._direct_search", return_value=[]) as mock_direct, \
-         patch("sources.douban_cn._related_version_search", return_value=[]) as mock_related, \
-         patch("sources.douban_cn._cndouban_works_payload", return_value={"status": "ok", "translations": fake_works}) as mock_fb:
+    }], [])
+    with patch("sources.douban_cn._zh_localisation_search", return_value=fake_zh) as mock_zh, \
+         patch("sources.douban_cn._direct_search") as mock_direct:
         r = douban_cn.search_book(search.BookQuery(title="Original", subject="zh"))
     assert r.success is True
-    assert mock_fb.called
+    assert mock_zh.called
     assert not mock_direct.called
-    assert not mock_related.called
-    assert len(r.entries) == 1
     assert r.entries[0]["title"] == "原书中文版"
     assert r.entries[0]["isbn_13"] == "9787564906962"
+    assert r.entries[0]["language"] == "zh"
 
 
-def test_find_cndouban_uses_kagi_site_before_douban_search():
-    """Title/author localisation discovers Douban subjects through Kagi first."""
-    urls: list[str] = []
-
-    def fake_doko_read(url, timeout=60):
-        urls.append(url)
-        if "book.douban.com/subject/2/" in url:
-            return True, """
-原书中文版
-作者: Example Author
-译者: 译者甲
-出版社: 河南大学出版社
-出版年: 2012
-ISBN: 9787564906962
-"""
-        return False, "unexpected"
-
-    with patch("sources.douban_cn._kagi_site_subject_urls",
-               return_value=(["https://book.douban.com/subject/2/"], [])) as mock_kagi, \
-         patch("sources.douban_cn._doko_read", side_effect=fake_doko_read):
-        result = douban_cn._find_cndouban(title="Original", author="Example Author")
-
-    assert result["status"] == "ok"
-    assert result["translations"][0]["douban_id"] == "2"
-    assert result["diagnostics"]["doko_calls"] == 1
-    mock_kagi.assert_called_once()
-    assert any("book.douban.com/subject/2/" in url for url in urls)
-    assert not any("search.douban.com" in url for url in urls)
-
-
-def test_find_cndouban_follows_related_version_link_after_kagi_subject():
-    """After Kagi finds the original subject, localisation follows version links directly."""
-    urls: list[str] = []
-
-    def fake_doko_read(url, timeout=60):
-        urls.append(url)
-        if "book.douban.com/subject/1/" in url:
-            return True, """
-# Original (豆瓣)
-作者: Example Author
-出版社: Example Press
-出版年: 2001
-ISBN: 9780000000001
-其他版本
-原书中文版 [2]
-[2] https://book.douban.com/subject/2/
-"""
-        if "book.douban.com/subject/2/" in url:
-            return True, """
-# 原书中文版 (豆瓣)
-作者: Example Author
-译者: 译者甲
-出版社: 河南大学出版社
-出版年: 2012
-ISBN: 9787564906962
-123人评价
-"""
-        return False, "unexpected"
-
-    with patch("sources.douban_cn._kagi_site_subject_urls",
-               return_value=(["https://book.douban.com/subject/1/"], [])) as mock_kagi, \
-         patch("sources.douban_cn._doko_read", side_effect=fake_doko_read):
-        result = douban_cn._find_cndouban(title="Original", author="Example Author")
-
-    assert result["status"] == "ok"
-    assert result["translations"][0]["douban_id"] == "2"
-    assert result["diagnostics"]["routing"] == [
-        "kagi-site-title-author",
-        "related-version-links",
-    ]
-    assert result["diagnostics"]["doko_calls"] == 2
-    mock_kagi.assert_called_once()
-    assert any("book.douban.com/subject/1/" in url for url in urls)
-    assert any("book.douban.com/subject/2/" in url for url in urls)
-    assert not any("search.douban.com" in url for url in urls)
-
-
-def test_find_cndouban_degrades_isbn_to_kagi_to_related_version():
-    """Full fallback order: ISBN direct, Kagi subject discovery, then direct related-version links."""
-    urls: list[str] = []
-
-    def fake_doko_read(url, timeout=60):
-        urls.append(url)
-        if "book.douban.com/isbn/" in url:
-            return False, "isbn miss"
-        if "book.douban.com/subject/1/" in url:
-            return True, """
-# Original (豆瓣)
-作者: Example Author
-出版社: Example Press
-出版年: 2001
-ISBN: 9780000000001
-其他版本
-原书中文版 [2]
-[2] https://book.douban.com/subject/2/
-"""
-        if "book.douban.com/subject/2/" in url:
-            return True, """
-# 原书中文版 (豆瓣)
-作者: Example Author
-译者: 译者甲
-出版社: 河南大学出版社
-出版年: 2012
-ISBN: 9787564906962
-123人评价
-"""
-        return False, "unexpected"
-
-    with patch("sources.douban_cn._kagi_site_subject_urls",
-               return_value=(["https://book.douban.com/subject/1/"], [])) as mock_kagi, \
-         patch("sources.douban_cn._doko_read", side_effect=fake_doko_read):
-        result = douban_cn._find_cndouban(
-            isbn="9780000000001",
-            title="Original",
-            author="Example Author",
-        )
-
-    assert result["status"] == "ok"
-    assert result["translations"][0]["douban_id"] == "2"
-    assert result["diagnostics"]["routing"] == [
-        "isbn-direct",
-        "kagi-site-title-author",
-        "related-version-links",
-    ]
-    assert result["diagnostics"]["doko_calls"] == 3
-    mock_kagi.assert_called_once()
-    assert any("book.douban.com/isbn/" in url for url in urls)
-    assert any("book.douban.com/subject/1/" in url for url in urls)
-    assert any("book.douban.com/subject/2/" in url for url in urls)
-    assert not any("search.douban.com" in url for url in urls)
-
-
-def test_subject_zh_falls_back_to_related_versions_when_cndouban_empty():
-    """If Doko subject-page lookup is empty, Kagi-seeded related probe runs before direct search."""
-    fake_related = [{
-        "title": "原书中文版",
-        "publisher": "河南大学出版社",
-        "year": 2012,
-        "douban_subject_id": "2",
-        "douban_url": "https://book.douban.com/subject/2/",
-    }]
-    with patch("sources.douban_cn._cndouban_works_payload", return_value={"status": "no-translations", "translations": []}) as mock_fb, \
-         patch("sources.douban_cn._direct_search", return_value=[]) as mock_direct, \
-         patch("sources.douban_cn._related_version_search", return_value=fake_related) as mock_related:
-        r = douban_cn.search_book(search.BookQuery(title="Original", subject="zh"))
+def test_subject_zh_returns_empty_when_no_chinese_editions():
+    """An empty localisation result is success+no entries (not error)."""
+    with patch("sources.douban_cn._zh_localisation_search", return_value=([], [])):
+        r = douban_cn.search_book(search.BookQuery(title="No Chinese Translation", subject="zh"))
     assert r.success is True
-    assert mock_fb.called
-    assert not mock_direct.called
-    assert mock_related.called
-    assert r.entries[0]["title"] == "原书中文版"
+    assert r.entries == []
 
 
-def test_related_version_search_uses_kagi_seed_before_douban_search():
-    urls: list[str] = []
-
-    def fake_doko_read(url, timeout=60):
-        urls.append(url)
-        if "book.douban.com/subject/1/" in url:
-            return True, """
-# Original (豆瓣)
-作者: Example Author 出版社: Example Press 出版年: 2001 ISBN: 9780000000001
-其他版本
-原书中文版 [2]
-[2] https://book.douban.com/subject/2/
-"""
-        if "book.douban.com/subject/2/" in url:
-            return True, """
-# 原书中文版 (豆瓣)
-作者: Example Author 译者: 译者甲 出版社: 河南大学出版社 出版年: 2012 ISBN: 9787564906962
-123人评价
-"""
-        return False, "unexpected"
-
-    with patch("sources.douban_cn._dd_fetch", return_value=(False, "skip direct")), \
-         patch("sources.douban_cn._kagi_site_subject_urls",
-               return_value=(["https://book.douban.com/subject/1/"], [])) as mock_kagi, \
-         patch("sources.douban_cn._doko_read", side_effect=fake_doko_read):
-        results = douban_cn._related_version_search(
-            search.BookQuery(title="Original", author="Example Author", limit=5),
-            direct_hits=[],
-        )
-
-    assert results[0]["douban_subject_id"] == "2"
-    mock_kagi.assert_called_once()
-    assert not any("search.douban.com" in url for url in urls)
+def test_empty_query_returns_error():
+    r = douban_cn.search_book(search.BookQuery())
+    assert r.success is False
 
 
-def test_kagi_site_subject_urls_never_uses_doko():
-    payload = {"data": [{"url": "https://book.douban.com/subject/12345/"}]}
-    completed = type("Completed", (), {
-        "returncode": 0,
+# ── _kagi_subject_urls: strict URL filter, kagi shell invocation ──
+
+def _completed(payload: dict, *, rc: int = 0, stderr: str = ""):
+    return type("Completed", (), {
+        "returncode": rc,
         "stdout": json.dumps(payload),
-        "stderr": "",
+        "stderr": stderr,
     })()
-    with patch("sources.douban_cn.shutil.which", return_value="/bin/kagi"), \
-         patch("sources.douban_cn.subprocess.run", return_value=completed) as mock_run, \
-         patch("sources.douban_cn._doko_read") as mock_doko:
-        urls, warnings = douban_cn._kagi_site_subject_urls("Example Book")
 
-    assert urls == ["https://book.douban.com/subject/12345/"]
+
+def test_kagi_subject_urls_returns_canonical_only():
+    """Strict regex keeps /subject/{id}/, drops /comments, /blockquotes, /doulists."""
+    payload = {"data": [
+        {"url": "https://book.douban.com/subject/12345/"},
+        {"url": "https://book.douban.com/subject/12345/comments/?sort=time"},
+        {"url": "https://book.douban.com/subject/67890/blockquotes"},
+        {"url": "https://book.douban.com/subject/67890/"},
+        {"url": "https://book.douban.com/subject/99999/doulists"},
+        {"url": "https://book.douban.com/subject/77777//"},  # double-slash
+        {"url": "https://book.douban.com/subject/55555/?_dtcc=1"},  # query string
+    ]}
+    with patch("sources.douban_cn.subprocess.run", return_value=_completed(payload)):
+        urls, warnings = douban_cn._kagi_subject_urls("Example Book", limit=10)
+    assert urls == [
+        "https://book.douban.com/subject/12345/",
+        "https://book.douban.com/subject/67890/",
+        "https://book.douban.com/subject/77777/",
+        "https://book.douban.com/subject/55555/",
+    ]
     assert warnings == []
-    mock_run.assert_called_once()
-    mock_doko.assert_not_called()
 
 
-def test_kagi_site_subject_query_has_only_site_limiter():
-    query = douban_cn._kagi_site_subject_query("Strange Encounters Sara Ahmed")
-    assert query == "site:book.douban.com/subject Strange Encounters Sara Ahmed"
+def test_kagi_subject_urls_respects_limit():
+    payload = {"data": [
+        {"url": f"https://book.douban.com/subject/{i}/"} for i in range(1, 20)
+    ]}
+    with patch("sources.douban_cn.subprocess.run", return_value=_completed(payload)):
+        urls, _ = douban_cn._kagi_subject_urls("Example", limit=5)
+    assert len(urls) == 5
 
+
+def test_kagi_subject_urls_dedupes_repeats():
+    payload = {"data": [
+        {"url": "https://book.douban.com/subject/100/"},
+        {"url": "https://book.douban.com/subject/100/"},
+        {"url": "https://book.douban.com/subject/100//"},  # normalises to same
+    ]}
+    with patch("sources.douban_cn.subprocess.run", return_value=_completed(payload)):
+        urls, _ = douban_cn._kagi_subject_urls("Example", limit=10)
+    assert urls == ["https://book.douban.com/subject/100/"]
+
+
+def test_kagi_subject_urls_invokes_kagi_with_site_limiter():
+    payload = {"data": []}
+    with patch("sources.douban_cn.subprocess.run",
+               return_value=_completed(payload)) as mock_run:
+        douban_cn._kagi_subject_urls("Strange Encounters Sara Ahmed")
+    args = mock_run.call_args[0][0]
+    assert args[0] == "kagi"
+    assert "--format" in args and "json" in args
+    assert any("site:book.douban.com/subject" in a for a in args)
+    assert any("Strange Encounters Sara Ahmed" in a for a in args)
+
+
+def test_kagi_subject_urls_missing_cli_returns_warning():
+    with patch("sources.douban_cn.subprocess.run", side_effect=FileNotFoundError):
+        urls, warnings = douban_cn._kagi_subject_urls("anything")
+    assert urls == []
+    assert any("not on PATH" in w for w in warnings)
+
+
+def test_kagi_subject_urls_nonzero_rc_returns_warning():
+    with patch("sources.douban_cn.subprocess.run",
+               return_value=_completed({}, rc=2, stderr="auth required")):
+        urls, warnings = douban_cn._kagi_subject_urls("anything")
+    assert urls == []
+    assert any("rc=2" in w for w in warnings)
+
+
+# ── _compact_external_book_query ──
 
 def test_compact_external_book_query_removes_subtitle_and_newline():
     q = douban_cn._compact_external_book_query(
@@ -282,98 +154,259 @@ def test_compact_external_book_query_removes_subtitle_and_newline():
     assert "Post-Coloniality" not in q
 
 
-def test_subject_zh_allows_douban_search_fallback_when_kagi_empty():
-    calls: list[str] = []
-
-    def fake_doko_read(url, timeout=60):
-        calls.append(url)
-        return False, "no hit"
-
-    with patch("sources.douban_cn._cndouban_works_payload", return_value={"status": "no-douban-entry", "translations": []}), \
-         patch("sources.douban_cn._kagi_site_subject_urls", return_value=([], ["no kagi hit"])), \
-         patch("sources.douban_cn._doko_read", side_effect=fake_doko_read), \
-         patch("sources.douban_cn._direct_search", return_value=[]):
-        result = douban_cn.search_book(search.BookQuery(title="Original", author="Example Author", subject="zh"))
-
-    assert result.success is True
-    assert any("search.douban.com" in url for url in calls)
+def test_compact_external_book_query_limits_tokens():
+    q = douban_cn._compact_external_book_query(
+        title="a b c d e f g h i j",
+        author="x y z aa bb cc dd",
+    )
+    # max 6 title tokens, max 4 author tokens
+    assert q == "a b c d e f x y z aa"
 
 
-def test_extract_external_subject_urls_decodes_redirects():
-    html = '''
-    <a href="/url?q=https%3A%2F%2Fbook.douban.com%2Fsubject%2F12345%2F&sa=U">x</a>
-    <a href="https://book.douban.com/subject/67890/">y</a>
-    '''
-    assert douban_cn._extract_subject_urls_from_external_text(html) == [
-        "https://book.douban.com/subject/12345/",
-        "https://book.douban.com/subject/67890/",
+# ── _is_chinese_edition: registry + CJK signals ──
+
+def test_is_chinese_edition_accepts_mainland_isbn():
+    assert douban_cn._is_chinese_edition({"isbn_13": "9787108017949"}) is True
+
+
+def test_is_chinese_edition_accepts_tw_isbn():
+    assert douban_cn._is_chinese_edition({"isbn_13": "9789866525605"}) is True
+
+
+def test_is_chinese_edition_accepts_hk_isbn():
+    assert douban_cn._is_chinese_edition({"isbn_13": "9789881555540"}) is True
+
+
+def test_is_chinese_edition_rejects_japanese_isbn_even_with_kanji():
+    """ISBN 978-4 (Japan) must reject even when title/translator are kanji."""
+    assert douban_cn._is_chinese_edition({
+        "isbn_13": "9784753103171",
+        "title": "伴侶種宣言",
+        "translators": ["永野 文香"],
+    }) is False
+
+
+def test_is_chinese_edition_rejects_korean_isbn():
+    assert douban_cn._is_chinese_edition({"isbn_13": "9788932917337"}) is False
+
+
+def test_is_chinese_edition_rejects_kana_in_title():
+    assert douban_cn._is_chinese_edition({
+        "title": "サイボーグ宣言",
+        "publisher": "東京大学出版会",
+    }) is False
+
+
+def test_is_chinese_edition_rejects_hangul():
+    assert douban_cn._is_chinese_edition({
+        "title": "사이보그 선언",
+        "publisher": "민음사",
+    }) is False
+
+
+def test_is_chinese_edition_accepts_cjk_publisher_without_isbn():
+    assert douban_cn._is_chinese_edition({
+        "title": "regional title",
+        "publisher": "商务印书馆",
+    }) is True
+
+
+def test_is_chinese_edition_accepts_cjk_translator_without_isbn():
+    assert douban_cn._is_chinese_edition({
+        "title": "regional title",
+        "translators": ["王宇根"],
+    }) is True
+
+
+def test_is_chinese_edition_rejects_non_cjk_translator():
+    """A French/English translator alone is not evidence of Chinese."""
+    assert douban_cn._is_chinese_edition({
+        "title": "Queer Phenomenology",
+        "publisher": "Éditions Le Manuscrit",
+        "translators": ["Laurence Brottier"],
+        "isbn_13": "9782304052824",
+    }) is False
+
+
+def test_is_chinese_edition_accepts_cjk_title():
+    assert douban_cn._is_chinese_edition({"title": "性别麻烦"}) is True
+
+
+def test_is_chinese_edition_rejects_no_signal():
+    assert douban_cn._is_chinese_edition({
+        "title": "Random English Book",
+        "publisher": "Penguin",
+        "translators": [],
+    }) is False
+
+
+# ── _fetch_subject_via_bs4: BeautifulSoup parsing of #info block ──
+
+_SUBJECT_HTML_ZH = """
+<html><head><title>性别麻烦 (豆瓣)</title></head><body>
+<h1><span property="v:itemreviewed">性别麻烦</span></h1>
+<div id="info">
+  <span class="pl">作者:</span> <a>朱迪斯·巴特勒</a><br/>
+  <span class="pl">出版社:</span> 上海三联书店<br/>
+  <span class="pl">译者:</span> <a>宋素凤</a><br/>
+  <span class="pl">出版年:</span> 2009-1<br/>
+  <span class="pl">页数:</span> 286<br/>
+  <span class="pl">定价:</span> 28.00元<br/>
+  <span class="pl">ISBN:</span> 9787542628893<br/>
+  <span class="pl">原作名:</span> Gender Trouble: Feminism and the Subversion of Identity<br/>
+</div>
+<div><strong property="v:average">8.4</strong>
+     <span property="v:votes">1234</span></div>
+</body></html>
+"""
+
+
+def test_fetch_subject_via_bs4_parses_chinese_edition():
+    with patch("sources.douban_cn._dd_fetch", return_value=(True, _SUBJECT_HTML_ZH)):
+        rec = douban_cn._fetch_subject_via_bs4("https://book.douban.com/subject/3339862/")
+    assert rec is not None
+    assert rec["douban_subject_id"] == "3339862"
+    assert rec["title"].startswith("性别麻烦")
+    assert rec["publisher"] == "上海三联书店"
+    assert rec["translators"] == ["宋素凤"]
+    assert rec["authors"] == ["朱迪斯·巴特勒"]
+    assert rec["year"] == 2009
+    assert rec["isbn_13"] == "9787542628893"
+    assert rec["original_title"] == "Gender Trouble: Feminism and the Subversion of Identity"
+    assert rec["douban_rating"] == 8.4
+    assert rec["ratings_count"] == 1234
+
+
+def test_fetch_subject_via_bs4_returns_none_when_blocked():
+    blocked = "<html><head><title>禁止访问</title></head></html>"
+    with patch("sources.douban_cn._dd_fetch", return_value=(True, blocked)):
+        rec = douban_cn._fetch_subject_via_bs4("https://book.douban.com/subject/1/")
+    assert rec is None
+
+
+def test_fetch_subject_via_bs4_returns_none_on_fetch_failure():
+    with patch("sources.douban_cn._dd_fetch", return_value=(False, "HTTP 503")):
+        rec = douban_cn._fetch_subject_via_bs4("https://book.douban.com/subject/1/")
+    assert rec is None
+
+
+def test_fetch_subject_via_bs4_isolates_fields_from_inline_metadata():
+    """The #info block parser must not bleed `出版年` etc. into earlier fields."""
+    inline = """
+    <html><head><title>X</title></head><body>
+    <h1><span property="v:itemreviewed">规训与惩罚</span></h1>
+    <div id="info">
+      <span class="pl">作者:</span> 米歇尔·福柯<br/>
+      <span class="pl">出版社:</span> 三联书店<br/>
+      <span class="pl">出版年:</span> 2003-1<br/>
+      <span class="pl">ISBN:</span> 9787108017949<br/>
+    </div>
+    </body></html>
+    """
+    with patch("sources.douban_cn._dd_fetch", return_value=(True, inline)):
+        rec = douban_cn._fetch_subject_via_bs4("https://book.douban.com/subject/1012307/")
+    assert rec["authors"] == ["米歇尔·福柯"]
+    assert rec["publisher"] == "三联书店"
+    assert rec["year"] == 2003
+    assert rec["isbn_13"] == "9787108017949"
+
+
+# ── _zh_localisation_search: integration ──
+
+def test_zh_localisation_search_filters_to_chinese_only():
+    """End-to-end: kagi returns mix of EN+ZH, only ZH survive."""
+    urls = [
+        "https://book.douban.com/subject/1/",   # English Penguin
+        "https://book.douban.com/subject/2/",   # Chinese 三联
     ]
-
-
-def test_subject_zh_reports_doko_unavailable_when_no_fallback_result():
-    payload = {
-        "status": "error",
-        "translations": [],
-        "diagnostics": {"warnings": ["isbn-direct: DOKO_NOT_AVAILABLE"]},
-    }
-    with patch("sources.douban_cn._cndouban_works_payload", return_value=payload), \
-         patch("sources.douban_cn._related_version_search", return_value=[]), \
-         patch("sources.douban_cn._direct_search", return_value=[]):
-        r = douban_cn.search_book(search.BookQuery(title="Original", subject="zh"))
-    assert r.success is False
-    assert "DOKO_NOT_AVAILABLE" in (r.error or "")
-
-
-def test_parse_doko_references_decodes_link2_subject_url():
-    body = """
-    [35] https://www.douban.com/link2/?url=https%3A%2F%2Fbook.douban.com%2Fsubject%2F4175504%2F&query=X
+    en_html = """
+    <html><h1><span property="v:itemreviewed">Discipline and Punish</span></h1>
+    <div id="info">
+      <span class="pl">作者:</span> Michel Foucault<br/>
+      <span class="pl">出版社:</span> Penguin<br/>
+      <span class="pl">出版年:</span> 1991-04-25<br/>
+      <span class="pl">ISBN:</span> 9780140137224<br/>
+    </div></html>
     """
-    refs = douban_cn._parse_doko_references(body)
-    assert refs["35"] == "https://book.douban.com/subject/4175504/"
-
-
-def test_parse_doko_subject_page_handles_inline_metadata():
-    body = """
-    # Cyborg Manifesto (豆瓣)
-    **Cyborg Manifesto**
-    作者: Donna J. Haraway [21]出版社: Feltrinelli出版年: 1995 ISBN: 9788807460012页数: 194装帧: Paperback
-    8.7
-    199人评价 [3]
+    zh_html = """
+    <html><h1><span property="v:itemreviewed">规训与惩罚</span></h1>
+    <div id="info">
+      <span class="pl">作者:</span> 米歇尔·福柯<br/>
+      <span class="pl">出版社:</span> 三联书店<br/>
+      <span class="pl">译者:</span> 刘北成<br/>
+      <span class="pl">出版年:</span> 2003-1<br/>
+      <span class="pl">ISBN:</span> 9787108017949<br/>
+    </div>
+    <div><span property="v:votes">5000</span></div></html>
     """
-    parsed = douban_cn._parse_doko_subject_page(body, "https://book.douban.com/subject/4175504/")
-    assert parsed is not None
-    assert parsed["title"] == "Cyborg Manifesto"
-    assert parsed["authors"] == ["Donna J. Haraway"]
-    assert parsed["publisher"] == "Feltrinelli"
-    assert parsed["year"] == 1995
-    assert parsed["isbn_13"] == "9788807460012"
-    assert parsed["ratings_count"] == 199
+
+    def fake_fetch(url, cookie=None, timeout=20):
+        if "subject/1/" in url:
+            return True, en_html
+        if "subject/2/" in url:
+            return True, zh_html
+        return False, "n/a"
+
+    with patch("sources.douban_cn._kagi_subject_urls", return_value=(urls, [])), \
+         patch("sources.douban_cn._dd_fetch", side_effect=fake_fetch):
+        out, warnings = douban_cn._zh_localisation_search(
+            search.BookQuery(title="Discipline and Punish", author="Foucault", limit=10)
+        )
+
+    assert len(out) == 1
+    assert out[0]["douban_subject_id"] == "2"
+    assert out[0]["title"] == "规训与惩罚"
+
+
+def test_zh_localisation_search_sorts_by_ratings_count():
+    urls = [f"https://book.douban.com/subject/{i}/" for i in range(1, 4)]
+
+    def fake_fetch(url, cookie=None, timeout=20):
+        sid = url.rstrip("/").split("/")[-1]
+        ratings = {"1": 10, "2": 5000, "3": 200}[sid]
+        return True, f"""
+        <html><h1><span property="v:itemreviewed">书{sid}</span></h1>
+        <div id="info">
+          <span class="pl">出版社:</span> 三联书店<br/>
+          <span class="pl">ISBN:</span> 978710801794{sid}<br/>
+        </div>
+        <div><span property="v:votes">{ratings}</span></div></html>
+        """
+
+    with patch("sources.douban_cn._kagi_subject_urls", return_value=(urls, [])), \
+         patch("sources.douban_cn._dd_fetch", side_effect=fake_fetch), \
+         patch("sources.douban_cn.time.sleep"):  # skip the polite delay
+        out, _ = douban_cn._zh_localisation_search(
+            search.BookQuery(title="x", author="y", limit=10)
+        )
+
+    assert [r["douban_subject_id"] for r in out] == ["2", "3", "1"]
+
+
+def test_zh_localisation_search_returns_warnings_on_kagi_failure():
+    with patch("sources.douban_cn._kagi_subject_urls",
+               return_value=([], ["kagi-search: timeout"])):
+        out, warnings = douban_cn._zh_localisation_search(
+            search.BookQuery(title="x", author="y")
+        )
+    assert out == []
+    assert any("timeout" in w for w in warnings)
 
 
 def main():
-    tests = [
-        test_supports,
-        test_general_metadata_query_uses_direct_path_first,
-        test_cjk_author_triggers_works_page,
-        test_subject_zh_uses_cndouban_subject_page_first,
-        test_find_cndouban_uses_kagi_site_before_douban_search,
-        test_find_cndouban_follows_related_version_link_after_kagi_subject,
-        test_find_cndouban_degrades_isbn_to_kagi_to_related_version,
-        test_subject_zh_falls_back_to_related_versions_when_cndouban_empty,
-        test_related_version_search_uses_kagi_seed_before_douban_search,
-        test_kagi_site_subject_urls_never_uses_doko,
-        test_kagi_site_subject_query_has_only_site_limiter,
-        test_compact_external_book_query_removes_subtitle_and_newline,
-        test_subject_zh_allows_douban_search_fallback_when_kagi_empty,
-        test_extract_external_subject_urls_decodes_redirects,
-        test_subject_zh_reports_doko_unavailable_when_no_fallback_result,
-        test_parse_doko_references_decodes_link2_subject_url,
-        test_parse_doko_subject_page_handles_inline_metadata,
-    ]
+    import inspect
+    tests = [obj for name, obj in inspect.getmembers(sys.modules[__name__])
+             if name.startswith("test_") and callable(obj)]
     failed = 0
     for t in tests:
-        try: t(); print(f"  PASS  {t.__name__}")
-        except Exception as e: failed += 1; print(f"  FAIL  {t.__name__}: {e}")
+        try:
+            t()
+            print(f"  PASS  {t.__name__}")
+        except Exception as e:
+            failed += 1
+            import traceback
+            print(f"  FAIL  {t.__name__}: {e}")
+            traceback.print_exc()
     print(f"\n{len(tests) - failed}/{len(tests)} tests passed")
     sys.exit(1 if failed else 0)
 

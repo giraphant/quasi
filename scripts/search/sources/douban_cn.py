@@ -1,19 +1,21 @@
 """Douban CN adapter — books only (CJK / Chinese-translation lookup).
 
-Inlined from scripts/search/douban_direct.py and scripts/search/cndouban.py
-(Phase 9.1). Standalone files kept until Phase 9.2.
+Two paths share this module:
 
-Combines two search paths:
-    1. _direct_search_impl  — direct HTTP scraping (no dokobot), from douban_direct.py
-    2. _cndouban_works_impl — cndouban lookup wrapper, from cndouban.py
-    3. related-version probe — search hit → subject page → other versions
+  1. `_direct_search_impl` — direct HTTP scraping of search.douban.com for
+     general metadata queries (no Doko, no Kagi). Used when the caller is
+     looking up a Chinese-authored book by its Chinese title/author.
 
-Path selection (internal, caller doesn't specify):
-    - For explicit zh/localisation lookup: Doko subject-page enumeration first
-      (ISBN/search → subject → other versions → Chinese manifestations),
-      with direct/related probe only as fallback.
-    - For general metadata lookup: direct path first, then Doko fallback when
-      direct returns nothing and the query looks Chinese.
+  2. `_zh_localisation_search` — Chinese-edition discovery for an English
+     book. Asks Kagi (`site:book.douban.com/subject {q}`), filters results
+     to canonical subject URLs, fetches each via direct HTTP, parses with
+     BeautifulSoup, and keeps only Chinese-language editions.
+
+Path selection (caller doesn't need to specify):
+  - `subject ∈ {zh, cn, chinese, translation, translations, cndouban}` →
+    localisation path
+  - otherwise → direct search path (with localisation as a CJK-author
+    fallback when the direct search returns nothing)
 """
 
 from __future__ import annotations
@@ -22,7 +24,6 @@ import gzip
 import json
 import random
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -33,6 +34,8 @@ from html import unescape
 from pathlib import Path
 from typing import Optional
 
+from bs4 import BeautifulSoup
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import search as _s
@@ -42,56 +45,40 @@ SOURCE_ID = "douban_cn"
 
 
 # ==================================================================
-# Inlined from douban_direct.py
+# Constants
 # ==================================================================
 
 _DOUBAN_SEARCH_URL = "https://www.douban.com/search"
 _DOUBAN_BOOK_URL = "https://book.douban.com/subject/%s/"
 _DOUBAN_BOOK_BASE = "https://book.douban.com/"
 _DOUBAN_BOOK_CAT = "1001"
+
 _SUBJECT_URL_RE = re.compile(r".*/subject/(\d+)/?")
-_WORKS_URL_RE = re.compile(r"https?://book\.douban\.com/works/(\d+)/?")
-_ANY_SUBJECT_HREF_RE = re.compile(
-    r"""href=["']((?:https?:)?//book\.douban\.com/subject/\d+/?|/subject/\d+/?)["']""",
-    re.IGNORECASE,
+
+# Strict canonical-subject regex used for filtering Kagi results.
+# Accepts `/subject/{digits}/`, `/subject/{digits}//`, and the same with
+# an optional query string. Rejects any extra path segment such as
+# `/comments`, `/blockquotes`, `/doulists`, `/reviews/123`, etc.
+_RE_DOUBAN_SUBJECT_CLEAN = re.compile(
+    r"^https?://book\.douban\.com/subject/(\d+)/*(?:\?[^#]*)?$"
 )
-_ANY_WORKS_HREF_RE = re.compile(
-    r"""href=["']((?:https?:)?//book\.douban\.com/works/\d+/?|/works/\d+/?)["']""",
-    re.IGNORECASE,
-)
-_ANY_HREF_RE = re.compile(r"""href=["']([^"']+)["']""", re.IGNORECASE)
-_DOKO_REF_RE = re.compile(r"^\s*\[(\d+)\]\s+(\S+)\s*$", re.MULTILINE)
-_DOKO_INLINE_REF_RE = re.compile(r"\[(\d+)\]")
-_DOKO_RATING_RE = re.compile(r"(\d{1,7})\s*人评价")
-_VERSION_SECTION_MARKERS = ("这本书的其他版本", "這本書的其他版本", "其他版本", "同一作品")
-_SECTION_END_MARKERS = (
-    "<h2",
-    "</aside",
-    '<div id="db-rec-section"',
-    '<div class="block5"',
-    '<div class="indent"',
-)
-_DOKO_META_LABELS = (
-    "作者", "译者", "出版社", "出版年", "ISBN",
-    "页数", "装帧", "定价", "丛书", "原作名",
-)
+
 # ISBN agency prefixes that identify a Chinese-language edition:
 #   978-7-xxx     — mainland China
 #   978-957/986-x — Taiwan
 #   978-988/962-x — Hong Kong
-# Cleaner than maintaining a publisher whitelist (which would never keep up
-# with the long tail of independent / academic presses).
+# Cleaner than a publisher whitelist (which would never keep up with the
+# long tail of independent / academic presses).
 _ZH_ISBN_PREFIXES = ("9787", "978957", "978986", "978988", "978962")
 
-# Other Asian-CJK-language prefixes — explicitly NOT Chinese. Without this
-# the kanji-only Japanese titles / kanji translator names pass the generic
-# CJK check (e.g. 伴侶種宣言 / 永野 文香 from a JP edition).
+# Other Asian-CJK-language ISBN prefixes — explicitly NOT Chinese. Without
+# this the kanji-only Japanese titles / kanji translator names slip past
+# the generic CJK check (e.g. 伴侶種宣言 / 永野 文香 from a JP edition).
 _NON_ZH_ASIAN_ISBN_PREFIXES = ("9784", "97889", "97811", "978604")
 
-# Kana / Hangul ranges — presence means it's clearly not Chinese.
-_KANA_HANGUL_RE = re.compile(
-    r"[぀-ゟ゠-ヿᄀ-ᇿ㄰-㆏가-힯]"
-)
+# Kana / Hangul ranges — presence in title / publisher / translator means
+# it's clearly not Chinese.
+_KANA_HANGUL_RE = re.compile(r"[぀-ゟ゠-ヿᄀ-ᇿ㄰-㆏가-힯]")
 
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -119,7 +106,7 @@ def _get_headers(cookie: str | None = None) -> dict[str, str]:
 
 
 def _dd_fetch(url: str, cookie: str | None = None, timeout: int = 20) -> tuple[bool, str]:
-    """HTTP fetch for douban_direct path."""
+    """HTTP fetch. Returns (success, body-or-error-string)."""
     try:
         req = urllib.request.Request(url, headers=_get_headers(cookie))
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -141,11 +128,21 @@ def _dd_fetch(url: str, cookie: str | None = None, timeout: int = 20) -> tuple[b
 
 
 def _is_blocked(html: str) -> bool:
-    return "<title>禁止访问</title>" in html or "检测到有异常请求" in html
+    return ("<title>禁止访问</title>" in html
+            or "检测到有异常请求" in html
+            or "sec.douban.com" in (html or "")[:2000])
 
+
+def _has_cjk(s: str | None) -> bool:
+    return any("一" <= c <= "鿿" for c in (s or ""))
+
+
+# ==================================================================
+# Direct search path (general metadata)
+# ==================================================================
 
 def _calc_url(href: str) -> str | None:
-    """Extract the actual Douban subject URL from a search result redirect link."""
+    """Extract the actual Douban subject URL from a search redirect link."""
     parsed = urllib.parse.urlparse(href)
     params = dict(urllib.parse.parse_qsl(parsed.query))
     url = urllib.parse.unquote(params.get("url", ""))
@@ -156,7 +153,6 @@ def _calc_url(href: str) -> str | None:
 
 def _search_book_urls(query: str, limit: int = 5,
                       cookie: str | None = None) -> tuple[list[str], list[str]]:
-    """Search Douban for book URLs. Returns (urls, warnings)."""
     params = {"cat": _DOUBAN_BOOK_CAT, "q": query}
     url = _DOUBAN_SEARCH_URL + "?" + urllib.parse.urlencode(params)
 
@@ -190,7 +186,6 @@ _RE_YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
 
 
 def _get_text_after_label(html: str, label: str) -> str:
-    """Extract text after a <span class="pl"> label like '作者', '出版社', etc."""
     pattern = rf'<span\s+class="pl">\s*{re.escape(label)}\s*[:：]?\s*</span>(.*?)(?:<br\s*/?>|<span\s+class="pl">)'
     m = re.search(pattern, html, re.DOTALL | re.IGNORECASE)
     if not m:
@@ -200,12 +195,10 @@ def _get_text_after_label(html: str, label: str) -> str:
     text = unescape(text)
     text = re.sub(r"\s+", " ", text).strip()
     text = text.replace("\xa0", " ").strip()
-    text = text.strip("/").strip()
-    return text
+    return text.strip("/").strip()
 
 
 def _get_authors_from_block(html: str, label: str) -> list[str]:
-    """Extract author/translator names from their link block."""
     pattern = rf'<span\s+class="pl">\s*{re.escape(label)}\s*</span>(.*?)(?:<br\s*/?>|<span\s+class="pl">)'
     m = re.search(pattern, html, re.DOTALL | re.IGNORECASE)
     if not m:
@@ -224,7 +217,6 @@ def _get_authors_from_block(html: str, label: str) -> list[str]:
 
 
 def _parse_dd_subject_page(html: str, subject_url: str) -> dict | None:
-    """Parse a Douban book subject page into metadata dict."""
     title_m = re.search(r"property=['\"]v:itemreviewed['\"][^>]*>([^<]+)<", html)
     title = unescape(title_m.group(1).strip()) if title_m else None
     if not title:
@@ -330,26 +322,15 @@ def _direct_search_impl(
     year_to: int | None = None,
     cookie: str | None = None,
 ) -> dict:
-    """Search Douban books via direct HTTP. Returns {success, source, count, results}.
-
-    No dokobot or browser bridge required. May be blocked by Douban
-    without a login cookie.
-    """
+    """Search Douban books via direct HTTP. May be blocked without a cookie."""
     book_urls, warnings = _search_book_urls(query, limit=min(limit * 2, 10), cookie=cookie)
-
     if not book_urls:
-        return {
-            "success": True,
-            "source": "Douban (direct)",
-            "count": 0,
-            "results": [],
-            "warnings": warnings,
-        }
+        return {"success": True, "source": "Douban (direct)",
+                "count": 0, "results": [], "warnings": warnings}
 
     results: list[dict] = []
     for url in book_urls:
         time.sleep(random.random() * 0.3 + 0.2)
-
         ok, body = _dd_fetch(url, cookie)
         if not ok:
             warnings.append(f"subject-fetch {url}: {body[:120]}")
@@ -357,847 +338,222 @@ def _direct_search_impl(
         if _is_blocked(body):
             warnings.append(f"subject-fetch {url}: blocked")
             continue
-
         book = _parse_dd_subject_page(body, url)
         if not book:
             continue
-
         if year_from and book.get("year") and book["year"] < year_from:
             continue
         if year_to and book.get("year") and book["year"] > year_to:
             continue
-
         results.append(book)
         if len(results) >= limit:
             break
 
-    return {
-        "success": True,
-        "source": "Douban (direct)",
-        "count": len(results),
-        "results": results,
-        "warnings": warnings,
-    }
+    return {"success": True, "source": "Douban (direct)",
+            "count": len(results), "results": results, "warnings": warnings}
 
 
 # ==================================================================
-# Inlined from cndouban.py
+# Localisation path: Kagi → subject URLs → BeautifulSoup → Chinese filter
 # ==================================================================
-
-def _has_cjk(s: str) -> bool:
-    return any('一' <= c <= '鿿' for c in (s or ""))
-
-
-def _doko_read(url: str, timeout: int = 60) -> tuple[bool, str]:
-    """Invoke `dokobot read --local <url>`; return (success, body)."""
-    if not shutil.which("dokobot"):
-        return False, "DOKO_NOT_AVAILABLE"
-
-    def _run(args):
-        return subprocess.run(
-            ["dokobot", "read", *args, url],
-            capture_output=True, text=True, timeout=timeout, check=False,
-        )
-
-    try:
-        r = _run(["--local"])
-        if r.returncode != 0 and "bridge" in (r.stderr or "").lower():
-            r = _run([])
-    except subprocess.TimeoutExpired:
-        return False, "DOKO_TIMEOUT"
-    except FileNotFoundError:
-        return False, "DOKO_NOT_FOUND"
-
-    if r.returncode != 0:
-        return False, f"DOKO_ERR rc={r.returncode}: {(r.stderr or '')[:200]}"
-    return True, (r.stdout or "")
-
-
-def _isbn_direct_url(isbn: str) -> str:
-    isbn_clean = re.sub(r"[^0-9X]", "", (isbn or "").upper())
-    return f"https://book.douban.com/isbn/{isbn_clean}/"
-
-
-def _cn_search_url(query: str) -> str:
-    return ("https://search.douban.com/book/subject_search?"
-            + urllib.parse.urlencode({"search_text": query}))
-
-
-def _kagi_site_subject_query(query: str) -> str:
-    return f"site:book.douban.com/subject {query}"
-
 
 def _compact_external_book_query(
-    *,
-    title: str | None = None,
-    author: str | None = None,
-    query: str | None = None,
-    year: int | None = None,
+    *, title: str | None = None, author: str | None = None,
+    query: str | None = None, year: int | None = None,
+    max_title_tokens: int = 6, max_author_tokens: int = 4,
 ) -> str:
-    """Build a short external-search query for Douban subject discovery."""
-    title_text = re.sub(r"\s+", " ", (title or query or "")).strip()
-    if title_text:
-        main_title = re.split(r"\s*[:：]\s*", title_text, maxsplit=1)[0].strip()
-        if main_title:
-            title_text = main_title
-    title_tokens = title_text.split()[:8]
-    author_text = re.sub(r"\s+", " ", (author or "")).strip()
-    author_tokens = author_text.split()[:4]
-    parts = title_tokens + author_tokens
-    if year:
-        parts.append(str(year))
-    return " ".join(parts)
+    """Build a compact Kagi-friendly query string.
 
-
-def _subject_url(subject_id: str) -> str:
-    return f"https://book.douban.com/subject/{subject_id}/"
-
-
-def _works_url(works_id: str) -> str:
-    return f"https://book.douban.com/works/{works_id}/"
-
-
-_RE_SUBJECT_ID = re.compile(r"book\.douban\.com/subject/(\d+)")
-_RE_WORKS_ID = re.compile(r"book\.douban\.com/works/(\d+)")
-
-_RE_AUTHOR_CN = re.compile(r"作\s*者[:：]\s*(.+?)(?:\n|$)")
-_RE_TRANSLATOR_CN = re.compile(r"译\s*者[:：]\s*(.+?)(?:\n|$)")
-_RE_PUBLISHER_CN = re.compile(r"出版社[:：]\s*(.+?)(?:\n|$)")
-_RE_PUBLISH_YEAR_CN = re.compile(r"出版年[:：]\s*(\d{4})")
-_RE_ISBN_CN = re.compile(r"ISBN[:：]\s*([\dX-]+)")
-_RE_ORIGINAL_TITLE_CN = re.compile(r"原作名[:：]\s*(.+?)(?:\n|$)")
-_RE_RATINGS_COUNT = re.compile(r"(\d{1,7})\s*人\s*评价")
-
-_RE_PUBLISHER_HINT = re.compile(
-    r"([一-鿿　A-Za-z·\s]{2,40}?"
-    r"(?:出版社|书店|印书馆|出版|文化|公司|大学|图书|译丛|出版部|事业|集团))"
-)
-_RE_YEAR_PAREN = re.compile(r"[（(](\d{4})[)）]")
-
-
-def _grab(rx, body, default=None):
-    m = rx.search(body or "")
-    if not m:
-        return default
-    return m.group(1).strip()
-
-
-def _guess_title_from_subject_page(body: str) -> Optional[str]:
-    """Pull the subject title from a doko-rendered page.
-
-    Prefer the `**Title**` bold marker that sits at the top of the metadata
-    block. Falls back to the `# Title (豆瓣)` h1, then to the first non-
-    boilerplate line. Strips the trailing `(豆瓣)` and any markdown noise.
+    - flattens whitespace
+    - drops subtitle after `:` / `：`
+    - limits title and author token count
     """
-    if not body:
-        return None
-    m = re.search(r"\*\*(.+?)\*\*", body)
-    if m:
-        cleaned = _clean_doko_title(m.group(1))
-        if cleaned:
-            return cleaned[:200]
-    m = re.search(r"^#\s+(.+?)\s*$", body, re.MULTILINE)
-    if m:
-        cleaned = _clean_doko_title(m.group(1))
-        if cleaned:
-            return cleaned[:200]
-    boilerplate = {"豆瓣", "豆瓣读书", "登录", "注册", "电影", "音乐", "书籍",
-                   "广告", "首页", "更多", "豆品", "导航"}
-    for line in body.splitlines()[:30]:
-        line = line.strip()
-        if not line or line in boilerplate:
-            continue
-        if line.startswith("豆瓣") or line.startswith("Sign in"):
-            continue
-        if len(line) < 2:
-            continue
-        return _clean_doko_title(line)[:200]
-    return None
-
-
-def _parse_cn_subject_page(body: str, subject_id: str) -> dict:
-    """Parse a doko-rendered Douban subject page into a canonical raw dict.
-
-    The metadata block is rendered as one line — using label-lookahead via
-    `_grab_doko_meta` keeps fields from bleeding into one another.
-    """
-    title = _guess_title_from_subject_page(body) or ""
-    author = _grab_doko_meta(body, "作者")
-    translator = _grab_doko_meta(body, "译者")
-    publisher = _grab_doko_meta(body, "出版社")
-    year_str = _grab_doko_meta(body, "出版年")
-    isbn = _grab_doko_meta(body, "ISBN")
-    original_title = _grab_doko_meta(body, "原作名")
-
-    year = int(year_str[:4]) if year_str and year_str[:4].isdigit() else None
-    ratings_m = _DOKO_RATING_RE.search(body or "") or _RE_RATINGS_COUNT.search(body or "")
-    ratings_count = int(ratings_m.group(1)) if ratings_m else 0
-
-    return {
-        "douban_id": subject_id,
-        "douban_url": _subject_url(subject_id),
-        "title": title,
-        "author": author or None,
-        "translator": translator or None,
-        "publisher": publisher or None,
-        "year": year,
-        "isbn": isbn or None,
-        "original_title": original_title or None,
-        "ratings_count": ratings_count,
-    }
-
-
-def _extract_works_id(body: str) -> Optional[str]:
-    m = _RE_WORKS_ID.search(body or "")
-    return m.group(1) if m else None
-
-
-def _extract_manifestations_from_works_page(body: str) -> list[dict]:
-    """Pull (subject_id, publisher_hint, year_hint) tuples from a works page."""
-    out: list[dict] = []
-    seen: set[str] = set()
-    lines = (body or "").splitlines()
-    for i, line in enumerate(lines):
-        m = _RE_SUBJECT_ID.search(line)
-        if not m:
-            continue
-        sid = m.group(1)
-        if sid in seen:
-            continue
-        seen.add(sid)
-        ctx = "\n".join(lines[max(0, i - 3):i + 1])
-        pub_match = _RE_PUBLISHER_HINT.search(ctx)
-        publisher = pub_match.group(1).strip() if pub_match else None
-        year_match = _RE_YEAR_PAREN.search(ctx)
-        year = int(year_match.group(1)) if year_match else None
-        out.append({
-            "subject_id": sid,
-            "publisher_hint": publisher,
-            "year_hint": year,
-        })
-    return out
-
-
-def _reverse_from_slug(slug: str) -> dict:
-    """Best-effort split of `{author}-{title-words}-{year}` style slugs."""
-    parts = (slug or "").split("-")
-    result: dict = {}
-    if len(parts) >= 3 and parts[-1].isdigit() and len(parts[-1]) == 4:
-        result["year"] = int(parts[-1])
-        result["author"] = parts[0]
-        result["title"] = " ".join(parts[1:-1])
-    return result
-
-
-_PRIMARY_MATCH_MIN = 0.3
-_PRIMARY_MATCH_STRONG = 1.2
-
-
-def _normalise_for_match(s: str) -> str:
-    if not s:
-        return ""
-    s = s.lower()
-    s = re.sub(r"[\s\-_:：,，.。·]+", " ", s)
-    return s.strip()
-
-
-def _score_primary_match(parsed: dict, *, title: str | None, author: str | None) -> float:
-    """Score how well a candidate Douban subject matches the original query.
-
-    Returns a sum of weighted signals; thresholds gate primary-subject acceptance.
-    """
-    score = 0.0
-    cand_title = _normalise_for_match(parsed.get("title") or "")
-    cand_orig = _normalise_for_match(parsed.get("original_title") or "")
-    cand_author = _normalise_for_match(parsed.get("author") or "")
-
+    parts: list[str] = []
     if title:
-        qt = _normalise_for_match(title)
-        qt_head = qt.split(" : ")[0].split(":")[0].strip()
-        qt_tokens = [t for t in qt_head.split() if len(t) >= 3]
-        for hay in (cand_title, cand_orig):
-            if not hay:
-                continue
-            if qt_head and qt_head in hay:
-                score += 1.0
-                break
-            if qt_tokens:
-                hits = sum(1 for t in qt_tokens if t in hay)
-                if hits >= max(2, int(0.6 * len(qt_tokens))):
-                    score += 0.6
-                    break
-
+        head = re.split(r"[:：]", title, maxsplit=1)[0]
+        tokens = re.split(r"\s+", head.strip())[:max_title_tokens]
+        if tokens:
+            parts.append(" ".join(tokens))
     if author:
-        qa = _normalise_for_match(author)
-        surname = qa.split()[-1] if qa else ""
-        if surname and surname in cand_author:
-            score += 0.4
-
-    return score
-
-
-def _find_cndouban(*, isbn: Optional[str] = None,
-                   title: Optional[str] = None,
-                   author: Optional[str] = None,
-                   year: Optional[int] = None,
-                   slug: Optional[str] = None,
-                   allow_douban_search: bool = True) -> dict:
-    """Core cndouban pipeline. Returns structured result dict."""
-    diagnostics = {"routing": [], "doko_calls": 0, "warnings": []}
-
-    if slug and not (title and author):
-        rev = _reverse_from_slug(slug)
-        title = title or rev.get("title")
-        author = author or rev.get("author")
-        year = year or rev.get("year")
-
-    if not (isbn or title or author):
-        return {
-            "status": "error",
-            "primary_subject": None,
-            "translations": [],
-            "diagnostics": {**diagnostics,
-                            "warnings": ["no inputs (need isbn, title+author, or slug)"]},
-        }
-
-    # ----- Step 1: locate primary Douban subject -----
-    primary_subject = None
-    primary_body = None
-
-    if isbn:
-        diagnostics["routing"].append("isbn-direct")
-        diagnostics["doko_calls"] += 1
-        ok, body = _doko_read(_isbn_direct_url(isbn))
-        if ok:
-            sid = _RE_SUBJECT_ID.search(body)
-            if sid:
-                primary_subject = sid.group(1)
-                primary_body = body
-        else:
-            diagnostics["warnings"].append(f"isbn-direct: {body[:120]}")
-
-    if primary_subject is None and (title or author):
-        q = _compact_external_book_query(
-            title=title,
-            author=author,
-            year=year,
-        )
-        diagnostics["routing"].append("kagi-site-title-author")
-        urls, warnings = _kagi_site_subject_urls(q, limit=5)
-        diagnostics["warnings"].extend(warnings)
-        scored: list[tuple[float, str, str]] = []
-        for url in urls:
-            cand = _subject_id_from_url(url)
-            if not cand:
-                continue
-            diagnostics["doko_calls"] += 1
-            ok2, body2 = _doko_read(_subject_url(cand))
-            if not ok2:
-                diagnostics["warnings"].append(f"subject-fetch {cand}: {body2[:120]}")
-                continue
-            parsed_cand = _parse_cn_subject_page(body2, cand)
-            score = _score_primary_match(parsed_cand, title=title, author=author)
-            scored.append((score, cand, body2))
-            if score >= _PRIMARY_MATCH_STRONG:
-                break
-        if scored:
-            scored.sort(key=lambda t: t[0], reverse=True)
-            best_score, best_cand, best_body = scored[0]
-            if best_score >= _PRIMARY_MATCH_MIN:
-                primary_subject = best_cand
-                primary_body = best_body
-            else:
-                diagnostics["warnings"].append(
-                    f"kagi-site-title-author: no candidate matched query "
-                    f"(best score={best_score:.2f}, cand={best_cand})"
-                )
-
-    if allow_douban_search and primary_subject is None and title and author:
-        q = f"{title} {author}"
-        diagnostics["routing"].append("search-title-author")
-        diagnostics["doko_calls"] += 1
-        ok, body = _doko_read(_cn_search_url(q))
-        if ok:
-            sid = _RE_SUBJECT_ID.search(body)
-            if sid:
-                cand = sid.group(1)
-                diagnostics["doko_calls"] += 1
-                ok2, body2 = _doko_read(_subject_url(cand))
-                if ok2:
-                    primary_subject = cand
-                    primary_body = body2
-                else:
-                    diagnostics["warnings"].append(f"subject-fetch {cand}: {body2[:120]}")
-        else:
-            diagnostics["warnings"].append(f"search-title-author: {body[:120]}")
-
-    if allow_douban_search and primary_subject is None and author:
-        diagnostics["routing"].append("search-author-only")
-        diagnostics["doko_calls"] += 1
-        ok, body = _doko_read(_cn_search_url(author))
-        if ok:
-            sid = _RE_SUBJECT_ID.search(body)
-            if sid:
-                cand = sid.group(1)
-                diagnostics["doko_calls"] += 1
-                ok2, body2 = _doko_read(_subject_url(cand))
-                if ok2:
-                    primary_subject = cand
-                    primary_body = body2
-                else:
-                    diagnostics["warnings"].append(f"subject-fetch {cand}: {body2[:120]}")
-        else:
-            diagnostics["warnings"].append(f"search-author: {body[:120]}")
-
-    if primary_subject is None:
-        return {
-            "status": "no-douban-entry",
-            "primary_subject": None,
-            "translations": [],
-            "diagnostics": diagnostics,
-        }
-
-    primary_meta = _parse_cn_subject_page(primary_body, primary_subject)
-
-    # ----- Step 2: related-version links from the primary subject page -----
-    manifestations: list[dict] = []
-    related_urls = _extract_related_version_urls_from_doko(
-        primary_body,
-        current_url=_subject_url(primary_subject),
-    )
-    if related_urls:
-        diagnostics["routing"].append("related-version-links")
-        for url in related_urls:
-            sid = _subject_id_from_url(url)
-            if sid:
-                manifestations.append({
-                    "subject_id": sid,
-                    "publisher_hint": None,
-                    "year_hint": None,
-                })
-
-    if not manifestations:
-        manifestations = [{
-            "subject_id": primary_subject,
-            "publisher_hint": primary_meta.get("publisher"),
-            "year_hint": primary_meta.get("year"),
-        }]
-        diagnostics["warnings"].append("related-version links absent — using primary subject only")
-
-    # ----- Step 3: filter Chinese candidates -----
-    chinese_candidates = [m for m in manifestations
-                          if _has_cjk(m.get("publisher_hint") or "")]
-    unknown_candidates = [m for m in manifestations
-                          if not (m.get("publisher_hint") or "")]
-
-    if _has_cjk(primary_meta.get("publisher") or ""):
-        if not any(m["subject_id"] == primary_subject for m in chinese_candidates):
-            chinese_candidates.append({
-                "subject_id": primary_subject,
-                "publisher_hint": primary_meta.get("publisher"),
-                "year_hint": primary_meta.get("year"),
-            })
-
-    if not chinese_candidates and not unknown_candidates:
-        return {
-            "status": "no-translations",
-            "primary_subject": {
-                "douban_id": primary_subject,
-                "douban_url": _subject_url(primary_subject),
-                "title_on_douban": primary_meta.get("title"),
-                "year_on_douban": primary_meta.get("year"),
-            },
-            "translations": [],
-            "diagnostics": diagnostics,
-        }
-
-    # ----- Step 4: scrape each Chinese candidate for full metadata -----
-    translations: list[dict] = []
-    candidate_pool: list[dict] = []
-    seen_candidate_ids: set[str] = set()
-    for cand in chinese_candidates + unknown_candidates:
-        sid = cand["subject_id"]
-        if sid in seen_candidate_ids:
-            continue
-        seen_candidate_ids.add(sid)
-        candidate_pool.append(cand)
-
-    for cand in candidate_pool:
-        sid = cand["subject_id"]
-        if sid == primary_subject:
-            if _is_chinese_like_record(primary_meta):
-                translations.append(primary_meta)
-            continue
-        diagnostics["doko_calls"] += 1
-        ok, body = _doko_read(_subject_url(sid))
-        if not ok:
-            diagnostics["warnings"].append(f"candidate {sid}: {body[:120]}")
-            continue
-        parsed = _parse_cn_subject_page(body, sid)
-        if cand.get("publisher_hint") or _is_chinese_like_record(parsed):
-            translations.append(parsed)
-
-    translations.sort(key=lambda t: t.get("ratings_count") or 0, reverse=True)
-
-    return {
-        "status": "ok" if translations else "no-translations",
-        "primary_subject": {
-            "douban_id": primary_subject,
-            "douban_url": _subject_url(primary_subject),
-            "title_on_douban": primary_meta.get("title"),
-            "year_on_douban": primary_meta.get("year"),
-        },
-        "translations": translations,
-        "diagnostics": diagnostics,
-    }
+        tokens = re.split(r"\s+", author.strip())[:max_author_tokens]
+        if tokens:
+            parts.append(" ".join(tokens))
+    if query and not (title or author):
+        parts.append(query.strip())
+    return re.sub(r"\s+", " ", " ".join(parts)).strip()
 
 
-def _cndouban_works_impl(args_namespace, *, allow_douban_search: bool = False) -> dict:
-    """Run the cndouban pipeline and return the result dict directly.
+def _kagi_subject_urls(query: str, limit: int = 10) -> tuple[list[str], list[str]]:
+    """Run `kagi search site:book.douban.com/subject {query}`.
 
-    Formerly run_cndouban in cndouban.py, which printed JSON to stdout.
-    Refactored to return a dict so callers get structured data without
-    stdout redirection.
+    Returns (canonical_subject_urls, warnings). The strict regex filter
+    drops any URL with extra path segments after the subject id.
     """
-    return _find_cndouban(
-        isbn=args_namespace.isbn,
-        title=args_namespace.title,
-        author=args_namespace.author,
-        year=args_namespace.year,
-        slug=args_namespace.slug,
-        allow_douban_search=allow_douban_search,
-    )
-
-
-# ==================================================================
-# Related-version probe: search hit → subject → other versions
-# ==================================================================
-
-def _normalise_subject_url(url: str) -> str:
-    if url.startswith("//"):
-        url = "https:" + url
-    elif url.startswith("/"):
-        url = urllib.parse.urljoin(_DOUBAN_BOOK_BASE, url)
-    m = re.search(r"(https?://book\.douban\.com/subject/\d+)/?", url)
-    return f"{m.group(1)}/" if m else url
-
-
-def _normalise_works_url(url: str) -> str:
-    if url.startswith("//"):
-        url = "https:" + url
-    elif url.startswith("/"):
-        url = urllib.parse.urljoin(_DOUBAN_BOOK_BASE, url)
-    m = re.search(r"(https?://book\.douban\.com/works/\d+)/?", url)
-    return f"{m.group(1)}/" if m else url
-
-
-def _subject_id_from_url(url: str) -> str:
-    m = _SUBJECT_URL_RE.match(_normalise_subject_url(url))
-    return m.group(1) if m else ""
-
-
-def _version_section_snippets(html: str) -> list[str]:
-    snippets = []
-    for marker in _VERSION_SECTION_MARKERS:
-        start = (html or "").find(marker)
-        if start < 0:
-            continue
-        search_from = start + len(marker)
-        end = len(html)
-        for end_marker in _SECTION_END_MARKERS:
-            pos = html.find(end_marker, search_from)
-            if pos > search_from:
-                end = min(end, pos)
-        snippets.append(html[start:end])
-    return snippets
-
-
-def _extract_related_version_urls(html: str, current_url: str | None = None) -> list[str]:
-    urls: list[str] = []
-    seen: set[str] = set()
-    current = _normalise_subject_url(current_url or "")
-    for snippet in _version_section_snippets(html):
-        for m in _ANY_SUBJECT_HREF_RE.finditer(snippet):
-            url = _normalise_subject_url(m.group(1))
-            if not _subject_id_from_url(url):
-                continue
-            if current and url == current:
-                continue
-            if url in seen:
-                continue
-            seen.add(url)
-            urls.append(url)
-    return urls
-
-
-def _decode_douban_url(url: str) -> str:
-    parsed = urllib.parse.urlparse(url)
-    if parsed.netloc == "www.douban.com" and parsed.path.startswith("/link2/"):
-        params = dict(urllib.parse.parse_qsl(parsed.query))
-        return urllib.parse.unquote(params.get("url", "")) or url
-    if parsed.netloc.endswith("google.com") and parsed.path == "/url":
-        params = dict(urllib.parse.parse_qsl(parsed.query))
-        return urllib.parse.unquote(params.get("q") or params.get("url") or "") or url
-    return url
-
-
-def _normalise_external_search_href(href: str) -> str:
-    href = unescape(href).replace("&amp;", "&")
-    if href.startswith("/url?"):
-        href = urllib.parse.urljoin("https://www.google.com/search", href)
-    return _decode_douban_url(href)
-
-
-def _extract_subject_urls_from_external_text(body: str, limit: int = 5) -> list[str]:
-    urls: list[str] = []
-    seen: set[str] = set()
-    for m in _ANY_HREF_RE.finditer(body or ""):
-        decoded = _normalise_external_search_href(m.group(1))
-        sm = re.search(r"https?://book\.douban\.com/subject/\d+/?", decoded)
-        if not sm:
-            continue
-        url = _normalise_subject_url(sm.group(0))
-        if url in seen:
-            continue
-        seen.add(url)
-        urls.append(url)
-        if len(urls) >= limit:
-            break
-    return urls
-
-
-def _extract_subject_urls_from_kagi_json(payload, limit: int = 5) -> list[str]:
-    urls: list[str] = []
-    seen: set[str] = set()
-
-    def walk(value):
-        if len(urls) >= limit:
-            return
-        if isinstance(value, dict):
-            candidate = value.get("url")
-            if isinstance(candidate, str):
-                decoded = _normalise_external_search_href(candidate)
-                sm = re.search(r"https?://book\.douban\.com/subject/\d+/?", decoded)
-                if sm:
-                    url = _normalise_subject_url(sm.group(0))
-                    if url not in seen:
-                        seen.add(url)
-                        urls.append(url)
-            for item in value.values():
-                walk(item)
-        elif isinstance(value, list):
-            for item in value:
-                walk(item)
-
-    walk(payload)
-    return urls
-
-
-def _kagi_site_subject_urls(query: str, limit: int = 5) -> tuple[list[str], list[str]]:
-    """Find Douban subject URLs via kagi-cli. Does not invoke Doko."""
-    if not shutil.which("kagi"):
-        return [], ["kagi-site-search: kagi CLI not available"]
-
-    kagi_query = _kagi_site_subject_query(query)
+    cmd = ["kagi", "search", "--format", "json",
+           f"site:book.douban.com/subject {query}"]
     try:
         result = subprocess.run(
-            ["kagi", "search", "--format", "json", kagi_query],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
+            cmd, capture_output=True, text=True, timeout=20, check=False,
         )
+    except FileNotFoundError:
+        return [], ["kagi-search: kagi CLI not on PATH"]
     except subprocess.TimeoutExpired:
-        return [], ["kagi-site-search: timeout"]
+        return [], ["kagi-search: timeout"]
     except Exception as exc:
-        return [], [f"kagi-site-search: {type(exc).__name__}: {exc}"]
+        return [], [f"kagi-search: {type(exc).__name__}: {exc}"]
 
     if result.returncode != 0:
-        return [], [f"kagi-site-search: rc={result.returncode}: {(result.stderr or result.stdout)[:160]}"]
+        return [], [f"kagi-search: rc={result.returncode}: "
+                    f"{(result.stderr or result.stdout)[:160]}"]
 
-    stdout = result.stdout or ""
     try:
-        payload = json.loads(stdout)
+        payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
-        urls = _extract_subject_urls_from_external_text(stdout, limit=limit)
-        if urls:
-            return urls, []
-        return [], ["kagi-site-search: non-json output without subject urls"]
+        return [], ["kagi-search: non-json output"]
 
-    urls = _extract_subject_urls_from_kagi_json(payload, limit=limit)
-    if urls:
-        return urls, []
-    urls = _extract_subject_urls_from_external_text(stdout, limit=limit)
-    if urls:
-        return urls, []
-    return [], ["kagi-site-search: no subject urls"]
-
-
-def _parse_doko_references(body: str) -> dict[str, str]:
-    return {m.group(1): _decode_douban_url(m.group(2)) for m in _DOKO_REF_RE.finditer(body or "")}
-
-
-def _doko_version_windows(body: str) -> list[str]:
-    windows = []
-    for marker in _VERSION_SECTION_MARKERS:
-        start = (body or "").find(marker)
-        if start < 0:
-            continue
-        window = body[start:start + 3000]
-        sep = window.find("\n---", len(marker))
-        if sep > 0:
-            window = window[:sep]
-        windows.append(window)
-    return windows
-
-
-def _extract_related_version_urls_from_doko(body: str, current_url: str | None = None) -> list[str]:
-    refs = _parse_doko_references(body)
     urls: list[str] = []
     seen: set[str] = set()
-    current = _normalise_subject_url(current_url or "")
-    for window in _doko_version_windows(body):
-        for ref_id in _DOKO_INLINE_REF_RE.findall(window):
-            url = _normalise_subject_url(refs.get(ref_id, ""))
-            if not _subject_id_from_url(url):
-                continue
-            if current and url == current:
-                continue
-            if url in seen:
-                continue
-            seen.add(url)
-            urls.append(url)
-    return urls
-
-
-def _extract_subject_urls_anywhere(html: str, current_url: str | None = None) -> list[str]:
-    urls: list[str] = []
-    seen: set[str] = set()
-    current = _normalise_subject_url(current_url or "")
-    for m in _ANY_SUBJECT_HREF_RE.finditer(html or ""):
-        url = _normalise_subject_url(m.group(1))
-        if not _subject_id_from_url(url):
+    for item in payload.get("data", []):
+        raw = item.get("url", "") if isinstance(item, dict) else ""
+        if not isinstance(raw, str):
             continue
-        if current and url == current:
+        # Normalise `/subject/ID//` → `/subject/ID/` before matching.
+        cleaned = re.sub(r"(/subject/\d+)/+", r"\1/", raw)
+        m = _RE_DOUBAN_SUBJECT_CLEAN.match(cleaned)
+        if not m:
             continue
-        if url in seen:
+        canonical = f"https://book.douban.com/subject/{m.group(1)}/"
+        if canonical in seen:
             continue
-        seen.add(url)
-        urls.append(url)
-    return urls
+        seen.add(canonical)
+        urls.append(canonical)
+        if len(urls) >= limit:
+            break
+    return urls, []
 
 
-def _extract_subject_urls_from_doko(body: str, current_url: str | None = None) -> list[str]:
-    urls: list[str] = []
-    seen: set[str] = set()
-    current = _normalise_subject_url(current_url or "")
-    for url in _parse_doko_references(body).values():
-        url = _normalise_subject_url(url)
-        if not _subject_id_from_url(url):
-            continue
-        if current and url == current:
-            continue
-        if url in seen:
-            continue
-        seen.add(url)
-        urls.append(url)
-    return urls
+def _fetch_subject_via_bs4(url: str, cookie: str | None = None) -> dict | None:
+    """Pull a Douban subject page via direct HTTP, parse with BeautifulSoup.
 
-
-def _doko_meta_window(body: str) -> str:
-    """Slice out the metadata block from a doko-rendered subject page.
-
-    Layout is `**Title**` then `---` then a reference number then the single
-    metadata line, terminated by `豆瓣评分`. Without this scope, helpers below
-    happily match stray label occurrences inside reader comments / book lists.
+    Returns a raw record dict, or None if the page can't be fetched / is
+    blocked / has no parseable title.
     """
-    if not body:
-        return ""
-    start = 0
-    m = re.search(r"\*\*([^*]+)\*\*", body)
-    if m:
-        start = m.end()
-    end_marker = body.find("豆瓣评分", start)
-    if end_marker < 0:
-        end_marker = min(start + 1200, len(body))
-    return body[start:end_marker]
+    ok, body = _dd_fetch(url, cookie)
+    if not ok or _is_blocked(body):
+        return None
 
+    soup = BeautifulSoup(body, "html.parser")
+    sid_m = _SUBJECT_URL_RE.match(url)
+    subject_id = sid_m.group(1) if sid_m else ""
 
-def _grab_doko_meta(body: str, label: str, *, scoped: bool = True) -> str:
-    haystack = _doko_meta_window(body) if scoped else (body or "")
-    label_alt = "|".join(re.escape(item) for item in _DOKO_META_LABELS)
-    pattern = rf"{re.escape(label)}\s*[:：]\s*(.*?)(?=(?:{label_alt})\s*[:：]|\n|$)"
-    m = re.search(pattern, haystack, re.DOTALL)
-    if not m:
-        return ""
-    value = re.sub(r"\[\d+\]", "", m.group(1))
-    value = re.sub(r"\s+", " ", value).strip()
-    return value.strip("/")
-
-
-def _clean_doko_title(raw: str) -> str:
-    t = (raw or "").strip()
-    t = re.sub(r"\s*\(豆瓣\)\s*$", "", t)
-    t = re.sub(r"\s*[（(]豆瓣[)）]\s*$", "", t)
-    return t.strip()
-
-
-def _parse_doko_subject_page(body: str, url: str) -> dict | None:
-    title = ""
-    m = re.search(r"^#\s+(.+?)\s+\(豆瓣\)\s*$", body or "", re.MULTILINE)
-    if m:
-        title = m.group(1).strip()
+    h1 = soup.find("span", property="v:itemreviewed")
+    title = h1.get_text(strip=True) if h1 else ""
     if not title:
-        m = re.search(r"\*\*(.+?)\*\*", body or "")
-        if m:
-            title = m.group(1).strip()
-    title = _clean_doko_title(title)
+        h1 = soup.find("h1")
+        if h1:
+            title = re.sub(r"\s*\(豆瓣\)\s*$", "", h1.get_text(strip=True))
     if not title:
         return None
 
-    author = _grab_doko_meta(body, "作者")
-    translator = _grab_doko_meta(body, "译者")
-    publisher = _grab_doko_meta(body, "出版社")
-    year_str = _grab_doko_meta(body, "出版年")
-    isbn = _grab_doko_meta(body, "ISBN")
-    isbn_clean = re.sub(r"[^0-9X]", "", (isbn or "").upper())
-    original_title = _grab_doko_meta(body, "原作名")
-    ratings_m = _DOKO_RATING_RE.search(body or "")
-
-    return {
+    info = soup.find("div", id="info")
+    rec: dict = {
+        "douban_subject_id": subject_id,
+        "douban_url": f"https://book.douban.com/subject/{subject_id}/",
         "title": title,
-        "authors": [author] if author else [],
-        "translators": [translator] if translator else [],
-        "publisher": publisher or "",
-        "year": int(year_str[:4]) if year_str[:4].isdigit() else None,
-        "isbn_13": isbn_clean if len(isbn_clean) == 13 else None,
-        "isbn_10": isbn_clean if len(isbn_clean) == 10 else None,
-        "ratings_count": int(ratings_m.group(1)) if ratings_m else 0,
-        "douban_subject_id": _subject_id_from_url(url),
-        "douban_url": _normalise_subject_url(url),
-        "original_title": original_title or "",
+        "subtitle": "",
+        "authors": [],
+        "translators": [],
+        "publisher": "",
+        "year": None,
+        "isbn_13": None,
+        "isbn_10": None,
+        "original_title": "",
+        "ratings_count": 0,
+        "douban_rating": None,
+        "series": "",
     }
+    if not info:
+        return rec
+
+    info_text = info.get_text("\n", strip=True)
+    labels = ("作者", "译者", "出版社", "出版年", "ISBN",
+              "原作名", "页数", "装帧", "定价", "丛书", "副标题")
+    label_alt = "|".join(re.escape(item) for item in labels)
+
+    def grab(label: str) -> str:
+        m = re.search(
+            rf"{re.escape(label)}\s*[:：]\s*(.+?)(?=\n(?:{label_alt})\s*[:：]|\n\n|$)",
+            info_text,
+            re.DOTALL,
+        )
+        return re.sub(r"\s+", " ", m.group(1)).strip() if m else ""
+
+    author_raw = grab("作者")
+    translator_raw = grab("译者")
+    publisher = grab("出版社")
+    year_raw = grab("出版年")
+    isbn = re.sub(r"[^0-9X]", "", grab("ISBN").upper())
+    original_title = grab("原作名")
+    subtitle = grab("副标题")
+    series = grab("丛书")
+
+    rec["subtitle"] = subtitle
+    rec["series"] = series
+    rec["original_title"] = original_title
+    rec["publisher"] = publisher
+
+    if author_raw:
+        rec["authors"] = [a.strip() for a in re.split(r"\s*/\s*", author_raw) if a.strip()]
+    if translator_raw:
+        rec["translators"] = [t.strip() for t in re.split(r"\s*/\s*", translator_raw) if t.strip()]
+    if year_raw:
+        ym = re.search(r"((?:19|20)\d{2})", year_raw)
+        if ym:
+            try:
+                rec["year"] = int(ym.group(1))
+            except ValueError:
+                pass
+    if isbn:
+        if len(isbn) == 13:
+            rec["isbn_13"] = isbn
+        elif len(isbn) == 10:
+            rec["isbn_10"] = isbn
+
+    rating_node = soup.find("strong", property="v:average")
+    if rating_node:
+        try:
+            rec["douban_rating"] = float(rating_node.get_text(strip=True))
+        except ValueError:
+            pass
+    votes_node = soup.find("span", property="v:votes")
+    if votes_node:
+        try:
+            rec["ratings_count"] = int(votes_node.get_text(strip=True))
+        except ValueError:
+            pass
+
+    if subtitle:
+        rec["title"] = f"{title}:{subtitle}"
+    return rec
 
 
-def _is_chinese_like_record(raw: dict) -> bool:
-    """Decide whether a parsed Douban subject record is a Chinese-language edition.
+def _is_chinese_edition(rec: dict) -> bool:
+    """Decide whether a parsed Douban subject record is Chinese-language.
 
-    Logic (in order):
-      1. ISBN agency prefix — registry, not a guess. CN/TW/HK ⇒ accept;
-         JP/KR/VN ⇒ reject (kanji-only signals would otherwise leak these in).
-      2. Kana / Hangul anywhere in title / publisher / translators ⇒ reject.
-      3. Any of (publisher | translators | title) has CJK ⇒ accept.
-      4. Otherwise ⇒ reject. A non-CJK translator field (e.g. French
-         "Laurence Brottier") is not evidence of a Chinese edition.
+    Order matters:
+      1. ISBN agency prefix is decisive — CN/TW/HK accept; JP/KR/VN reject.
+      2. Kana or Hangul anywhere ⇒ reject (catches kanji-only JP titles).
+      3. CJK in publisher | translator (non-empty AND CJK) | title ⇒ accept.
+      4. Otherwise reject. A non-CJK translator (e.g. "Laurence Brottier"
+         on a French edition) is not evidence of a Chinese edition.
     """
-    title = raw.get("title") or ""
-    publisher = raw.get("publisher") or ""
-    translators_raw = raw.get("translators") or (
-        [raw.get("translator")] if raw.get("translator") else []
+    title = rec.get("title", "") or ""
+    publisher = rec.get("publisher", "") or ""
+    translators = " ".join(
+        t for t in (rec.get("translators") or []) if t
     )
-    translators = " ".join(t for t in translators_raw if t)
 
-    isbn = raw.get("isbn") or raw.get("isbn_13") or raw.get("isbn_10") or ""
+    isbn = rec.get("isbn_13") or rec.get("isbn_10") or ""
     isbn_digits = re.sub(r"[^0-9]", "", isbn)
     if isbn_digits.startswith(_ZH_ISBN_PREFIXES):
         return True
@@ -1214,111 +570,74 @@ def _is_chinese_like_record(raw: dict) -> bool:
         return True
     if _has_cjk(title):
         return True
-
     return False
 
 
-def _fetch_subject_for_related(url: str) -> tuple[dict | None, list[str]]:
-    ok, body = _dd_fetch(url)
-    if ok and not _is_blocked(body):
-        return (
-            _parse_dd_subject_page(body, url),
-            _extract_related_version_urls(body, current_url=url),
-        )
+def _zh_localisation_search(query: _s.BookQuery) -> tuple[list[dict], list[str]]:
+    """Top-level Chinese-edition discovery via Kagi → BeautifulSoup.
 
-    ok, body = _doko_read(url)
-    if ok:
-        return (
-            _parse_doko_subject_page(body, url),
-            _extract_related_version_urls_from_doko(body, current_url=url),
-        )
-    return None, []
+    Returns (chinese_records, warnings). Chinese records are sorted by
+    ratings_count desc (so the most-read edition surfaces first).
+    """
+    warnings: list[str] = []
+    q = _compact_external_book_query(
+        title=query.title, author=query.author,
+        query=query.query, year=query.year_from,
+    )
+    if not q and query.isbn:
+        q = query.isbn
+    if not q:
+        return [], ["zh-localisation: no usable query"]
 
-
-def _related_version_search(
-    query: _s.BookQuery,
-    direct_hits: list[dict],
-    *,
-    allow_douban_search: bool = True,
-) -> list[dict]:
-    seed_urls = []
-    for hit in direct_hits:
-        url = hit.get("douban_url") or hit.get("preview_link")
-        if url and _subject_id_from_url(url):
-            seed_urls.append(_normalise_subject_url(url))
-
-    if not seed_urls:
-        q_text = _compact_external_book_query(
-            title=query.title,
-            author=query.author,
-            query=query.query,
-            year=query.year_from,
-        )
-        if q_text:
-            seed_urls, _ = _kagi_site_subject_urls(q_text, limit=query.limit)
-        douban_q_text = " ".join(filter(None, [query.isbn, query.title, query.author, query.query]))
-        if allow_douban_search and not seed_urls and douban_q_text:
-            ok, body = _doko_read(_cn_search_url(douban_q_text))
-            if ok:
-                seed_urls = _extract_subject_urls_from_doko(body)[:query.limit]
-
-    related_urls: list[str] = []
-    seen_urls: set[str] = set(seed_urls)
-    for seed_url in seed_urls[:query.limit]:
-        _, seed_related = _fetch_subject_for_related(seed_url)
-        for url in seed_related:
-            if url not in seen_urls:
-                seen_urls.add(url)
-                related_urls.append(url)
+    urls, kagi_warnings = _kagi_subject_urls(q, limit=max(query.limit, 10))
+    warnings.extend(kagi_warnings)
+    if not urls:
+        return [], warnings
 
     out: list[dict] = []
     seen_ids: set[str] = set()
-    for url in related_urls:
-        raw, _ = _fetch_subject_for_related(url)
-        if not raw or not _is_chinese_like_record(raw):
+    for url in urls:
+        time.sleep(random.random() * 0.3 + 0.2)
+        rec = _fetch_subject_via_bs4(url)
+        if rec is None:
+            warnings.append(f"subject-fetch failed: {url}")
             continue
-        sid = raw.get("douban_subject_id") or raw.get("douban_id") or _subject_id_from_url(url)
+        if not _is_chinese_edition(rec):
+            continue
+        sid = rec.get("douban_subject_id") or ""
         if sid in seen_ids:
             continue
         seen_ids.add(sid)
-        out.append(raw)
-        if len(out) >= query.limit:
-            break
+        out.append(rec)
+
     out.sort(key=lambda r: r.get("ratings_count") or 0, reverse=True)
-    return out
+    return out, warnings
 
 
 # ==================================================================
 # Adapter glue: normalise + search wrappers
 # ==================================================================
 
-def _has_cjk_str(s: str | None) -> bool:
-    return bool(s) and any("一" <= c <= "鿿" for c in s)
-
-
 def _normalise(raw: dict) -> dict:
     b = _s.BookRecord().to_dict()
-    isbn = re.sub(r"[^0-9X]", "", (raw.get("isbn") or "").upper()) or None
     b["title"]          = raw.get("title", "") or ""
-    b["authors"]        = raw.get("authors") or ([raw.get("author")] if raw.get("author") else [])
-    b["translators"]    = ([raw.get("translator")] if raw.get("translator") else []) \
-                          or (raw.get("translators") or [])
+    b["authors"]        = raw.get("authors") or []
+    b["translators"]    = raw.get("translators") or []
     b["original_title"] = raw.get("original_title", "") or ""
     b["year"]           = raw.get("year")
     b["publisher"]      = raw.get("publisher", "") or ""
-    b["isbn_13"]        = raw.get("isbn_13") or (isbn if isbn and len(isbn) == 13 else None)
-    b["isbn_10"]        = raw.get("isbn_10") or (isbn if isbn and len(isbn) == 10 else None)
+    b["isbn_13"]        = raw.get("isbn_13")
+    b["isbn_10"]        = raw.get("isbn_10")
     b["language"]       = "zh"
     b["ratings"]        = {"count": raw.get("ratings_count"),
                            "average": raw.get("douban_rating")}
     b["preview_link"]   = raw.get("douban_url", "") or raw.get("preview_link", "") or ""
-    b["source_ids"]["douban_cn"] = raw.get("douban_subject_id") or raw.get("douban_id")
+    b["source_ids"]["douban_cn"] = raw.get("douban_subject_id")
     b["_sources"] = [SOURCE_ID]
     return b
 
 
 def _direct_search(query: _s.BookQuery) -> list[dict]:
-    """Wrap _direct_search_impl with our query dataclass."""
     q_text = " ".join(filter(None, [
         query.isbn, query.title, query.author, query.query,
     ]))
@@ -1331,38 +650,6 @@ def _direct_search(query: _s.BookQuery) -> list[dict]:
         return []
 
 
-def _cndouban_works_page(query: _s.BookQuery) -> list[dict]:
-    """Wrap _cndouban_works_impl (subject-page localisation via dokobot)."""
-    payload = _cndouban_works_payload(query)
-    return payload.get("translations") or []
-
-
-def _cndouban_works_payload(query: _s.BookQuery) -> dict:
-    """Run Doko subject-page lookup and keep diagnostics for caller decisions."""
-    import argparse
-    args = argparse.Namespace(
-        isbn=query.isbn, title=query.title, author=query.author,
-        slug=None, year=query.year_from,
-    )
-    try:
-        return _cndouban_works_impl(args)
-    except Exception as exc:
-        return {
-            "status": "error",
-            "translations": [],
-            "diagnostics": {"warnings": [f"{type(exc).__name__}: {exc}"]},
-        }
-
-
-def _doko_unavailable_from_payload(payload: dict) -> str | None:
-    diagnostics = payload.get("diagnostics") or {}
-    warnings = diagnostics.get("warnings") or []
-    for warning in warnings:
-        if "DOKO_" in str(warning) or "No local bridge" in str(warning) or "API key required" in str(warning):
-            return str(warning)
-    return None
-
-
 def _wants_chinese_versions(query: _s.BookQuery) -> bool:
     return (query.subject or "").lower() in {
         "zh", "cn", "chinese", "translation", "translations", "cndouban",
@@ -1372,31 +659,20 @@ def _wants_chinese_versions(query: _s.BookQuery) -> bool:
 def search_book(query: _s.BookQuery) -> _s.AdapterResult:
     if not any([query.isbn, query.title, query.author, query.query, query.subject]):
         return _s.AdapterResult(source=SOURCE_ID, success=False, error="No query")
-    wants_zh = _wants_chinese_versions(query)
 
-    if wants_zh:
-        # Localisation lookup starts with direct ISBN / Kagi site discovery,
-        # then leaves Douban's own search endpoint as the final fallback.
-        payload = _cndouban_works_payload(query)
-        works = payload.get("translations") or []
-        if not works:
-            works = _related_version_search(query, [])
-        if not works:
-            direct = _direct_search(query)
-            works = _related_version_search(query, direct) if direct else []
-        if not works:
-            doko_error = _doko_unavailable_from_payload(payload)
-            if doko_error:
-                return _s.AdapterResult(source=SOURCE_ID, success=False, error=doko_error)
-        all_raw = works
-    else:
-        direct = _direct_search(query)
-        works = []
-        if not direct and _has_cjk_str(query.author):
-            works = _cndouban_works_page(query)
-        all_raw = direct + works
+    if _wants_chinese_versions(query):
+        translations, warnings = _zh_localisation_search(query)
+        if not translations:
+            return _s.AdapterResult(source=SOURCE_ID, success=True, entries=[])
+        return _s.AdapterResult(
+            source=SOURCE_ID, success=True,
+            entries=[_normalise(e) for e in translations[:query.limit]],
+        )
 
-    if not all_raw:
+    direct = _direct_search(query)
+    if not direct:
         return _s.AdapterResult(source=SOURCE_ID, success=True, entries=[])
-    return _s.AdapterResult(source=SOURCE_ID, success=True,
-                            entries=[_normalise(e) for e in all_raw[:query.limit]])
+    return _s.AdapterResult(
+        source=SOURCE_ID, success=True,
+        entries=[_normalise(e) for e in direct[:query.limit]],
+    )

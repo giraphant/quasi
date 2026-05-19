@@ -76,6 +76,62 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.32.8** (2026-05-19): **Douban localisation: Doko walk removed,
+  Kagi + BeautifulSoup is the only path.** 10/10 live test books (Foucault
+  / Butler / Latour / Anderson / Said / Arendt / Bourdieu / Haraway etc.)
+  returned at least one Chinese-edition candidate via the simple flow —
+  vindicating the user's diagnosis that the Doko maze was overengineering.
+  - **`scripts/search/sources/douban_cn.py`**: 1402 → 678 lines (51% cut).
+    Deleted: `_doko_read`, `_find_cndouban`, `_cndouban_works_*`,
+    `_related_version_search`, `_fetch_subject_for_related`,
+    `_parse_cn_subject_page`, `_parse_doko_subject_page`,
+    `_grab_doko_meta`, `_doko_meta_window`, `_clean_doko_title`,
+    `_extract_related_version_urls*`, `_version_section_snippets`,
+    `_parse_doko_references`, `_extract_manifestations_from_works_page`,
+    `_kagi_site_subject_urls`, `_kagi_site_subject_query`,
+    `_score_primary_match`, `_normalise_for_match`, plus a dozen helpers.
+    Net deletion of the entire Doko subprocess path.
+  - **New 3-step path** (`_zh_localisation_search`):
+    1. `_compact_external_book_query(title, author)` →
+       `_kagi_subject_urls(q)` runs `kagi search --format json
+       site:book.douban.com/subject {q}` and filters `data[].url` via
+       `_RE_DOUBAN_SUBJECT_CLEAN = r"^https?://book\.douban\.com/subject/
+       (\d+)/*(?:\?[^#]*)?$"` — drops `/comments`, `/blockquotes`,
+       `/doulists`, `/reviews/...`, normalises `/subject/ID//` and
+       `?_dtcc=...` to canonical `/subject/ID/`.
+    2. `_fetch_subject_via_bs4(url)` uses plain `urllib` (`_dd_fetch`) +
+       `BeautifulSoup` to parse `<span property="v:itemreviewed">` for the
+       title and `<div id="info">` for `作者 / 译者 / 出版社 / 出版年 / ISBN
+       / 原作名` etc. Field parsing uses label-alt lookahead so the inline
+       metadata block doesn't bleed across fields, and stays scoped to
+       `#info` so stray `译者:` in reader comments can't leak in.
+    3. `_is_chinese_edition(rec)` (unchanged from 0.32.7): ISBN agency
+       prefix decisive (CN/TW/HK accept, JP/KR/VN reject), then kana /
+       hangul anywhere reject, then CJK in publisher / translator-with-CJK
+       / title accept.
+  - `search_book(query)` `subject=zh` branch shrinks from a 3-fallback
+    cascade (Doko cndouban → kagi-seeded related-version walk → direct
+    search → related-version walk) to one call to
+    `_zh_localisation_search`.
+  - **No new `userConfig`** — `kagi` CLI reads `.kagi.toml` from CWD per
+    its own convention; the plugin doesn't bridge or override.
+  - **Tests rewritten**: `test_source_douban_cn.py` (29 tests) and
+    `test_douban_cn_en2zh.py` (19 tests) target the new functions —
+    URL-filter regex (canonical / `/comments` reject / double-slash
+    normalisation / dedup / limit), `_compact_external_book_query`
+    behaviour, `_kagi_subject_urls` shell-out (kagi missing / nonzero rc
+    / site-limiter format), `_fetch_subject_via_bs4` parsing (info-block
+    isolation, block detection, fetch-failure handling),
+    `_is_chinese_edition` matrix (CN/TW/HK accept, JP reject even with
+    kanji, kana/hangul reject, CJK-publisher accept, non-CJK translator
+    reject), `_zh_localisation_search` integration (filter mix EN+ZH,
+    sort by ratings_count, kagi-warning surface). Full suite: 94 pass.
+  - `agents/search-agent.md` zh-localisation note updated:
+    `Kagi 不可用或无结果时,bin 会自行走豆瓣兜底` → `Kagi 不可用时,
+    localisations.zh.candidates 为空`. No more Doko fallback to misrepresent.
+  - `docs/DOUBAN_LOCALISATION_HANDOFF.md` rewritten end-to-end against
+    the new 3-step pipeline.
+
 - **0.32.7** (2026-05-19): **Douban Chinese localisation pipeline — end-to-end
   correctness pass.** Builds on 0.32.4–0.32.6 (Kagi-CLI primary subject
   discovery). Five real-book end-to-end runs surfaced five downstream bugs
