@@ -1046,8 +1046,13 @@ def download_pdf_from_url(url, output_path, timeout=60):
         # Auto-inject EZProxy cookie if URL matches
         ezproxy = load_ezproxy_config()
         if _url_matches_ezproxy(url, ezproxy):
-            cookie_name = ezproxy.get("cookie_name", "ezproxy")
-            headers["Cookie"] = f"{cookie_name}={ezproxy['cookie']}"
+            if "cookies" in ezproxy:
+                headers["Cookie"] = "; ".join(
+                    f"{name}={value}" for name, value in ezproxy["cookies"].items()
+                )
+            else:
+                cookie_name = ezproxy.get("cookie_name", "ezproxy")
+                headers["Cookie"] = f"{cookie_name}={ezproxy['cookie']}"
 
         def _do():
             req = urllib.request.Request(url, headers=headers)

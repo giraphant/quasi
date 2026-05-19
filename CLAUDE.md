@@ -76,6 +76,11 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.33.4** (2026-05-19): **Fix proxied direct URL cookie injection.**
+  - `download_pdf_from_url()` now supports CookieCloud's multi-cookie EZProxy config (`cookies` dict) when downloading already-proxied direct PDF URLs.
+  - Fixes a `KeyError: 'cookie'` path introduced after CookieCloud moved from a single cookie value to domain-filtered cookie dictionaries.
+  - Tests: full suite 23/23 passing.
+
 - **0.33.3** (2026-05-19): **Plugin config cleanup for worktrees.**
   - All active plugin Configure options are marked `sensitive` so Claude Code stores and injects every option through the same private/keychain path. This works around worktree sessions only receiving private plugin options in hook subprocesses.
   - `anna_mirrors` is removed from plugin Configure options and no longer forwarded by the Bash PreToolUse hook.
