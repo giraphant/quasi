@@ -76,6 +76,53 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.32.7** (2026-05-19): **Douban Chinese localisation pipeline — end-to-end
+  correctness pass.** Builds on 0.32.4–0.32.6 (Kagi-CLI primary subject
+  discovery). Five real-book end-to-end runs surfaced five downstream bugs
+  that were masking each other; all fixed in `scripts/search/sources/douban_cn.py`:
+  - **Primary-subject picker no longer takes Kagi rank #1 blindly.** For
+    "Strange Encounters / Sara Ahmed" Kagi ranked *The Cultural Politics of
+    Emotion* #1 (CPE's page text mentions SE). Now each Kagi URL is
+    Doko-fetched, parsed, and scored against the original title/author
+    (`_score_primary_match`: title-head substring ⇒ +1.0; token overlap ≥60%
+    ⇒ +0.6; author-surname ⇒ +0.4). Score ≥1.2 early-breaks; <0.3 rejects.
+  - **`_parse_cn_subject_page` field extraction rewritten.** Doko renders
+    Douban metadata as one long line `作者: ... 出版社: ... 出版年: ... ISBN: ...`,
+    so the old `作者:.+?\n` regex greedily grabbed the entire blob. Now uses
+    `_grab_doko_meta` with label lookahead against `_DOKO_META_LABELS`.
+  - **`_grab_doko_meta` scoped to a metadata window.** Previously matched
+    anywhere in the body — picked up stray `译者:` from reader comments far
+    below the metadata, producing translator blobs like `"Alice Lian Sara
+    Ahmed(2004),The Cultural Politics of Emotion..."`. New helper
+    `_doko_meta_window(body)` slices text between `**Title**` and `豆瓣评分`.
+  - **Title cleaning.** `_guess_title_from_subject_page` used to return
+    `# Title (豆瓣)` with markdown noise. Now prefers the `**Title**` marker
+    and strips the `(豆瓣)` suffix via `_clean_doko_title`.
+  - **Chinese-edition detection no longer a publisher whitelist.** Old
+    `_ZH_PUBLISHER_HINT_RE` enumerated ~25 publisher fragments (`三联|译林|
+    上海|...`) — could never keep up with the long tail of academic / indie
+    presses, and its bare `出版` alternation also matched the year label
+    `出版年` (false positive). Replaced with registry-based signals:
+    - ISBN agency prefix `978-7-` (mainland) / `978-957/986` (TW) /
+      `978-988/962` (HK) ⇒ accept
+    - ISBN prefix `978-4-` (JP) / `978-89/11` (KR) / `978-604` (VN) ⇒
+      explicit reject (otherwise kanji-only Japanese titles like 伴侶種宣言
+      slip through the generic CJK check)
+    - Kana or Hangul anywhere in title / publisher / translator ⇒ reject
+    - CJK in publisher | (CJK in translator AND translator non-empty) |
+      CJK in title ⇒ accept
+    The translator-non-empty alone (which had let through a French CPE
+    edition by "Laurence Brottier") now requires CJK to count.
+  - **End-to-end validation** in `docs/DOUBAN_LOCALISATION_HANDOFF.md`:
+    Gender Trouble returns 3 Chinese editions (上海三联书店 / 岳麓书社 /
+    桂冠 TW); Discipline and Punish returns 4 (三联书店 various years);
+    Strange Encounters / CPE / Staying with the Trouble correctly return
+    no candidates (no Chinese Douban subject for those works exists).
+  - Existing 38 `douban_cn` tests still pass; full search suite 84 pass.
+  - No new plugin `userConfig` slot — `kagi` CLI auth is read from
+    `.kagi.toml` in CWD (user's own setup), not bridged through the
+    plugin.
+
 - **0.32.3** (2026-05-18): **book localisation sidecar becomes
   Doko-first and source-independent.** `quasi-search book` now always
   attempts the `localisations.zh` Douban sidecar, even when the caller

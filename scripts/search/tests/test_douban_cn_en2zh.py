@@ -324,14 +324,15 @@ def test_find_cndouban_no_inputs():
     assert result["primary_subject"] is None
 
 
-def test_find_cndouban_with_dokobot_unavailable():
-    """When dokobot is not available, should fallback gracefully."""
+def test_find_cndouban_with_kagi_unavailable_falls_back_to_douban_search():
+    """Automatic lookup falls back to Douban search when Kagi discovery is unavailable."""
     with patch("shutil.which", return_value=None):
         result = douban_cn._find_cndouban(
             title="Staying with the Trouble",
             author="Donna Haraway",
         )
     assert result["status"] == "no-douban-entry"
+    assert "kagi CLI not available" in str(result["diagnostics"]["warnings"])
     assert "DOKO_NOT_AVAILABLE" in str(result["diagnostics"]["warnings"])
 
 
@@ -418,7 +419,7 @@ def main():
         test_parse_subject_page_zh_translation_fields,
         test_parse_subject_page_en_original,
         test_normalise_zh_translation_to_book_record,
-        test_normalise_drops_isbn_from_direct_path,
+        test_normalise_keeps_isbn_from_direct_path,
         test_normalise_handles_missing_fields,
         test_search_book_english_title_returns_zh_translation,
         test_search_book_with_subject_zh_triggers_works_fallback,
@@ -431,7 +432,7 @@ def main():
         test_get_text_after_label,
         test_get_authors_from_block,
         test_find_cndouban_no_inputs,
-        test_find_cndouban_with_dokobot_unavailable,
+        test_find_cndouban_with_kagi_unavailable_falls_back_to_douban_search,
         test_parse_cn_subject_page_from_doko_text,
         test_extract_manifestations_from_works_page,
         test_direct_search_impl_year_filter,

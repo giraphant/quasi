@@ -45,18 +45,12 @@ quasi-search paper \
 `quasi-search book` 会自动填充 `localisations.zh`。第一次调用只用 caller/context
 里已有的原始书目信息: ISBN、原文 title、原文 author、year、原始 query。
 
-额外中文本检查需要显式标记,且最多一次:
-
-```bash
-quasi-search book \
-  [同一组 ISBN/title/author/query/year 参数] \
-  --subject cndouban --json
-```
-
-这次 probe 仍然使用原始字段,只是在 `--subject cndouban` 上标记“只检查中文版本”。
-不要自行翻译书名、猜中文书名/出版社/译者,也不要把这类猜测塞进 `--title`
-或 `--query` 一口气查。需要看具体豆瓣页面时,只读取已经返回的 `douban_url`
-或 `preview_link`;不要手写豆瓣搜索 URL。
+如需额外检查中文本,最多重跑一次同一组原始字段。不要自行翻译书名、猜中文书名
+/出版社/译者,也不要把这类猜测塞进 `--title` 或 `--query` 一口气查。
+需要看具体豆瓣页面时,只读取已经返回的 `douban_url` 或 `preview_link`;
+不要手写豆瓣搜索 URL。
+内部中文本发现会先用 Kagi CLI 做 `site:book.douban.com/subject` 查询;
+Kagi 不可用或无结果时,bin 会自行走豆瓣兜底。
 
 ## 判断规则
 

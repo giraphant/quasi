@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -61,8 +62,8 @@ def test_subject_zh_uses_cndouban_subject_page_first():
     assert r.entries[0]["isbn_13"] == "9787564906962"
 
 
-def test_find_cndouban_uses_google_site_before_douban_search():
-    """Title/author localisation discovers Douban subjects through Google first."""
+def test_find_cndouban_uses_kagi_site_before_douban_search():
+    """Title/author localisation discovers Douban subjects through Kagi first."""
     urls: list[str] = []
 
     def fake_doko_read(url, timeout=60):
@@ -78,22 +79,21 @@ ISBN: 9787564906962
 """
         return False, "unexpected"
 
-    with patch("sources.douban_cn._google_site_subject_urls",
-               return_value=(["https://book.douban.com/subject/2/"], [])) as mock_google, \
+    with patch("sources.douban_cn._kagi_site_subject_urls",
+               return_value=(["https://book.douban.com/subject/2/"], [])) as mock_kagi, \
          patch("sources.douban_cn._doko_read", side_effect=fake_doko_read):
         result = douban_cn._find_cndouban(title="Original", author="Example Author")
 
     assert result["status"] == "ok"
     assert result["translations"][0]["douban_id"] == "2"
     assert result["diagnostics"]["doko_calls"] == 1
-    mock_google.assert_called_once()
+    mock_kagi.assert_called_once()
     assert any("book.douban.com/subject/2/" in url for url in urls)
-    assert not any("google.com/search" in url for url in urls)
     assert not any("search.douban.com" in url for url in urls)
 
 
-def test_find_cndouban_follows_related_version_link_after_google_subject():
-    """After Google finds the original subject, localisation follows version links directly."""
+def test_find_cndouban_follows_related_version_link_after_kagi_subject():
+    """After Kagi finds the original subject, localisation follows version links directly."""
     urls: list[str] = []
 
     def fake_doko_read(url, timeout=60):
@@ -121,27 +121,26 @@ ISBN: 9787564906962
 """
         return False, "unexpected"
 
-    with patch("sources.douban_cn._google_site_subject_urls",
-               return_value=(["https://book.douban.com/subject/1/"], [])) as mock_google, \
+    with patch("sources.douban_cn._kagi_site_subject_urls",
+               return_value=(["https://book.douban.com/subject/1/"], [])) as mock_kagi, \
          patch("sources.douban_cn._doko_read", side_effect=fake_doko_read):
         result = douban_cn._find_cndouban(title="Original", author="Example Author")
 
     assert result["status"] == "ok"
     assert result["translations"][0]["douban_id"] == "2"
     assert result["diagnostics"]["routing"] == [
-        "google-site-title-author",
+        "kagi-site-title-author",
         "related-version-links",
     ]
     assert result["diagnostics"]["doko_calls"] == 2
-    mock_google.assert_called_once()
+    mock_kagi.assert_called_once()
     assert any("book.douban.com/subject/1/" in url for url in urls)
     assert any("book.douban.com/subject/2/" in url for url in urls)
-    assert not any("google.com/search" in url for url in urls)
     assert not any("search.douban.com" in url for url in urls)
 
 
-def test_find_cndouban_degrades_isbn_to_google_to_related_version():
-    """Full fallback order: ISBN direct, Google subject discovery, then direct related-version links."""
+def test_find_cndouban_degrades_isbn_to_kagi_to_related_version():
+    """Full fallback order: ISBN direct, Kagi subject discovery, then direct related-version links."""
     urls: list[str] = []
 
     def fake_doko_read(url, timeout=60):
@@ -171,8 +170,8 @@ ISBN: 9787564906962
 """
         return False, "unexpected"
 
-    with patch("sources.douban_cn._google_site_subject_urls",
-               return_value=(["https://book.douban.com/subject/1/"], [])) as mock_google, \
+    with patch("sources.douban_cn._kagi_site_subject_urls",
+               return_value=(["https://book.douban.com/subject/1/"], [])) as mock_kagi, \
          patch("sources.douban_cn._doko_read", side_effect=fake_doko_read):
         result = douban_cn._find_cndouban(
             isbn="9780000000001",
@@ -184,20 +183,19 @@ ISBN: 9787564906962
     assert result["translations"][0]["douban_id"] == "2"
     assert result["diagnostics"]["routing"] == [
         "isbn-direct",
-        "google-site-title-author",
+        "kagi-site-title-author",
         "related-version-links",
     ]
     assert result["diagnostics"]["doko_calls"] == 3
-    mock_google.assert_called_once()
+    mock_kagi.assert_called_once()
     assert any("book.douban.com/isbn/" in url for url in urls)
     assert any("book.douban.com/subject/1/" in url for url in urls)
     assert any("book.douban.com/subject/2/" in url for url in urls)
-    assert not any("google.com/search" in url for url in urls)
     assert not any("search.douban.com" in url for url in urls)
 
 
 def test_subject_zh_falls_back_to_related_versions_when_cndouban_empty():
-    """If Doko subject-page lookup is empty, Google-seeded related probe runs before direct search."""
+    """If Doko subject-page lookup is empty, Kagi-seeded related probe runs before direct search."""
     fake_related = [{
         "title": "原书中文版",
         "publisher": "河南大学出版社",
@@ -216,7 +214,7 @@ def test_subject_zh_falls_back_to_related_versions_when_cndouban_empty():
     assert r.entries[0]["title"] == "原书中文版"
 
 
-def test_related_version_search_uses_google_seed_before_douban_search():
+def test_related_version_search_uses_kagi_seed_before_douban_search():
     urls: list[str] = []
 
     def fake_doko_read(url, timeout=60):
@@ -238,8 +236,8 @@ def test_related_version_search_uses_google_seed_before_douban_search():
         return False, "unexpected"
 
     with patch("sources.douban_cn._dd_fetch", return_value=(False, "skip direct")), \
-         patch("sources.douban_cn._google_site_subject_urls",
-               return_value=(["https://book.douban.com/subject/1/"], [])) as mock_google, \
+         patch("sources.douban_cn._kagi_site_subject_urls",
+               return_value=(["https://book.douban.com/subject/1/"], [])) as mock_kagi, \
          patch("sources.douban_cn._doko_read", side_effect=fake_doko_read):
         results = douban_cn._related_version_search(
             search.BookQuery(title="Original", author="Example Author", limit=5),
@@ -247,24 +245,35 @@ def test_related_version_search_uses_google_seed_before_douban_search():
         )
 
     assert results[0]["douban_subject_id"] == "2"
-    mock_google.assert_called_once()
+    mock_kagi.assert_called_once()
     assert not any("search.douban.com" in url for url in urls)
 
 
-def test_google_site_subject_urls_never_uses_doko():
-    html = '<a href="/url?q=https%3A%2F%2Fbook.douban.com%2Fsubject%2F12345%2F&sa=U">x</a>'
-    with patch("sources.douban_cn._dd_fetch", return_value=(True, html)) as mock_fetch, \
+def test_kagi_site_subject_urls_never_uses_doko():
+    payload = {"data": [{"url": "https://book.douban.com/subject/12345/"}]}
+    completed = type("Completed", (), {
+        "returncode": 0,
+        "stdout": json.dumps(payload),
+        "stderr": "",
+    })()
+    with patch("sources.douban_cn.shutil.which", return_value="/bin/kagi"), \
+         patch("sources.douban_cn.subprocess.run", return_value=completed) as mock_run, \
          patch("sources.douban_cn._doko_read") as mock_doko:
-        urls, warnings = douban_cn._google_site_subject_urls("Example Book")
+        urls, warnings = douban_cn._kagi_site_subject_urls("Example Book")
 
     assert urls == ["https://book.douban.com/subject/12345/"]
     assert warnings == []
-    mock_fetch.assert_called_once()
+    mock_run.assert_called_once()
     mock_doko.assert_not_called()
 
 
-def test_compact_google_book_query_removes_subtitle_and_newline():
-    q = douban_cn._compact_google_book_query(
+def test_kagi_site_subject_query_has_only_site_limiter():
+    query = douban_cn._kagi_site_subject_query("Strange Encounters Sara Ahmed")
+    assert query == "site:book.douban.com/subject Strange Encounters Sara Ahmed"
+
+
+def test_compact_external_book_query_removes_subtitle_and_newline():
+    q = douban_cn._compact_external_book_query(
         title="Strange Encounters: Embodied Others in\n         Post-Coloniality",
         author="Sara Ahmed",
     )
@@ -273,12 +282,29 @@ def test_compact_google_book_query_removes_subtitle_and_newline():
     assert "Post-Coloniality" not in q
 
 
-def test_extract_google_subject_urls_decodes_redirects():
+def test_subject_zh_allows_douban_search_fallback_when_kagi_empty():
+    calls: list[str] = []
+
+    def fake_doko_read(url, timeout=60):
+        calls.append(url)
+        return False, "no hit"
+
+    with patch("sources.douban_cn._cndouban_works_payload", return_value={"status": "no-douban-entry", "translations": []}), \
+         patch("sources.douban_cn._kagi_site_subject_urls", return_value=([], ["no kagi hit"])), \
+         patch("sources.douban_cn._doko_read", side_effect=fake_doko_read), \
+         patch("sources.douban_cn._direct_search", return_value=[]):
+        result = douban_cn.search_book(search.BookQuery(title="Original", author="Example Author", subject="zh"))
+
+    assert result.success is True
+    assert any("search.douban.com" in url for url in calls)
+
+
+def test_extract_external_subject_urls_decodes_redirects():
     html = '''
     <a href="/url?q=https%3A%2F%2Fbook.douban.com%2Fsubject%2F12345%2F&sa=U">x</a>
     <a href="https://book.douban.com/subject/67890/">y</a>
     '''
-    assert douban_cn._extract_google_subject_urls(html) == [
+    assert douban_cn._extract_subject_urls_from_external_text(html) == [
         "https://book.douban.com/subject/12345/",
         "https://book.douban.com/subject/67890/",
     ]
@@ -330,14 +356,16 @@ def main():
         test_general_metadata_query_uses_direct_path_first,
         test_cjk_author_triggers_works_page,
         test_subject_zh_uses_cndouban_subject_page_first,
-        test_find_cndouban_uses_google_site_before_douban_search,
-        test_find_cndouban_follows_related_version_link_after_google_subject,
-        test_find_cndouban_degrades_isbn_to_google_to_related_version,
+        test_find_cndouban_uses_kagi_site_before_douban_search,
+        test_find_cndouban_follows_related_version_link_after_kagi_subject,
+        test_find_cndouban_degrades_isbn_to_kagi_to_related_version,
         test_subject_zh_falls_back_to_related_versions_when_cndouban_empty,
-        test_related_version_search_uses_google_seed_before_douban_search,
-        test_google_site_subject_urls_never_uses_doko,
-        test_compact_google_book_query_removes_subtitle_and_newline,
-        test_extract_google_subject_urls_decodes_redirects,
+        test_related_version_search_uses_kagi_seed_before_douban_search,
+        test_kagi_site_subject_urls_never_uses_doko,
+        test_kagi_site_subject_query_has_only_site_limiter,
+        test_compact_external_book_query_removes_subtitle_and_newline,
+        test_subject_zh_allows_douban_search_fallback_when_kagi_empty,
+        test_extract_external_subject_urls_decodes_redirects,
         test_subject_zh_reports_doko_unavailable_when_no_fallback_result,
         test_parse_doko_references_decodes_link2_subject_url,
         test_parse_doko_subject_page_handles_inline_metadata,

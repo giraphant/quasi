@@ -49,7 +49,6 @@ _DOUBAN_SEARCH_URL = "https://www.douban.com/search"
 _DOUBAN_BOOK_URL = "https://book.douban.com/subject/%s/"
 _DOUBAN_BOOK_BASE = "https://book.douban.com/"
 _DOUBAN_BOOK_CAT = "1001"
-_GOOGLE_SEARCH_URL = "https://www.google.com/search"
 _SUBJECT_URL_RE = re.compile(r".*/subject/(\d+)/?")
 _WORKS_URL_RE = re.compile(r"https?://book\.douban\.com/works/(\d+)/?")
 _ANY_SUBJECT_HREF_RE = re.compile(
@@ -76,10 +75,22 @@ _DOKO_META_LABELS = (
     "作者", "译者", "出版社", "出版年", "ISBN",
     "页数", "装帧", "定价", "丛书", "原作名",
 )
-_ZH_PUBLISHER_HINT_RE = re.compile(
-    r"(出版社|出版|书店|書店|印书馆|印書館|商务|商務|三联|三聯|人民|"
-    r"译林|譯林|中华|中華|中信|上海|北京|浙江|江苏|廣西|广西|"
-    r"台湾|臺灣|香港|聯經|时报|時報|麦田|麥田|遠流|天下|大学|大學|群學)"
+# ISBN agency prefixes that identify a Chinese-language edition:
+#   978-7-xxx     — mainland China
+#   978-957/986-x — Taiwan
+#   978-988/962-x — Hong Kong
+# Cleaner than maintaining a publisher whitelist (which would never keep up
+# with the long tail of independent / academic presses).
+_ZH_ISBN_PREFIXES = ("9787", "978957", "978986", "978988", "978962")
+
+# Other Asian-CJK-language prefixes — explicitly NOT Chinese. Without this
+# the kanji-only Japanese titles / kanji translator names pass the generic
+# CJK check (e.g. 伴侶種宣言 / 永野 文香 from a JP edition).
+_NON_ZH_ASIAN_ISBN_PREFIXES = ("9784", "97889", "97811", "978604")
+
+# Kana / Hangul ranges — presence means it's clearly not Chinese.
+_KANA_HANGUL_RE = re.compile(
+    r"[぀-ゟ゠-ヿᄀ-ᇿ㄰-㆏가-힯]"
 )
 
 _USER_AGENTS = [
@@ -412,19 +423,18 @@ def _cn_search_url(query: str) -> str:
             + urllib.parse.urlencode({"search_text": query}))
 
 
-def _google_site_subject_search_url(query: str) -> str:
-    return (_GOOGLE_SEARCH_URL + "?"
-            + urllib.parse.urlencode({"q": f"site:book.douban.com/subject {query} 豆瓣读书"}))
+def _kagi_site_subject_query(query: str) -> str:
+    return f"site:book.douban.com/subject {query}"
 
 
-def _compact_google_book_query(
+def _compact_external_book_query(
     *,
     title: str | None = None,
     author: str | None = None,
     query: str | None = None,
     year: int | None = None,
 ) -> str:
-    """Build a short Google query for Douban subject discovery."""
+    """Build a short external-search query for Douban subject discovery."""
     title_text = re.sub(r"\s+", " ", (title or query or "")).strip()
     if title_text:
         main_title = re.split(r"\s*[:：]\s*", title_text, maxsplit=1)[0].strip()
@@ -473,39 +483,66 @@ def _grab(rx, body, default=None):
 
 
 def _guess_title_from_subject_page(body: str) -> Optional[str]:
-    """Heuristic: first prominent non-boilerplate line from doko-rendered text."""
+    """Pull the subject title from a doko-rendered page.
+
+    Prefer the `**Title**` bold marker that sits at the top of the metadata
+    block. Falls back to the `# Title (豆瓣)` h1, then to the first non-
+    boilerplate line. Strips the trailing `(豆瓣)` and any markdown noise.
+    """
+    if not body:
+        return None
+    m = re.search(r"\*\*(.+?)\*\*", body)
+    if m:
+        cleaned = _clean_doko_title(m.group(1))
+        if cleaned:
+            return cleaned[:200]
+    m = re.search(r"^#\s+(.+?)\s*$", body, re.MULTILINE)
+    if m:
+        cleaned = _clean_doko_title(m.group(1))
+        if cleaned:
+            return cleaned[:200]
     boilerplate = {"豆瓣", "豆瓣读书", "登录", "注册", "电影", "音乐", "书籍",
                    "广告", "首页", "更多", "豆品", "导航"}
-    for line in (body or "").splitlines()[:30]:
+    for line in body.splitlines()[:30]:
         line = line.strip()
-        if not line:
-            continue
-        if line in boilerplate:
+        if not line or line in boilerplate:
             continue
         if line.startswith("豆瓣") or line.startswith("Sign in"):
             continue
         if len(line) < 2:
             continue
-        return line[:200]
+        return _clean_doko_title(line)[:200]
     return None
 
 
 def _parse_cn_subject_page(body: str, subject_id: str) -> dict:
-    year_str = _grab(_RE_PUBLISH_YEAR_CN, body)
-    year = int(year_str) if year_str and year_str.isdigit() else None
-    ratings_m = _RE_RATINGS_COUNT.search(body or "")
+    """Parse a doko-rendered Douban subject page into a canonical raw dict.
+
+    The metadata block is rendered as one line — using label-lookahead via
+    `_grab_doko_meta` keeps fields from bleeding into one another.
+    """
+    title = _guess_title_from_subject_page(body) or ""
+    author = _grab_doko_meta(body, "作者")
+    translator = _grab_doko_meta(body, "译者")
+    publisher = _grab_doko_meta(body, "出版社")
+    year_str = _grab_doko_meta(body, "出版年")
+    isbn = _grab_doko_meta(body, "ISBN")
+    original_title = _grab_doko_meta(body, "原作名")
+
+    year = int(year_str[:4]) if year_str and year_str[:4].isdigit() else None
+    ratings_m = _DOKO_RATING_RE.search(body or "") or _RE_RATINGS_COUNT.search(body or "")
     ratings_count = int(ratings_m.group(1)) if ratings_m else 0
 
     return {
         "douban_id": subject_id,
         "douban_url": _subject_url(subject_id),
-        "title": _guess_title_from_subject_page(body),
-        "author": _grab(_RE_AUTHOR_CN, body),
-        "translator": _grab(_RE_TRANSLATOR_CN, body),
-        "publisher": _grab(_RE_PUBLISHER_CN, body),
+        "title": title,
+        "author": author or None,
+        "translator": translator or None,
+        "publisher": publisher or None,
         "year": year,
-        "isbn": _grab(_RE_ISBN_CN, body),
-        "original_title": _grab(_RE_ORIGINAL_TITLE_CN, body),
+        "isbn": isbn or None,
+        "original_title": original_title or None,
         "ratings_count": ratings_count,
     }
 
@@ -552,11 +589,59 @@ def _reverse_from_slug(slug: str) -> dict:
     return result
 
 
+_PRIMARY_MATCH_MIN = 0.3
+_PRIMARY_MATCH_STRONG = 1.2
+
+
+def _normalise_for_match(s: str) -> str:
+    if not s:
+        return ""
+    s = s.lower()
+    s = re.sub(r"[\s\-_:：,，.。·]+", " ", s)
+    return s.strip()
+
+
+def _score_primary_match(parsed: dict, *, title: str | None, author: str | None) -> float:
+    """Score how well a candidate Douban subject matches the original query.
+
+    Returns a sum of weighted signals; thresholds gate primary-subject acceptance.
+    """
+    score = 0.0
+    cand_title = _normalise_for_match(parsed.get("title") or "")
+    cand_orig = _normalise_for_match(parsed.get("original_title") or "")
+    cand_author = _normalise_for_match(parsed.get("author") or "")
+
+    if title:
+        qt = _normalise_for_match(title)
+        qt_head = qt.split(" : ")[0].split(":")[0].strip()
+        qt_tokens = [t for t in qt_head.split() if len(t) >= 3]
+        for hay in (cand_title, cand_orig):
+            if not hay:
+                continue
+            if qt_head and qt_head in hay:
+                score += 1.0
+                break
+            if qt_tokens:
+                hits = sum(1 for t in qt_tokens if t in hay)
+                if hits >= max(2, int(0.6 * len(qt_tokens))):
+                    score += 0.6
+                    break
+
+    if author:
+        qa = _normalise_for_match(author)
+        surname = qa.split()[-1] if qa else ""
+        if surname and surname in cand_author:
+            score += 0.4
+
+    return score
+
+
 def _find_cndouban(*, isbn: Optional[str] = None,
                    title: Optional[str] = None,
                    author: Optional[str] = None,
                    year: Optional[int] = None,
-                   slug: Optional[str] = None) -> dict:
+                   slug: Optional[str] = None,
+                   allow_douban_search: bool = True) -> dict:
     """Core cndouban pipeline. Returns structured result dict."""
     diagnostics = {"routing": [], "doko_calls": 0, "warnings": []}
 
@@ -592,27 +677,42 @@ def _find_cndouban(*, isbn: Optional[str] = None,
             diagnostics["warnings"].append(f"isbn-direct: {body[:120]}")
 
     if primary_subject is None and (title or author):
-        q = _compact_google_book_query(
+        q = _compact_external_book_query(
             title=title,
             author=author,
             year=year,
         )
-        diagnostics["routing"].append("google-site-title-author")
-        urls, warnings = _google_site_subject_urls(q, limit=5)
+        diagnostics["routing"].append("kagi-site-title-author")
+        urls, warnings = _kagi_site_subject_urls(q, limit=5)
         diagnostics["warnings"].extend(warnings)
+        scored: list[tuple[float, str, str]] = []
         for url in urls:
             cand = _subject_id_from_url(url)
             if not cand:
                 continue
             diagnostics["doko_calls"] += 1
             ok2, body2 = _doko_read(_subject_url(cand))
-            if ok2:
-                primary_subject = cand
-                primary_body = body2
+            if not ok2:
+                diagnostics["warnings"].append(f"subject-fetch {cand}: {body2[:120]}")
+                continue
+            parsed_cand = _parse_cn_subject_page(body2, cand)
+            score = _score_primary_match(parsed_cand, title=title, author=author)
+            scored.append((score, cand, body2))
+            if score >= _PRIMARY_MATCH_STRONG:
                 break
-            diagnostics["warnings"].append(f"subject-fetch {cand}: {body2[:120]}")
+        if scored:
+            scored.sort(key=lambda t: t[0], reverse=True)
+            best_score, best_cand, best_body = scored[0]
+            if best_score >= _PRIMARY_MATCH_MIN:
+                primary_subject = best_cand
+                primary_body = best_body
+            else:
+                diagnostics["warnings"].append(
+                    f"kagi-site-title-author: no candidate matched query "
+                    f"(best score={best_score:.2f}, cand={best_cand})"
+                )
 
-    if primary_subject is None and title and author:
+    if allow_douban_search and primary_subject is None and title and author:
         q = f"{title} {author}"
         diagnostics["routing"].append("search-title-author")
         diagnostics["doko_calls"] += 1
@@ -631,7 +731,7 @@ def _find_cndouban(*, isbn: Optional[str] = None,
         else:
             diagnostics["warnings"].append(f"search-title-author: {body[:120]}")
 
-    if primary_subject is None and author:
+    if allow_douban_search and primary_subject is None and author:
         diagnostics["routing"].append("search-author-only")
         diagnostics["doko_calls"] += 1
         ok, body = _doko_read(_cn_search_url(author))
@@ -752,7 +852,7 @@ def _find_cndouban(*, isbn: Optional[str] = None,
     }
 
 
-def _cndouban_works_impl(args_namespace) -> dict:
+def _cndouban_works_impl(args_namespace, *, allow_douban_search: bool = False) -> dict:
     """Run the cndouban pipeline and return the result dict directly.
 
     Formerly run_cndouban in cndouban.py, which printed JSON to stdout.
@@ -765,6 +865,7 @@ def _cndouban_works_impl(args_namespace) -> dict:
         author=args_namespace.author,
         year=args_namespace.year,
         slug=args_namespace.slug,
+        allow_douban_search=allow_douban_search,
     )
 
 
@@ -840,14 +941,18 @@ def _decode_douban_url(url: str) -> str:
     return url
 
 
-def _extract_google_subject_urls(body: str, limit: int = 5) -> list[str]:
+def _normalise_external_search_href(href: str) -> str:
+    href = unescape(href).replace("&amp;", "&")
+    if href.startswith("/url?"):
+        href = urllib.parse.urljoin("https://www.google.com/search", href)
+    return _decode_douban_url(href)
+
+
+def _extract_subject_urls_from_external_text(body: str, limit: int = 5) -> list[str]:
     urls: list[str] = []
     seen: set[str] = set()
     for m in _ANY_HREF_RE.finditer(body or ""):
-        href = unescape(m.group(1)).replace("&amp;", "&")
-        if href.startswith("/url?"):
-            href = urllib.parse.urljoin(_GOOGLE_SEARCH_URL, href)
-        decoded = _decode_douban_url(href)
+        decoded = _normalise_external_search_href(m.group(1))
         sm = re.search(r"https?://book\.douban\.com/subject/\d+/?", decoded)
         if not sm:
             continue
@@ -861,19 +966,71 @@ def _extract_google_subject_urls(body: str, limit: int = 5) -> list[str]:
     return urls
 
 
-def _google_site_subject_urls(query: str, limit: int = 5) -> tuple[list[str], list[str]]:
-    """Find Douban subject URLs via Google HTTP. Never invokes Doko."""
-    url = _google_site_subject_search_url(query)
-    ok, body = _dd_fetch(url, timeout=15)
-    warnings: list[str] = []
-    if ok:
-        urls = _extract_google_subject_urls(body, limit=limit)
+def _extract_subject_urls_from_kagi_json(payload, limit: int = 5) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    def walk(value):
+        if len(urls) >= limit:
+            return
+        if isinstance(value, dict):
+            candidate = value.get("url")
+            if isinstance(candidate, str):
+                decoded = _normalise_external_search_href(candidate)
+                sm = re.search(r"https?://book\.douban\.com/subject/\d+/?", decoded)
+                if sm:
+                    url = _normalise_subject_url(sm.group(0))
+                    if url not in seen:
+                        seen.add(url)
+                        urls.append(url)
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(payload)
+    return urls
+
+
+def _kagi_site_subject_urls(query: str, limit: int = 5) -> tuple[list[str], list[str]]:
+    """Find Douban subject URLs via kagi-cli. Does not invoke Doko."""
+    if not shutil.which("kagi"):
+        return [], ["kagi-site-search: kagi CLI not available"]
+
+    kagi_query = _kagi_site_subject_query(query)
+    try:
+        result = subprocess.run(
+            ["kagi", "search", "--format", "json", kagi_query],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [], ["kagi-site-search: timeout"]
+    except Exception as exc:
+        return [], [f"kagi-site-search: {type(exc).__name__}: {exc}"]
+
+    if result.returncode != 0:
+        return [], [f"kagi-site-search: rc={result.returncode}: {(result.stderr or result.stdout)[:160]}"]
+
+    stdout = result.stdout or ""
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        urls = _extract_subject_urls_from_external_text(stdout, limit=limit)
         if urls:
-            return urls, warnings
-        warnings.append("google-site-fetch: no subject urls")
-    else:
-        warnings.append(f"google-site-fetch: {body[:120]}")
-    return [], warnings
+            return urls, []
+        return [], ["kagi-site-search: non-json output without subject urls"]
+
+    urls = _extract_subject_urls_from_kagi_json(payload, limit=limit)
+    if urls:
+        return urls, []
+    urls = _extract_subject_urls_from_external_text(stdout, limit=limit)
+    if urls:
+        return urls, []
+    return [], ["kagi-site-search: no subject urls"]
 
 
 def _parse_doko_references(body: str) -> dict[str, str]:
@@ -947,15 +1104,42 @@ def _extract_subject_urls_from_doko(body: str, current_url: str | None = None) -
     return urls
 
 
-def _grab_doko_meta(body: str, label: str) -> str:
+def _doko_meta_window(body: str) -> str:
+    """Slice out the metadata block from a doko-rendered subject page.
+
+    Layout is `**Title**` then `---` then a reference number then the single
+    metadata line, terminated by `豆瓣评分`. Without this scope, helpers below
+    happily match stray label occurrences inside reader comments / book lists.
+    """
+    if not body:
+        return ""
+    start = 0
+    m = re.search(r"\*\*([^*]+)\*\*", body)
+    if m:
+        start = m.end()
+    end_marker = body.find("豆瓣评分", start)
+    if end_marker < 0:
+        end_marker = min(start + 1200, len(body))
+    return body[start:end_marker]
+
+
+def _grab_doko_meta(body: str, label: str, *, scoped: bool = True) -> str:
+    haystack = _doko_meta_window(body) if scoped else (body or "")
     label_alt = "|".join(re.escape(item) for item in _DOKO_META_LABELS)
     pattern = rf"{re.escape(label)}\s*[:：]\s*(.*?)(?=(?:{label_alt})\s*[:：]|\n|$)"
-    m = re.search(pattern, body or "", re.DOTALL)
+    m = re.search(pattern, haystack, re.DOTALL)
     if not m:
         return ""
     value = re.sub(r"\[\d+\]", "", m.group(1))
     value = re.sub(r"\s+", " ", value).strip()
     return value.strip("/")
+
+
+def _clean_doko_title(raw: str) -> str:
+    t = (raw or "").strip()
+    t = re.sub(r"\s*\(豆瓣\)\s*$", "", t)
+    t = re.sub(r"\s*[（(]豆瓣[)）]\s*$", "", t)
+    return t.strip()
 
 
 def _parse_doko_subject_page(body: str, url: str) -> dict | None:
@@ -967,6 +1151,7 @@ def _parse_doko_subject_page(body: str, url: str) -> dict | None:
         m = re.search(r"\*\*(.+?)\*\*", body or "")
         if m:
             title = m.group(1).strip()
+    title = _clean_doko_title(title)
     if not title:
         return None
 
@@ -995,15 +1180,42 @@ def _parse_doko_subject_page(body: str, url: str) -> dict | None:
 
 
 def _is_chinese_like_record(raw: dict) -> bool:
+    """Decide whether a parsed Douban subject record is a Chinese-language edition.
+
+    Logic (in order):
+      1. ISBN agency prefix — registry, not a guess. CN/TW/HK ⇒ accept;
+         JP/KR/VN ⇒ reject (kanji-only signals would otherwise leak these in).
+      2. Kana / Hangul anywhere in title / publisher / translators ⇒ reject.
+      3. Any of (publisher | translators | title) has CJK ⇒ accept.
+      4. Otherwise ⇒ reject. A non-CJK translator field (e.g. French
+         "Laurence Brottier") is not evidence of a Chinese edition.
+    """
     title = raw.get("title") or ""
     publisher = raw.get("publisher") or ""
-    translators = " ".join(raw.get("translators") or ([raw.get("translator")] if raw.get("translator") else []))
-    authors = " ".join(raw.get("authors") or ([raw.get("author")] if raw.get("author") else []))
-    if _ZH_PUBLISHER_HINT_RE.search(publisher):
+    translators_raw = raw.get("translators") or (
+        [raw.get("translator")] if raw.get("translator") else []
+    )
+    translators = " ".join(t for t in translators_raw if t)
+
+    isbn = raw.get("isbn") or raw.get("isbn_13") or raw.get("isbn_10") or ""
+    isbn_digits = re.sub(r"[^0-9]", "", isbn)
+    if isbn_digits.startswith(_ZH_ISBN_PREFIXES):
         return True
-    if translators and _has_cjk(translators):
+    if isbn_digits.startswith(_NON_ZH_ASIAN_ISBN_PREFIXES):
+        return False
+
+    blob = f"{title} {publisher} {translators}"
+    if _KANA_HANGUL_RE.search(blob):
+        return False
+
+    if _has_cjk(publisher):
         return True
-    return _has_cjk(title) and (_has_cjk(publisher) or _has_cjk(authors))
+    if translators.strip() and _has_cjk(translators):
+        return True
+    if _has_cjk(title):
+        return True
+
+    return False
 
 
 def _fetch_subject_for_related(url: str) -> tuple[dict | None, list[str]]:
@@ -1023,7 +1235,12 @@ def _fetch_subject_for_related(url: str) -> tuple[dict | None, list[str]]:
     return None, []
 
 
-def _related_version_search(query: _s.BookQuery, direct_hits: list[dict]) -> list[dict]:
+def _related_version_search(
+    query: _s.BookQuery,
+    direct_hits: list[dict],
+    *,
+    allow_douban_search: bool = True,
+) -> list[dict]:
     seed_urls = []
     for hit in direct_hits:
         url = hit.get("douban_url") or hit.get("preview_link")
@@ -1031,16 +1248,16 @@ def _related_version_search(query: _s.BookQuery, direct_hits: list[dict]) -> lis
             seed_urls.append(_normalise_subject_url(url))
 
     if not seed_urls:
-        q_text = _compact_google_book_query(
+        q_text = _compact_external_book_query(
             title=query.title,
             author=query.author,
             query=query.query,
             year=query.year_from,
         )
         if q_text:
-            seed_urls, _ = _google_site_subject_urls(q_text, limit=query.limit)
+            seed_urls, _ = _kagi_site_subject_urls(q_text, limit=query.limit)
         douban_q_text = " ".join(filter(None, [query.isbn, query.title, query.author, query.query]))
-        if not seed_urls and douban_q_text:
+        if allow_douban_search and not seed_urls and douban_q_text:
             ok, body = _doko_read(_cn_search_url(douban_q_text))
             if ok:
                 seed_urls = _extract_subject_urls_from_doko(body)[:query.limit]
@@ -1158,8 +1375,8 @@ def search_book(query: _s.BookQuery) -> _s.AdapterResult:
     wants_zh = _wants_chinese_versions(query)
 
     if wants_zh:
-        # Localisation lookup starts with direct ISBN / Google site discovery,
-        # leaving Douban's own search endpoint as the last fallback.
+        # Localisation lookup starts with direct ISBN / Kagi site discovery,
+        # then leaves Douban's own search endpoint as the final fallback.
         payload = _cndouban_works_payload(query)
         works = payload.get("translations") or []
         if not works:
