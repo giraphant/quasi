@@ -76,6 +76,18 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.33.1** (2026-05-19): **UChicago EZProxy PDF discovery.**
+  - EZProxy publisher-pattern download now tries all matching publisher
+    patterns instead of stopping after the first match. This lets UChicago
+    fall through from `/doi/pdf/{doi}` to `/doi/pdfplus/{doi}`.
+  - UChicago embedded viewer support: EZProxy fetches `/doi/epdf/{doi}`
+    and extracts `citation_pdf_url` from the page before the generic HTML
+    link scrape. This covers UChicago pages whose direct PDF endpoint is
+    not exposed on the DOI landing page.
+  - Publisher Direct also tries all matching patterns and includes
+    UChicago `/doi/pdfplus/{doi}`.
+  - Tests: full suite 23/23 passing.
+
 - **0.33.0** (2026-05-19): **Paper download gains multi-source discovery,
   publisher direct PDF, and Kagi recovery.** Driven by 19-paper test
   batch where 15 papers failed acquisition (6× EZProxy expired,
