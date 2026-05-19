@@ -76,6 +76,58 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.32.14** (2026-05-19): **Douban zh-localisation: two-stage CJK
+  filter; bin no longer guesses relevance.** Three interlocking bugs
+  surfaced when localising *Living a Feminist Life* — Kagi's top hit
+  (`/subject/36494081/?_dtcc=1`) was being silently dropped, and the
+  ISBN fallback variant was polluting results with popular unrelated
+  Chinese books. Root cause was 0.32.9's "strict admission" regex
+  rejecting normal URL cruft, plus an under-considered ISBN variant
+  using the original-language ISBN that Douban doesn't index.
+  - **Regex normalises subject-URL cruft instead of rejecting it.**
+    `_RE_DOUBAN_SUBJECT_CLEAN` switched to
+    `^https?://book\.douban\.com/subject/(\d+)/*(?:\?[^#]*)?(?:#.*)?$`.
+    Accepts `/subject/{id}//` (double-slash) and `/subject/{id}/?_dtcc=1`
+    (Kagi tracking suffix) and `/subject/{id}#frag`, all normalise to
+    canonical `/subject/{id}/`. Still rejects `/comments`,
+    `/blockquotes`, `/doulists`, `/annotation`, `/offers`, `/buylinks`,
+    `/reviews/...` child paths. This reverses 0.32.9 — that release's
+    "exact policy" was a regression in disguise; real Kagi output
+    routinely carries the cruft on legitimate subject pages.
+  - **ISBN variant gated to ISBN-only queries.** `_external_book_queries`
+    no longer adds the ISBN as a Kagi search variant when title or
+    free-text query is present. Douban indexes the *Chinese-edition*
+    ISBN, never the original English one — so an English-edition ISBN
+    triggers Kagi's "no precise match, return popular results"
+    fallback, which surfaces top-rated unrelated Chinese books
+    (典型: 如何阅读一本书 / 脑髓地狱 / 边界力 / 谁来决定吃什么 returned for any
+    English ISBN under `subject=zh`).
+  - **Pre-fetch CJK title filter.** `_kagi_subject_urls` now returns
+    `[(canonical_url, kagi_title), ...]` pairs. `_kagi_book_search`
+    accepts `cjk_title_only=True` and skips Kagi hits whose page title
+    is Latin-dominant before spending an HTTP fetch on them — drops
+    the English-edition Douban page when we're after the Chinese
+    translation. `_cjk_dominant` decides by CJK-vs-ASCII-letter count.
+  - **Bin no longer attempts query-vs-record relevance matching.**
+    `_zh_localisation_search` is two coarse filters and a sort:
+    pre-fetch CJK title → fetch → post-fetch `_is_chinese_edition`
+    (publisher / translator / ISBN-agency / kana-hangul-reject signals
+    unchanged) → sort by `ratings_count`. The "is this record the
+    translation of *this specific* book the caller asked for"
+    disambiguation is the caller agent's job — bin returns the small
+    set of Chinese-book candidates Kagi surfaced, agent picks.
+  - **Per-variant Kagi pull bumped 10 → 20** so the CJK pre-filter has
+    enough candidates to survive even when the EN edition crowds the
+    top of Kagi's ranking.
+  - Tests in `test_source_douban_cn.py` and `test_douban_cn_en2zh.py`
+    updated for the new `(url, title)` return shape and the cjk-title
+    pre-filter behaviour. Full search suite green (35 + 12 + others).
+  - Behaviour: end-to-end `quasi-search book --title "Living a
+    Feminist Life" --author "Sara Ahmed" --source douban_cn --subject
+    zh` now returns the single correct record `subject 36494081 过一种
+    女性主义的生活, 原作名 = Living a Feminist Life, 出版社 = 上海文艺出版社`
+    (previously: 4 unrelated popular Chinese books).
+
 - **0.32.13** (2026-05-19): **EZProxy config takes a base URL, not a
   half login prefix.**
   - Breaking config rename: `cookiecloud_login_url` is removed and

@@ -76,32 +76,55 @@ def _completed(payload: dict, *, rc: int = 0, stderr: str = ""):
 
 
 def test_kagi_subject_urls_returns_canonical_only():
-    """Strict regex keeps /subject/{id}/, drops /comments, /blockquotes, /doulists."""
+    """Keeps /subject/{id}/, normalises double-slash + ?_dtcc cruft,
+    drops /comments, /blockquotes, /doulists child paths. Returns
+    (canonical_url, kagi_title) pairs so callers can pre-filter on
+    the page title without a fetch."""
     payload = {"data": [
-        {"url": "https://book.douban.com/subject/12345/"},
-        {"url": "https://book.douban.com/subject/12345/comments/?sort=time"},
-        {"url": "https://book.douban.com/subject/67890/blockquotes"},
-        {"url": "https://book.douban.com/subject/67890/"},
-        {"url": "https://book.douban.com/subject/99999/doulists"},
-        {"url": "https://book.douban.com/subject/77777//"},  # double-slash
-        {"url": "https://book.douban.com/subject/55555/?_dtcc=1"},  # query string
+        {"url": "https://book.douban.com/subject/12345/",
+         "title": "性别麻烦 (豆瓣)"},
+        {"url": "https://book.douban.com/subject/12345/comments/?sort=time",
+         "title": "性别麻烦 短评"},
+        {"url": "https://book.douban.com/subject/67890/blockquotes",
+         "title": "Gender Trouble 原文摘录"},
+        {"url": "https://book.douban.com/subject/67890/",
+         "title": "Gender Trouble (豆瓣)"},
+        {"url": "https://book.douban.com/subject/99999/doulists",
+         "title": "推荐 Gender Trouble 的书单"},
+        {"url": "https://book.douban.com/subject/77777//",  # double-slash → normalise
+         "title": "消解性别 (豆瓣)"},
+        {"url": "https://book.douban.com/subject/55555/?_dtcc=1",  # query → normalise
+         "title": "性别是流动的吗？"},
     ]}
     with patch("sources.douban_cn.subprocess.run", return_value=_completed(payload)):
-        urls, warnings = douban_cn._kagi_subject_urls("Example Book", limit=10)
-    assert urls == [
-        "https://book.douban.com/subject/12345/",
-        "https://book.douban.com/subject/67890/",
+        items, warnings = douban_cn._kagi_subject_urls("Example Book", limit=10)
+    assert items == [
+        ("https://book.douban.com/subject/12345/", "性别麻烦 (豆瓣)"),
+        ("https://book.douban.com/subject/67890/", "Gender Trouble (豆瓣)"),
+        ("https://book.douban.com/subject/77777/", "消解性别 (豆瓣)"),
+        ("https://book.douban.com/subject/55555/", "性别是流动的吗？"),
     ]
     assert warnings == []
 
 
-def test_canonical_subject_url_rejects_child_pages():
+def test_canonical_subject_url_normalises_cruft_and_rejects_children():
     assert douban_cn._canonical_subject_url(
         "https://book.douban.com/subject/2482832/"
     ) == "https://book.douban.com/subject/2482832/"
     assert douban_cn._canonical_subject_url(
         "https://book.douban.com/subject/2482832"
     ) == "https://book.douban.com/subject/2482832/"
+    # ── normalise cruft Kagi/Douban routinely append ──
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/55555/?_dtcc=1"
+    ) == "https://book.douban.com/subject/55555/"
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/77777//"
+    ) == "https://book.douban.com/subject/77777/"
+    assert douban_cn._canonical_subject_url(
+        "https://book.douban.com/subject/88888/#reviews"
+    ) == "https://book.douban.com/subject/88888/"
+    # ── reject child paths ──
     assert douban_cn._canonical_subject_url(
         "https://book.douban.com/subject/2482832/comments"
     ) is None
@@ -112,31 +135,32 @@ def test_canonical_subject_url_rejects_child_pages():
         "https://book.douban.com/subject/20384337/annotation"
     ) is None
     assert douban_cn._canonical_subject_url(
-        "https://book.douban.com/subject/55555/?_dtcc=1"
+        "https://book.douban.com/subject/2482832/offers/?offer_id=1"
     ) is None
     assert douban_cn._canonical_subject_url(
-        "https://book.douban.com/subject/77777//"
+        "https://book.douban.com/subject/2482832/buylinks"
     ) is None
 
 
 def test_kagi_subject_urls_respects_limit():
     payload = {"data": [
-        {"url": f"https://book.douban.com/subject/{i}/"} for i in range(1, 20)
+        {"url": f"https://book.douban.com/subject/{i}/", "title": f"Book {i}"}
+        for i in range(1, 20)
     ]}
     with patch("sources.douban_cn.subprocess.run", return_value=_completed(payload)):
-        urls, _ = douban_cn._kagi_subject_urls("Example", limit=5)
-    assert len(urls) == 5
+        items, _ = douban_cn._kagi_subject_urls("Example", limit=5)
+    assert len(items) == 5
 
 
 def test_kagi_subject_urls_dedupes_repeats():
     payload = {"data": [
-        {"url": "https://book.douban.com/subject/100/"},
-        {"url": "https://book.douban.com/subject/100/"},
-        {"url": "https://book.douban.com/subject/100//"},  # normalises to same
+        {"url": "https://book.douban.com/subject/100/", "title": "Book 100"},
+        {"url": "https://book.douban.com/subject/100/", "title": "Book 100 dup"},
+        {"url": "https://book.douban.com/subject/100//", "title": "Book 100 cruft"},
     ]}
     with patch("sources.douban_cn.subprocess.run", return_value=_completed(payload)):
-        urls, _ = douban_cn._kagi_subject_urls("Example", limit=10)
-    assert urls == ["https://book.douban.com/subject/100/"]
+        items, _ = douban_cn._kagi_subject_urls("Example", limit=10)
+    assert items == [("https://book.douban.com/subject/100/", "Book 100")]
 
 
 def test_kagi_subject_urls_invokes_kagi_with_site_limiter():
@@ -205,6 +229,21 @@ def test_external_book_queries_include_title_head_fallback():
     )
     assert '"Strange Encounters"' in variants
     assert '"Strange Encounters" 原作名' in variants
+
+
+def test_external_book_queries_skip_isbn_when_title_present():
+    """Original-language ISBN poisons Douban search — Douban indexes the
+    Chinese-edition ISBN, not the original. When title is present, drop
+    the ISBN variant; when title is absent, keep it as the only signal."""
+    with_title = douban_cn._external_book_queries(
+        title="Living a Feminist Life",
+        author="Sara Ahmed",
+        isbn="9780822373377",
+    )
+    assert "9780822373377" not in with_title
+
+    isbn_only = douban_cn._external_book_queries(isbn="9780822373377")
+    assert isbn_only == ["9780822373377"]
 
 
 # ── _is_chinese_edition: registry + CJK signals ──
@@ -358,20 +397,15 @@ def test_fetch_subject_via_bs4_isolates_fields_from_inline_metadata():
 # ── _zh_localisation_search: integration ──
 
 def test_zh_localisation_search_filters_to_chinese_only():
-    """End-to-end: kagi returns mix of EN+ZH, only ZH survive."""
-    urls = [
-        "https://book.douban.com/subject/1/",   # English Penguin
-        "https://book.douban.com/subject/2/",   # Chinese 三联
+    """End-to-end: kagi returns mix of EN+ZH (CJK-dominant title only for
+    the ZH one), only ZH survive both the pre-fetch CJK filter and the
+    post-fetch publisher-CJK check."""
+    items = [
+        ("https://book.douban.com/subject/2/", "规训与惩罚 (豆瓣)"),  # ZH page title
+        # No EN item — cjk_title_only=True would skip it pre-fetch.
+        # Add one to also exercise the pre-filter:
+        ("https://book.douban.com/subject/1/", "Discipline and Punish (豆瓣)"),  # EN, skipped
     ]
-    en_html = """
-    <html><h1><span property="v:itemreviewed">Discipline and Punish</span></h1>
-    <div id="info">
-      <span class="pl">作者:</span> Michel Foucault<br/>
-      <span class="pl">出版社:</span> Penguin<br/>
-      <span class="pl">出版年:</span> 1991-04-25<br/>
-      <span class="pl">ISBN:</span> 9780140137224<br/>
-    </div></html>
-    """
     zh_html = """
     <html><h1><span property="v:itemreviewed">规训与惩罚</span></h1>
     <div id="info">
@@ -385,13 +419,12 @@ def test_zh_localisation_search_filters_to_chinese_only():
     """
 
     def fake_fetch(url, cookie=None, timeout=20):
-        if "subject/1/" in url:
-            return True, en_html
         if "subject/2/" in url:
             return True, zh_html
-        return False, "n/a"
+        # subject/1 should never be fetched because pre-filter drops it
+        raise AssertionError(f"Latin-title URL should not be fetched: {url}")
 
-    with patch("sources.douban_cn._kagi_subject_urls", return_value=(urls, [])), \
+    with patch("sources.douban_cn._kagi_subject_urls", return_value=(items, [])), \
          patch("sources.douban_cn._dd_fetch", side_effect=fake_fetch):
         out, warnings = douban_cn._zh_localisation_search(
             search.BookQuery(title="Discipline and Punish", author="Foucault", limit=10)
@@ -403,7 +436,10 @@ def test_zh_localisation_search_filters_to_chinese_only():
 
 
 def test_zh_localisation_search_sorts_by_ratings_count():
-    urls = [f"https://book.douban.com/subject/{i}/" for i in range(1, 4)]
+    items = [
+        (f"https://book.douban.com/subject/{i}/", f"书{i} (豆瓣)")
+        for i in range(1, 4)
+    ]
 
     def fake_fetch(url, cookie=None, timeout=20):
         sid = url.rstrip("/").split("/")[-1]
@@ -417,7 +453,7 @@ def test_zh_localisation_search_sorts_by_ratings_count():
         <div><span property="v:votes">{ratings}</span></div></html>
         """
 
-    with patch("sources.douban_cn._kagi_subject_urls", return_value=(urls, [])), \
+    with patch("sources.douban_cn._kagi_subject_urls", return_value=(items, [])), \
          patch("sources.douban_cn._dd_fetch", side_effect=fake_fetch), \
          patch("sources.douban_cn.time.sleep"):  # skip the polite delay
         out, _ = douban_cn._zh_localisation_search(

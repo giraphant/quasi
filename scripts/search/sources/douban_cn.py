@@ -42,12 +42,15 @@ SOURCE_ID = "douban_cn"
 
 _SUBJECT_URL_RE = re.compile(r".*/subject/(\d+)/?")
 
-# Strict canonical-subject regex used for filtering Kagi results.
-# Accepts `/subject/{digits}` and `/subject/{digits}/`. Rejects any extra
-# path segment or query string such as
-# `/comments`, `/blockquotes`, `/doulists`, `/reviews/123`, etc.
+# Canonical-subject regex used for filtering Kagi results. Accepts the
+# bare subject page in any form Kagi/Douban hand us: `/subject/{id}`,
+# `/subject/{id}/`, `/subject/{id}//` (double-slash cruft),
+# `/subject/{id}/?_dtcc=1` (Kagi tracking suffix), `/subject/{id}#frag`,
+# etc — all normalise to `/subject/{id}/`. Rejects child paths like
+# `/comments`, `/blockquotes`, `/doulists`, `/annotation`, `/offers`,
+# `/buylinks`, `/reviews/...`.
 _RE_DOUBAN_SUBJECT_CLEAN = re.compile(
-    r"^https?://book\.douban\.com/subject/(\d+)/?$"
+    r"^https?://book\.douban\.com/subject/(\d+)/*(?:\?[^#]*)?(?:#.*)?$"
 )
 
 # ISBN agency prefixes that identify a Chinese-language edition:
@@ -202,7 +205,12 @@ def _external_book_queries(
             query_norm,
         ])
 
-    if isbn_norm:
+    # ISBN is only useful as a Douban search term when it's the *Chinese*
+    # edition's ISBN. The caller usually passes the original-language ISBN,
+    # which Douban doesn't index — Kagi then falls back to popular unrelated
+    # Chinese books for that variant. Only fire the ISBN variant when we
+    # have nothing else to go on.
+    if isbn_norm and not title_norm and not query_norm:
         variants.append(isbn_norm)
 
     return _dedupe_keep_order(variants)
@@ -239,11 +247,25 @@ def _kagi_env() -> dict[str, str]:
     return env
 
 
-def _kagi_subject_urls(query: str, limit: int = 10) -> tuple[list[str], list[str]]:
+def _cjk_dominant(s: str) -> bool:
+    """Whether the string is majority CJK (vs Latin letters). Used as a
+    cheap "this is a Chinese-edition Douban page" signal on Kagi's
+    returned page-title, before we spend an HTTP fetch on it."""
+    if not s:
+        return False
+    cjk = sum(1 for ch in s if "一" <= ch <= "鿿")
+    latin = sum(1 for ch in s if ch.isascii() and ch.isalpha())
+    return cjk > latin
+
+
+def _kagi_subject_urls(query: str, limit: int = 20) -> tuple[list[tuple[str, str]], list[str]]:
     """Run `kagi search site:book.douban.com/subject {query}`.
 
-    Returns (canonical_subject_urls, warnings). The strict regex filter
-    drops any URL with extra path segments after the subject id.
+    Returns ([(canonical_url, page_title), ...], warnings). The canonical-
+    URL filter normalises subject-page cruft (`//`, `?_dtcc=1`, `#frag`)
+    and rejects child paths (`/comments`, `/blockquotes`, etc.). The Kagi
+    page-title is preserved so callers can pre-filter (e.g. CJK-dominant)
+    without spending a fetch.
     """
     cmd = ["kagi", "search", "--format", "json",
            f"site:book.douban.com/subject {query}"]
@@ -268,22 +290,23 @@ def _kagi_subject_urls(query: str, limit: int = 10) -> tuple[list[str], list[str
     except json.JSONDecodeError:
         return [], ["kagi-search: non-json output"]
 
-    urls: list[str] = []
+    items: list[tuple[str, str]] = []
     seen: set[str] = set()
     for item in payload.get("data", []):
-        raw = item.get("url", "") if isinstance(item, dict) else ""
+        if not isinstance(item, dict):
+            continue
+        raw = item.get("url", "")
         if not isinstance(raw, str):
             continue
         canonical = _canonical_subject_url(raw)
-        if not canonical:
-            continue
-        if canonical in seen:
+        if not canonical or canonical in seen:
             continue
         seen.add(canonical)
-        urls.append(canonical)
-        if len(urls) >= limit:
+        title = item.get("title", "") if isinstance(item.get("title"), str) else ""
+        items.append((canonical, title))
+        if len(items) >= limit:
             break
-    return urls, []
+    return items, []
 
 
 # ==================================================================
@@ -438,12 +461,18 @@ def _is_chinese_edition(rec: dict) -> bool:
 # Top-level Kagi-driven search
 # ==================================================================
 
-def _kagi_book_search(query: _s.BookQuery) -> tuple[list[dict], list[str]]:
+def _kagi_book_search(
+    query: _s.BookQuery, *, cjk_title_only: bool = False,
+) -> tuple[list[dict], list[str]]:
     """Single discovery path: Kagi → canonical URLs → bs4 fetch.
 
     Returns (records, warnings). Records are the raw parsed dicts (one per
     successfully fetched subject page); ordering matches Kagi's result
     ranking. Chinese-edition filtering is the caller's responsibility.
+
+    When `cjk_title_only=True`, Kagi hits whose page title is Latin-
+    dominant are skipped before the HTTP fetch — drops English-edition
+    Douban pages cheaply when the caller is doing zh-localisation.
     """
     warnings: list[str] = []
     queries = _external_book_queries(
@@ -453,13 +482,15 @@ def _kagi_book_search(query: _s.BookQuery) -> tuple[list[dict], list[str]]:
     if not queries:
         return [], ["kagi-book-search: no usable query"]
 
-    url_limit = max(query.limit, 10)
+    url_limit = max(query.limit, 20)
     urls: list[str] = []
     seen_urls: set[str] = set()
     for q in queries:
         found, kagi_warnings = _kagi_subject_urls(q, limit=url_limit)
         warnings.extend(kagi_warnings)
-        for url in found:
+        for url, kagi_title in found:
+            if cjk_title_only and not _cjk_dominant(kagi_title):
+                continue
             if url in seen_urls:
                 continue
             seen_urls.add(url)
@@ -486,8 +517,21 @@ def _kagi_book_search(query: _s.BookQuery) -> tuple[list[dict], list[str]]:
 
 
 def _zh_localisation_search(query: _s.BookQuery) -> tuple[list[dict], list[str]]:
-    """Return Chinese-edition records from the Kagi-driven book search."""
-    records, warnings = _kagi_book_search(query)
+    """Return Chinese-edition records from the Kagi-driven book search.
+
+    Two-stage filter:
+      1. Pre-fetch — `_kagi_book_search(..., cjk_title_only=True)` drops
+         Kagi hits whose page title is Latin-dominant (typically the
+         English-edition Douban page). Saves HTTP fetches.
+      2. Post-fetch — `_is_chinese_edition` accepts any record whose
+         publisher / translator / ISBN agency / title indicate a
+         Chinese-language book.
+
+    No "is this the translation of *this specific* book" check — that
+    disambiguation is the caller agent's job. The bin returns the small
+    set of Chinese-book candidates Kagi surfaced for the query.
+    """
+    records, warnings = _kagi_book_search(query, cjk_title_only=True)
     records = [r for r in records if _is_chinese_edition(r)]
     records.sort(key=lambda r: r.get("ratings_count") or 0, reverse=True)
     return records, warnings
