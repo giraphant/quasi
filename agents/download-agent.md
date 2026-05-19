@@ -26,8 +26,9 @@ quasi-download book fetch --md5 {md5} --slug {slug} [--format pdf] --json
 # → JSON {status, kind, temp_path, source, inspect:{readability,front_text,year_signals,...}}
 
 # 论文：按 DOI/URL 下载到临时目录 + 自动诊断
-quasi-download paper fetch --doi "{doi}" --slug {slug} [--retry-wayback] --json
+quasi-download paper fetch --doi "{doi}" --slug {slug} --json
 quasi-download paper fetch --url "{pdf_url}" --slug {slug} --json
+# cascade: direct URL → OA → Sci-Hub → EZProxy → Wayback；每段有 retry/backoff。
 
 # 接受候选,入库为 sources/{slug}.{ext}
 quasi-download accept --path {temp_path} --slug {slug} --kind book -o sources --json

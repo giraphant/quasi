@@ -64,6 +64,56 @@ HEADERS_API = {"User-Agent": "BTS-Research/1.0 (mailto:research@example.com)"}
 
 DELAY = 10  # Rate limit: minimum 10s between downloads
 
+# Treat these HTTP statuses as transient (worth retrying). Anything else
+# (4xx, 410, etc.) is deterministic and propagates immediately.
+_RETRYABLE_HTTP_CODES = frozenset({429, 500, 502, 503, 504, 520, 521, 522, 524})
+
+
+def _is_retryable_http(exc) -> bool:
+    code = None
+    if isinstance(exc, urllib.error.HTTPError):
+        code = exc.code
+    elif isinstance(exc, requests.HTTPError) and getattr(exc, "response", None) is not None:
+        code = exc.response.status_code
+    return code is not None and code in _RETRYABLE_HTTP_CODES
+
+
+def _retry(fn, *, attempts=3, base_delay=1.0, label="http"):
+    """Run fn() with exponential-backoff retry on transient network errors.
+
+    Retries on connection resets, DNS hiccups, socket timeouts, and
+    transient HTTP statuses (429/5xx). 4xx responses and domain-specific
+    exceptions (e.g. EZProxyCookieExpired) propagate without retry.
+    """
+    last_exc = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except urllib.error.HTTPError as e:
+            if not _is_retryable_http(e):
+                raise
+            last_exc = e
+        except requests.HTTPError as e:
+            if not _is_retryable_http(e):
+                raise
+            last_exc = e
+        except (
+            urllib.error.URLError,
+            requests.RequestException,
+            TimeoutError,
+            ConnectionResetError,
+        ) as e:
+            last_exc = e
+        if i < attempts - 1:
+            sleep = base_delay * (2 ** i)
+            print(
+                f"  retry {label} ({i + 1}/{attempts - 1}): "
+                f"{type(last_exc).__name__}: {last_exc}; sleeping {sleep:.1f}s",
+                file=sys.stderr,
+            )
+            time.sleep(sleep)
+    raise last_exc
+
 
 class EZProxyCookieExpired(Exception):
     """Raised when EZProxy returns a login page instead of content."""
@@ -131,6 +181,7 @@ PUBLISHER_PDF_PATTERNS = [
     ("uchicago",     "/doi/pdf/{doi}"),
     ("mit.edu",      "/doi/pdf/{doi}"),
     ("mitpress",     "/doi/pdf/{doi}"),
+    ("pubsonline.informs", "/doi/pdf/{doi}"),
 ]
 
 
@@ -419,6 +470,8 @@ def try_ezproxy_download(doi, output_path):
     """
     config = load_ezproxy_config()
     if not config:
+        print("  EZProxy: not configured (CookieCloud env vars missing), skipping",
+              file=sys.stderr)
         return False
 
     login_url = config["login_url"]
@@ -429,7 +482,10 @@ def try_ezproxy_download(doi, output_path):
     print(f"  EZProxy: {target_url[:80]}", file=sys.stderr)
 
     try:
-        resp = session.get(target_url, allow_redirects=True, timeout=30)
+        resp = _retry(
+            lambda: session.get(target_url, allow_redirects=True, timeout=30),
+            label="EZProxy redirect",
+        )
     except (requests.RequestException, TimeoutError, OSError) as e:
         print(f"  EZProxy redirect failed: {e}", file=sys.stderr)
         return False
@@ -461,7 +517,10 @@ def try_ezproxy_download(doi, output_path):
             print(f"  EZProxy PDF try: {pdf_url[:80]}", file=sys.stderr)
 
             try:
-                pdf_resp = session.get(pdf_url, timeout=60)
+                pdf_resp = _retry(
+                    lambda: session.get(pdf_url, timeout=60),
+                    label=f"EZProxy PDF {publisher_hint}",
+                )
                 data = pdf_resp.content
                 if _is_pdf_data(data):
                     with open(output_path, "wb") as f:
@@ -489,7 +548,10 @@ def try_ezproxy_download(doi, output_path):
 
         print(f"  EZProxy scrape try: {link[:80]}", file=sys.stderr)
         try:
-            link_resp = session.get(link, timeout=60)
+            link_resp = _retry(
+                lambda: session.get(link, timeout=60),
+                label="EZProxy scrape",
+            )
             data = link_resp.content
             if _is_pdf_data(data):
                 with open(output_path, "wb") as f:
@@ -762,7 +824,14 @@ def find_oa_url(doi):
     return None
 
 
-SCIHUB_MIRRORS = ["https://sci-hub.ru", "https://sci-hub.ren"]
+# Mirror order matters: sci-hub.ru returns the freshest citation_pdf_url
+# meta. sci-hub.st and sci-hub.box mirror the same storage backend.
+# sci-hub.ren persistently returns 403 (probed 2026-05); dropped.
+SCIHUB_MIRRORS = [
+    "https://sci-hub.ru",
+    "https://sci-hub.st",
+    "https://sci-hub.box",
+]
 
 
 def try_scihub_download(doi, output_path):
@@ -777,9 +846,13 @@ def try_scihub_download(doi, output_path):
     for mirror in SCIHUB_MIRRORS:
         try:
             page_url = f"{mirror}/{doi}"
-            req = urllib.request.Request(page_url, headers=HEADERS_BROWSER)
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                html = resp.read(50000).decode("utf-8", errors="ignore")
+
+            def _fetch_page():
+                req = urllib.request.Request(page_url, headers=HEADERS_BROWSER)
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    return resp.read(50000).decode("utf-8", errors="ignore")
+
+            html = _retry(_fetch_page, label=f"sci-hub {mirror}")
 
             # Extract PDF URL from <meta name="citation_pdf_url" content="...">
             match = re.search(
@@ -795,21 +868,23 @@ def try_scihub_download(doi, output_path):
             elif pdf_url.startswith("/"):
                 pdf_url = mirror + pdf_url
 
-            # Download the PDF
-            pdf_req = urllib.request.Request(pdf_url, headers=HEADERS_BROWSER)
-            with urllib.request.urlopen(pdf_req, timeout=60) as pdf_resp:
-                data = pdf_resp.read()
-                if _is_pdf_data(data):
-                    with open(output_path, "wb") as f:
-                        f.write(data)
-                    print(
-                        f"  Sci-Hub OK {len(data) / 1024:.0f}KB -> "
-                        f"{os.path.basename(output_path)}",
-                        file=sys.stderr,
-                    )
-                    return True
-                else:
-                    print(f"  Sci-Hub ({mirror}): not a PDF", file=sys.stderr)
+            def _fetch_pdf():
+                pdf_req = urllib.request.Request(pdf_url, headers=HEADERS_BROWSER)
+                with urllib.request.urlopen(pdf_req, timeout=60) as pdf_resp:
+                    return pdf_resp.read()
+
+            data = _retry(_fetch_pdf, label=f"sci-hub PDF {mirror}")
+            if _is_pdf_data(data):
+                with open(output_path, "wb") as f:
+                    f.write(data)
+                print(
+                    f"  Sci-Hub OK {len(data) / 1024:.0f}KB -> "
+                    f"{os.path.basename(output_path)}",
+                    file=sys.stderr,
+                )
+                return True
+            else:
+                print(f"  Sci-Hub ({mirror}): not a PDF", file=sys.stderr)
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
             print(f"  Sci-Hub ({mirror}): {e}", file=sys.stderr)
             continue
@@ -865,27 +940,29 @@ def download_pdf_from_url(url, output_path, timeout=60):
             cookie_name = ezproxy.get("cookie_name", "ezproxy")
             headers["Cookie"] = f"{cookie_name}={ezproxy['cookie']}"
 
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = resp.read()
-            if _is_pdf_data(data):
-                with open(output_path, "wb") as f:
-                    f.write(data)
-                print(f"  OK {len(data) / 1024:.0f}KB -> {os.path.basename(output_path)}",
-                      file=sys.stderr)
-                return True
-            else:
-                # Check if this is an EZProxy login page
-                lower_data = data[:2000].lower()
-                if _url_matches_ezproxy(url, ezproxy) and (
-                    b"login" in lower_data or b"auth" in lower_data
-                    or b"ezproxy" in lower_data or b"shibboleth" in lower_data
-                ):
-                    raise EZProxyCookieExpired(
-                        "EZProxy cookie expired — re-login in Chrome to let CookieCloud sync fresh cookies"
-                    )
-                print(f"  SKIP not-a-pdf ({len(data)} bytes)", file=sys.stderr)
-                return False
+        def _do():
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+
+        data = _retry(_do, label=f"GET {url[:60]}")
+        if _is_pdf_data(data):
+            with open(output_path, "wb") as f:
+                f.write(data)
+            print(f"  OK {len(data) / 1024:.0f}KB -> {os.path.basename(output_path)}",
+                  file=sys.stderr)
+            return True
+        # Check if this is an EZProxy login page
+        lower_data = data[:2000].lower()
+        if _url_matches_ezproxy(url, ezproxy) and (
+            b"login" in lower_data or b"auth" in lower_data
+            or b"ezproxy" in lower_data or b"shibboleth" in lower_data
+        ):
+            raise EZProxyCookieExpired(
+                "EZProxy cookie expired — re-login in Chrome to let CookieCloud sync fresh cookies"
+            )
+        print(f"  SKIP not-a-pdf ({len(data)} bytes)", file=sys.stderr)
+        return False
     except EZProxyCookieExpired:
         raise  # Re-raise, don't swallow
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
@@ -976,27 +1053,48 @@ def download_paper(doi=None, url=None, output_dir="sources", filename=None,
 
 
 def _stream_download(url, dest_path, headers=None):
-    """Stream-download file with progress."""
-    r = requests.get(url, headers=headers or HEADERS_BROWSER, stream=True, timeout=120)
-    if r.status_code != 200:
-        print(f"  Download failed: HTTP {r.status_code}", file=sys.stderr)
+    """Stream-download file with progress. Retries the whole transfer on
+    transient connection / 5xx errors (chunked stream restarts from byte 0).
+    """
+
+    def _do():
+        r = requests.get(url, headers=headers or HEADERS_BROWSER,
+                         stream=True, timeout=120)
+        if r.status_code != 200:
+            r.raise_for_status()  # routed through _retry's HTTP code check
+            return False
+
+        total = int(r.headers.get("content-length", 0))
+        downloaded = 0
+        with open(dest_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total:
+                    pct = downloaded * 100 // total
+                    bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
+                    print(
+                        f"\r  [{bar}] {pct}% ({downloaded // 1024}KB/{total // 1024}KB)",
+                        end="", flush=True, file=sys.stderr,
+                    )
+        print(file=sys.stderr)
+        return True
+
+    try:
+        ok = _retry(_do, label=f"stream {os.path.basename(dest_path)}")
+    except urllib.error.HTTPError as e:
+        print(f"  Download failed: HTTP {e.code}", file=sys.stderr)
+        return False
+    except requests.HTTPError as e:
+        status = getattr(e.response, "status_code", "?")
+        print(f"  Download failed: HTTP {status}", file=sys.stderr)
+        return False
+    except (urllib.error.URLError, requests.RequestException, TimeoutError, OSError) as e:
+        print(f"  Download failed: {e}", file=sys.stderr)
         return False
 
-    total = int(r.headers.get("content-length", 0))
-    downloaded = 0
-
-    with open(dest_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=8192):
-            f.write(chunk)
-            downloaded += len(chunk)
-            if total:
-                pct = downloaded * 100 // total
-                bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
-                print(
-                    f"\r  [{bar}] {pct}% ({downloaded // 1024}KB/{total // 1024}KB)",
-                    end="", flush=True, file=sys.stderr,
-                )
-    print(file=sys.stderr)
+    if not ok:
+        return False
 
     size = os.path.getsize(dest_path)
     if size < 10240:
@@ -1145,7 +1243,7 @@ def _cmd_paper_fetch(args) -> int:
         download_paper,
         doi=args.doi, url=args.url,
         output_dir=str(temp_dir), filename=args.slug,
-        retry_wayback=args.retry_wayback,
+        retry_wayback=True,
     )
     if result:
         path_obj = Path(result).resolve()
@@ -1264,7 +1362,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_pf.add_argument("--url", help="Direct PDF URL")
     p_pf.add_argument("--slug", required=True, help="Target work slug for temp filename")
     p_pf.add_argument("--retry-wayback", action="store_true",
-                      help="Re-check Wayback if primary sources fail")
+                      help=argparse.SUPPRESS)  # no-op since cascade always tries Wayback
     p_pf.add_argument("--temp-dir", default=str(_default_temp_dir()),
                       help="Temp output directory (default: .quasi/temp/downloads)")
     p_pf.add_argument("--json", action="store_true", help="Accepted for contract clarity; output is always JSON")

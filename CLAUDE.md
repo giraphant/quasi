@@ -76,6 +76,61 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.32.15** (2026-05-19): **Paper download cascade gains retry/backoff
+  and a real INFORMS pattern; Wayback always on.** Triggered by a 5-paper
+  batch (Hayles 2019 / Star 1996 / Oudshoorn 2004 / Lock 1994 /
+  Dhaliwal 2022) where 4 of 5 papers failed acquisition. Live re-probe
+  showed 3 of 4 DOI-bearing papers downloaded fine *today* — the original
+  batch had been killed by transient sci-hub / EZProxy errors that no
+  retry layer was catching. Lock 1994 has no DOI (JSTOR stable URL
+  only) and is out of scope for download.py; that one needs agent-side
+  changes to fall back through `--url` when `doi:null`.
+  - New `_retry(fn, attempts=3, base_delay=1.0)` helper with
+    `_is_retryable_http()` companion. Retries `URLError` /
+    `RequestException` / `TimeoutError` / `ConnectionResetError` and
+    transient HTTP codes (`429, 500, 502, 503, 504, 520, 521, 522, 524`)
+    with exponential backoff. Determinstic 4xx propagates immediately —
+    a 404 should never become 3× wall-clock cost.
+  - Wrapped network entry points: `try_scihub_download` (both the
+    page-fetch and the PDF-fetch `urlopen`s, per mirror),
+    `download_pdf_from_url` (urllib), `_stream_download` (requests stream
+    — chunked transfer restarts from byte 0 on failure), and
+    `try_ezproxy_download`'s three `session.get` calls (login redirect,
+    publisher-pattern PDF try, scrape try).
+  - `SCIHUB_MIRRORS`: `[".ru", ".ren"]` → `[".ru", ".st", ".box"]`.
+    Probed 2026-05: `.ren` persistently returns 403; `.st` and `.box`
+    mirror the same storage backend as `.ru` and reliably surface
+    `citation_pdf_url` meta tags. Mirror list is now 3 deep with no
+    known-dead entries.
+  - `PUBLISHER_PDF_PATTERNS` gains `("pubsonline.informs",
+    "/doi/pdf/{doi}")` — INFORMS journals (Information Systems
+    Research, Organization Science, MIS Quarterly, etc.) host PDFs at
+    `pubsonline.informs.org/doi/pdf/{doi}`. Previously EZProxy
+    redirects to INFORMS fell through to the HTML-scrape branch which
+    rarely works (INFORMS hides PDF links behind a JS click handler).
+  - `try_ezproxy_download` logs `EZProxy: not configured (CookieCloud
+    env vars missing), skipping` when `load_ezproxy_config()` returns
+    None. Was silent — diagnostically misleading because the cascade
+    printed `Trying EZProxy for X...` then `Could not download paper`
+    with no signal that the stage was a no-op.
+  - `--retry-wayback` flag accepted but ignored (help hidden via
+    `argparse.SUPPRESS`); Wayback is now always tried as the last
+    cascade step. `_cmd_paper_fetch` calls `download_paper(...,
+    retry_wayback=True)` unconditionally. The flag stays callable so
+    existing agent prompts / skills that still pass it don't break.
+  - `agents/download-agent.md` paper-fetch command example drops
+    `[--retry-wayback]` and notes the cascade has retry/backoff at each
+    stage.
+  - Tests: `test_download_cli.py` + `test_dead_names.py` unchanged and
+    passing (7/7). `_retry` smoke-tested out of band: 4xx propagates
+    after 1 attempt, 5xx / ConnectionResetError retry to 3 attempts
+    then re-raise, second-attempt-success returns the value.
+  - End-to-end re-probe (post-fix):
+    - Star 1996 (`10.1287/isre.7.1.111`) → sci-hub.ru direct, 2.4 MB ✓
+    - Dhaliwal 2022 (`10.1086/721167`) → sci-hub.ru/.st/.box all empty
+      (sci-hub doesn't have the 2022 article) → EZProxy uchicago
+      pattern → 10.5 MB ✓
+
 - **0.32.14** (2026-05-19): **Douban zh-localisation: two-stage CJK
   filter; bin no longer guesses relevance.** Three interlocking bugs
   surfaced when localising *Living a Feminist Life* — Kagi's top hit
