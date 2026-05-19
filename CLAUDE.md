@@ -76,6 +76,12 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.33.3** (2026-05-19): **Plugin config cleanup for worktrees.**
+  - All active plugin Configure options are marked `sensitive` so Claude Code stores and injects every option through the same private/keychain path. This works around worktree sessions only receiving private plugin options in hook subprocesses.
+  - `anna_mirrors` is removed from plugin Configure options and no longer forwarded by the Bash PreToolUse hook.
+  - Anna's Archive download still uses the built-in default mirror list internally, so users only configure `anna_donator_key`.
+  - README credential table updated accordingly.
+
 - **0.33.2** (2026-05-19): **Publisher PDF download query variants.**
   - EZProxy direct PDF patterns now try `?download=true` variants for Taylor & Francis, Wiley, and UChicago before falling back to embedded viewer scraping.
   - EZProxy epdf fallback now covers Taylor & Francis (`/doi/epdf/{doi}?needAccess=true`) and Wiley (`/doi/epdf/{doi}`), matching proxied viewer URLs observed for Social Epistemology and British Journal of Sociology papers.
