@@ -179,10 +179,30 @@ PUBLISHER_PDF_PATTERNS = [
     ("springer",     "/content/pdf/{doi}.pdf"),  # reeder uses /article/{doi}/fulltext.pdf
     ("nature.com",   "/content/pdf/{doi}.pdf"),
     ("uchicago",     "/doi/pdf/{doi}"),
+    ("uchicago",     "/doi/pdfplus/{doi}"),
     ("mit.edu",      "/doi/pdf/{doi}"),
     ("mitpress",     "/doi/pdf/{doi}"),
     ("pubsonline.informs", "/doi/pdf/{doi}"),
 ]
+
+_EPDF_PUBLISHER_PATTERNS = [
+    ("uchicago", "/doi/epdf/{doi}"),
+]
+
+_RE_CITATION_PDF = re.compile(
+    rb'<meta\s+(?:name=["\']citation_pdf_url["\']\s+content=["\'](.*?)["\']'
+    rb'|content=["\'](.*?)["\']\s+name=["\']citation_pdf_url["\'])',
+    re.IGNORECASE,
+)
+
+
+def _extract_citation_pdf_url(html_bytes):
+    """Extract citation_pdf_url from HTML meta tags. Returns URL string or None."""
+    m = _RE_CITATION_PDF.search(html_bytes)
+    if m:
+        raw = (m.group(1) or m.group(2)).decode("utf-8", errors="ignore")
+        return raw.strip() if raw.strip() else None
+    return None
 
 
 def _is_pdf_data(data):
@@ -530,7 +550,59 @@ def try_ezproxy_download(doi, output_path):
                     return True
             except (requests.RequestException, TimeoutError, OSError):
                 pass
-            break  # Only try the first matching publisher
+
+    # Step 2.5: Extract citation_pdf_url from landing page meta tags
+    _citation_pdf = _extract_citation_pdf_url(landing_html)
+    if _citation_pdf:
+        if _citation_pdf.startswith("/"):
+            parsed = urllib.parse.urlparse(final_url)
+            _citation_pdf = f"{parsed.scheme}://{parsed.netloc}{_citation_pdf}"
+        print(f"  EZProxy citation_pdf_url: {_citation_pdf[:80]}", file=sys.stderr)
+        try:
+            pdf_resp = _retry(
+                lambda: session.get(_citation_pdf, timeout=60),
+                label="EZProxy citation_pdf_url",
+            )
+            data = pdf_resp.content
+            if _is_pdf_data(data):
+                with open(output_path, "wb") as f:
+                    f.write(data)
+                print(f"  OK {len(data) / 1024:.0f}KB -> {os.path.basename(output_path)}",
+                      file=sys.stderr)
+                return True
+        except (requests.RequestException, TimeoutError, OSError):
+            pass
+
+    # Step 2.6: Fetch epdf page (embedded PDF viewer) and extract PDF URL
+    for publisher_hint, epdf_pattern in _EPDF_PUBLISHER_PATTERNS:
+        if publisher_hint in final_url:
+            parsed = urllib.parse.urlparse(final_url)
+            base = f"{parsed.scheme}://{parsed.netloc}"
+            epdf_url = base + epdf_pattern.format(doi=doi)
+            print(f"  EZProxy epdf: {epdf_url[:80]}", file=sys.stderr)
+            try:
+                epdf_resp = _retry(
+                    lambda: session.get(epdf_url, timeout=30),
+                    label=f"EZProxy epdf {publisher_hint}",
+                )
+                epdf_pdf = _extract_citation_pdf_url(epdf_resp.content)
+                if epdf_pdf:
+                    if epdf_pdf.startswith("/"):
+                        epdf_pdf = base + epdf_pdf
+                    print(f"  EZProxy epdf -> PDF: {epdf_pdf[:80]}", file=sys.stderr)
+                    pdf_resp = _retry(
+                        lambda: session.get(epdf_pdf, timeout=60),
+                        label=f"EZProxy epdf-PDF {publisher_hint}",
+                    )
+                    data = pdf_resp.content
+                    if _is_pdf_data(data):
+                        with open(output_path, "wb") as f:
+                            f.write(data)
+                        print(f"  OK {len(data) / 1024:.0f}KB -> {os.path.basename(output_path)}",
+                              file=sys.stderr)
+                        return True
+            except (requests.RequestException, TimeoutError, OSError):
+                pass
 
     # Step 3: Scrape landing page HTML for PDF links
     pdf_links = re.findall(
@@ -997,6 +1069,7 @@ def download_pdf_from_url(url, output_path, timeout=60):
 
 _PUBLISHER_DIRECT_URLS = [
     ("10.1086/",  "https://www.journals.uchicago.edu/doi/pdf/{doi}"),
+    ("10.1086/",  "https://www.journals.uchicago.edu/doi/pdfplus/{doi}"),
     ("10.1080/",  "https://www.tandfonline.com/doi/pdf/{doi}"),
     ("10.1177/",  "https://journals.sagepub.com/doi/pdf/{doi}"),
     ("10.1093/",  "https://academic.oup.com/doi/pdf/{doi}"),
@@ -1046,7 +1119,6 @@ def _try_publisher_direct(doi, output_path):
             except (urllib.error.URLError, urllib.error.HTTPError,
                     TimeoutError, OSError) as e:
                 print(f"  Publisher direct: {e}", file=sys.stderr)
-            break
     return False
 
 
