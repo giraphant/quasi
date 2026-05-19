@@ -76,6 +76,66 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.33.0** (2026-05-19): **Paper download gains multi-source discovery,
+  publisher direct PDF, and Kagi recovery.** Driven by 19-paper test
+  batch where 15 papers failed acquisition (6× EZProxy expired,
+  6× abstract-only/no-PDF, 2× paywall+no OA, 1× too new — the
+  remaining 4× ECONNRESET/502 were already fixed by 0.32.15 retry).
+  Root cause: papers had no multi-source candidate discovery — unlike
+  books (which search Anna's Archive for multiple candidates and iterate),
+  papers took a single DOI and ran a fixed cascade. If the DOI was wrong
+  or the cascade failed, there was no fallback.
+  - **Paper fetch cascade expanded** from 5 stages to 8 (Phase 1) + Kagi
+    recovery (Phase 2). New cascade:
+    `hint URLs → OA (+Crossref links) → Sci-Hub → Publisher Direct
+    → EZProxy → Wayback → [if all fail] Kagi discovery → retry with
+    discovered DOIs/URLs`.
+  - **Crossref PDF links** added to `find_oa_url()` as 4th source.
+    Queries `https://api.crossref.org/works/{doi}` and extracts
+    `link[]` entries with `content-type: application/pdf`. Many
+    publishers register their PDF endpoints here.
+  - **Publisher Direct PDF** — new cascade stage between Sci-Hub and
+    EZProxy. `_try_publisher_direct(doi, output_path)` constructs
+    publisher PDF URLs from DOI prefix patterns
+    (`_PUBLISHER_DIRECT_URLS`: uchicago, tandfonline, sagepub, oup,
+    wiley, springer, nature, mit, acm, muse, cambridge, informs)
+    and tries fetching them without EZProxy. Catches cases where
+    institutional IP access works or publisher has opened access.
+  - **Kagi recovery** — when Phase 1 cascade exhausts all sources,
+    `_kagi_discover_paper(title, author)` searches the paper title
+    via `kagi search --format json`, filters results by ≥50% title
+    word overlap, extracts DOIs from URLs via regex, and collects
+    publisher URLs. Discovered URLs are tried directly; discovered
+    DOIs (different from the original) are retried through
+    OA/Sci-Hub/EZProxy. Silently skipped if kagi CLI is unavailable
+    or `QUASI_KAGI_SESSION_TOKEN` is unset. Enables acquisition
+    even when the caller's DOI is wrong.
+  - **Multiple `--url` hints** — `paper fetch` now accepts repeated
+    `--url` flags (`action="append"`). Each URL is tried as a direct
+    download attempt before the DOI cascade. This lets the agent
+    pass OA URLs and publisher URLs discovered via search.
+  - **`--title` / `--author` flags** — `paper fetch` now accepts
+    `--title` and `--author` for Kagi recovery. When the DOI cascade
+    fails, these enable the automatic Kagi discovery phase.
+  - **Wayback patterns expanded** — `find_wayback_url()` now
+    constructs publisher-specific PDF URLs for UChicago (`10.1086`),
+    Wiley (`10.1002`), OUP (`10.1093`), MIT Press (`10.1162`),
+    T&F (`10.1080`), SAGE (`10.1177`), in addition to the existing
+    ACM, Springer, MUSE patterns. Each gets a dedicated CDX lookup.
+  - **download-agent.md** — paper flow now mirrors book flow: agent
+    calls `quasi-search paper --doi/--title/--author --json` to
+    verify DOI and discover access URLs before calling `paper fetch`.
+    Passes verified DOI + `oa_url`/`url` as `--url` hints. Handles
+    wrong/missing DOI case. Agent prompt updated with new CLI
+    examples and search-before-fetch guidance.
+  - **process-paper SKILL.md** — download-agent dispatch now passes
+    `oa_url` and `url` from search-agent results through to
+    download-agent's `identifiers:` block, so download-agent already
+    has URLs to try without re-searching.
+  - Tests: full suite 23/23 passing. No test changes needed — new
+    features are additive (new cascade stages, new CLI flags with
+    defaults, new recovery path).
+
 - **0.32.15** (2026-05-19): **Paper download cascade gains retry/backoff
   and a real INFORMS pattern; Wayback always on.** Triggered by a 5-paper
   batch (Hayles 2019 / Star 1996 / Oudshoorn 2004 / Lock 1994 /
