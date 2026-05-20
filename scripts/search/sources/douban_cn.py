@@ -202,6 +202,8 @@ def _external_book_queries(
                 f"{quoted_title} {_quote_phrase(author_norm)}",
                 f"{quoted_title} {_author_tail(author_norm)}",
                 f"{title_norm} {author_norm}",
+                _quote_phrase(author_norm),
+                author_norm,
             ])
     elif query_norm:
         variants.extend([
@@ -263,14 +265,14 @@ def _cjk_dominant(s: str) -> bool:
     return cjk > latin
 
 
-def _kagi_subject_urls(query: str, limit: int = 20) -> tuple[list[tuple[str, str]], list[str]]:
+def _kagi_subject_urls(query: str, limit: int = 20) -> tuple[list[tuple[str, str, str]], list[str]]:
     """Run `kagi search site:book.douban.com/subject {query}`.
 
-    Returns ([(canonical_url, page_title), ...], warnings). The canonical-
-    URL filter normalises subject-page cruft (`//`, `?_dtcc=1`, `#frag`)
-    and rejects child paths (`/comments`, `/blockquotes`, etc.). The Kagi
-    page-title is preserved so callers can pre-filter (e.g. CJK-dominant)
-    without spending a fetch.
+    Returns ([(canonical_url, page_title, snippet), ...], warnings). The
+    canonical-URL filter normalises subject-page cruft (`//`, `?_dtcc=1`,
+    `#frag`) and rejects child paths (`/comments`, `/blockquotes`, etc.).
+    The Kagi page-title is preserved so callers can pre-filter (e.g.
+    CJK-dominant) without spending a fetch.
     """
     cmd = ["kagi", "search", "--format", "json",
            f"site:book.douban.com/subject {query}"]
@@ -295,7 +297,7 @@ def _kagi_subject_urls(query: str, limit: int = 20) -> tuple[list[tuple[str, str
     except json.JSONDecodeError:
         return [], ["kagi-search: non-json output"]
 
-    items: list[tuple[str, str]] = []
+    items: list[tuple[str, str, str]] = []
     seen: set[str] = set()
     for item in payload.get("data", []):
         if not isinstance(item, dict):
@@ -308,7 +310,8 @@ def _kagi_subject_urls(query: str, limit: int = 20) -> tuple[list[tuple[str, str
             continue
         seen.add(canonical)
         title = item.get("title", "") if isinstance(item.get("title"), str) else ""
-        items.append((canonical, title))
+        snippet = item.get("snippet", "") if isinstance(item.get("snippet"), str) else ""
+        items.append((canonical, title, snippet))
         if len(items) >= limit:
             break
     return items, []
@@ -423,6 +426,77 @@ def _fetch_subject_via_bs4(url: str, cookie: str | None = None) -> dict | None:
     return rec
 
 
+def _strip_douban_title(value: str) -> str:
+    return re.sub(r"\s*\(豆瓣\)\s*$", "", _normalise_query_text(value))
+
+
+def _parse_kagi_snippet_record(url: str, kagi_title: str, snippet: str) -> dict | None:
+    sid_m = _SUBJECT_URL_RE.match(url)
+    subject_id = sid_m.group(1) if sid_m else ""
+    title = _strip_douban_title(kagi_title)
+    text = _normalise_query_text(snippet)
+    if not text:
+        return None
+    if not title:
+        title = re.split(r"\s+(?:作者|译者|出版社|出版年|ISBN|原作名)\s*[:：]", text, maxsplit=1)[0].strip()
+    if not title:
+        return None
+
+    labels = ("作者", "译者", "出版社", "出品方", "出版年", "ISBN", "页数", "装帧", "定价", "原作名", "豆瓣评分")
+    label_alt = "|".join(re.escape(item) for item in labels)
+
+    def grab(label: str) -> str:
+        m = re.search(
+            rf"(?:^|\s){re.escape(label)}\s*[:：]?\s*(.+?)(?=\s(?:{label_alt})\s*[:：]?|$)",
+            text,
+            re.IGNORECASE,
+        )
+        return m.group(1).strip() if m else ""
+
+    rec: dict = {
+        "douban_subject_id": subject_id,
+        "douban_url": f"https://book.douban.com/subject/{subject_id}/" if subject_id else url,
+        "title": title,
+        "subtitle": "",
+        "authors": [],
+        "translators": [],
+        "publisher": grab("出版社"),
+        "year": None,
+        "isbn_13": None,
+        "isbn_10": None,
+        "original_title": grab("原作名"),
+        "ratings_count": 0,
+        "douban_rating": None,
+        "series": "",
+    }
+
+    author_raw = grab("作者")
+    translator_raw = grab("译者")
+    if author_raw:
+        rec["authors"] = [a.strip() for a in re.split(r"\s*/\s*", author_raw) if a.strip()]
+    if translator_raw:
+        rec["translators"] = [t.strip() for t in re.split(r"\s*/\s*", translator_raw) if t.strip()]
+
+    year_raw = grab("出版年")
+    ym = re.search(r"((?:19|20)\d{2})", year_raw)
+    if ym:
+        rec["year"] = int(ym.group(1))
+
+    isbn = re.sub(r"[^0-9X]", "", grab("ISBN").upper())
+    if len(isbn) == 13:
+        rec["isbn_13"] = isbn
+    elif len(isbn) == 10:
+        rec["isbn_10"] = isbn
+
+    rating = re.search(r"豆瓣评分\s*([0-9](?:\.[0-9])?)", text)
+    if rating:
+        rec["douban_rating"] = float(rating.group(1))
+    count = re.search(r"([0-9][0-9,]*)\s*人评价", text)
+    if count:
+        rec["ratings_count"] = int(count.group(1).replace(",", ""))
+    return rec
+
+
 def _is_chinese_edition(rec: dict) -> bool:
     """Decide whether a parsed Douban subject record is Chinese-language.
 
@@ -488,28 +562,30 @@ def _kagi_book_search(
         return [], ["kagi-book-search: no usable query"]
 
     url_limit = max(query.limit, 20)
-    urls: list[str] = []
+    candidates: list[tuple[str, str, str]] = []
     seen_urls: set[str] = set()
     for q in queries:
         found, kagi_warnings = _kagi_subject_urls(q, limit=url_limit)
         warnings.extend(kagi_warnings)
-        for url, kagi_title in found:
+        for url, kagi_title, snippet in found:
             if cjk_title_only and not _cjk_dominant(kagi_title):
                 continue
             if url in seen_urls:
                 continue
             seen_urls.add(url)
-            urls.append(url)
-        if len(urls) >= url_limit:
+            candidates.append((url, kagi_title, snippet))
+        if len(candidates) >= url_limit:
             break
-    if not urls:
+    if not candidates:
         return [], warnings
 
     out: list[dict] = []
     seen: set[str] = set()
-    for url in urls:
+    for url, kagi_title, snippet in candidates:
         time.sleep(random.random() * 0.3 + 0.2)
         rec = _fetch_subject_via_bs4(url)
+        if rec is None:
+            rec = _parse_kagi_snippet_record(url, kagi_title, snippet)
         if rec is None:
             warnings.append(f"subject-fetch failed: {url}")
             continue

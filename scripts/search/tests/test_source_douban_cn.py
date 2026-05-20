@@ -113,11 +113,27 @@ def test_kagi_subject_urls_returns_canonical_only():
     with patch("sources.douban_cn.subprocess.run", return_value=_completed(payload)):
         items, warnings = douban_cn._kagi_subject_urls("Example Book", limit=10)
     assert items == [
-        ("https://book.douban.com/subject/12345/", "性别麻烦 (豆瓣)"),
-        ("https://book.douban.com/subject/67890/", "Gender Trouble (豆瓣)"),
-        ("https://book.douban.com/subject/77777/", "消解性别 (豆瓣)"),
-        ("https://book.douban.com/subject/55555/", "性别是流动的吗？"),
+        ("https://book.douban.com/subject/12345/", "性别麻烦 (豆瓣)", ""),
+        ("https://book.douban.com/subject/67890/", "Gender Trouble (豆瓣)", ""),
+        ("https://book.douban.com/subject/77777/", "消解性别 (豆瓣)", ""),
+        ("https://book.douban.com/subject/55555/", "性别是流动的吗？", ""),
     ]
+    assert warnings == []
+
+
+def test_kagi_subject_urls_preserves_snippet_for_fetch_fallback():
+    payload = {"data": [{
+        "url": "https://book.douban.com/subject/36494081/?_dtcc=1",
+        "title": "过一种女性主义的生活 (豆瓣)",
+        "snippet": "过一种女性主义的生活 作者: [英]萨拉·艾哈迈德 译者: 范语晨 出版社: 上海文艺出版社 出版年: 2023-10 ISBN: 9787532188239 原作名: Living a Feminist Life 豆瓣评分 8.5 634 人评价",
+    }]}
+    with patch("sources.douban_cn.subprocess.run", return_value=_completed(payload)):
+        items, warnings = douban_cn._kagi_subject_urls("Living a Feminist Life", limit=10)
+    assert items == [(
+        "https://book.douban.com/subject/36494081/",
+        "过一种女性主义的生活 (豆瓣)",
+        "过一种女性主义的生活 作者: [英]萨拉·艾哈迈德 译者: 范语晨 出版社: 上海文艺出版社 出版年: 2023-10 ISBN: 9787532188239 原作名: Living a Feminist Life 豆瓣评分 8.5 634 人评价",
+    )]
     assert warnings == []
 
 
@@ -174,7 +190,7 @@ def test_kagi_subject_urls_dedupes_repeats():
     ]}
     with patch("sources.douban_cn.subprocess.run", return_value=_completed(payload)):
         items, _ = douban_cn._kagi_subject_urls("Example", limit=10)
-    assert items == [("https://book.douban.com/subject/100/", "Book 100")]
+    assert items == [("https://book.douban.com/subject/100/", "Book 100", "")]
 
 
 def test_kagi_subject_urls_invokes_kagi_with_site_limiter():
@@ -244,6 +260,16 @@ def test_external_book_queries_include_title_head_fallback():
     )
     assert '"Strange Encounters"' in variants
     assert '"Strange Encounters" 原作名' in variants
+
+
+def test_external_book_queries_do_not_use_bare_author_tail_as_author_only_fallback():
+    variants = douban_cn._external_book_queries(
+        title="Politics of Life Itself",
+        author="Nikolas Rose",
+    )
+    assert '"Nikolas Rose"' in variants
+    assert "Nikolas Rose" in variants
+    assert "Rose" not in variants
 
 
 def test_external_book_queries_skip_isbn_when_title_present():
@@ -416,10 +442,10 @@ def test_zh_localisation_search_filters_to_chinese_only():
     the ZH one), only ZH survive both the pre-fetch CJK filter and the
     post-fetch publisher-CJK check."""
     items = [
-        ("https://book.douban.com/subject/2/", "规训与惩罚 (豆瓣)"),  # ZH page title
+        ("https://book.douban.com/subject/2/", "规训与惩罚 (豆瓣)", ""),  # ZH page title
         # No EN item — cjk_title_only=True would skip it pre-fetch.
         # Add one to also exercise the pre-filter:
-        ("https://book.douban.com/subject/1/", "Discipline and Punish (豆瓣)"),  # EN, skipped
+        ("https://book.douban.com/subject/1/", "Discipline and Punish (豆瓣)", ""),  # EN, skipped
     ]
     zh_html = """
     <html><h1><span property="v:itemreviewed">规训与惩罚</span></h1>
@@ -450,9 +476,66 @@ def test_zh_localisation_search_filters_to_chinese_only():
     assert out[0]["title"] == "规训与惩罚"
 
 
+def test_zh_localisation_search_uses_kagi_snippet_when_douban_fetch_is_blocked():
+    snippet = "过一种女性主义的生活 作者: [英]萨拉·艾哈迈德 译者: 范语晨 出版社: 上海文艺出版社 出版年: 2023-10 ISBN: 9787532188239 原作名: Living a Feminist Life 豆瓣评分 8.5 634 人评价"
+    items = [(
+        "https://book.douban.com/subject/36494081/",
+        "过一种女性主义的生活 (豆瓣)",
+        snippet,
+    )]
+
+    with patch("sources.douban_cn._kagi_subject_urls", return_value=(items, [])), \
+         patch("sources.douban_cn._dd_fetch", return_value=(False, "HTTP 403")), \
+         patch("sources.douban_cn.time.sleep"):
+        out, warnings = douban_cn._zh_localisation_search(
+            search.BookQuery(title="Living a Feminist Life", author="Sara Ahmed", limit=10)
+        )
+
+    assert len(out) == 1
+    rec = out[0]
+    assert rec["douban_subject_id"] == "36494081"
+    assert rec["title"] == "过一种女性主义的生活"
+    assert rec["authors"] == ["[英]萨拉·艾哈迈德"]
+    assert rec["translators"] == ["范语晨"]
+    assert rec["publisher"] == "上海文艺出版社"
+    assert rec["year"] == 2023
+    assert rec["isbn_13"] == "9787532188239"
+    assert rec["original_title"] == "Living a Feminist Life"
+    assert rec["douban_rating"] == 8.5
+    assert rec["ratings_count"] == 634
+    assert warnings == []
+
+
+def test_zh_localisation_search_uses_author_only_fallback_queries():
+    snippet = "加速 作者: [德] 哈特穆特·罗萨 译者: 董璐 出版社: 北京大学出版社 出版年: 2015 isbn: 9787301265181 原作名: Beschleunigung. Die Veränderung der Zeitstrukturen in der Moderne 豆瓣评分 8.3 1000 人评价"
+    calls: list[str] = []
+
+    def fake_kagi(q, limit=20):
+        calls.append(q)
+        if q == '"Hartmut Rosa"':
+            return ([('https://book.douban.com/subject/26681330/', '加速 (豆瓣)', snippet)], [])
+        return ([], [])
+
+    with patch("sources.douban_cn._kagi_subject_urls", side_effect=fake_kagi), \
+         patch("sources.douban_cn._dd_fetch", return_value=(False, "HTTP 403")), \
+         patch("sources.douban_cn.time.sleep"):
+        out, warnings = douban_cn._zh_localisation_search(
+            search.BookQuery(title="Social Acceleration", author="Hartmut Rosa", limit=10)
+        )
+
+    assert len(out) == 1
+    assert out[0]["douban_subject_id"] == "26681330"
+    assert out[0]["title"] == "加速"
+    assert out[0]["isbn_13"] == "9787301265181"
+    assert '"Social Acceleration"' in calls
+    assert '"Hartmut Rosa"' in calls
+    assert calls.index('"Social Acceleration"') < calls.index('"Hartmut Rosa"')
+    assert warnings == []
+
+
 def test_zh_localisation_search_sorts_by_ratings_count():
     items = [
-        (f"https://book.douban.com/subject/{i}/", f"书{i} (豆瓣)")
+        (f"https://book.douban.com/subject/{i}/", f"书{i} (豆瓣)", "")
         for i in range(1, 4)
     ]
 

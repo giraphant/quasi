@@ -182,8 +182,8 @@ def test_search_book_english_title_kagi_path_returns_results():
         return False, "not found"
 
     with patch("sources.douban_cn._kagi_subject_urls", return_value=([
-            ("https://book.douban.com/subject/3512345/", "与麻烦同在 (豆瓣)"),
-            ("https://book.douban.com/subject/36512345/", "Staying with the Trouble (豆瓣)"),
+            ("https://book.douban.com/subject/3512345/", "与麻烦同在 (豆瓣)", ""),
+            ("https://book.douban.com/subject/36512345/", "Staying with the Trouble (豆瓣)", ""),
          ], [])), \
          patch("sources.douban_cn._dd_fetch", side_effect=mock_dd_fetch), \
          patch("sources.douban_cn.time.sleep"):
@@ -207,7 +207,7 @@ def test_search_book_with_subject_zh_uses_kagi_then_bs4():
     """When subject='zh' is set, the Kagi-driven localisation path runs."""
 
     def mock_kagi(query, limit=20):
-        return ([("https://book.douban.com/subject/9999/", "类人猿、赛博格和女人 (豆瓣)")], [])
+        return ([("https://book.douban.com/subject/9999/", "类人猿、赛博格和女人 (豆瓣)", "")], [])
 
     def mock_fetch(url, cookie=None, timeout=20):
         if "subject/9999" in url:
@@ -248,7 +248,7 @@ def test_search_book_blocked_returns_error():
         return True, blocked_html
 
     with patch("sources.douban_cn._kagi_subject_urls",
-               return_value=([("https://book.douban.com/subject/9999/", "Some Book (豆瓣)")], [])), \
+               return_value=([("https://book.douban.com/subject/9999/", "Some Book (豆瓣)", "")], [])), \
          patch("sources.douban_cn._dd_fetch", side_effect=mock_dd_fetch):
         q = search.BookQuery(title="Some Book", limit=5)
         result = douban_cn.search_book(q)
