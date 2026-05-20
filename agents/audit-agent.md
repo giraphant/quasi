@@ -26,7 +26,32 @@ quasi-audit --path "{path}"
 Parse stdout JSON even when the command exits `1`. The command has already run
 mechanical autofix before producing the typecheck/classification result.
 
-If `status == "clean"` and `llm_editable` is empty, go straight to output.
+If `status == "clean"` and `llm_editable` is empty, and the caller did not request metadata 校对 / 核验, go straight to output.
+
+### Metadata search QA
+
+当调用方要求 metadata 校对 / 核验 / check metadata 时,你要用现有 search CLI 主动核验每个目标文件的 frontmatter。不要新造 audit/search CLI、search wrapper、helper subcommand;不要写入 cache,不要写 manifest,不要维护跨文件状态。
+
+先读取目标文件 frontmatter,再按已有字段选择裸命令:
+
+```bash
+# book: 优先 ISBN;没有 ISBN 时用 title + author
+quasi-search book --isbn "{isbn}" --json
+quasi-search book --title "{title}" --author "{author}" --json
+
+# paper / chapter: 优先 DOI;没有 DOI 时用 title + author
+quasi-search paper --doi "{doi}" --json
+quasi-search paper --title "{title}" --author "{author}" --json
+```
+
+可按需要加 `--year-from`, `--year-to`, `--top`, `--source`,但不要为了空结果反复改 query。解析 stdout JSON,重点看:
+
+- `results[0]`: 最可能的 metadata candidate。
+- `diagnostics.conflicts`: 多源字段冲突,尤其 year / isbn / publisher / doi / venue。
+
+把 search 结果与当前 frontmatter 的 `title`, `authors`, `year`, `isbn`, `doi`, `journal`, `publisher` 等字段逐项对比。只有当 search evidence 清楚、且修正只是本文件 frontmatter 的最小字段编辑时才修改。凡是候选冲突、弱匹配、或需要人工判断版本/译本/同名论文的情况,都放入最终 `escalated`。
+
+metadata 不一致时用 `kind: "metadata_mismatch"` 汇报,在 `reason` 里写清当前值、search 候选值和证据来源,在 `suggested_action` 里写建议动作。不要编造 DOI / ISBN / year / publisher;search 没返回就说明无法核验。
 
 ### Step 2: minimal LLM edits
 
@@ -50,7 +75,7 @@ Run:
 quasi-audit --path "{path}"
 ```
 
-Use this final runner JSON for `status`, counts, and `escalated`.
+Use this final runner JSON for `status` and counts. Merge any metadata QA escalations into final `escalated`; if merged metadata escalations remain and runner `status` is `clean`, return final `status: "partial"`.
 
 ## 输出
 

@@ -116,6 +116,39 @@ def test_search_agent_documents_bounded_catalog_rescue_contract():
     assert missing == []
 
 
+def test_audit_agent_documents_search_metadata_qa_contract():
+    text = (PLUGIN_ROOT / "agents" / "audit-agent.md").read_text(encoding="utf-8")
+
+    required = [
+        "metadata 校对",
+        "quasi-search book",
+        "quasi-search paper",
+        "--json",
+        "--isbn",
+        "--doi",
+        "--title",
+        "--author",
+        "results[0]",
+        "diagnostics.conflicts",
+        "frontmatter",
+        "metadata_mismatch",
+        "escalated",
+        "不要写入 cache",
+        "不要写 manifest",
+        "不要新造 audit/search CLI",
+    ]
+    missing = [token for token in required if token not in text]
+    assert missing == []
+
+    forbidden = [
+        "quasi-audit metadata",
+        "quasi-search metadata",
+        "quasi-audit search",
+    ]
+    present = [token for token in forbidden if token in text]
+    assert present == []
+
+
 def test_process_paper_accepts_pdf_preferred_text_source_contract():
     text = (PLUGIN_ROOT / "skills" / "process-paper" / "SKILL.md").read_text(encoding="utf-8")
 
