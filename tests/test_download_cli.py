@@ -158,3 +158,85 @@ def test_ezproxy_cookie_header_uses_only_cookies_matching_request_host():
     )
 
     assert header == "root=r; idm=i"
+
+
+def test_find_oa_url_accepts_crossref_pdf_url_when_content_type_unspecified(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_crossref_pdf_under_test")
+
+    def fake_get_json(url, timeout=10):
+        if "api.crossref.org" in url:
+            return {
+                "status": "ok",
+                "message": {
+                    "link": [
+                        {
+                            "content-type": "unspecified",
+                            "URL": "http://academic.oup.com/mind/article-pdf/110/438/504/3033370/1100504.pdf",
+                        }
+                    ]
+                },
+            }
+        return None
+
+    monkeypatch.setattr(mod, "_get_json_urllib", fake_get_json)
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+
+    assert mod.find_oa_url("10.1093/mind/110.438.504") == (
+        "http://academic.oup.com/mind/article-pdf/110/438/504/3033370/1100504.pdf"
+    )
+
+
+def test_find_oa_url_accepts_cambridge_crossref_content_view_link(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_crossref_cambridge_under_test")
+
+    def fake_get_json(url, timeout=10):
+        if "api.crossref.org" in url:
+            return {
+                "status": "ok",
+                "message": {
+                    "link": [
+                        {
+                            "content-type": "unspecified",
+                            "URL": "https://www.cambridge.org/core/services/aop-cambridge-core/content/view/S0036930622000394",
+                        }
+                    ]
+                },
+            }
+        return None
+
+    monkeypatch.setattr(mod, "_get_json_urllib", fake_get_json)
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+
+    assert mod.find_oa_url("10.1017/s0036930622000394") == (
+        "https://www.cambridge.org/core/services/aop-cambridge-core/content/view/S0036930622000394"
+    )
+
+
+def test_informs_proxied_host_matches_ezproxy_pdf_pattern():
+    mod = _load_module(DOWNLOAD, "download_informs_pattern_under_test")
+    final_url = "https://pubsonline-informs-org.eux.idm.oclc.org/doi/10.1287/ijoc.2024.0736"
+    doi = "10.1287/ijoc.2024.0736"
+
+    urls = [
+        f"https://pubsonline-informs-org.eux.idm.oclc.org{pattern.format(doi=doi)}"
+        for hint, pattern in mod.PUBLISHER_PDF_PATTERNS
+        if hint in final_url
+    ]
+
+    assert urls == [
+        "https://pubsonline-informs-org.eux.idm.oclc.org/doi/pdf/10.1287/ijoc.2024.0736"
+    ]
+
+
+def test_informs_doi_matches_publisher_direct_pdf_pattern():
+    mod = _load_module(DOWNLOAD, "download_informs_direct_under_test")
+    doi = "10.1287/ijoc.2024.0736"
+    suffix = doi.split("/", 1)[-1]
+
+    urls = [
+        pattern.format(doi=doi, suffix=suffix)
+        for prefix, pattern in mod._PUBLISHER_DIRECT_URLS
+        if doi.startswith(prefix)
+    ]
+
+    assert "https://pubsonline.informs.org/doi/pdf/10.1287/ijoc.2024.0736" in urls

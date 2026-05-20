@@ -215,6 +215,7 @@ PUBLISHER_PDF_PATTERNS = [
     ("mit.edu",      "/doi/pdf/{doi}"),
     ("mitpress",     "/doi/pdf/{doi}"),
     ("pubsonline.informs", "/doi/pdf/{doi}"),
+    ("pubsonline-informs", "/doi/pdf/{doi}"),
 ]
 
 _EPDF_PUBLISHER_PATTERNS = [
@@ -946,10 +947,15 @@ def find_oa_url(doi):
         msg = data.get("message") or {}
         for link in msg.get("link") or []:
             ct = (link.get("content-type") or "").lower()
+            pdf_link = link.get("URL")
+            parsed_path = urllib.parse.urlparse(pdf_link or "").path.lower()
+            is_cambridge_pdf_endpoint = (
+                urllib.parse.urlparse(pdf_link or "").hostname == "www.cambridge.org"
+                and "/core/services/aop-cambridge-core/content/view/" in parsed_path
+            )
             if ct == "application/pdf" or (
                 "pdf" in ct and link.get("intended-application") == "text-mining"
-            ):
-                pdf_link = link.get("URL")
+            ) or parsed_path.endswith(".pdf") or "/pdf" in parsed_path or is_cambridge_pdf_endpoint:
                 if pdf_link:
                     return pdf_link
 
@@ -1133,7 +1139,7 @@ _PUBLISHER_DIRECT_URLS = [
     ("10.1145/",  "https://dl.acm.org/doi/pdf/{doi}"),
     ("10.1353/",  "https://muse.jhu.edu/article/{suffix}"),
     ("10.1017/",  "https://www.cambridge.org/core/services/aop-cambridge-core/content/view/{doi}"),
-    ("10.pubsonline.informs", "https://pubsonline.informs.org/doi/pdf/{doi}"),
+    ("10.1287/", "https://pubsonline.informs.org/doi/pdf/{doi}"),
 ]
 
 

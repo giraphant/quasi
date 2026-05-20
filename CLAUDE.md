@@ -76,6 +76,13 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.33.6** (2026-05-20): **Publisher PDF discovery handles Crossref PDF endpoints and proxied INFORMS hosts.**
+  - Crossref PDF discovery now accepts official PDF-looking URLs even when Crossref marks their `content-type` as `unspecified`, covering OUP article-PDF URLs.
+  - Cambridge Crossref `content/view/...` endpoints are accepted as PDF candidates; live 2026 Cambridge EZProxy validation also succeeds through `citation_pdf_url` when direct construction is not usable.
+  - INFORMS proxied hosts (`pubsonline-informs-...`) now match the EZProxy PDF pattern, and DOI prefix `10.1287/` now maps to `pubsonline.informs.org/doi/pdf/{doi}` for publisher-direct attempts.
+  - Live 2026 EZProxy validation: ACM, Cambridge, De Gruyter, Brill, MIT Press, OUP, Project MUSE, SAGE, Taylor & Francis, UChicago, Wiley, plus forced Springer EZProxy stage all succeed. INFORMS reaches the proxied article page but tested `/doi/pdf/...` endpoints return HTML/no entitlement; Elsevier ScienceDirect reaches the subscribed article page but PDF download is gated by a browser intermediate page.
+  - Tests: full suite 29/29 passing.
+
 - **0.33.5** (2026-05-19): **EZProxy CookieCloud domain matching handles OCLC subdomains.**
   - CookieCloud filtering now keeps cookies across the configured EZProxy domain tree instead of requiring exact-domain equality. Configuring `oclc.org` now preserves usable cookies from `idm.oclc.org` and publisher-specific proxied subdomains.
   - EZProxy sessions preserve each CookieCloud cookie's original domain/path, so parent-domain and subdomain cookies are scoped the same way the browser scoped them.
