@@ -257,6 +257,9 @@ def test_sciencedirect_article_url_detection_accepts_native_and_ezproxy_urls():
     assert not mod._is_sciencedirect_article_url(
         "https://example.org/science/article/pii/S0378216626001025"
     )
+    assert not mod._is_sciencedirect_article_url(
+        "https://www-sciencedirect-com.example.org/science/article/pii/S0378216626001025"
+    )
 
 
 def test_dokobot_read_url_falls_back_when_local_bridge_is_unavailable(monkeypatch):

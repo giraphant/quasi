@@ -244,12 +244,14 @@ def _extract_citation_pdf_url(html_bytes):
 
 def _is_sciencedirect_host(host: str) -> bool:
     host = host.lower().strip(".")
-    return (
-        host == "www.sciencedirect.com"
-        or host.endswith(".sciencedirect.com")
-        or host.startswith("www-sciencedirect-com.")
-        or host.startswith("sciencedirect-com.")
-    )
+    if host == "www.sciencedirect.com" or host.endswith(".sciencedirect.com"):
+        return True
+
+    for encoded_host in ("www-sciencedirect-com.", "sciencedirect-com."):
+        if host.startswith(encoded_host):
+            proxy_suffix = host[len(encoded_host):]
+            return _host_matches_domain(proxy_suffix, "oclc.org")
+    return False
 
 
 def _is_sciencedirect_article_url(url: str) -> bool:
