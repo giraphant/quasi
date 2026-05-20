@@ -380,3 +380,48 @@ def test_accept_moves_temp_text_paper_to_sources(tmp_path):
     assert payload["kind"] == "paper"
     assert Path(payload["path"]).name == "making-sense-conduct-2026.txt"
     assert Path(payload["path"]).read_text(encoding="utf-8").startswith("Making sense")
+
+
+def test_download_paper_uses_sciencedirect_text_after_pdf_sources_fail(tmp_path, monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_sciencedirect_text_flow_under_test")
+    article_url = "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025"
+
+    monkeypatch.setattr(mod, "download_pdf_from_url", lambda *args, **kwargs: False)
+    monkeypatch.setattr(mod, "find_oa_url", lambda doi: None)
+    monkeypatch.setattr(mod, "try_scihub_download", lambda *args: False)
+    monkeypatch.setattr(mod, "_try_publisher_direct", lambda *args: False)
+    monkeypatch.setattr(mod, "find_wayback_url", lambda doi: None)
+    monkeypatch.setattr(mod, "_kagi_discover_paper", lambda title, author=None: ([], []))
+    monkeypatch.setattr(mod.time, "sleep", lambda seconds: None)
+
+    def fake_ezproxy(doi, output_path, sciencedirect_urls=None):
+        if sciencedirect_urls is not None:
+            sciencedirect_urls.append(article_url)
+        return False
+
+    monkeypatch.setattr(mod, "_try_ezproxy_with_refresh", fake_ezproxy)
+    monkeypatch.setattr(
+        mod,
+        "_dokobot_read_url",
+        lambda url: (
+            "Making sense of conduct: A conversation analysis of therapist formulation "
+            "in interaction with autistic children\n"
+            + "therapist formulation autistic children " * 80
+        ),
+    )
+
+    result = mod.download_paper(
+        doi="10.1016/j.pragma.2026.04.009",
+        output_dir=str(tmp_path),
+        filename="making-sense-conduct-2026",
+        verify_title=(
+            "Making sense of conduct: A conversation analysis of therapist formulation "
+            "in interaction with autistic children"
+        ),
+    )
+
+    assert result == str(tmp_path / "making-sense-conduct-2026.txt")
+    assert (tmp_path / "making-sense-conduct-2026.txt").read_text(encoding="utf-8").startswith(
+        "Making sense of conduct"
+    )
+    assert not (tmp_path / "making-sense-conduct-2026.pdf").exists()
