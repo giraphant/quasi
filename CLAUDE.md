@@ -137,6 +137,19 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.35.0** (2026-05-20): **Audit agent gains frontmatter metadata QA via search CLI (QUA-61).**
+  - `audit-agent` now follows an explicit step sequence: Step 1 local audit
+    transaction, Step 2 minimal LLM edits, Step 3 frontmatter check, Step 4
+    validation.
+  - Step 3 reads each item's frontmatter and, when needed, calls the existing
+    `quasi-search` CLI (`book --isbn` / `--title --author`, `paper --doi` /
+    `--title --author`) to verify `title`, `authors`, `year`, `isbn`, `doi`,
+    `journal`, `publisher` against online metadata.
+  - Mismatches are reported as `kind: "metadata_mismatch"` with current value,
+    search candidate, and evidence source. Only clear, minimal frontmatter edits
+    are applied; conflicts, weak matches, and edition/translation judgment calls
+    are escalated. Never fabricates DOI / ISBN / year / publisher.
+
 - **0.34.0** (2026-05-20): **EZProxy global cross-process rate gate (QUA-50).**
   - `quasi-download` now spaces EZProxy attempts across separate processes so
     parallel paper downloads cannot trigger institutional EZProxy bans —
