@@ -589,3 +589,39 @@ def test_ezproxy_throttle_treats_corrupt_state_as_no_prior(tmp_path):
 def test_ezproxy_min_interval_default_is_thirty():
     mod = _load_module(DOWNLOAD, "download_throttle_default_under_test")
     assert mod.EZPROXY_MIN_INTERVAL == 30
+
+
+def test_ezproxy_throttle_serializes_across_processes(tmp_path):
+    """Real cross-process proof: the exclusive lock is held across the sleep,
+    so concurrent processes pass the gate at least one interval apart. A version
+    that released the lock before sleeping would let all workers pass nearly
+    simultaneously and fail this test."""
+    import time
+
+    state = tmp_path / "ezproxy-throttle.state"
+    worker = tmp_path / "throttle_worker.py"
+    worker.write_text(
+        "import sys, time, importlib.util\n"
+        "from pathlib import Path\n"
+        "path = sys.argv[1]\n"
+        "sys.path.insert(0, str(Path(path).parent))\n"
+        "spec = importlib.util.spec_from_file_location('dl_worker', path)\n"
+        "mod = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(mod)\n"
+        "mod._ezproxy_throttle(state_path=sys.argv[2], interval=1.0)\n"
+        "sys.stdout.write(repr(time.time()))\n"
+    )
+
+    procs = [
+        subprocess.Popen(
+            [sys.executable, str(worker), str(DOWNLOAD), str(state)],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(3)
+    ]
+    times = sorted(float(p.communicate()[0]) for p in procs)
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    assert all(g >= 0.8 for g in gaps), (
+        f"gate passes too close together (lock not held across sleep?): {gaps}"
+    )
