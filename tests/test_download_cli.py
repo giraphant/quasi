@@ -240,3 +240,68 @@ def test_informs_doi_matches_publisher_direct_pdf_pattern():
     ]
 
     assert "https://pubsonline.informs.org/doi/pdf/10.1287/ijoc.2024.0736" in urls
+
+
+def test_sciencedirect_article_url_detection_accepts_native_and_ezproxy_urls():
+    mod = _load_module(DOWNLOAD, "download_sciencedirect_url_under_test")
+
+    assert mod._is_sciencedirect_article_url(
+        "https://www.sciencedirect.com/science/article/pii/S0378216626001025"
+    )
+    assert mod._is_sciencedirect_article_url(
+        "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025"
+    )
+    assert not mod._is_sciencedirect_article_url(
+        "https://www.sciencedirect.com/topics/social-sciences/conversation-analysis"
+    )
+    assert not mod._is_sciencedirect_article_url(
+        "https://example.org/science/article/pii/S0378216626001025"
+    )
+
+
+def test_dokobot_read_url_falls_back_when_local_bridge_is_unavailable(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_dokobot_fallback_under_test")
+    calls: list[list[str]] = []
+
+    def fake_run(args, capture_output, text, timeout, check):
+        calls.append(args)
+        if "--local" in args:
+            return subprocess.CompletedProcess(args, 1, "", "local bridge unavailable")
+        body = "Making sense of conduct\nTherapist formulation\n" + "article body " * 120
+        return subprocess.CompletedProcess(args, 0, body, "")
+
+    monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/local/bin/dokobot")
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+
+    text = mod._dokobot_read_url(
+        "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025",
+        timeout=5,
+    )
+
+    assert text.startswith("Making sense of conduct")
+    assert calls == [
+        [
+            "dokobot",
+            "read",
+            "--local",
+            "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025",
+        ],
+        [
+            "dokobot",
+            "read",
+            "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025",
+        ],
+    ]
+
+
+def test_dokobot_read_url_rejects_short_text(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_dokobot_short_text_under_test")
+
+    monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/local/bin/dokobot")
+    monkeypatch.setattr(
+        mod.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "too short", ""),
+    )
+
+    assert mod._dokobot_read_url("https://www.sciencedirect.com/science/article/pii/S0378216626001025") is None
