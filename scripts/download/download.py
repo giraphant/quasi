@@ -139,7 +139,7 @@ def load_ezproxy_config():
     return get_ezproxy_config(verbose=True)
 
 
-def _try_ezproxy_with_refresh(doi, output_path):
+def _try_ezproxy_with_refresh(doi, output_path, sciencedirect_urls=None):
     """Try EZProxy download; on expiry, invalidate cache + retry once.
 
     Clears the in-memory CookieCloud cache so the next call re-pulls fresh
@@ -147,7 +147,11 @@ def _try_ezproxy_with_refresh(doi, output_path):
     cookies are also rejected (Chrome side likely hasn't re-logged in yet).
     """
     try:
-        return try_ezproxy_download(doi, output_path)
+        return try_ezproxy_download(
+            doi,
+            output_path,
+            sciencedirect_urls=sciencedirect_urls,
+        )
     except EZProxyCookieExpired:
         try:
             from cookiecloud import invalidate_cache, get_ezproxy_config
@@ -156,7 +160,11 @@ def _try_ezproxy_with_refresh(doi, output_path):
         invalidate_cache()
         if get_ezproxy_config():
             print(f"  EZProxy: refreshed via CookieCloud, retrying...", file=sys.stderr)
-            return try_ezproxy_download(doi, output_path)
+            return try_ezproxy_download(
+                doi,
+                output_path,
+                sciencedirect_urls=sciencedirect_urls,
+            )
         raise
 
 
@@ -619,7 +627,7 @@ def _build_ezproxy_session(config):
     return session
 
 
-def try_ezproxy_download(doi, output_path):
+def try_ezproxy_download(doi, output_path, sciencedirect_urls=None):
     """Download paper via EZProxy: login redirect → publisher PDF pattern → HTML scrape.
 
     Returns True on success (file written to output_path), False otherwise.
@@ -664,6 +672,8 @@ def try_ezproxy_download(doi, output_path):
         return False
 
     print(f"  EZProxy landed: {final_url[:80]}", file=sys.stderr)
+    if sciencedirect_urls is not None and _is_sciencedirect_article_url(final_url):
+        sciencedirect_urls.append(final_url)
 
     # Step 2: Try known publisher PDF URL patterns
     for publisher_hint, pattern in PUBLISHER_PDF_PATTERNS:
@@ -1378,10 +1388,14 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
     os.makedirs(output_dir, exist_ok=True)
     dest = os.path.join(output_dir, f"{safe_name}.pdf")
+    text_dest = os.path.join(output_dir, f"{safe_name}.txt")
 
     if os.path.exists(dest) and os.path.getsize(dest) > 1000:
         print(f"  EXISTS {dest}", file=sys.stderr)
         return dest
+    if os.path.exists(text_dest) and os.path.getsize(text_dest) > 1000:
+        print(f"  EXISTS {text_dest}", file=sys.stderr)
+        return text_dest
 
     def _verify_and_accept(path, source_name):
         """Verify downloaded file. Returns True if accepted, False if rejected."""
@@ -1395,6 +1409,12 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
             os.remove(path)
         return False
 
+    sciencedirect_urls: list[str] = []
+
+    def _remember_sciencedirect_url(candidate_url: str | None):
+        if candidate_url and _is_sciencedirect_article_url(candidate_url) and candidate_url not in sciencedirect_urls:
+            sciencedirect_urls.append(candidate_url)
+
     # Collect all hint URLs (deduplicated, order-preserving)
     hint_urls: list[str] = []
     _seen_urls: set[str] = set()
@@ -1407,6 +1427,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
     # 1. Direct URLs (all hints)
     for hint_url in hint_urls:
+        _remember_sciencedirect_url(hint_url)
         print(f"  Direct URL: {hint_url[:80]}", file=sys.stderr)
         try:
             if download_pdf_from_url(hint_url, dest) and _verify_and_accept(dest, "Direct"):
@@ -1443,7 +1464,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
     if doi:
         print(f"  Trying EZProxy for {doi}...", file=sys.stderr)
         try:
-            if _try_ezproxy_with_refresh(doi, dest) and _verify_and_accept(dest, "EZProxy"):
+            if _try_ezproxy_with_refresh(doi, dest, sciencedirect_urls=sciencedirect_urls) and _verify_and_accept(dest, "EZProxy"):
                 return dest
         except EZProxyCookieExpired:
             print(f"  EZProxy cookie expired, continuing...", file=sys.stderr)
@@ -1471,6 +1492,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
             if kagi_url in _seen_urls:
                 continue
             _seen_urls.add(kagi_url)
+            _remember_sciencedirect_url(kagi_url)
             print(f"  Kagi URL: {kagi_url[:80]}", file=sys.stderr)
             try:
                 if download_pdf_from_url(kagi_url, dest) and _verify_and_accept(dest, "Kagi URL"):
@@ -1500,10 +1522,23 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
             # EZProxy with new DOI
             try:
-                if _try_ezproxy_with_refresh(kagi_doi, dest) and _verify_and_accept(dest, "Kagi EZProxy"):
+                if _try_ezproxy_with_refresh(kagi_doi, dest, sciencedirect_urls=sciencedirect_urls) and _verify_and_accept(dest, "Kagi EZProxy"):
                     return dest
             except EZProxyCookieExpired:
                 pass
+
+    for article_url in sciencedirect_urls:
+        print(f"  ScienceDirect text fallback: {article_url[:80]}", file=sys.stderr)
+        text = _dokobot_read_url(article_url)
+        if not text:
+            continue
+        try:
+            Path(text_dest).write_text(text, encoding="utf-8")
+        except OSError as exc:
+            print(f"  ScienceDirect text fallback: {exc}", file=sys.stderr)
+            continue
+        if _verify_and_accept(text_dest, "ScienceDirect text"):
+            return text_dest
 
     print(f"  Could not download paper", file=sys.stderr)
     return None
