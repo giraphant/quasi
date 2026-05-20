@@ -379,6 +379,42 @@ def test_verify_source_content_accepts_txt_title_match(tmp_path):
     )
 
 
+def test_verify_source_content_rejects_weak_partial_title_match(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_text_verify_weak_title_under_test")
+    text_path = tmp_path / "wrong-paper.txt"
+    text_path.write_text(
+        "Language acquisition across linguistic and cognitive systems\n"
+        "Edited by Michèle Kail and Maya Hickmann\n"
+        + "language acquisition linguistic cognitive systems " * 40,
+        encoding="utf-8",
+    )
+
+    assert not mod.verify_source_content(
+        str(text_path),
+        expected_title=(
+            "Some and or in second language acquisition: Exploring linguistic "
+            "and cognitive factors"
+        ),
+    )
+
+
+def test_verify_source_content_rejects_same_author_related_title(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_text_verify_related_title_under_test")
+    text_path = tmp_path / "related-paper.txt"
+    text_path.write_text(
+        "We need to talk about hearer's meaning!\n"
+        "Maj-Britt Mosegaard Hansen and Marina Terkourafi\n"
+        + "hearer's meaning pragmatic theory speaker intentions " * 40,
+        encoding="utf-8",
+    )
+
+    assert not mod.verify_source_content(
+        str(text_path),
+        expected_author="Marina Terkourafi",
+        expected_title="Hearer's Meaning 2.0: A reply to Li and Xie (2025)",
+    )
+
+
 def test_accept_moves_temp_text_paper_to_sources(tmp_path):
     project = tmp_path / "project"
     temp_dir = project / ".quasi" / "temp" / "downloads"

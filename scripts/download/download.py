@@ -507,6 +507,7 @@ def _verify_text_content(text, expected_author=None, expected_title=None,
         return True  # Can't verify, assume OK
 
     text = text.lower()
+    normalised_text = " ".join(re.findall(r"[a-z0-9]+", text))
     matches = 0
     needed = min_keyword_matches
 
@@ -537,15 +538,30 @@ def _verify_text_content(text, expected_author=None, expected_title=None,
             "is", "are", "was", "with", "from", "by", "at", "as", "its",
             "this", "that", "how", "what", "why", "new", "between",
         }
-        words = [w for w in re.findall(r'[a-z]{3,}', title_lower)
-                 if w not in stop_words]
+        words = []
+        seen_words = set()
+        for word in re.findall(r"[a-z]{3,}", title_lower):
+            if word in stop_words or word in seen_words:
+                continue
+            seen_words.add(word)
+            words.append(word)
 
         found_words = [w for w in words if w in text]
+        normalised_title = " ".join(re.findall(r"[a-z0-9]+", title_lower))
+        title_needed = min(len(words), max(3, (len(words) * 3 + 4) // 5))
+        title_matches = bool(normalised_title and normalised_title in normalised_text)
+        title_matches = title_matches or (bool(words) and len(found_words) >= title_needed)
         if found_words:
             matches += len(found_words)
             print(f"  Verify: title words found: {found_words[:5]}", file=sys.stderr)
         else:
             print(f"  Verify: no title keywords found in source", file=sys.stderr)
+        if not title_matches:
+            print(
+                f"  Verify: title match too weak ({len(found_words)}/{len(words)} words)",
+                file=sys.stderr,
+            )
+            return False
 
     if matches >= needed:
         print(f"  Verify: PASS ({matches} matches)", file=sys.stderr)
