@@ -64,6 +64,7 @@ HEADERS_BROWSER = {
 HEADERS_API = {"User-Agent": "BTS-Research/1.0 (mailto:research@example.com)"}
 
 DELAY = 10  # Rate limit: minimum 10s between downloads
+EZPROXY_MIN_INTERVAL = 30  # seconds; global min gap between EZProxy attempts
 
 # Treat these HTTP statuses as transient (worth retrying). Anything else
 # (4xx, 410, etc.) is deterministic and propagates immediately.
@@ -114,6 +115,67 @@ def _retry(fn, *, attempts=3, base_delay=1.0, label="http"):
             )
             time.sleep(sleep)
     raise last_exc
+
+
+def _quasi_data_dir() -> Path:
+    """User-global plugin data dir (matches the bin/quasi-download shim)."""
+    return Path(
+        os.environ.get("CLAUDE_PLUGIN_DATA")
+        or os.path.expanduser("~/.cache/quasi")
+    )
+
+
+def _ezproxy_state_path() -> Path:
+    return _quasi_data_dir() / "ezproxy-throttle.state"
+
+
+def _ezproxy_throttle(state_path=None, interval=None, now=None, sleep=None):
+    """Block until >= interval has elapsed since the last EZProxy attempt
+    (globally, across all quasi-download processes), then record this attempt.
+
+    Holds an exclusive flock on a user-global state file across the wait, so
+    competing processes serialize one interval apart. No-op when interval <= 0
+    or fcntl is unavailable. Parameters are injectable for tests; production
+    callers pass nothing. Returns seconds waited.
+    """
+    interval = EZPROXY_MIN_INTERVAL if interval is None else interval
+    if interval <= 0:
+        return 0.0
+    try:
+        import fcntl
+    except ImportError:
+        return 0.0
+    now = now or time.time
+    sleep = sleep or time.sleep
+    sp = Path(state_path) if state_path else _ezproxy_state_path()
+    sp.parent.mkdir(parents=True, exist_ok=True)
+
+    waited = 0.0
+    with open(sp, "a+") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # blocks -> serializes processes
+        try:
+            f.seek(0)
+            raw = f.read().strip()
+            try:
+                last = float(raw) if raw else 0.0
+            except ValueError:
+                last = 0.0
+            wait = interval - (now() - last)
+            wait = min(interval, wait)  # cap vs corrupted/future timestamp
+            if wait > 0:
+                print(
+                    f"  EZProxy: global rate gate, waiting {wait:.1f}s",
+                    file=sys.stderr,
+                )
+                sleep(wait)
+                waited = wait
+            f.seek(0)
+            f.truncate()
+            f.write(str(now()))
+            f.flush()
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    return waited
 
 
 class EZProxyCookieExpired(Exception):

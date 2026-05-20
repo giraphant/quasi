@@ -497,3 +497,95 @@ def test_download_paper_uses_sciencedirect_text_after_pdf_sources_fail(tmp_path,
     )
     assert not (tmp_path / "making-sense-conduct-2026.pdf").exists()
     assert dokobot_calls == [article_url]
+
+
+def test_ezproxy_throttle_first_call_does_not_wait(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_throttle_first_under_test")
+    state = tmp_path / "ezproxy-throttle.state"
+    recorded: list[float] = []
+
+    waited = mod._ezproxy_throttle(
+        state_path=state,
+        interval=30,
+        now=lambda: 1000.0,
+        sleep=recorded.append,
+    )
+
+    assert waited == 0.0
+    assert recorded == []
+    assert state.read_text().strip() == "1000.0"
+
+
+def test_ezproxy_throttle_waits_remaining_interval(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_throttle_wait_under_test")
+    state = tmp_path / "ezproxy-throttle.state"
+    state.write_text("1000.0")
+    recorded: list[float] = []
+
+    waited = mod._ezproxy_throttle(
+        state_path=state,
+        interval=30,
+        now=lambda: 1005.0,
+        sleep=recorded.append,
+    )
+
+    assert waited == 25.0
+    assert recorded == [25.0]
+    assert state.read_text().strip() == "1005.0"
+
+
+def test_ezproxy_throttle_caps_wait_against_future_timestamp(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_throttle_cap_under_test")
+    state = tmp_path / "ezproxy-throttle.state"
+    state.write_text("2000.0")  # far in the future vs. now()
+    recorded: list[float] = []
+
+    waited = mod._ezproxy_throttle(
+        state_path=state,
+        interval=30,
+        now=lambda: 1000.0,
+        sleep=recorded.append,
+    )
+
+    assert waited == 30.0
+    assert recorded == [30.0]
+
+
+def test_ezproxy_throttle_zero_interval_is_noop(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_throttle_zero_under_test")
+    state = tmp_path / "missing.state"
+    recorded: list[float] = []
+
+    waited = mod._ezproxy_throttle(
+        state_path=state,
+        interval=0,
+        now=lambda: 1000.0,
+        sleep=recorded.append,
+    )
+
+    assert waited == 0.0
+    assert recorded == []
+    assert not state.exists()
+
+
+def test_ezproxy_throttle_treats_corrupt_state_as_no_prior(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_throttle_corrupt_under_test")
+    state = tmp_path / "ezproxy-throttle.state"
+    state.write_text("not-a-number")
+    recorded: list[float] = []
+
+    waited = mod._ezproxy_throttle(
+        state_path=state,
+        interval=30,
+        now=lambda: 1000.0,
+        sleep=recorded.append,
+    )
+
+    assert waited == 0.0
+    assert recorded == []
+    assert state.read_text().strip() == "1000.0"
+
+
+def test_ezproxy_min_interval_default_is_thirty():
+    mod = _load_module(DOWNLOAD, "download_throttle_default_under_test")
+    assert mod.EZPROXY_MIN_INTERVAL == 30
