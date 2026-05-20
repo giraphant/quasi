@@ -400,15 +400,19 @@ def test_download_paper_uses_sciencedirect_text_after_pdf_sources_fail(tmp_path,
         return False
 
     monkeypatch.setattr(mod, "_try_ezproxy_with_refresh", fake_ezproxy)
-    monkeypatch.setattr(
-        mod,
-        "_dokobot_read_url",
-        lambda url: (
+    dokobot_calls = []
+
+    def fake_dokobot_read_url(url):
+        dokobot_calls.append(url)
+        if url != article_url:
+            return None
+        return (
             "Making sense of conduct: A conversation analysis of therapist formulation "
             "in interaction with autistic children\n"
             + "therapist formulation autistic children " * 80
-        ),
-    )
+        )
+
+    monkeypatch.setattr(mod, "_dokobot_read_url", fake_dokobot_read_url)
 
     result = mod.download_paper(
         doi="10.1016/j.pragma.2026.04.009",
@@ -425,3 +429,4 @@ def test_download_paper_uses_sciencedirect_text_after_pdf_sources_fail(tmp_path,
         "Making sense of conduct"
     )
     assert not (tmp_path / "making-sense-conduct-2026.pdf").exists()
+    assert dokobot_calls == [article_url]
