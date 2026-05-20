@@ -262,6 +262,37 @@ def test_sciencedirect_article_url_detection_accepts_native_and_ezproxy_urls():
     )
 
 
+def test_ezproxy_sciencedirect_url_tracking_deduplicates(monkeypatch, tmp_path):
+    mod = _load_module(DOWNLOAD, "download_ezproxy_sciencedirect_dedupe_under_test")
+    article_url = "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025"
+
+    class FakeResponse:
+        url = article_url
+        content = b"<html></html>"
+        status_code = 200
+        history = [object()]
+
+    class FakeSession:
+        def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        mod,
+        "load_ezproxy_config",
+        lambda: {"login_url": "https://ezproxy.example.edu/login?url=", "cookie": "x"},
+    )
+    monkeypatch.setattr(mod, "_build_ezproxy_session", lambda config: FakeSession())
+
+    sciencedirect_urls = [article_url]
+
+    assert not mod.try_ezproxy_download(
+        "10.1016/j.pragma.2026.04.009",
+        str(tmp_path / "paper.pdf"),
+        sciencedirect_urls=sciencedirect_urls,
+    )
+    assert sciencedirect_urls == [article_url]
+
+
 def test_dokobot_read_url_falls_back_when_local_bridge_is_unavailable(monkeypatch):
     mod = _load_module(DOWNLOAD, "download_dokobot_fallback_under_test")
     calls: list[list[str]] = []

@@ -672,7 +672,11 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None):
         return False
 
     print(f"  EZProxy landed: {final_url[:80]}", file=sys.stderr)
-    if sciencedirect_urls is not None and _is_sciencedirect_article_url(final_url):
+    if (
+        sciencedirect_urls is not None
+        and _is_sciencedirect_article_url(final_url)
+        and final_url not in sciencedirect_urls
+    ):
         sciencedirect_urls.append(final_url)
 
     # Step 2: Try known publisher PDF URL patterns
