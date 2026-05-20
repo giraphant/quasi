@@ -60,7 +60,7 @@ quasi-download accept --path {temp_path} --slug {slug} --kind book -o sources --
   - caller 的 DOI 与 search 返回的 DOI 不一致 → 用 search 的 DOI,在 DOWNLOAD_RESULT 里注明 `verdict_note: "DOI corrected from {original} to {verified}"`。
   - caller 无 DOI 但有 title+author → search 发现 DOI → 传给 fetch。search 也找不到 DOI → 仅靠 `--url` + Kagi recovery。
   - `paper fetch --doi {doi} --url {url1} --url {url2} --title "{title}" --author "{author}" --slug {slug}` — bin 自行跑完整级联 + Kagi 恢复;PDF 仍优先。若 ScienceDirect PDF 被浏览器中间页拦住但 article 页可读,bin 可返回 `.txt` 正文源。不匹配就删除 `temp_path`,报 DOWNLOAD_FAILED。匹配后 `accept --kind paper`。
-- **同源**下载间隔 ≥10 秒（AA / EZProxy rate-limit）。跨源可并发。
+- **同源**下载间隔 ≥10 秒（AA rate-limit）。EZProxy 由 quasi-download CLI 内部全局限流（默认 30 秒最小间隔，跨进程串行），agent 不必手动间隔 EZProxy。跨源可并发。
 
 ### 书的 year_evidence（kind=book 专用）
 
