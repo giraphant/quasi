@@ -308,3 +308,75 @@ def test_dokobot_read_url_rejects_short_text(monkeypatch):
     )
 
     assert mod._dokobot_read_url("https://www.sciencedirect.com/science/article/pii/S0378216626001025") is None
+
+
+def test_inspect_downloaded_file_reads_txt_front_text(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_text_inspect_under_test")
+    text_path = tmp_path / "paper.txt"
+    text_path.write_text(
+        "Making sense of conduct: A conversation analysis of therapist formulation "
+        "in interaction with autistic children\n"
+        "Doe and Roe discuss therapist formulation in detail. "
+        + "article text " * 120,
+        encoding="utf-8",
+    )
+
+    inspect = mod._inspect_downloaded_file(text_path)
+
+    assert inspect["format"] == "txt"
+    assert inspect["readability"] == "text"
+    assert inspect["front_text"].startswith("Making sense of conduct")
+    assert inspect["fallback_hint"] is None
+
+
+def test_verify_source_content_accepts_txt_title_match(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_text_verify_under_test")
+    text_path = tmp_path / "paper.txt"
+    text_path.write_text(
+        "Making sense of conduct: A conversation analysis of therapist formulation "
+        "in interaction with autistic children\n"
+        + "therapist formulation autistic children " * 40,
+        encoding="utf-8",
+    )
+
+    assert mod.verify_source_content(
+        str(text_path),
+        expected_title=(
+            "Making sense of conduct: A conversation analysis of therapist formulation "
+            "in interaction with autistic children"
+        ),
+    )
+
+
+def test_accept_moves_temp_text_paper_to_sources(tmp_path):
+    project = tmp_path / "project"
+    temp_dir = project / ".quasi" / "temp" / "downloads"
+    temp_dir.mkdir(parents=True)
+    src = temp_dir / "candidate.txt"
+    src.write_text("Making sense of conduct\n" + "article text " * 120, encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(DOWNLOAD),
+            "accept",
+            "--path",
+            str(src),
+            "--slug",
+            "making-sense-conduct-2026",
+            "--kind",
+            "paper",
+            "--json",
+        ],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["kind"] == "paper"
+    assert Path(payload["path"]).name == "making-sense-conduct-2026.txt"
+    assert Path(payload["path"]).read_text(encoding="utf-8").startswith("Making sense")
