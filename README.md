@@ -94,7 +94,7 @@ sources/
 
 | 服务 | 配置字段 |
 |---|---|
-| Anna's Archive | `anna_donator_key`, `anna_mirrors` |
+| Anna's Archive | `anna_donator_key` |
 | CookieCloud / EZProxy | `cookiecloud_server`, `cookiecloud_uuid`, `cookiecloud_password`, `cookiecloud_ezproxy_domain`, `cookiecloud_ezproxy_base_url` |
 | Immersive Translate | `immersive_auth_key` |
 | Kagi | `kagi_session_token` |

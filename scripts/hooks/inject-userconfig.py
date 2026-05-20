@@ -29,7 +29,6 @@ import sys
 # QUASI_<KEY>. Keep this list in sync with plugin.json's `userConfig`.
 _KEYS = [
     "ANNA_DONATOR_KEY",
-    "ANNA_MIRRORS",
     "COOKIECLOUD_SERVER",
     "COOKIECLOUD_UUID",
     "COOKIECLOUD_PASSWORD",

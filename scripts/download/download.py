@@ -25,6 +25,7 @@ materialise in the hook+bash subprocess env for one tool call at a time.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
@@ -159,12 +160,39 @@ def _try_ezproxy_with_refresh(doi, output_path):
         raise
 
 
+def _host_matches_domain(host: str, domain: str) -> bool:
+    host = host.lower().strip(".")
+    domain = domain.lower().lstrip(".")
+    return host == domain or host.endswith(f".{domain}")
+
+
 def _url_matches_ezproxy(url, ezproxy_config):
     """Check if a URL belongs to the EZProxy domain."""
     if not ezproxy_config:
         return False
-    domain = ezproxy_config["domain"].lstrip(".")
-    return domain in url
+    host = urllib.parse.urlparse(url).hostname or ""
+    if _host_matches_domain(host, ezproxy_config["domain"]):
+        return True
+    for rec in ezproxy_config.get("cookie_records", []):
+        if _host_matches_domain(host, rec.get("domain", "")):
+            return True
+    return False
+
+
+def _ezproxy_cookie_header(ezproxy_config, url):
+    host = urllib.parse.urlparse(url).hostname or ""
+    parts = []
+    for rec in ezproxy_config.get("cookie_records", []):
+        if _host_matches_domain(host, rec.get("domain", "")):
+            parts.append(f"{rec['name']}={rec['value']}")
+    if parts:
+        return "; ".join(parts)
+    if "cookies" in ezproxy_config:
+        return "; ".join(
+            f"{name}={value}" for name, value in ezproxy_config["cookies"].items()
+        )
+    cookie_name = ezproxy_config.get("cookie_name", "ezproxy")
+    return f"{cookie_name}={ezproxy_config['cookie']}"
 
 
 # Publisher PDF URL patterns: given a proxied landing page URL,
@@ -175,14 +203,43 @@ PUBLISHER_PDF_PATTERNS = [
     ("oup.com",      "/doi/pdf/{doi}"),
     ("academic.oup", "/doi/pdf/{doi}"),
     ("wiley",        "/doi/pdfdirect/{doi}"),
+    ("wiley",        "/doi/pdfdirect/{doi}?download=true"),
     ("tandfonline",  "/doi/pdf/{doi}"),
+    ("tandfonline",  "/doi/pdf/{doi}?download=true"),
     ("springer",     "/content/pdf/{doi}.pdf"),  # reeder uses /article/{doi}/fulltext.pdf
     ("nature.com",   "/content/pdf/{doi}.pdf"),
     ("uchicago",     "/doi/pdf/{doi}"),
+    ("uchicago",     "/doi/pdf/{doi}?download=true"),
+    ("uchicago",     "/doi/pdfplus/{doi}"),
+    ("uchicago",     "/doi/pdfplus/{doi}?download=true"),
     ("mit.edu",      "/doi/pdf/{doi}"),
     ("mitpress",     "/doi/pdf/{doi}"),
     ("pubsonline.informs", "/doi/pdf/{doi}"),
+    ("pubsonline-informs", "/doi/pdf/{doi}"),
 ]
+
+_EPDF_PUBLISHER_PATTERNS = [
+    ("uchicago", "/doi/epdf/{doi}"),
+    ("tandfonline", "/doi/epdf/{doi}?needAccess=true"),
+    ("wiley", "/doi/epdf/{doi}"),
+]
+
+_RE_META_TAG = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+_RE_HTML_ATTR = re.compile(r"""([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*([\"'])(.*?)\2""", re.DOTALL)
+
+
+def _extract_citation_pdf_url(html_bytes):
+    text = html_bytes[:200000].decode("utf-8", errors="ignore")
+    for tag in _RE_META_TAG.findall(text):
+        attrs = {
+            name.lower(): html.unescape(value.strip())
+            for name, _quote, value in _RE_HTML_ATTR.findall(tag)
+        }
+        if attrs.get("name", "").lower() == "citation_pdf_url":
+            url = attrs.get("content", "").strip()
+            if url:
+                return url
+    return None
 
 
 def _is_pdf_data(data):
@@ -448,14 +505,23 @@ def _build_ezproxy_session(config):
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     })
 
+    cookie_records = config.get("cookie_records", [])
+    if cookie_records:
+        for rec in cookie_records:
+            session.cookies.set(
+                rec["name"],
+                rec["value"],
+                domain=rec["domain"],
+                path=rec.get("path", "/"),
+            )
+        return session
+
     domain = config.get("domain", ".eux.idm.oclc.org")
-    # Multi-cookie: {"cookies": {"name1": "val1", "name2": "val2"}}
     cookies = config.get("cookies", {})
     if cookies:
         for name, value in cookies.items():
             session.cookies.set(name, value, domain=domain)
     else:
-        # Single cookie: {"cookie_name": "name", "cookie": "value"}
         cookie_name = config.get("cookie_name", "ezproxy")
         session.cookies.set(cookie_name, config["cookie"], domain=domain)
 
@@ -530,7 +596,59 @@ def try_ezproxy_download(doi, output_path):
                     return True
             except (requests.RequestException, TimeoutError, OSError):
                 pass
-            break  # Only try the first matching publisher
+
+    # Step 2.5: Extract citation_pdf_url from landing page meta tags
+    _citation_pdf = _extract_citation_pdf_url(landing_html)
+    if _citation_pdf:
+        if _citation_pdf.startswith("/"):
+            parsed = urllib.parse.urlparse(final_url)
+            _citation_pdf = f"{parsed.scheme}://{parsed.netloc}{_citation_pdf}"
+        print(f"  EZProxy citation_pdf_url: {_citation_pdf[:80]}", file=sys.stderr)
+        try:
+            pdf_resp = _retry(
+                lambda: session.get(_citation_pdf, timeout=60),
+                label="EZProxy citation_pdf_url",
+            )
+            data = pdf_resp.content
+            if _is_pdf_data(data):
+                with open(output_path, "wb") as f:
+                    f.write(data)
+                print(f"  OK {len(data) / 1024:.0f}KB -> {os.path.basename(output_path)}",
+                      file=sys.stderr)
+                return True
+        except (requests.RequestException, TimeoutError, OSError):
+            pass
+
+    # Step 2.6: Fetch epdf page (embedded PDF viewer) and extract PDF URL
+    for publisher_hint, epdf_pattern in _EPDF_PUBLISHER_PATTERNS:
+        if publisher_hint in final_url:
+            parsed = urllib.parse.urlparse(final_url)
+            base = f"{parsed.scheme}://{parsed.netloc}"
+            epdf_url = base + epdf_pattern.format(doi=doi)
+            print(f"  EZProxy epdf: {epdf_url[:80]}", file=sys.stderr)
+            try:
+                epdf_resp = _retry(
+                    lambda: session.get(epdf_url, timeout=30),
+                    label=f"EZProxy epdf {publisher_hint}",
+                )
+                epdf_pdf = _extract_citation_pdf_url(epdf_resp.content)
+                if epdf_pdf:
+                    if epdf_pdf.startswith("/"):
+                        epdf_pdf = base + epdf_pdf
+                    print(f"  EZProxy epdf -> PDF: {epdf_pdf[:80]}", file=sys.stderr)
+                    pdf_resp = _retry(
+                        lambda: session.get(epdf_pdf, timeout=60),
+                        label=f"EZProxy epdf-PDF {publisher_hint}",
+                    )
+                    data = pdf_resp.content
+                    if _is_pdf_data(data):
+                        with open(output_path, "wb") as f:
+                            f.write(data)
+                        print(f"  OK {len(data) / 1024:.0f}KB -> {os.path.basename(output_path)}",
+                              file=sys.stderr)
+                        return True
+            except (requests.RequestException, TimeoutError, OSError):
+                pass
 
     # Step 3: Scrape landing page HTML for PDF links
     pdf_links = re.findall(
@@ -820,6 +938,26 @@ def find_oa_url(doi):
         oa_pdf = data.get("openAccessPdf")
         if oa_pdf and oa_pdf.get("url"):
             return oa_pdf["url"]
+    time.sleep(DELAY)
+
+    # 4. Crossref link field — publisher-registered PDF URLs
+    url = f"https://api.crossref.org/works/{doi}"
+    data = _get_json_urllib(url, timeout=20)
+    if data and data.get("status") == "ok":
+        msg = data.get("message") or {}
+        for link in msg.get("link") or []:
+            ct = (link.get("content-type") or "").lower()
+            pdf_link = link.get("URL")
+            parsed_path = urllib.parse.urlparse(pdf_link or "").path.lower()
+            is_cambridge_pdf_endpoint = (
+                urllib.parse.urlparse(pdf_link or "").hostname == "www.cambridge.org"
+                and "/core/services/aop-cambridge-core/content/view/" in parsed_path
+            )
+            if ct == "application/pdf" or (
+                "pdf" in ct and link.get("intended-application") == "text-mining"
+            ) or parsed_path.endswith(".pdf") or "/pdf" in parsed_path or is_cambridge_pdf_endpoint:
+                if pdf_link:
+                    return pdf_link
 
     return None
 
@@ -902,8 +1040,21 @@ def find_wayback_url(doi):
         pdf_urls.append(f"https://dl.acm.org/doi/pdf/{doi}")
     elif doi.startswith("10.1007/"):
         pdf_urls.append(f"https://link.springer.com/content/pdf/{doi}.pdf")
-    elif doi.startswith("10.1080/") or doi.startswith("10.1177/"):
-        pdf_urls.append(f"https://doi.org/{doi}")
+    elif doi.startswith("10.1086/"):
+        pdf_urls.append(f"https://www.journals.uchicago.edu/doi/pdf/{doi}")
+        pdf_urls.append(f"https://www.journals.uchicago.edu/doi/pdf/{doi}?download=true")
+    elif doi.startswith(("10.1002/", "10.1111/")):
+        pdf_urls.append(f"https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}")
+        pdf_urls.append(f"https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}?download=true")
+    elif doi.startswith("10.1093/"):
+        pdf_urls.append(f"https://academic.oup.com/doi/pdf/{doi}")
+    elif doi.startswith("10.1162/"):
+        pdf_urls.append(f"https://direct.mit.edu/doi/pdf/{doi}")
+    elif doi.startswith("10.1080/"):
+        pdf_urls.append(f"https://www.tandfonline.com/doi/pdf/{doi}")
+        pdf_urls.append(f"https://www.tandfonline.com/doi/pdf/{doi}?download=true")
+    elif doi.startswith("10.1177/"):
+        pdf_urls.append(f"https://journals.sagepub.com/doi/pdf/{doi}")
     elif doi.startswith("10.1353/"):
         pdf_urls.append(f"https://muse.jhu.edu/pub/{doi.split('/')[-1]}")
     pdf_urls.append(f"https://doi.org/{doi}")
@@ -937,8 +1088,7 @@ def download_pdf_from_url(url, output_path, timeout=60):
         # Auto-inject EZProxy cookie if URL matches
         ezproxy = load_ezproxy_config()
         if _url_matches_ezproxy(url, ezproxy):
-            cookie_name = ezproxy.get("cookie_name", "ezproxy")
-            headers["Cookie"] = f"{cookie_name}={ezproxy['cookie']}"
+            headers["Cookie"] = _ezproxy_cookie_header(ezproxy, url)
 
         def _do():
             req = urllib.request.Request(url, headers=headers)
@@ -970,11 +1120,160 @@ def download_pdf_from_url(url, output_path, timeout=60):
         return False
 
 
-def download_paper(doi=None, url=None, output_dir="sources", filename=None,
-                   retry_wayback=True, verify_author=None, verify_title=None):
+_PUBLISHER_DIRECT_URLS = [
+    ("10.1086/",  "https://www.journals.uchicago.edu/doi/pdf/{doi}"),
+    ("10.1086/",  "https://www.journals.uchicago.edu/doi/pdf/{doi}?download=true"),
+    ("10.1086/",  "https://www.journals.uchicago.edu/doi/pdfplus/{doi}"),
+    ("10.1086/",  "https://www.journals.uchicago.edu/doi/pdfplus/{doi}?download=true"),
+    ("10.1080/",  "https://www.tandfonline.com/doi/pdf/{doi}"),
+    ("10.1080/",  "https://www.tandfonline.com/doi/pdf/{doi}?download=true"),
+    ("10.1177/",  "https://journals.sagepub.com/doi/pdf/{doi}"),
+    ("10.1093/",  "https://academic.oup.com/doi/pdf/{doi}"),
+    ("10.1002/",  "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}"),
+    ("10.1002/",  "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}?download=true"),
+    ("10.1111/",  "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}"),
+    ("10.1111/",  "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}?download=true"),
+    ("10.1007/",  "https://link.springer.com/content/pdf/{doi}.pdf"),
+    ("10.1038/",  "https://www.nature.com/articles/{suffix}.pdf"),
+    ("10.1162/",  "https://direct.mit.edu/doi/pdf/{doi}"),
+    ("10.1145/",  "https://dl.acm.org/doi/pdf/{doi}"),
+    ("10.1353/",  "https://muse.jhu.edu/article/{suffix}"),
+    ("10.1017/",  "https://www.cambridge.org/core/services/aop-cambridge-core/content/view/{doi}"),
+    ("10.1287/", "https://pubsonline.informs.org/doi/pdf/{doi}"),
+]
+
+
+def _try_publisher_direct(doi, output_path):
+    """Try downloading PDF directly from publisher URL (no EZProxy).
+
+    Some publishers allow PDF access from institutional IP ranges or for
+    open-access articles without explicit proxy authentication.
+    """
+    if not doi:
+        return False
+
+    suffix = doi.split("/", 1)[-1] if "/" in doi else ""
+    for prefix, pattern in _PUBLISHER_DIRECT_URLS:
+        if doi.startswith(prefix):
+            pdf_url = pattern.format(doi=doi, suffix=suffix)
+            print(f"  Publisher direct: {pdf_url[:80]}", file=sys.stderr)
+            try:
+                def _do():
+                    req = urllib.request.Request(pdf_url, headers=HEADERS_BROWSER)
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        return resp.read()
+
+                data = _retry(_do, label=f"publisher-direct {prefix}")
+                if _is_pdf_data(data):
+                    with open(output_path, "wb") as f:
+                        f.write(data)
+                    print(
+                        f"  Publisher direct OK {len(data) / 1024:.0f}KB -> "
+                        f"{os.path.basename(output_path)}",
+                        file=sys.stderr,
+                    )
+                    return True
+                else:
+                    print(f"  Publisher direct: not a PDF", file=sys.stderr)
+            except (urllib.error.URLError, urllib.error.HTTPError,
+                    TimeoutError, OSError) as e:
+                print(f"  Publisher direct: {e}", file=sys.stderr)
+    return False
+
+
+_TITLE_STOP_WORDS = frozenset({
+    "the", "a", "an", "of", "in", "on", "and", "or", "for", "to",
+    "is", "are", "was", "with", "from", "by", "at", "as", "its",
+    "this", "that", "how", "what", "why", "new", "between", "not",
+})
+
+_DOI_IN_URL_RE = re.compile(r"10\.\d{4,9}/[^\s&?#\"']+")
+
+
+def _kagi_discover_paper(title, author=None):
+    """Search Kagi for paper title; extract DOIs and publisher URLs.
+
+    Returns (doi_candidates, url_candidates) — both lists of strings.
+    Silently returns empty if kagi CLI is unavailable.
+    """
+    kagi_token = os.environ.get("QUASI_KAGI_SESSION_TOKEN")
+    if not kagi_token:
+        return [], []
+    if not shutil.which("kagi"):
+        return [], []
+
+    query = title
+    if author:
+        surname = author.split()[-1] if author else ""
+        if surname:
+            query = f"{title} {surname}"
+
+    env = dict(os.environ)
+    env["KAGI_SESSION_TOKEN"] = kagi_token
+
+    try:
+        result = subprocess.run(
+            ["kagi", "search", "--format", "json", query],
+            capture_output=True, timeout=30, env=env,
+        )
+        if result.returncode != 0:
+            print(f"  Kagi: exit {result.returncode}", file=sys.stderr)
+            return [], []
+        data = json.loads(result.stdout)
+        items = data.get("data", [])
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as e:
+        print(f"  Kagi: {e}", file=sys.stderr)
+        return [], []
+
+    title_lower = title.lower()
+    title_words = set(re.findall(r"[a-z]{3,}", title_lower)) - _TITLE_STOP_WORDS
+
+    if not title_words:
+        return [], []
+
+    dois: list[str] = []
+    urls: list[str] = []
+    seen_dois: set[str] = set()
+
+    for item in items:
+        item_title = (item.get("title") or "").lower()
+        item_url = item.get("url") or ""
+
+        item_words = set(re.findall(r"[a-z]{3,}", item_title)) - _TITLE_STOP_WORDS
+        if not item_words:
+            continue
+        overlap = len(title_words & item_words) / len(title_words)
+        if overlap < 0.5:
+            continue
+
+        doi_match = _DOI_IN_URL_RE.search(item_url)
+        if doi_match:
+            found_doi = doi_match.group(0).rstrip(".")
+            if found_doi not in seen_dois:
+                seen_dois.add(found_doi)
+                dois.append(found_doi)
+
+        if item_url and item_url.startswith("http"):
+            urls.append(item_url)
+
+    if dois:
+        print(f"  Kagi: discovered {len(dois)} DOI(s): {dois[:3]}", file=sys.stderr)
+    if urls:
+        print(f"  Kagi: discovered {len(urls)} URL(s)", file=sys.stderr)
+    return dois, urls
+
+
+def download_paper(doi=None, url=None, urls=None, output_dir="sources",
+                   filename=None, retry_wayback=True,
+                   verify_author=None, verify_title=None):
     """Download a paper PDF by DOI or URL. Returns file path or None.
 
-    Cascade: direct URL → OA (Unpaywall/OpenAlex/S2) → Sci-Hub → EZProxy → Wayback
+    Cascade:
+      Phase 1 (with provided identifiers):
+        direct URLs → OA (Unpaywall/OpenAlex/S2/Crossref links)
+        → Sci-Hub → Publisher Direct → EZProxy → Wayback
+      Phase 2 (recovery — when Phase 1 fails and title available):
+        Kagi discovery → retry with discovered DOIs/URLs
 
     If verify_author/verify_title are provided, each downloaded PDF is checked
     for content match. Mismatches are deleted and the cascade continues.
@@ -1005,11 +1304,24 @@ def download_paper(doi=None, url=None, output_dir="sources", filename=None,
             os.remove(path)
         return False
 
-    # 1. Direct URL
-    if url:
-        print(f"  Direct URL: {url[:80]}", file=sys.stderr)
-        if download_pdf_from_url(url, dest) and _verify_and_accept(dest, "Direct"):
-            return dest
+    # Collect all hint URLs (deduplicated, order-preserving)
+    hint_urls: list[str] = []
+    _seen_urls: set[str] = set()
+    for u in ([url] if url else []) + (urls or []):
+        if u and u not in _seen_urls:
+            _seen_urls.add(u)
+            hint_urls.append(u)
+
+    # --- Phase 1: provided identifiers ---
+
+    # 1. Direct URLs (all hints)
+    for hint_url in hint_urls:
+        print(f"  Direct URL: {hint_url[:80]}", file=sys.stderr)
+        try:
+            if download_pdf_from_url(hint_url, dest) and _verify_and_accept(dest, "Direct"):
+                return dest
+        except EZProxyCookieExpired:
+            print(f"  EZProxy cookie expired on hint URL, continuing...", file=sys.stderr)
         time.sleep(0.5)
 
     # 2. OA sources
@@ -1029,17 +1341,24 @@ def download_paper(doi=None, url=None, output_dir="sources", filename=None,
             return dest
         time.sleep(0.5)
 
-    # 4. EZProxy (institutional proxy)
+    # 4. Publisher Direct (construct PDF URL from DOI, no proxy)
+    if doi:
+        print(f"  Trying publisher direct for {doi}...", file=sys.stderr)
+        if _try_publisher_direct(doi, dest) and _verify_and_accept(dest, "Publisher Direct"):
+            return dest
+        time.sleep(0.5)
+
+    # 5. EZProxy (institutional proxy)
     if doi:
         print(f"  Trying EZProxy for {doi}...", file=sys.stderr)
         try:
             if _try_ezproxy_with_refresh(doi, dest) and _verify_and_accept(dest, "EZProxy"):
                 return dest
         except EZProxyCookieExpired:
-            print(f"  EZProxy cookie expired, skipping to Wayback...", file=sys.stderr)
+            print(f"  EZProxy cookie expired, continuing...", file=sys.stderr)
         time.sleep(0.5)
 
-    # 5. Wayback
+    # 6. Wayback
     if doi and retry_wayback:
         print(f"  Searching Wayback for {doi}...", file=sys.stderr)
         wb_url = find_wayback_url(doi)
@@ -1047,6 +1366,53 @@ def download_paper(doi=None, url=None, output_dir="sources", filename=None,
             print(f"  WB: {wb_url[:80]}", file=sys.stderr)
             if download_pdf_from_url(wb_url, dest, timeout=90) and _verify_and_accept(dest, "Wayback"):
                 return dest
+
+    # --- Phase 2: Kagi discovery recovery ---
+    # When Phase 1 exhausted all sources, search Kagi by title to discover
+    # alternative DOIs and publisher URLs, then retry the cascade with them.
+    recovery_title = verify_title or filename
+    if recovery_title:
+        print(f"  Phase 1 exhausted. Trying Kagi discovery...", file=sys.stderr)
+        kagi_dois, kagi_urls = _kagi_discover_paper(recovery_title, verify_author)
+
+        # Try discovered URLs directly
+        for kagi_url in kagi_urls:
+            if kagi_url in _seen_urls:
+                continue
+            _seen_urls.add(kagi_url)
+            print(f"  Kagi URL: {kagi_url[:80]}", file=sys.stderr)
+            try:
+                if download_pdf_from_url(kagi_url, dest) and _verify_and_accept(dest, "Kagi URL"):
+                    return dest
+            except EZProxyCookieExpired:
+                pass
+            time.sleep(0.5)
+
+        # Try discovered DOIs (different from the original)
+        for kagi_doi in kagi_dois:
+            if kagi_doi == doi:
+                continue
+            print(f"  Kagi discovered DOI: {kagi_doi}", file=sys.stderr)
+
+            # OA with new DOI
+            oa_url = find_oa_url(kagi_doi)
+            if oa_url:
+                print(f"  Kagi OA: {oa_url[:80]}", file=sys.stderr)
+                if download_pdf_from_url(oa_url, dest) and _verify_and_accept(dest, "Kagi OA"):
+                    return dest
+                time.sleep(0.5)
+
+            # Sci-Hub with new DOI
+            if try_scihub_download(kagi_doi, dest) and _verify_and_accept(dest, "Kagi Sci-Hub"):
+                return dest
+            time.sleep(0.5)
+
+            # EZProxy with new DOI
+            try:
+                if _try_ezproxy_with_refresh(kagi_doi, dest) and _verify_and_accept(dest, "Kagi EZProxy"):
+                    return dest
+            except EZProxyCookieExpired:
+                pass
 
     print(f"  Could not download paper", file=sys.stderr)
     return None
@@ -1239,11 +1605,13 @@ def _cmd_paper_fetch(args) -> int:
         return 2
 
     temp_dir = resolve_project_path(args.temp_dir or _default_temp_dir())
+    all_urls = args.url or []
     result = _handle_errors(
         download_paper,
-        doi=args.doi, url=args.url,
+        doi=args.doi, urls=all_urls,
         output_dir=str(temp_dir), filename=args.slug,
         retry_wayback=True,
+        verify_title=args.title, verify_author=args.author,
     )
     if result:
         path_obj = Path(result).resolve()
@@ -1251,9 +1619,9 @@ def _cmd_paper_fetch(args) -> int:
             "status": "ok",
             "kind": "paper",
             "doi": args.doi,
-            "url": args.url,
+            "urls": all_urls,
             "temp_path": str(path_obj),
-            "source": "direct_url" if args.url else "doi_cascade",
+            "source": "doi_cascade",
             "inspect": _inspect_downloaded_file(path_obj),
         })
         return 0
@@ -1261,7 +1629,7 @@ def _cmd_paper_fetch(args) -> int:
         "status": "download_failed",
         "kind": "paper",
         "doi": args.doi,
-        "url": args.url,
+        "urls": all_urls,
         "reason": "all_sources_failed",
     })
     return 1
@@ -1359,7 +1727,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_pf = paper_sub.add_parser("fetch", help="Download a paper to temp and diagnose")
     p_pf.add_argument("--doi", help="Paper DOI")
-    p_pf.add_argument("--url", help="Direct PDF URL")
+    p_pf.add_argument("--url", action="append", help="Direct PDF URL (repeatable)")
+    p_pf.add_argument("--title", help="Paper title (enables Kagi recovery)")
+    p_pf.add_argument("--author", help="Paper author (improves Kagi recovery)")
     p_pf.add_argument("--slug", required=True, help="Target work slug for temp filename")
     p_pf.add_argument("--retry-wayback", action="store_true",
                       help=argparse.SUPPRESS)  # no-op since cascade always tries Wayback

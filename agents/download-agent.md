@@ -27,8 +27,16 @@ quasi-download book fetch --md5 {md5} --slug {slug} [--format pdf] --json
 
 # 论文：按 DOI/URL 下载到临时目录 + 自动诊断
 quasi-download paper fetch --doi "{doi}" --slug {slug} --json
-quasi-download paper fetch --url "{pdf_url}" --slug {slug} --json
-# cascade: direct URL → OA → Sci-Hub → EZProxy → Wayback；每段有 retry/backoff。
+quasi-download paper fetch --doi "{doi}" --url "{url1}" --url "{url2}" \
+  --title "{title}" --author "{author}" --slug {slug} --json
+# cascade (Phase 1): hint URLs → OA (+Crossref links) → Sci-Hub → Publisher Direct → EZProxy → Wayback
+# cascade (Phase 2, recovery): Kagi 搜标题 → 发现新 DOI/URL → 用新 DOI 重跑 OA/Sci-Hub/EZProxy
+# --url 可重复;--title/--author 启用 Kagi 恢复(DOI cascade 全部失败时自动触发)
+
+# 论文：搜索验证 DOI + 发现 access URL
+quasi-search paper --doi "{doi}" --json
+quasi-search paper --title "{title}" --author "{author}" --json
+# → JSON {results, diagnostics} — results[0] 有验证过的 DOI、oa_url、url
 
 # 接受候选,入库为 sources/{slug}.{ext}
 quasi-download accept --path {temp_path} --slug {slug} --kind book -o sources --json
@@ -45,7 +53,12 @@ quasi-download accept --path {temp_path} --slug {slug} --kind book -o sources --
   - 判定不匹配 → 删除 `temp_path`,试下个候选。
   - 判定匹配 → `quasi-download accept --path {temp_path} --slug {slug} --kind book`;成功后 DOWNLOAD_RESULT 报 final `path`。
   - 候选耗尽 → DOWNLOAD_FAILED。
-- **论文**: `paper fetch` 一次性走完 source 级联。必要时核对 `inspect.front_text`;不匹配就删除 `temp_path` 并报 DOWNLOAD_FAILED（论文没有"换候选"概念,DOI 只有一个）。匹配后 `accept --kind paper`。
+- **论文**: 先 `quasi-search paper --doi/--title/--author --json` 验证 DOI + 发现 access URL，再 `paper fetch`。
+  - search 返回的 `results[0]` 可能有 `oa_url`（OA PDF 链接）和 `doi`（验证过的 DOI）。
+  - caller 已提供 `oa_url` / `url` 时，跳过 search、直接带 `--url` 给 fetch。
+  - caller 的 DOI 与 search 返回的 DOI 不一致 → 用 search 的 DOI,在 DOWNLOAD_RESULT 里注明 `verdict_note: "DOI corrected from {original} to {verified}"`。
+  - caller 无 DOI 但有 title+author → search 发现 DOI → 传给 fetch。search 也找不到 DOI → 仅靠 `--url` + Kagi recovery。
+  - `paper fetch --doi {doi} --url {url1} --url {url2} --title "{title}" --author "{author}" --slug {slug}` — bin 自行跑完整级联 + Kagi 恢复;不匹配就删除 `temp_path` 并报 DOWNLOAD_FAILED。匹配后 `accept --kind paper`。
 - **同源**下载间隔 ≥10 秒（AA / EZProxy rate-limit）。跨源可并发。
 
 ### 书的 year_evidence（kind=book 专用）

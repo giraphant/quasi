@@ -76,6 +76,110 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.33.6** (2026-05-20): **Publisher PDF discovery handles Crossref PDF endpoints and proxied INFORMS hosts.**
+  - Crossref PDF discovery now accepts official PDF-looking URLs even when Crossref marks their `content-type` as `unspecified`, covering OUP article-PDF URLs.
+  - Cambridge Crossref `content/view/...` endpoints are accepted as PDF candidates; live 2026 Cambridge EZProxy validation also succeeds through `citation_pdf_url` when direct construction is not usable.
+  - INFORMS proxied hosts (`pubsonline-informs-...`) now match the EZProxy PDF pattern, and DOI prefix `10.1287/` now maps to `pubsonline.informs.org/doi/pdf/{doi}` for publisher-direct attempts.
+  - Live 2026 EZProxy validation: ACM, Cambridge, De Gruyter, Brill, MIT Press, OUP, Project MUSE, SAGE, Taylor & Francis, UChicago, Wiley, plus forced Springer EZProxy stage all succeed. INFORMS reaches the proxied article page but tested `/doi/pdf/...` endpoints return HTML/no entitlement; Elsevier ScienceDirect reaches the subscribed article page but PDF download is gated by a browser intermediate page.
+  - Tests: full suite 29/29 passing.
+
+- **0.33.5** (2026-05-19): **EZProxy CookieCloud domain matching handles OCLC subdomains.**
+  - CookieCloud filtering now keeps cookies across the configured EZProxy domain tree instead of requiring exact-domain equality. Configuring `oclc.org` now preserves usable cookies from `idm.oclc.org` and publisher-specific proxied subdomains.
+  - EZProxy sessions preserve each CookieCloud cookie's original domain/path, so parent-domain and subdomain cookies are scoped the same way the browser scoped them.
+  - Direct proxied PDF downloads build a Cookie header from only the cookie records matching the requested proxied host, avoiding stale or unrelated sibling-domain cookies.
+  - Live validation: Taylor & Francis proxied direct PDF for DOI `10.1080/02691728.2025.2480274` succeeds with configured domain `oclc.org`.
+  - Tests: full suite 25/25 passing.
+
+- **0.33.4** (2026-05-19): **Fix proxied direct URL cookie injection.**
+  - `download_pdf_from_url()` now supports CookieCloud's multi-cookie EZProxy config (`cookies` dict) when downloading already-proxied direct PDF URLs.
+  - Fixes a `KeyError: 'cookie'` path introduced after CookieCloud moved from a single cookie value to domain-filtered cookie dictionaries.
+  - Tests: full suite 23/23 passing.
+
+- **0.33.3** (2026-05-19): **Plugin config cleanup for worktrees.**
+  - All active plugin Configure options are marked `sensitive` so Claude Code stores and injects every option through the same private/keychain path. This works around worktree sessions only receiving private plugin options in hook subprocesses.
+  - `anna_mirrors` is removed from plugin Configure options and no longer forwarded by the Bash PreToolUse hook.
+  - Anna's Archive download still uses the built-in default mirror list internally, so users only configure `anna_donator_key`.
+  - README credential table updated accordingly.
+
+- **0.33.2** (2026-05-19): **Publisher PDF download query variants.**
+  - EZProxy direct PDF patterns now try `?download=true` variants for Taylor & Francis, Wiley, and UChicago before falling back to embedded viewer scraping.
+  - EZProxy epdf fallback now covers Taylor & Francis (`/doi/epdf/{doi}?needAccess=true`) and Wiley (`/doi/epdf/{doi}`), matching proxied viewer URLs observed for Social Epistemology and British Journal of Sociology papers.
+  - Publisher Direct and Wayback URL construction now include `?download=true` variants for Taylor & Francis, Wiley, and UChicago; Wiley `10.1111/` DOI prefixes are included alongside `10.1002/`.
+  - `citation_pdf_url` meta extraction is now attribute-order tolerant, so viewer pages with extra `<meta>` attributes still resolve to the underlying PDF URL.
+  - Tests: full suite 23/23 passing.
+
+- **0.33.1** (2026-05-19): **UChicago EZProxy PDF discovery.**
+  - EZProxy publisher-pattern download now tries all matching publisher
+    patterns instead of stopping after the first match. This lets UChicago
+    fall through from `/doi/pdf/{doi}` to `/doi/pdfplus/{doi}`.
+  - UChicago embedded viewer support: EZProxy fetches `/doi/epdf/{doi}`
+    and extracts `citation_pdf_url` from the page before the generic HTML
+    link scrape. This covers UChicago pages whose direct PDF endpoint is
+    not exposed on the DOI landing page.
+  - Publisher Direct also tries all matching patterns and includes
+    UChicago `/doi/pdfplus/{doi}`.
+  - Tests: full suite 23/23 passing.
+
+- **0.33.0** (2026-05-19): **Paper download gains multi-source discovery,
+  publisher direct PDF, and Kagi recovery.** Driven by 19-paper test
+  batch where 15 papers failed acquisition (6× EZProxy expired,
+  6× abstract-only/no-PDF, 2× paywall+no OA, 1× too new — the
+  remaining 4× ECONNRESET/502 were already fixed by 0.32.15 retry).
+  Root cause: papers had no multi-source candidate discovery — unlike
+  books (which search Anna's Archive for multiple candidates and iterate),
+  papers took a single DOI and ran a fixed cascade. If the DOI was wrong
+  or the cascade failed, there was no fallback.
+  - **Paper fetch cascade expanded** from 5 stages to 8 (Phase 1) + Kagi
+    recovery (Phase 2). New cascade:
+    `hint URLs → OA (+Crossref links) → Sci-Hub → Publisher Direct
+    → EZProxy → Wayback → [if all fail] Kagi discovery → retry with
+    discovered DOIs/URLs`.
+  - **Crossref PDF links** added to `find_oa_url()` as 4th source.
+    Queries `https://api.crossref.org/works/{doi}` and extracts
+    `link[]` entries with `content-type: application/pdf`. Many
+    publishers register their PDF endpoints here.
+  - **Publisher Direct PDF** — new cascade stage between Sci-Hub and
+    EZProxy. `_try_publisher_direct(doi, output_path)` constructs
+    publisher PDF URLs from DOI prefix patterns
+    (`_PUBLISHER_DIRECT_URLS`: uchicago, tandfonline, sagepub, oup,
+    wiley, springer, nature, mit, acm, muse, cambridge, informs)
+    and tries fetching them without EZProxy. Catches cases where
+    institutional IP access works or publisher has opened access.
+  - **Kagi recovery** — when Phase 1 cascade exhausts all sources,
+    `_kagi_discover_paper(title, author)` searches the paper title
+    via `kagi search --format json`, filters results by ≥50% title
+    word overlap, extracts DOIs from URLs via regex, and collects
+    publisher URLs. Discovered URLs are tried directly; discovered
+    DOIs (different from the original) are retried through
+    OA/Sci-Hub/EZProxy. Silently skipped if kagi CLI is unavailable
+    or `QUASI_KAGI_SESSION_TOKEN` is unset. Enables acquisition
+    even when the caller's DOI is wrong.
+  - **Multiple `--url` hints** — `paper fetch` now accepts repeated
+    `--url` flags (`action="append"`). Each URL is tried as a direct
+    download attempt before the DOI cascade. This lets the agent
+    pass OA URLs and publisher URLs discovered via search.
+  - **`--title` / `--author` flags** — `paper fetch` now accepts
+    `--title` and `--author` for Kagi recovery. When the DOI cascade
+    fails, these enable the automatic Kagi discovery phase.
+  - **Wayback patterns expanded** — `find_wayback_url()` now
+    constructs publisher-specific PDF URLs for UChicago (`10.1086`),
+    Wiley (`10.1002`), OUP (`10.1093`), MIT Press (`10.1162`),
+    T&F (`10.1080`), SAGE (`10.1177`), in addition to the existing
+    ACM, Springer, MUSE patterns. Each gets a dedicated CDX lookup.
+  - **download-agent.md** — paper flow now mirrors book flow: agent
+    calls `quasi-search paper --doi/--title/--author --json` to
+    verify DOI and discover access URLs before calling `paper fetch`.
+    Passes verified DOI + `oa_url`/`url` as `--url` hints. Handles
+    wrong/missing DOI case. Agent prompt updated with new CLI
+    examples and search-before-fetch guidance.
+  - **process-paper SKILL.md** — download-agent dispatch now passes
+    `oa_url` and `url` from search-agent results through to
+    download-agent's `identifiers:` block, so download-agent already
+    has URLs to try without re-searching.
+  - Tests: full suite 23/23 passing. No test changes needed — new
+    features are additive (new cascade stages, new CLI flags with
+    defaults, new recovery path).
+
 - **0.32.15** (2026-05-19): **Paper download cascade gains retry/backoff
   and a real INFORMS pattern; Wayback always on.** Triggered by a 5-paper
   batch (Hayles 2019 / Star 1996 / Oudshoorn 2004 / Lock 1994 /
