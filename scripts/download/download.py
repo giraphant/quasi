@@ -242,6 +242,64 @@ def _extract_citation_pdf_url(html_bytes):
     return None
 
 
+def _is_sciencedirect_host(host: str) -> bool:
+    host = host.lower().strip(".")
+    return (
+        host == "www.sciencedirect.com"
+        or host.endswith(".sciencedirect.com")
+        or host.startswith("www-sciencedirect-com.")
+        or host.startswith("sciencedirect-com.")
+    )
+
+
+def _is_sciencedirect_article_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or ""
+    path = parsed.path.lower()
+    return _is_sciencedirect_host(host) and (
+        path.startswith("/science/article/pii/")
+        or path.startswith("/science/article/abs/pii/")
+    )
+
+
+def _dokobot_read_url(url: str, timeout: int = 90) -> str | None:
+    if not shutil.which("dokobot"):
+        print("  Dokobot: unavailable, skipping ScienceDirect text fallback", file=sys.stderr)
+        return None
+
+    def _run(args):
+        return subprocess.run(
+            ["dokobot", "read", *args, url],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+
+    try:
+        result = _run(["--local"])
+        if result.returncode != 0 and "bridge" in (result.stderr or "").lower():
+            result = _run([])
+    except subprocess.TimeoutExpired:
+        print("  Dokobot: timed out", file=sys.stderr)
+        return None
+    except OSError as exc:
+        print(f"  Dokobot: {exc}", file=sys.stderr)
+        return None
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        message = detail[0] if detail else f"exit {result.returncode}"
+        print(f"  Dokobot: {message[:160]}", file=sys.stderr)
+        return None
+
+    text = (result.stdout or "").strip()
+    if len(re.sub(r"\s+", "", text)) < 1000:
+        print(f"  Dokobot: extracted text too short ({len(text)} chars)", file=sys.stderr)
+        return None
+    return text
+
+
 def _is_pdf_data(data):
     """Check if raw bytes look like a PDF."""
     return data[:5] == b"%PDF-" or (
