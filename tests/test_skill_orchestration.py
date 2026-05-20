@@ -90,3 +90,12 @@ def test_frontmatter_descriptions_are_routing_hints():
                 offenders.append(f"{rel}: description contains {forbidden!r}")
 
     assert offenders == []
+
+
+def test_process_paper_accepts_pdf_preferred_text_source_contract():
+    text = (PLUGIN_ROOT / "skills" / "process-paper" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "sources/{slug}.pdf" in text
+    assert "sources/{slug}.txt" in text
+    assert "source_file" in text
+    assert "source_pdf" not in text
