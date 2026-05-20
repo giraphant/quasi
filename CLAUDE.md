@@ -76,6 +76,28 @@ To bump deps: edit `scripts/requirements.txt`, ship. Next session picks up the d
 
 ## Recent Changes
 
+- **0.34.0** (2026-05-20): **EZProxy global cross-process rate gate (QUA-50).**
+  - `quasi-download` now spaces EZProxy attempts across separate processes so
+    parallel paper downloads cannot trigger institutional EZProxy bans —
+    agent-side concurrency control was unreliable.
+  - New `_ezproxy_throttle()` in `scripts/download/download.py` takes an
+    exclusive `fcntl.flock` on a user-global state file
+    (`${CLAUDE_PLUGIN_DATA:-~/.cache/quasi}/ezproxy-throttle.state`), and
+    **holds the lock across the wait**, so competing processes pass the gate
+    exactly one interval apart (true serialization, no thundering herd).
+  - Called once at the top of `try_ezproxy_download`, after the
+    "not configured" skip — unconfigured runs never wait; Phase-1, Phase-2
+    Kagi, and the cookie-refresh retry all funnel through the single gate.
+  - `EZPROXY_MIN_INTERVAL = 30` seconds, hardcoded (no env var, no Configure
+    option). Wait is uncapped (a queued process always waits its turn) but a
+    single wait is bounded to one interval against corrupted/future
+    timestamps. No-op when `fcntl` is unavailable.
+  - Scope: EZProxy only. AA stays agent-spaced; `download-agent.md` note
+    relaxed accordingly.
+  - Tests: `tests/test_download_cli.py` gains throttle timing/locking unit
+    tests, a real multi-process serialization test, and gate-placement tests
+    for `try_ezproxy_download`.
+
 - **0.33.6** (2026-05-20): **Publisher PDF discovery handles Crossref PDF endpoints and proxied INFORMS hosts.**
   - Crossref PDF discovery now accepts official PDF-looking URLs even when Crossref marks their `content-type` as `unspecified`, covering OUP article-PDF URLs.
   - Cambridge Crossref `content/view/...` endpoints are accepted as PDF candidates; live 2026 Cambridge EZProxy validation also succeeds through `citation_pdf_url` when direct construction is not usable.
