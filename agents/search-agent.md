@@ -58,17 +58,16 @@ Confidence:
 
 Retry budget:同一 search 失败可重试 1 次。bin 跑通但 `results` 为空,不要自己反复改 query。
 
-### 中文弱候选 catalog rescue
+### 中文增强
 
-当 `localisations.zh.status="found"` 且候选里有“弱中文候选”时,你可以做一次受限补强。弱中文候选指: title 明显是中文/CJK,但 ISBN / publisher / translator / original_title 里有关键字段缺失,或候选带 `_weak=true`。
+当 `localisations.zh.status="found"` 且候选里有“中文候选”但未能真正匹配原版时,你可以做一次受限补强。
 
 补强规则:
 
-- 最多处理前 3 个弱中文候选,整次任务最多 4 次 `quasi-search kagi search --format json`。
+- 最多处理前 3 个中文候选,整次任务最多 5 次 `quasi-search kagi search --format json`。
 - 查询顺序:
-  1. `"中文题名" ISBN site:books.com.tw`
-  2. `"中文题名" ISBN`
-  3. 若候选已有 ISBN,再查 `"ISBN" site:books.com.tw`
+  1. `"中文题名" ISBN`
+  2. 若候选已有 ISBN,再查 `"ISBN" site:books.com.tw`
 - 只读取 Kagi JSON 结果里的 `data[].title` / `data[].url` / `data[].snippet`。
 - 可从 books.com.tw / 豆瓣 / 三民 / 高校或译者页 snippet 里抽取 ISBN、publisher、author、translator、year、original_title。
 - 只补缺失字段;不要覆盖 Douban 已有字段。

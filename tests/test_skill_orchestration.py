@@ -96,9 +96,11 @@ def test_search_agent_documents_bounded_catalog_rescue_contract():
     text = (PLUGIN_ROOT / "agents" / "search-agent.md").read_text(encoding="utf-8")
 
     required = [
-        "弱中文候选",
+        "中文增强",
+        "中文候选",
+        "未能真正匹配原版",
         "最多处理前 3 个",
-        "最多 4 次",
+        "最多 5 次",
         "quasi-search kagi search --format json",
         "site:books.com.tw",
         "data[].title",
