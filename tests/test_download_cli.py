@@ -625,3 +625,46 @@ def test_ezproxy_throttle_serializes_across_processes(tmp_path):
     assert all(g >= 0.8 for g in gaps), (
         f"gate passes too close together (lock not held across sleep?): {gaps}"
     )
+
+
+def test_try_ezproxy_download_skips_throttle_when_unconfigured(tmp_path, monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_ezproxy_unconfigured_under_test")
+
+    calls: list[int] = []
+    monkeypatch.setattr(mod, "load_ezproxy_config", lambda: None)
+    monkeypatch.setattr(mod, "_ezproxy_throttle", lambda *a, **k: calls.append(1))
+
+    out = tmp_path / "out.pdf"
+    result = mod.try_ezproxy_download("10.1/example", str(out))
+
+    assert result is False
+    assert calls == []  # not configured -> gate never reached
+
+
+def test_try_ezproxy_download_calls_throttle_when_configured(tmp_path, monkeypatch):
+    import requests
+    mod = _load_module(DOWNLOAD, "download_ezproxy_configured_under_test")
+
+    calls: list[int] = []
+    monkeypatch.setattr(
+        mod,
+        "load_ezproxy_config",
+        lambda: {
+            "login_url": "https://ezproxy.example.edu/login?url=",
+            "cookie_records": [
+                {"name": "a", "value": "b", "domain": "ezproxy.example.edu", "path": "/"}
+            ],
+        },
+    )
+    monkeypatch.setattr(mod, "_ezproxy_throttle", lambda *a, **k: calls.append(1))
+
+    def _boom(*a, **k):
+        raise requests.RequestException("no network in test")
+
+    monkeypatch.setattr(mod, "_retry", _boom)
+
+    out = tmp_path / "out.pdf"
+    result = mod.try_ezproxy_download("10.1/example", str(out))
+
+    assert result is False
+    assert calls == [1]  # gate reached exactly once when configured

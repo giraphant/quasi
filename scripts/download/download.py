@@ -717,6 +717,8 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None):
               file=sys.stderr)
         return False
 
+    _ezproxy_throttle()  # global cross-process rate gate (QUA-50)
+
     login_url = config["login_url"]
     session = _build_ezproxy_session(config)
 
