@@ -1584,7 +1584,8 @@ def _inspect_downloaded_file(path: Path) -> dict:
         front_text = _extract_pdf_text(str(path), max_pages=4, allow_raw_fallback=False)
     elif suffix == "txt":
         try:
-            front_text = path.read_text(encoding="utf-8", errors="ignore")[:6000]
+            with path.open("r", encoding="utf-8", errors="ignore") as f:
+                front_text = f.read(6000)
         except OSError:
             front_text = ""
     elif suffix == "epub":
