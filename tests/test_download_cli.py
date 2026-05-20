@@ -240,3 +240,260 @@ def test_informs_doi_matches_publisher_direct_pdf_pattern():
     ]
 
     assert "https://pubsonline.informs.org/doi/pdf/10.1287/ijoc.2024.0736" in urls
+
+
+def test_sciencedirect_article_url_detection_accepts_native_and_ezproxy_urls():
+    mod = _load_module(DOWNLOAD, "download_sciencedirect_url_under_test")
+
+    assert mod._is_sciencedirect_article_url(
+        "https://www.sciencedirect.com/science/article/pii/S0378216626001025"
+    )
+    assert mod._is_sciencedirect_article_url(
+        "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025"
+    )
+    assert not mod._is_sciencedirect_article_url(
+        "https://www.sciencedirect.com/topics/social-sciences/conversation-analysis"
+    )
+    assert not mod._is_sciencedirect_article_url(
+        "https://example.org/science/article/pii/S0378216626001025"
+    )
+    assert not mod._is_sciencedirect_article_url(
+        "https://www-sciencedirect-com.example.org/science/article/pii/S0378216626001025"
+    )
+
+
+def test_ezproxy_sciencedirect_url_tracking_deduplicates(monkeypatch, tmp_path):
+    mod = _load_module(DOWNLOAD, "download_ezproxy_sciencedirect_dedupe_under_test")
+    article_url = "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025"
+
+    class FakeResponse:
+        url = article_url
+        content = b"<html></html>"
+        status_code = 200
+        history = [object()]
+
+    class FakeSession:
+        def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        mod,
+        "load_ezproxy_config",
+        lambda: {"login_url": "https://ezproxy.example.edu/login?url=", "cookie": "x"},
+    )
+    monkeypatch.setattr(mod, "_build_ezproxy_session", lambda config: FakeSession())
+
+    sciencedirect_urls = [article_url]
+
+    assert not mod.try_ezproxy_download(
+        "10.1016/j.pragma.2026.04.009",
+        str(tmp_path / "paper.pdf"),
+        sciencedirect_urls=sciencedirect_urls,
+    )
+    assert sciencedirect_urls == [article_url]
+
+
+def test_dokobot_read_url_falls_back_when_local_bridge_is_unavailable(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_dokobot_fallback_under_test")
+    calls: list[list[str]] = []
+
+    def fake_run(args, capture_output, text, timeout, check):
+        calls.append(args)
+        if "--local" in args:
+            return subprocess.CompletedProcess(args, 1, "", "local bridge unavailable")
+        body = "Making sense of conduct\nTherapist formulation\n" + "article body " * 120
+        return subprocess.CompletedProcess(args, 0, body, "")
+
+    monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/local/bin/dokobot")
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+
+    text = mod._dokobot_read_url(
+        "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025",
+        timeout=5,
+    )
+
+    assert text.startswith("Making sense of conduct")
+    assert calls == [
+        [
+            "dokobot",
+            "read",
+            "--local",
+            "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025",
+        ],
+        [
+            "dokobot",
+            "read",
+            "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025",
+        ],
+    ]
+
+
+def test_dokobot_read_url_rejects_short_text(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_dokobot_short_text_under_test")
+
+    monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/local/bin/dokobot")
+    monkeypatch.setattr(
+        mod.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "too short", ""),
+    )
+
+    assert mod._dokobot_read_url("https://www.sciencedirect.com/science/article/pii/S0378216626001025") is None
+
+
+def test_inspect_downloaded_file_reads_txt_front_text(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_text_inspect_under_test")
+    text_path = tmp_path / "paper.txt"
+    text_path.write_text(
+        "Making sense of conduct: A conversation analysis of therapist formulation "
+        "in interaction with autistic children\n"
+        "Doe and Roe discuss therapist formulation in detail. "
+        + "article text " * 120,
+        encoding="utf-8",
+    )
+
+    inspect = mod._inspect_downloaded_file(text_path)
+
+    assert inspect["format"] == "txt"
+    assert inspect["readability"] == "text"
+    assert inspect["front_text"].startswith("Making sense of conduct")
+    assert inspect["fallback_hint"] is None
+
+
+def test_verify_source_content_accepts_txt_title_match(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_text_verify_under_test")
+    text_path = tmp_path / "paper.txt"
+    text_path.write_text(
+        "Making sense of conduct: A conversation analysis of therapist formulation "
+        "in interaction with autistic children\n"
+        + "therapist formulation autistic children " * 40,
+        encoding="utf-8",
+    )
+
+    assert mod.verify_source_content(
+        str(text_path),
+        expected_title=(
+            "Making sense of conduct: A conversation analysis of therapist formulation "
+            "in interaction with autistic children"
+        ),
+    )
+
+
+def test_verify_source_content_rejects_weak_partial_title_match(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_text_verify_weak_title_under_test")
+    text_path = tmp_path / "wrong-paper.txt"
+    text_path.write_text(
+        "Language acquisition across linguistic and cognitive systems\n"
+        "Edited by Michèle Kail and Maya Hickmann\n"
+        + "language acquisition linguistic cognitive systems " * 40,
+        encoding="utf-8",
+    )
+
+    assert not mod.verify_source_content(
+        str(text_path),
+        expected_title=(
+            "Some and or in second language acquisition: Exploring linguistic "
+            "and cognitive factors"
+        ),
+    )
+
+
+def test_verify_source_content_rejects_same_author_related_title(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_text_verify_related_title_under_test")
+    text_path = tmp_path / "related-paper.txt"
+    text_path.write_text(
+        "We need to talk about hearer's meaning!\n"
+        "Maj-Britt Mosegaard Hansen and Marina Terkourafi\n"
+        + "hearer's meaning pragmatic theory speaker intentions " * 40,
+        encoding="utf-8",
+    )
+
+    assert not mod.verify_source_content(
+        str(text_path),
+        expected_author="Marina Terkourafi",
+        expected_title="Hearer's Meaning 2.0: A reply to Li and Xie (2025)",
+    )
+
+
+def test_accept_moves_temp_text_paper_to_sources(tmp_path):
+    project = tmp_path / "project"
+    temp_dir = project / ".quasi" / "temp" / "downloads"
+    temp_dir.mkdir(parents=True)
+    src = temp_dir / "candidate.txt"
+    src.write_text("Making sense of conduct\n" + "article text " * 120, encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(DOWNLOAD),
+            "accept",
+            "--path",
+            str(src),
+            "--slug",
+            "making-sense-conduct-2026",
+            "--kind",
+            "paper",
+            "--json",
+        ],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["kind"] == "paper"
+    assert Path(payload["path"]).name == "making-sense-conduct-2026.txt"
+    assert Path(payload["path"]).read_text(encoding="utf-8").startswith("Making sense")
+
+
+def test_download_paper_uses_sciencedirect_text_after_pdf_sources_fail(tmp_path, monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_sciencedirect_text_flow_under_test")
+    article_url = "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025"
+
+    monkeypatch.setattr(mod, "download_pdf_from_url", lambda *args, **kwargs: False)
+    monkeypatch.setattr(mod, "find_oa_url", lambda doi: None)
+    monkeypatch.setattr(mod, "try_scihub_download", lambda *args: False)
+    monkeypatch.setattr(mod, "_try_publisher_direct", lambda *args: False)
+    monkeypatch.setattr(mod, "find_wayback_url", lambda doi: None)
+    monkeypatch.setattr(mod, "_kagi_discover_paper", lambda title, author=None: ([], []))
+    monkeypatch.setattr(mod.time, "sleep", lambda seconds: None)
+
+    def fake_ezproxy(doi, output_path, sciencedirect_urls=None):
+        if sciencedirect_urls is not None:
+            sciencedirect_urls.append(article_url)
+        return False
+
+    monkeypatch.setattr(mod, "_try_ezproxy_with_refresh", fake_ezproxy)
+    dokobot_calls = []
+
+    def fake_dokobot_read_url(url):
+        dokobot_calls.append(url)
+        if url != article_url:
+            return None
+        return (
+            "Making sense of conduct: A conversation analysis of therapist formulation "
+            "in interaction with autistic children\n"
+            + "therapist formulation autistic children " * 80
+        )
+
+    monkeypatch.setattr(mod, "_dokobot_read_url", fake_dokobot_read_url)
+
+    result = mod.download_paper(
+        doi="10.1016/j.pragma.2026.04.009",
+        output_dir=str(tmp_path),
+        filename="making-sense-conduct-2026",
+        verify_title=(
+            "Making sense of conduct: A conversation analysis of therapist formulation "
+            "in interaction with autistic children"
+        ),
+    )
+
+    assert result == str(tmp_path / "making-sense-conduct-2026.txt")
+    assert (tmp_path / "making-sense-conduct-2026.txt").read_text(encoding="utf-8").startswith(
+        "Making sense of conduct"
+    )
+    assert not (tmp_path / "making-sense-conduct-2026.pdf").exists()
+    assert dokobot_calls == [article_url]

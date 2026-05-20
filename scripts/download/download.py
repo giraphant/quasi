@@ -139,7 +139,7 @@ def load_ezproxy_config():
     return get_ezproxy_config(verbose=True)
 
 
-def _try_ezproxy_with_refresh(doi, output_path):
+def _try_ezproxy_with_refresh(doi, output_path, sciencedirect_urls=None):
     """Try EZProxy download; on expiry, invalidate cache + retry once.
 
     Clears the in-memory CookieCloud cache so the next call re-pulls fresh
@@ -147,7 +147,11 @@ def _try_ezproxy_with_refresh(doi, output_path):
     cookies are also rejected (Chrome side likely hasn't re-logged in yet).
     """
     try:
-        return try_ezproxy_download(doi, output_path)
+        return try_ezproxy_download(
+            doi,
+            output_path,
+            sciencedirect_urls=sciencedirect_urls,
+        )
     except EZProxyCookieExpired:
         try:
             from cookiecloud import invalidate_cache, get_ezproxy_config
@@ -156,7 +160,11 @@ def _try_ezproxy_with_refresh(doi, output_path):
         invalidate_cache()
         if get_ezproxy_config():
             print(f"  EZProxy: refreshed via CookieCloud, retrying...", file=sys.stderr)
-            return try_ezproxy_download(doi, output_path)
+            return try_ezproxy_download(
+                doi,
+                output_path,
+                sciencedirect_urls=sciencedirect_urls,
+            )
         raise
 
 
@@ -240,6 +248,66 @@ def _extract_citation_pdf_url(html_bytes):
             if url:
                 return url
     return None
+
+
+def _is_sciencedirect_host(host: str) -> bool:
+    host = host.lower().strip(".")
+    if host == "www.sciencedirect.com" or host.endswith(".sciencedirect.com"):
+        return True
+
+    for encoded_host in ("www-sciencedirect-com.", "sciencedirect-com."):
+        if host.startswith(encoded_host):
+            proxy_suffix = host[len(encoded_host):]
+            return _host_matches_domain(proxy_suffix, "oclc.org")
+    return False
+
+
+def _is_sciencedirect_article_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or ""
+    path = parsed.path.lower()
+    return _is_sciencedirect_host(host) and (
+        path.startswith("/science/article/pii/")
+        or path.startswith("/science/article/abs/pii/")
+    )
+
+
+def _dokobot_read_url(url: str, timeout: int = 90) -> str | None:
+    if not shutil.which("dokobot"):
+        print("  Dokobot: unavailable, skipping ScienceDirect text fallback", file=sys.stderr)
+        return None
+
+    def _run(args):
+        return subprocess.run(
+            ["dokobot", "read", *args, url],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+
+    try:
+        result = _run(["--local"])
+        if result.returncode != 0 and "bridge" in (result.stderr or "").lower():
+            result = _run([])
+    except subprocess.TimeoutExpired:
+        print("  Dokobot: timed out", file=sys.stderr)
+        return None
+    except OSError as exc:
+        print(f"  Dokobot: {exc}", file=sys.stderr)
+        return None
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        message = detail[0] if detail else f"exit {result.returncode}"
+        print(f"  Dokobot: {message[:160]}", file=sys.stderr)
+        return None
+
+    text = (result.stdout or "").strip()
+    if len(re.sub(r"\s+", "", text)) < 1000:
+        print(f"  Dokobot: extracted text too short ({len(text)} chars)", file=sys.stderr)
+        return None
+    return text
 
 
 def _is_pdf_data(data):
@@ -428,21 +496,18 @@ def _extract_year_signals(text):
     }
 
 
-def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
-                       min_keyword_matches=2):
-    """Verify downloaded PDF matches expected paper.
-
-    Extracts text from first 2 pages and checks for author surname
-    and title keywords. Returns True if content matches, False otherwise.
-    """
+def _verify_text_content(text, expected_author=None, expected_title=None,
+                         min_keyword_matches=2):
+    """Verify extracted source text matches expected paper metadata."""
     if not expected_author and not expected_title:
         return True  # Nothing to verify
 
-    text = _extract_pdf_text(pdf_path)
     if not text:
         print(f"  Verify: could not extract text, skipping check", file=sys.stderr)
         return True  # Can't verify, assume OK
 
+    text = text.lower()
+    normalised_text = " ".join(re.findall(r"[a-z0-9]+", text))
     matches = 0
     needed = min_keyword_matches
 
@@ -473,15 +538,30 @@ def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
             "is", "are", "was", "with", "from", "by", "at", "as", "its",
             "this", "that", "how", "what", "why", "new", "between",
         }
-        words = [w for w in re.findall(r'[a-z]{3,}', title_lower)
-                 if w not in stop_words]
+        words = []
+        seen_words = set()
+        for word in re.findall(r"[a-z]{3,}", title_lower):
+            if word in stop_words or word in seen_words:
+                continue
+            seen_words.add(word)
+            words.append(word)
 
         found_words = [w for w in words if w in text]
+        normalised_title = " ".join(re.findall(r"[a-z0-9]+", title_lower))
+        title_needed = min(len(words), max(3, (len(words) * 3 + 4) // 5))
+        title_matches = bool(normalised_title and normalised_title in normalised_text)
+        title_matches = title_matches or (bool(words) and len(found_words) >= title_needed)
         if found_words:
             matches += len(found_words)
             print(f"  Verify: title words found: {found_words[:5]}", file=sys.stderr)
         else:
-            print(f"  Verify: no title keywords found in PDF", file=sys.stderr)
+            print(f"  Verify: no title keywords found in source", file=sys.stderr)
+        if not title_matches:
+            print(
+                f"  Verify: title match too weak ({len(found_words)}/{len(words)} words)",
+                file=sys.stderr,
+            )
+            return False
 
     if matches >= needed:
         print(f"  Verify: PASS ({matches} matches)", file=sys.stderr)
@@ -490,6 +570,41 @@ def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
         print(f"  Verify: FAIL ({matches}/{needed} matches) — wrong paper?",
               file=sys.stderr)
         return False
+
+
+def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
+                       min_keyword_matches=2):
+    """Verify downloaded PDF matches expected paper.
+
+    Extracts text from first 2 pages and checks for author surname
+    and title keywords. Returns True if content matches, False otherwise.
+    """
+    text = _extract_pdf_text(pdf_path)
+    return _verify_text_content(
+        text,
+        expected_author,
+        expected_title,
+        min_keyword_matches,
+    )
+
+
+def verify_source_content(source_path, expected_author=None, expected_title=None,
+                          min_keyword_matches=2):
+    """Verify downloaded source content, supporting text and PDF sources."""
+    path = Path(source_path)
+    if path.suffix.lower() == ".txt":
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            text = ""
+        return _verify_text_content(
+            text,
+            expected_author,
+            expected_title,
+            min_keyword_matches,
+        )
+    return verify_pdf_content(str(path), expected_author, expected_title,
+                              min_keyword_matches)
 
 
 def _build_ezproxy_session(config):
@@ -528,7 +643,7 @@ def _build_ezproxy_session(config):
     return session
 
 
-def try_ezproxy_download(doi, output_path):
+def try_ezproxy_download(doi, output_path, sciencedirect_urls=None):
     """Download paper via EZProxy: login redirect → publisher PDF pattern → HTML scrape.
 
     Returns True on success (file written to output_path), False otherwise.
@@ -573,6 +688,12 @@ def try_ezproxy_download(doi, output_path):
         return False
 
     print(f"  EZProxy landed: {final_url[:80]}", file=sys.stderr)
+    if (
+        sciencedirect_urls is not None
+        and _is_sciencedirect_article_url(final_url)
+        and final_url not in sciencedirect_urls
+    ):
+        sciencedirect_urls.append(final_url)
 
     # Step 2: Try known publisher PDF URL patterns
     for publisher_hint, pattern in PUBLISHER_PDF_PATTERNS:
@@ -1287,22 +1408,32 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
     os.makedirs(output_dir, exist_ok=True)
     dest = os.path.join(output_dir, f"{safe_name}.pdf")
+    text_dest = os.path.join(output_dir, f"{safe_name}.txt")
 
     if os.path.exists(dest) and os.path.getsize(dest) > 1000:
         print(f"  EXISTS {dest}", file=sys.stderr)
         return dest
+    if os.path.exists(text_dest) and os.path.getsize(text_dest) > 1000:
+        print(f"  EXISTS {text_dest}", file=sys.stderr)
+        return text_dest
 
     def _verify_and_accept(path, source_name):
         """Verify downloaded file. Returns True if accepted, False if rejected."""
         if not verify_author and not verify_title:
             return True
-        if verify_pdf_content(path, verify_author, verify_title):
+        if verify_source_content(path, verify_author, verify_title):
             return True
         print(f"  {source_name}: content mismatch, deleting and trying next source",
               file=sys.stderr)
         if os.path.exists(path):
             os.remove(path)
         return False
+
+    sciencedirect_urls: list[str] = []
+
+    def _remember_sciencedirect_url(candidate_url: str | None):
+        if candidate_url and _is_sciencedirect_article_url(candidate_url) and candidate_url not in sciencedirect_urls:
+            sciencedirect_urls.append(candidate_url)
 
     # Collect all hint URLs (deduplicated, order-preserving)
     hint_urls: list[str] = []
@@ -1316,6 +1447,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
     # 1. Direct URLs (all hints)
     for hint_url in hint_urls:
+        _remember_sciencedirect_url(hint_url)
         print(f"  Direct URL: {hint_url[:80]}", file=sys.stderr)
         try:
             if download_pdf_from_url(hint_url, dest) and _verify_and_accept(dest, "Direct"):
@@ -1352,7 +1484,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
     if doi:
         print(f"  Trying EZProxy for {doi}...", file=sys.stderr)
         try:
-            if _try_ezproxy_with_refresh(doi, dest) and _verify_and_accept(dest, "EZProxy"):
+            if _try_ezproxy_with_refresh(doi, dest, sciencedirect_urls=sciencedirect_urls) and _verify_and_accept(dest, "EZProxy"):
                 return dest
         except EZProxyCookieExpired:
             print(f"  EZProxy cookie expired, continuing...", file=sys.stderr)
@@ -1380,6 +1512,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
             if kagi_url in _seen_urls:
                 continue
             _seen_urls.add(kagi_url)
+            _remember_sciencedirect_url(kagi_url)
             print(f"  Kagi URL: {kagi_url[:80]}", file=sys.stderr)
             try:
                 if download_pdf_from_url(kagi_url, dest) and _verify_and_accept(dest, "Kagi URL"):
@@ -1409,10 +1542,23 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
             # EZProxy with new DOI
             try:
-                if _try_ezproxy_with_refresh(kagi_doi, dest) and _verify_and_accept(dest, "Kagi EZProxy"):
+                if _try_ezproxy_with_refresh(kagi_doi, dest, sciencedirect_urls=sciencedirect_urls) and _verify_and_accept(dest, "Kagi EZProxy"):
                     return dest
             except EZProxyCookieExpired:
                 pass
+
+    for article_url in sciencedirect_urls:
+        print(f"  ScienceDirect text fallback: {article_url[:80]}", file=sys.stderr)
+        text = _dokobot_read_url(article_url)
+        if not text:
+            continue
+        try:
+            Path(text_dest).write_text(text, encoding="utf-8")
+        except OSError as exc:
+            print(f"  ScienceDirect text fallback: {exc}", file=sys.stderr)
+            continue
+        if _verify_and_accept(text_dest, "ScienceDirect text"):
+            return text_dest
 
     print(f"  Could not download paper", file=sys.stderr)
     return None
@@ -1491,6 +1637,12 @@ def _inspect_downloaded_file(path: Path) -> dict:
     front_text = ""
     if suffix == "pdf":
         front_text = _extract_pdf_text(str(path), max_pages=4, allow_raw_fallback=False)
+    elif suffix == "txt":
+        try:
+            with path.open("r", encoding="utf-8", errors="ignore") as f:
+                front_text = f.read(6000)
+        except OSError:
+            front_text = ""
     elif suffix == "epub":
         front_text = _extract_epub_text(path, max_items=4)
 

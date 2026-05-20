@@ -2,7 +2,7 @@
 name: quasi:process-paper
 description: >
   Use when the user wants to search, download, and analyse a single academic
-  paper from a DOI, title, author, or existing PDF.
+  paper from a DOI, title, author, or existing source file.
 ---
 
 # Process Paper — 单论文处理
@@ -16,7 +16,7 @@ description: >
 从用户请求中归一化出以下输入:
 
 - `doi`,或
-- `slug`(`sources/{slug}.pdf` 已存在时),或
+- `slug`(`sources/{slug}.pdf` 或 `sources/{slug}.txt` 已存在时),或
 - `title + author`
 - `translate`:可选布尔值
 
@@ -32,8 +32,8 @@ description: >
 ## Agent / Helper 合同
 
 - `search-agent` 只返回 `picked/candidates/localisations`,不写文件。picked 的 `oa_url`/`url` 传给 download-agent。
-- `download-agent` 负责 fetch + inspect + accept,成功后返回稳定 `sources/{slug}.pdf`。接收 `oa_url`/`url` 作为 hint URL。
-- `analyse-agent` 只写 `vault/papers/{slug}.md`;audit escalated 时由本 skill 触发一次重做。
+- `download-agent` 负责 fetch + inspect + accept,成功后返回稳定 `sources/{slug}.pdf` 或 `sources/{slug}.txt`。PDF 优先;ScienceDirect PDF 被浏览器中间页拦住时允许 `.txt` 正文兜底。接收 `oa_url`/`url` 作为 hint URL。
+- `analyse-agent` 只写 `vault/papers/{slug}.md`;输入可为 `.pdf` 或 `.txt`;audit escalated 时由本 skill 触发一次重做。
 
 ## 硬约束
 
@@ -45,7 +45,7 @@ description: >
 ```
 主进程 (dispatcher)
 ├─ Step 0: ENSURE METADATA + SOURCED
-│   ├─ 若 --slug 且 sources/{slug}.pdf 已存在 → 跳过 search/download
+│   ├─ 若 --slug 且 sources/{slug}.pdf 或 sources/{slug}.txt 已存在 → 跳过 search/download
 │   │   ├─ 若 vault/papers/{slug}.md 存在 → 读 frontmatter 拿 metadata
 │   │   └─ 否则 → search-agent 返回 metadata,主进程可写 `.quasi/papers/{slug}.search.json` 缓存
 │   └─ 否则 → search-agent 返回 metadata + download-agent (kind=paper, items=[1])
@@ -59,8 +59,12 @@ description: >
 args = parse_args()  # --doi / --slug / --title+--author / --translate
 project = "$CLAUDE_PROJECT_DIR"
 
+existing_pdf = f"sources/{args.slug}.pdf" if args.slug and Glob(f"sources/{args.slug}.pdf") else None
+existing_txt = f"sources/{args.slug}.txt" if args.slug and Glob(f"sources/{args.slug}.txt") else None
+existing_source = existing_pdf or existing_txt
+
 # Step 0: ENSURE METADATA + SOURCED
-if args.slug and Glob(f"sources/{args.slug}.pdf"):
+if args.slug and existing_source:
     slug = args.slug
     if exists(f"vault/papers/{slug}.md"):
         # 已有 vault 文件 → frontmatter 拿 metadata（题目/作者/年/doi/journal）
@@ -77,7 +81,7 @@ constraints:
 """)
         paper_meta = search.picked
         write_json(f".quasi/papers/{slug}.search.json", search)
-    source_pdf = f"sources/{slug}.pdf"
+    source_file = existing_source
 else:
     # 完整 search + download 路径
     search = Agent("quasi:search-agent", foreground=True, prompt=f"""\
@@ -108,7 +112,7 @@ output_dir: sources/
     item = download_result.per_item[0]
     if item["status"] != "ok":
         report(f"download failed for {slug}: {item.get('verdict_note', 'no details')}"); return
-    source_pdf = item["path"]
+    source_file = item["path"]
 
 # Step 1: ANALYSE
 output_path = f"vault/papers/{slug}.md"
@@ -121,7 +125,7 @@ authors: {paper_meta['authors']}
 year:    {paper_meta['year']}
 journal: {paper_meta.get('journal', '')}
 doi:     {paper_meta.get('doi', '')}
-input:   {source_pdf}
+input:   {source_file}
 output:  {output_path}
 topic:   {args.topic if args.topic else paper_meta.get('topic', '')}
 """)
@@ -139,7 +143,7 @@ authors: {paper_meta['authors']}
 year:    {paper_meta['year']}
 journal: {paper_meta.get('journal', '')}
 doi:     {paper_meta.get('doi', '')}
-input:   {source_pdf}
+input:   {source_file}
 output:  {output_path}
 topic:   {args.topic if args.topic else paper_meta.get('topic', '')}
 overwrite: true
@@ -155,17 +159,17 @@ reason:  audit escalated {item.kind}: {item.reason}
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
 | Step 0 search | `.quasi/papers/{slug}.search.json` | 存在则跳过 search-agent |
-| Step 0 download | `sources/{slug}.pdf` | 存在则跳过 download-agent |
+| Step 0 download | `sources/{slug}.pdf` 或 `sources/{slug}.txt` | 存在则跳过 download-agent；两者都存在时优先 `.pdf` |
 | Step 1 | `vault/papers/{slug}.md` | 存在则跳过 analyse-agent |
 | Step 2 | 无 —— 幂等 | 上次 audit clean 时几乎无成本 |
 
 ## 输出
 
 ```
-sources/{paper-slug}.pdf                            ← 原 PDF
-.quasi/papers/{paper-slug}.search.json              ← search 结果缓存
-vault/papers/{paper-slug}.md                        ← 最终输出
-processing/translations/{paper-slug}-zh.pdf         ← 可选翻译
+sources/{paper-slug}.pdf 或 sources/{paper-slug}.txt       ← 原 PDF 或 ScienceDirect 正文兜底
+.quasi/papers/{paper-slug}.search.json                    ← search 结果缓存
+vault/papers/{paper-slug}.md                              ← 最终输出
+processing/translations/{paper-slug}-zh.pdf               ← 可选翻译
 ```
 
 paper-slug 与 process-author Phase 4 / process-topic 共享全库扁平命名

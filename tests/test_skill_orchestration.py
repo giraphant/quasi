@@ -114,3 +114,12 @@ def test_search_agent_documents_bounded_catalog_rescue_contract():
     ]
     missing = [token for token in required if token not in text]
     assert missing == []
+
+
+def test_process_paper_accepts_pdf_preferred_text_source_contract():
+    text = (PLUGIN_ROOT / "skills" / "process-paper" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "sources/{slug}.pdf" in text
+    assert "sources/{slug}.txt" in text
+    assert "source_file" in text
+    assert "source_pdf" not in text
