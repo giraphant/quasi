@@ -488,21 +488,17 @@ def _extract_year_signals(text):
     }
 
 
-def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
-                       min_keyword_matches=2):
-    """Verify downloaded PDF matches expected paper.
-
-    Extracts text from first 2 pages and checks for author surname
-    and title keywords. Returns True if content matches, False otherwise.
-    """
+def _verify_text_content(text, expected_author=None, expected_title=None,
+                         min_keyword_matches=2):
+    """Verify extracted source text matches expected paper metadata."""
     if not expected_author and not expected_title:
         return True  # Nothing to verify
 
-    text = _extract_pdf_text(pdf_path)
     if not text:
         print(f"  Verify: could not extract text, skipping check", file=sys.stderr)
         return True  # Can't verify, assume OK
 
+    text = text.lower()
     matches = 0
     needed = min_keyword_matches
 
@@ -541,7 +537,7 @@ def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
             matches += len(found_words)
             print(f"  Verify: title words found: {found_words[:5]}", file=sys.stderr)
         else:
-            print(f"  Verify: no title keywords found in PDF", file=sys.stderr)
+            print(f"  Verify: no title keywords found in source", file=sys.stderr)
 
     if matches >= needed:
         print(f"  Verify: PASS ({matches} matches)", file=sys.stderr)
@@ -550,6 +546,41 @@ def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
         print(f"  Verify: FAIL ({matches}/{needed} matches) — wrong paper?",
               file=sys.stderr)
         return False
+
+
+def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
+                       min_keyword_matches=2):
+    """Verify downloaded PDF matches expected paper.
+
+    Extracts text from first 2 pages and checks for author surname
+    and title keywords. Returns True if content matches, False otherwise.
+    """
+    text = _extract_pdf_text(pdf_path)
+    return _verify_text_content(
+        text,
+        expected_author,
+        expected_title,
+        min_keyword_matches,
+    )
+
+
+def verify_source_content(source_path, expected_author=None, expected_title=None,
+                          min_keyword_matches=2):
+    """Verify downloaded source content, supporting text and PDF sources."""
+    path = Path(source_path)
+    if path.suffix.lower() == ".txt":
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            text = ""
+        return _verify_text_content(
+            text,
+            expected_author,
+            expected_title,
+            min_keyword_matches,
+        )
+    return verify_pdf_content(str(path), expected_author, expected_title,
+                              min_keyword_matches)
 
 
 def _build_ezproxy_session(config):
@@ -1356,7 +1387,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
         """Verify downloaded file. Returns True if accepted, False if rejected."""
         if not verify_author and not verify_title:
             return True
-        if verify_pdf_content(path, verify_author, verify_title):
+        if verify_source_content(path, verify_author, verify_title):
             return True
         print(f"  {source_name}: content mismatch, deleting and trying next source",
               file=sys.stderr)
@@ -1551,6 +1582,11 @@ def _inspect_downloaded_file(path: Path) -> dict:
     front_text = ""
     if suffix == "pdf":
         front_text = _extract_pdf_text(str(path), max_pages=4, allow_raw_fallback=False)
+    elif suffix == "txt":
+        try:
+            front_text = path.read_text(encoding="utf-8", errors="ignore")[:6000]
+        except OSError:
+            front_text = ""
     elif suffix == "epub":
         front_text = _extract_epub_text(path, max_items=4)
 
