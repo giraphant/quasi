@@ -67,19 +67,42 @@ def _fetch(cfg: dict, timeout: int = 15) -> dict | None:
     return data
 
 
-def _filter_cookies(data: dict, ezproxy_domain: str) -> dict[str, str]:
-    """Pick cookies set on the EZProxy domain (exact match, leading-dot agnostic)."""
+def _domain_matches_config(cookie_domain: str, configured_domain: str) -> bool:
+    cookie_domain = cookie_domain.lstrip(".").lower()
+    configured_domain = configured_domain.lstrip(".").lower()
+    return (
+        cookie_domain == configured_domain
+        or cookie_domain.endswith(f".{configured_domain}")
+        or configured_domain.endswith(f".{cookie_domain}")
+    )
+
+
+def _filter_cookie_records(data: dict, ezproxy_domain: str) -> list[dict[str, str]]:
+    """Pick cookies valid for the configured EZProxy domain tree."""
     target = ezproxy_domain.lstrip(".").lower()
-    out: dict[str, str] = {}
+    out: list[dict[str, str]] = []
     for bucket in data.get("cookie_data", {}).values():
         for c in bucket:
             dom = (c.get("domain") or "").lstrip(".").lower()
-            if dom == target:
-                name = c.get("name")
-                value = c.get("value")
-                if name and value:
-                    out[name] = value
+            if not dom or not _domain_matches_config(dom, target):
+                continue
+            name = c.get("name")
+            value = c.get("value")
+            if name and value:
+                out.append({
+                    "name": name,
+                    "value": value,
+                    "domain": dom,
+                    "path": c.get("path") or "/",
+                })
     return out
+
+
+def _filter_cookies(data: dict, ezproxy_domain: str) -> dict[str, str]:
+    return {
+        rec["name"]: rec["value"]
+        for rec in _filter_cookie_records(data, ezproxy_domain)
+    }
 
 
 def get_ezproxy_config(verbose: bool = True) -> dict | None:
@@ -96,19 +119,21 @@ def get_ezproxy_config(verbose: bool = True) -> dict | None:
     if not data:
         return None
 
-    cookies = _filter_cookies(data, cfg["ezproxy_domain"])
-    if not cookies:
+    cookie_records = _filter_cookie_records(data, cfg["ezproxy_domain"])
+    if not cookie_records:
         print(f"  cookiecloud: no cookies matched domain {cfg['ezproxy_domain']!r}",
               file=sys.stderr)
         return None
 
+    cookies = {rec["name"]: rec["value"] for rec in cookie_records}
     _cache = {
-        "cookies":   cookies,
-        "domain":    cfg["ezproxy_domain"],
-        "login_url": cfg["login_url"],
+        "cookies":        cookies,
+        "cookie_records": cookie_records,
+        "domain":         cfg["ezproxy_domain"],
+        "login_url":      cfg["login_url"],
     }
     if verbose:
-        print(f"  cookiecloud: {len(cookies)} cookies pulled "
+        print(f"  cookiecloud: {len(cookie_records)} cookies pulled "
               f"(domain {cfg['ezproxy_domain']!r})", file=sys.stderr)
     return _cache
 

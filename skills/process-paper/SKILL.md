@@ -31,8 +31,8 @@ description: >
 
 ## Agent / Helper 合同
 
-- `search-agent` 只返回 `picked/candidates/localisations`,不写文件。
-- `download-agent` 负责 fetch + inspect + accept,成功后返回稳定 `sources/{slug}.pdf`。
+- `search-agent` 只返回 `picked/candidates/localisations`,不写文件。picked 的 `oa_url`/`url` 传给 download-agent。
+- `download-agent` 负责 fetch + inspect + accept,成功后返回稳定 `sources/{slug}.pdf`。接收 `oa_url`/`url` 作为 hint URL。
 - `analyse-agent` 只写 `vault/papers/{slug}.md`;audit escalated 时由本 skill 触发一次重做。
 
 ## 硬约束
@@ -101,6 +101,8 @@ items:
     expected_title: {paper_meta['title']}
     identifiers:
       doi: {paper_meta.get('doi', '')}
+      oa_url: {paper_meta.get('oa_url', '')}
+      url: {paper_meta.get('url', '')}
 output_dir: sources/
 """)
     item = download_result.per_item[0]

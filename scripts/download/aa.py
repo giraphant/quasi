@@ -11,7 +11,6 @@ Returns the legacy {success, source, count, results} dict — caller
 (download-agent) consumes this directly.
 """
 
-import json
 import os
 import sys
 import urllib.parse
@@ -49,26 +48,12 @@ def load_aa_config():
     """Resolve Anna's Archive config from QUASI_ANNA_* env vars.
 
     Env is injected by the PreToolUse hook (see scripts/hooks/inject-userconfig.py).
-    `QUASI_ANNA_MIRRORS` is a JSON array string (hook uses shlex.quote on the
-    multiple-typed userConfig value). Empty/missing mirrors → DEFAULT_AA_MIRRORS.
+    Mirrors use the built-in default list.
     """
     donator_key = os.environ.get("QUASI_ANNA_DONATOR_KEY", "").strip()
     if not donator_key:
         return None
-    raw_mirrors = os.environ.get("QUASI_ANNA_MIRRORS", "").strip()
-    mirrors: list[str] = []
-    if raw_mirrors:
-        try:
-            parsed = json.loads(raw_mirrors)
-            if isinstance(parsed, list):
-                mirrors = [str(m).strip().rstrip("/") for m in parsed if str(m).strip()]
-            elif isinstance(parsed, str) and parsed.strip():
-                mirrors = [parsed.strip().rstrip("/")]
-        except (ValueError, TypeError):
-            mirrors = [raw_mirrors.rstrip("/")]
-    if not mirrors:
-        mirrors = list(DEFAULT_AA_MIRRORS)
-    return {"donator_key": donator_key, "mirrors": mirrors}
+    return {"donator_key": donator_key, "mirrors": list(DEFAULT_AA_MIRRORS)}
 
 
 def get_aa_base_url(config):
