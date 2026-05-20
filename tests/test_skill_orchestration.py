@@ -90,3 +90,25 @@ def test_frontmatter_descriptions_are_routing_hints():
                 offenders.append(f"{rel}: description contains {forbidden!r}")
 
     assert offenders == []
+
+
+def test_search_agent_documents_bounded_catalog_rescue_contract():
+    text = (PLUGIN_ROOT / "agents" / "search-agent.md").read_text(encoding="utf-8")
+
+    required = [
+        "弱中文候选",
+        "最多处理前 3 个",
+        "最多 4 次",
+        "quasi-search kagi search --format json",
+        "site:books.com.tw",
+        "data[].title",
+        "data[].url",
+        "data[].snippet",
+        "只补缺失字段",
+        "不要覆盖 Douban",
+        "不要写入 cache",
+        "不要打开网页",
+        "不要使用 DOKO",
+    ]
+    missing = [token for token in required if token not in text]
+    assert missing == []

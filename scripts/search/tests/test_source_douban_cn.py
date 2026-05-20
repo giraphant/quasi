@@ -231,6 +231,22 @@ def test_kagi_subject_urls_nonzero_rc_returns_warning():
     assert all("\x1b" not in w for w in warnings)
 
 
+def test_douban_cn_source_and_tests_have_no_doko_fallback_references():
+    forbidden = ("_doko" "_read", "_fetch_subject_via_" "doko", "doko" "bot")
+    paths = [
+        Path(douban_cn.__file__),
+        Path(__file__),
+        Path(__file__).with_name("test_douban_cn_en2zh.py"),
+    ]
+    offenders = []
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        for token in forbidden:
+            if token in text:
+                offenders.append(f"{path.name}: {token}")
+    assert offenders == []
+
+
 # ── _compact_external_book_query ──
 
 def test_external_book_queries_search_exact_title_before_author():
@@ -476,6 +492,31 @@ def test_zh_localisation_search_filters_to_chinese_only():
     assert out[0]["title"] == "规训与惩罚"
 
 
+def test_kagi_snippet_parser_does_not_treat_author_bio_as_author_field():
+    rec = douban_cn._parse_kagi_snippet_record(
+        "https://book.douban.com/subject/26262047/",
+        "生命本身的政治 (豆瓣)",
+        "生命本身的政治 作者简介 · · · 尼古拉斯•罗斯，伦敦政治经济学院社会学教授。 出版社: 北京大学出版社 出版年: 2014 ISBN: 9787301249574",
+    )
+    assert rec is not None
+    assert rec["authors"] == []
+    assert rec["publisher"] == "北京大学出版社"
+    assert rec["year"] == 2014
+    assert rec["isbn_13"] == "9787301249574"
+
+
+def test_kagi_snippet_parser_marks_title_only_snippet_as_weak():
+    rec = douban_cn._parse_kagi_snippet_record(
+        "https://book.douban.com/subject/35948627/",
+        "不受掌控 (豆瓣)",
+        "不受掌控 · · · 相关讨论和书评",
+    )
+    assert rec is not None
+    assert rec["title"] == "不受掌控"
+    assert rec["_weak"] is True
+    assert rec["_weak_reason"] == "kagi-snippet-missing-bibliographic-fields"
+
+
 def test_zh_localisation_search_uses_kagi_snippet_when_douban_fetch_is_blocked():
     snippet = "过一种女性主义的生活 作者: [英]萨拉·艾哈迈德 译者: 范语晨 出版社: 上海文艺出版社 出版年: 2023-10 ISBN: 9787532188239 原作名: Living a Feminist Life 豆瓣评分 8.5 634 人评价"
     items = [(
@@ -503,6 +544,72 @@ def test_zh_localisation_search_uses_kagi_snippet_when_douban_fetch_is_blocked()
     assert rec["original_title"] == "Living a Feminist Life"
     assert rec["douban_rating"] == 8.5
     assert rec["ratings_count"] == 634
+    assert warnings == []
+
+
+def test_zh_localisation_search_keeps_weak_cjk_kagi_title_when_fetch_blocked_and_snippet_empty():
+    blocked_html = "<html><head><title>禁止访问</title></head><body>检测到有异常请求</body></html>"
+
+    def mock_fetch(url, cookie=None, timeout=20):
+        return True, blocked_html
+
+    with patch("sources.douban_cn._kagi_subject_urls",
+               return_value=([("https://book.douban.com/subject/35948627/", "不受掌控 (豆瓣)", "")], [])), \
+         patch("sources.douban_cn._dd_fetch", side_effect=mock_fetch), \
+         patch("sources.douban_cn.time.sleep"):
+        records, warnings = douban_cn._zh_localisation_search(
+            search.BookQuery(title="Uncontrollability", author="Hartmut Rosa", subject="zh", limit=5)
+        )
+
+    assert warnings == []
+    assert len(records) == 1
+    assert records[0]["title"] == "不受掌控"
+    assert records[0]["douban_subject_id"] == "35948627"
+    assert records[0]["douban_url"] == "https://book.douban.com/subject/35948627/"
+    assert records[0]["_weak"] is True
+    assert records[0]["_weak_reason"] == "douban-fetch-blocked-kagi-title-only"
+
+
+def test_search_book_preserves_weak_candidate_metadata():
+    weak_raw = {
+        "douban_subject_id": "35948627",
+        "douban_url": "https://book.douban.com/subject/35948627/",
+        "title": "不受掌控",
+        "authors": [],
+        "translators": [],
+        "publisher": "",
+        "year": None,
+        "isbn_13": None,
+        "isbn_10": None,
+        "original_title": "",
+        "ratings_count": 0,
+        "douban_rating": None,
+        "_weak": True,
+        "_weak_reason": "douban-fetch-blocked-kagi-title-only",
+    }
+    with patch("sources.douban_cn._zh_localisation_search", return_value=([weak_raw], [])):
+        result = douban_cn.search_book(search.BookQuery(title="Uncontrollability", subject="zh"))
+
+    assert result.success is True
+    assert result.entries[0]["_weak"] is True
+    assert result.entries[0]["_weak_reason"] == "douban-fetch-blocked-kagi-title-only"
+
+
+def test_zh_localisation_search_rejects_latin_kagi_title_when_fetch_blocked_and_snippet_empty():
+    blocked_html = "<html><head><title>禁止访问</title></head><body>检测到有异常请求</body></html>"
+
+    def mock_fetch(url, cookie=None, timeout=20):
+        return True, blocked_html
+
+    with patch("sources.douban_cn._kagi_subject_urls",
+               return_value=([("https://book.douban.com/subject/36512345/", "Staying with the Trouble (豆瓣)", "")], [])), \
+         patch("sources.douban_cn._dd_fetch", side_effect=mock_fetch), \
+         patch("sources.douban_cn.time.sleep"):
+        records, warnings = douban_cn._zh_localisation_search(
+            search.BookQuery(title="Staying with the Trouble", author="Donna Haraway", subject="zh", limit=5)
+        )
+
+    assert records == []
     assert warnings == []
 
 

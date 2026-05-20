@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""quasi-search — book / paper search across multiple sources.
+"""quasi-search — book / paper search plus Kagi pass-through.
 
-Two-verb CLI. `quasi-search book` and `quasi-search paper` fan out to
-per-platform source adapters in `sources/`, merge results into a fixed
-BookRecord / PaperRecord schema, and emit a SearchResponse envelope.
+`quasi-search book` and `quasi-search paper` fan out to per-platform source
+adapters in `sources/`, merge results into a fixed BookRecord / PaperRecord
+schema, and emit a SearchResponse envelope.
 
 This file is sectioned, top-to-bottom:
     1. SCHEMAS  — BookRecord, PaperRecord, SearchResponse, BookQuery, PaperQuery, AdapterResult
@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -439,7 +441,7 @@ def _localisation_candidate_from_entry(entry: dict) -> dict | None:
     ratings = entry.get("ratings") or {}
     authors = entry.get("authors") or []
     translators = entry.get("translators") or []
-    return {
+    candidate = {
         "source": "douban_cn",
         "id": f"douban_cn:{douban_id}",
         "douban_id": str(douban_id),
@@ -457,6 +459,10 @@ def _localisation_candidate_from_entry(entry: dict) -> dict | None:
         "ratings_count": ratings.get("count") or entry.get("ratings_count"),
         "douban_url": entry.get("preview_link") or entry.get("douban_url") or "",
     }
+    if entry.get("_weak"):
+        candidate["_weak"] = True
+        candidate["_weak_reason"] = entry.get("_weak_reason")
+    return candidate
 
 
 def _localisation_query(query: BookQuery) -> BookQuery:
@@ -682,15 +688,38 @@ def _build_paper_parser(sub) -> argparse.ArgumentParser:
     return p
 
 
+def _build_kagi_parser(sub) -> argparse.ArgumentParser:
+    p = sub.add_parser("kagi", help="Pass through to native Kagi CLI with quasi auth")
+    p.add_argument("kagi_args", nargs=argparse.REMAINDER)
+    return p
+
+
+def _run_kagi(kagi_args: list[str]) -> int:
+    env = os.environ.copy()
+    quasi_token = env.pop("QUASI_KAGI_SESSION_TOKEN", "")
+    if quasi_token and not env.get("KAGI_SESSION_TOKEN"):
+        env["KAGI_SESSION_TOKEN"] = quasi_token
+    try:
+        result = subprocess.run(["kagi", *kagi_args], env=env)
+    except FileNotFoundError:
+        print("error: native kagi CLI not found on PATH", file=sys.stderr)
+        return 127
+    return result.returncode
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="quasi-search",
-        description="Two-verb search: book / paper.",
+        description="Search books/papers, plus a thin Kagi pass-through.",
     )
     sub = parser.add_subparsers(dest="verb")
     _build_book_parser(sub)
     _build_paper_parser(sub)
+    _build_kagi_parser(sub)
     args = parser.parse_args(argv)
+
+    if args.verb == "kagi":
+        return _run_kagi(args.kagi_args)
 
     if args.verb not in ("book", "paper"):
         parser.print_help()

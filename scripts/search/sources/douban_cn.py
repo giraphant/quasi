@@ -444,10 +444,11 @@ def _parse_kagi_snippet_record(url: str, kagi_title: str, snippet: str) -> dict 
 
     labels = ("作者", "译者", "出版社", "出品方", "出版年", "ISBN", "页数", "装帧", "定价", "原作名", "豆瓣评分")
     label_alt = "|".join(re.escape(item) for item in labels)
+    label_sep = r"(?:\s*[:：]|\s+)"
 
     def grab(label: str) -> str:
         m = re.search(
-            rf"(?:^|\s){re.escape(label)}\s*[:：]?\s*(.+?)(?=\s(?:{label_alt})\s*[:：]?|$)",
+            rf"(?:^|\s){re.escape(label)}{label_sep}(.+?)(?=\s(?:{label_alt}){label_sep}|$)",
             text,
             re.IGNORECASE,
         )
@@ -494,7 +495,46 @@ def _parse_kagi_snippet_record(url: str, kagi_title: str, snippet: str) -> dict 
     count = re.search(r"([0-9][0-9,]*)\s*人评价", text)
     if count:
         rec["ratings_count"] = int(count.group(1).replace(",", ""))
+
+    has_bibliographic_fields = any([
+        rec["authors"],
+        rec["translators"],
+        rec["publisher"],
+        rec["year"],
+        rec["isbn_13"],
+        rec["isbn_10"],
+        rec["original_title"],
+    ])
+    if not has_bibliographic_fields and _cjk_dominant(title):
+        rec["_weak"] = True
+        rec["_weak_reason"] = "kagi-snippet-missing-bibliographic-fields"
     return rec
+
+
+def _weak_kagi_title_record(url: str, kagi_title: str) -> dict | None:
+    title = _strip_douban_title(kagi_title)
+    sid_m = _SUBJECT_URL_RE.match(url)
+    subject_id = sid_m.group(1) if sid_m else ""
+    if not subject_id or not title or not _cjk_dominant(title):
+        return None
+    return {
+        "douban_subject_id": subject_id,
+        "douban_url": f"https://book.douban.com/subject/{subject_id}/",
+        "title": title,
+        "subtitle": "",
+        "authors": [],
+        "translators": [],
+        "publisher": "",
+        "year": None,
+        "isbn_13": None,
+        "isbn_10": None,
+        "original_title": "",
+        "ratings_count": 0,
+        "douban_rating": None,
+        "series": "",
+        "_weak": True,
+        "_weak_reason": "douban-fetch-blocked-kagi-title-only",
+    }
 
 
 def _is_chinese_edition(rec: dict) -> bool:
@@ -586,6 +626,8 @@ def _kagi_book_search(
         rec = _fetch_subject_via_bs4(url)
         if rec is None:
             rec = _parse_kagi_snippet_record(url, kagi_title, snippet)
+        if rec is None and cjk_title_only:
+            rec = _weak_kagi_title_record(url, kagi_title)
         if rec is None:
             warnings.append(f"subject-fetch failed: {url}")
             continue
@@ -638,6 +680,9 @@ def _normalise(raw: dict) -> dict:
     b["preview_link"]   = raw.get("douban_url", "") or raw.get("preview_link", "") or ""
     b["source_ids"]["douban_cn"] = raw.get("douban_subject_id")
     b["_sources"] = [SOURCE_ID]
+    if raw.get("_weak"):
+        b["_weak"] = True
+        b["_weak_reason"] = raw.get("_weak_reason")
     return b
 
 
