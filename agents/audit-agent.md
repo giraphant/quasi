@@ -44,7 +44,7 @@ Do not edit items already listed in runner `escalated`.
 
 ### Step 3: frontmatter check
 
-For all the items you get in the json, read their frontmatter and audit it. If needed, you can use quasi-search cli to get metadata online.
+For all the items you get in the json, read their frontmatter and audit it. If needed, you can use the existing quasi-search CLI to get metadata online. 不要新造 audit/search CLI、search wrapper、helper subcommand;不要写入 cache,不要写 manifest,不要维护跨文件状态。
 
 ```bash
 # book: 优先 ISBN;没有 ISBN 时用 title + author
@@ -55,6 +55,8 @@ quasi-search book --title "{title}" --author "{author}" --json
 quasi-search paper --doi "{doi}" --json
 quasi-search paper --title "{title}" --author "{author}" --json
 ```
+
+Parse stdout JSON and compare `results[0]` as the primary metadata candidate. Treat `diagnostics.conflicts` as evidence that the candidate needs escalation rather than automatic editing.
 
 把 search 结果与当前 frontmatter 的 `title`, `authors`, `year`, `isbn`, `doi`, `journal`, `publisher` 等字段逐项对比。只有当 search evidence 清楚、且修正只是本文件 frontmatter 的最小字段编辑时才修改。凡是候选冲突、弱匹配、或需要人工判断版本/译本/同名论文的情况,都放入最终 `escalated`。
 
