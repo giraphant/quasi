@@ -137,6 +137,22 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.36.0** (2026-05-21): **Wrap-up citation review moves to Claude Code-native review cards.**
+  - `quasi-helpers citation review-cards` merges `citecheck-agent` batch
+    outputs into `.quasi/citation/{stem}/review-cards.json`, preserving
+    both the new rich card fields and the legacy `flag` / `note` shape for
+    transition.
+  - `citecheck-agent` now writes high-context review cards: draft quote,
+    use summary, current bib concern, candidate evidence from vault files,
+    recommended action, confidence, and missing evidence. It still never
+    edits draft, vault, manifest, biblio, or decisions.
+  - `wrap-up` Phase 2.4 is explicitly CC-native review, not HTML/TUI. The
+    main process must pass review-card context through to the user and, after
+    each group of user decisions, immediately update `decisions.json`, apply
+    needed local edits, re-emit `references.bib`, and report remaining work.
+  - Tests: `tests/test_citation_review_cards.py` covers rich-card merging and
+    legacy compact-note normalisation.
+
 - **0.35.0** (2026-05-20): **Audit agent gains frontmatter metadata QA via search CLI (QUA-61).**
   - `audit-agent` now follows an explicit step sequence: Step 1 local audit
     transaction, Step 2 minimal LLM edits, Step 3 frontmatter check, Step 4
