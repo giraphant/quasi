@@ -4,10 +4,11 @@
 Subcommands (each is a discrete step; orchestration lives in the wrap-up skill,
 NOT in this CLI):
 
-    parse        draft.md → parse.json (citations + mentions)
-    biblio       vault frontmatter → biblio.json
-    resolve      parse.json + biblio.json → manifest.json (single/multi/miss)
-    emit-bib     manifest.json + biblio.json (+ decisions.json) → references.bib
+    parse          draft.md → parse.json (citations + mentions)
+    biblio         vault frontmatter → biblio.json
+    resolve        parse.json + biblio.json → manifest.json (single/multi/miss)
+    review-cards   verdicts/batch-*.json → review-cards.json
+    emit-bib       manifest.json + biblio.json (+ decisions.json) → references.bib
 
 Conventions:
     project root  = $CLAUDE_PROJECT_DIR (or --project-root)
@@ -30,6 +31,7 @@ import parse as parse_mod          # noqa: E402
 import biblio as biblio_mod        # noqa: E402
 import resolve as resolve_mod      # noqa: E402
 import emit_bib as emit_bib_mod    # noqa: E402
+import review_cards as review_cards_mod  # noqa: E402
 from core import atomic_write_text, project_root as core_project_root, write_json  # noqa: E402
 
 
@@ -119,6 +121,22 @@ def cmd_emit_bib(args) -> int:
     return 0
 
 
+def cmd_review_cards(args) -> int:
+    data = review_cards_mod.build_review_cards(Path(args.verdicts_dir))
+    out = Path(args.output)
+    write_json(out, data)
+    s = data["summary"]
+    print(
+        f"review cards: total {s['total']} · "
+        f"auto_ok {s['auto_ok']} · "
+        f"needs_user {s['needs_user']} · "
+        f"unresolved {s['unresolved']} · "
+        f"errors {s['errors']}"
+    )
+    print(f"wrote {out}")
+    return 0
+
+
 # ---- main --------------------------------------------------------------------
 
 def main(argv: list[str]) -> int:
@@ -148,9 +166,14 @@ def main(argv: list[str]) -> int:
     p_eb = sub.add_parser("emit-bib", help="biblio + manifest (+ decisions) → references.bib")
     p_eb.add_argument("manifest")
     p_eb.add_argument("--biblio", required=True)
-    p_eb.add_argument("--decisions", help="Optional decisions.json from review HTML export")
+    p_eb.add_argument("--decisions", help="Optional decisions.json from citation review")
     p_eb.add_argument("-o", "--output", required=True)
     p_eb.set_defaults(func=cmd_emit_bib)
+
+    p_rc = sub.add_parser("review-cards", help="Merge citecheck batch verdicts → review-cards.json")
+    p_rc.add_argument("verdicts_dir", help="Directory containing batch-*.json files")
+    p_rc.add_argument("-o", "--output", required=True)
+    p_rc.set_defaults(func=cmd_review_cards)
 
     args = ap.parse_args(argv)
     return args.func(args)

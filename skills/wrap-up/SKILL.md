@@ -33,7 +33,8 @@ description: >
 ## Agent / Helper 合同
 
 - `proofread-agent` 只处理一个 draft section;全局收敛和人工审稿由主进程完成。
-- `citecheck-agent` 只写指定 `verdict_out`;主进程聚合 verdicts 并驱动 TUI。
+- `citecheck-agent` 只写指定 `verdict_out`;每条 note 是一张 review card,供主进程透传给用户。
+- `quasi-helpers citation review-cards` 只合并 `verdicts/batch-*.json` 为 `{ct_dir}/review-cards.json`;不做判断、不改 decisions。
 - `search-agent` 只为 miss citation 返回 recovery 候选;主进程判断是否进入
   `vault_todo/draft_rewrites/skip`。
 - 所有人类决策集中在 Phase 2.4,不要拆给 agent。
@@ -41,24 +42,25 @@ description: >
 ## 硬约束
 
 - Phase 1 必须全部完成才进入 Phase 2;proofread 改字会让 citation parse 行号失效。
-- Phase 2.2 + 2.3 必须完成才进入 Phase 2.4;TUI 需要全量数据。
-- TUI 是主进程串行驱动,不要拆给 agent。
+- Phase 2.2 + 2.3 必须完成才进入 Phase 2.4;主进程需要完整 review cards / recoveries 才能问用户。
+- Phase 2.4 是 Claude Code 主进程驱动的 CC-native review,不要拆给 agent,不要转 HTML/TUI。
+- 主进程每收到一组用户裁决,必须立即执行一轮 apply:增量写 `decisions.json`、按需修改文件、重导 bibliography、报告本轮改动和剩余 pending。
 - Phase 3 cleanup 只在用户明确说审完或清理记录块后执行。
 
 ## 工作流
 
 ```
 ┌─ Phase 1  PROOFREAD   ─ sonnet 节内多轮 + codex 提议 + 主进程审稿
-├─ Phase 2  CITATION    ─ 解析 + LLM context-fit + 在线 recover + TUI 审定 + emit .bib
-│   ├─ 2.1 parse + resolve              (deterministic)
-│   ├─ 2.2 citecheck-agent 批 (single + multi only)  → flag ok/review + picked_slug
-│   ├─ 2.3 search-agent 批 (miss)       → online recovery
-│   ├─ 2.4 TUI 审定 (主进程 AskUserQuestion 循环)    ← 新
-│   └─ 2.5 write decisions.json + emit references.bib
+├─ Phase 2  CITATION    ─ 解析 + LLM review cards + 在线 recover + CC-native 审定 + 增量 emit .bib
+│   ├─ 2.1 parse + resolve                         (deterministic)
+│   ├─ 2.2 citecheck-agent 批(single + multi only)  → review cards
+│   ├─ 2.3 search-agent 批(miss)                    → online recovery
+│   ├─ 2.4 CC-native 审定(主进程透传 review cards)   ← 每组答复后立即 apply
+│   └─ 2.5 final summary + references.bib path
 └─ Phase 3  CLEANUP     ─ 等用户审完触发("审完了" 等)删 proofread 记录块
 ```
 
-agent 只给一句 context-fit note, **主进程在主上下文里直接 AskUserQuestion 走一遍**, 一边走一边累积 `decisions.by_key` 写盘。
+agent 不直接裁决引用是否正确,只产出可问人的 review card。**主进程在主上下文里透传 card 的正文用途、当前条目、候选证据、建议和后果**,让用户裁决。用户每答完一组,主进程立刻落盘并重导,不把答案攒到最后。
 
 旧 `render.py` 仅作为源码归档参考,skill 不再调用。
 
@@ -179,9 +181,13 @@ Agent("quasi:citecheck-agent", background=True,
              f"verdict_out: {ct_dir}/verdicts/batch-{NNN}.json")
 ```
 
-每批产出 `verdicts/batch-NNN.json`,每条 note 含 `{key, picked_slug, flag, note}` (flag ∈ ok/review)。
+每批产出 `verdicts/batch-NNN.json`,每条 note 是 review card,含 `key`, `picked_slug`, `status`, `flag`, `decision_question`, `draft_context`, `current_bib`, `candidates`, `recommended_action`, `confidence`, `missing_evidence`, `note`。`flag` 只是兼容字段。
 
-**等所有 batch 完成** (foreground or `while` glob poll)。
+**等所有 batch 完成** (foreground or harness task notifications)。然后合并:
+
+```bash
+quasi-helpers citation review-cards {ct_dir}/verdicts -o {ct_dir}/review-cards.json
+```
 
 ### 2.3 — search-agent recover (miss only) — `--no-recover` 时跳过
 
@@ -226,16 +232,13 @@ for v, job in recovery_jobs:
 Recovery 的判断和落盘属于 `wrap-up` 主进程:search-agent 只搜索并返回候选,不写
 verdict 文件,也不决定是否进入后续用户审定。
 
-### 2.4 — TUI 审定 (主进程, 关键步骤)
+### 2.4 — CC-native review cards 审定 (主进程, 关键步骤)
 
-**主进程驱动**, **不要派 agent**。读所有 artifacts,按维度分箱,**按维度顺序** AskUserQuestion 走完。
+**主进程驱动**, **不要派 agent**, **不要转 HTML/TUI**。读所有 artifacts,按 review card 状态和 miss recovery 分箱。凡是问用户,都通过 Claude Code 主进程透传上下文和证据。
 
 ```python
 manifest = read({ct_dir}/manifest.json)
-notes = {}  # key → {picked_slug, flag, note}
-for f in glob({ct_dir}/verdicts/batch-*.json):
-    for n in read(f).notes:
-        notes[n.key] = n
+review_cards = read({ct_dir}/review-cards.json)
 
 recoveries = {}  # key → online_recovery dict
 for f in glob({ct_dir}/verdicts/recovery-*.json):
@@ -243,23 +246,23 @@ for f in glob({ct_dir}/verdicts/recovery-*.json):
     recoveries[r.key] = r.online_recovery
 
 bins = {
-  "auto_ok":       [],   # 不问用户, 直接接受
-  "review_single": [],   # single-hit + flag=review
-  "review_multi":  [],   # multi-hit (无论 flag, 都让用户确认; 但默认接受 agent picked)
+  "auto_ok":       [],   # 不问用户, 本轮 apply 时自动写 decisions
+  "needs_user":    [],   # 主进程逐张透传高上下文 card
+  "unresolved":    [],   # 证据不足, 询问 search_more / skip / vault_todo
   "miss_recover":  [],   # miss + recoveries[key] 存在
   "miss_orphan":   [],   # miss + 无 recovery
 }
 
+for card in review_cards.cards:
+    if card.status == "auto_ok":
+        bins["auto_ok"].append(card)
+    elif card.status == "needs_user":
+        bins["needs_user"].append(card)
+    else:
+        bins["unresolved"].append(card)
+
 for e in manifest.entries:
-    n = notes.get(e.key)
-    if e.status == "single-hit":
-        if n and n.flag == "ok":
-            bins["auto_ok"].append((e, n))
-        else:
-            bins["review_single"].append((e, n))
-    elif e.status == "multi-hit":
-        bins["review_multi"].append((e, n))
-    elif e.status == "miss":
+    if e.status == "miss":
         if e.key in recoveries:
             bins["miss_recover"].append((e, recoveries[e.key]))
         else:
@@ -268,145 +271,119 @@ for e in manifest.entries:
 
 **先打印一次 summary**: 让用户知道本轮要过多少条。
 
-```
-📊 Citation review:
-  ✓ 自动接受 (single-hit + agent ok):  {len(auto_ok)} 条
-  ⚠ 单候选可疑 (single-hit + review):  {len(review_single)} 条
-  🔀 多候选挑选 (multi-hit):           {len(review_multi)} 条
-  🔍 缺 + 在线找到候选:                {len(miss_recover)} 条
-  ❌ 缺 + 在线也没找到:                {len(miss_orphan)} 条
-  ─────────────────────────────────────
-  本轮需要你审:  {total - len(auto_ok)} 条
-```
-
-**然后按 bin 顺序走 TUI**:
-
-**A. review_single — single-hit 主题可疑**
-
-对每条,AskUserQuestion (一次问 1 条; 后续可优化为一次 1-4 条批问):
-
-- `header`: `"{key}"` (chip 显示 key)
-- `question`: 多行,含 mention 上下文摘录 (~200字截断) + agent note + 当前 vault candidate 标题
-- `options` (4 选 1):
-  - "接受 vault: {picked_slug}" (recommended; default 选这个) — `decision="single-hit-accept"`
-  - "改 draft 引用" (用 Other 填新 key 或描述) — `decision="draft-rewrite-todo"`
-  - "标 vault TODO (用户要去补对的 vault 条目)" — `decision="vault-todo"`
-  - "跳过本条 (不出 bib)" — `decision="skip"`
-
-**B. review_multi — 多候选挑选**
-
-对每条 AskUserQuestion:
-
-- `header`: `"{key}"`
-- `question`: mention 上下文 + agent picked_slug + agent note
-- `options`:
-  - "接受 agent 选的: {picked_slug}" (default; agent 通常对)
-  - "其他候选: {candidate2}" (列其他候选,1-2 个)
-  - "都不对, 我手填" (用 Other)
-  - "跳过本条"
-
-candidates 多于 3 个时, 显示前 2 + "其他...(用 Other 填 slug)"。
-
-**C. miss_recover — 缺 + 在线找到候选**
-
-对每条 AskUserQuestion:
-
-- `header`: `"{key}"`
-- `question`: mention 上下文 + recovery 给的 title/author/year + process_book_cmd + confidence
-- `options`:
-  - "加待跑列表: {process_book_cmd}" (default if confidence ≥ medium) — `decision="vault-todo-with-cmd"`
-  - "改 draft 引用" (Other 填) — `decision="draft-rewrite-todo"`
-  - "跳过本条" — `decision="skip"`
-
-**D. miss_orphan — 缺 + 在线也没找到**
-
-对每条 AskUserQuestion:
-
-- `header`: `"{key}"`
-- `question`: mention 上下文 + 提示 "在线也没找到"
-- `options`:
-  - "标 vault TODO (自己去查)" — `decision="vault-todo"`
-  - "改 draft 引用" (Other) — `decision="draft-rewrite-todo"`
-  - "跳过本条" — `decision="skip"`
-
-### 2.5 — 写 decisions.json + emit .bib
-
-走完所有 bin 后, 主进程把结果整成:
-
-```json
-{
-  "by_key": {
-    "fausto-sterling-2000": {
-      "bib_source": "vault:fausto-sterling-sexing-the-body-2000",
-      "decision": "single-hit-accept",
-      "note": "vault 候选契合, 接受"
-    },
-    "russell-2019": {
-      "bib_source": "new:russell-...-2019",
-      "decision": "vault-todo-with-cmd",
-      "note": "已加待跑列表"
-    },
-    "garbage-key": {
-      "bib_source": null,
-      "decision": "skip",
-      "note": "用户跳过"
-    }
-  },
-  "vault_todo": [
-    {"key": "russell-2019", "process_book_cmd": "/quasi:process-book ...", "title": "...", "author": "...", "year": ...}
-  ],
-  "draft_rewrites": [
-    {"old_key": "fausto-sterling-2000", "user_note": "改为 Sexing the Body 2000", "draft_snippet": "..."}
-  ],
-  "summary": {
-    "total": 168,
-    "auto_ok": 137,
-    "user_reviewed": 31,
-    "skipped": 4,
-    "vault_todo": 12,
-    "draft_rewrites": 3
-  }
-}
+```text
+Citation review:
+  auto-ok:      {len(auto_ok)} 条
+  needs-user:   {len(needs_user)} 条
+  unresolved:   {len(unresolved)} 条
+  miss+recover: {len(miss_recover)} 条
+  miss+orphan:  {len(miss_orphan)} 条
+  本轮需要人工裁决: {len(needs_user)+len(unresolved)+len(miss_recover)+len(miss_orphan)} 条
 ```
 
-Write 到 `{ct_dir}/decisions.json`。
+**Review card 提问格式**:
 
-然后 emit:
+每次可以问 1 条复杂 card,或合并 2-4 条同类简单 card。凡是问用户,问题正文必须包含:
 
-```bash
-quasi-helpers citation emit-bib {ct_dir}/manifest.json \
-  --biblio {ct_dir}/biblio.json \
-  --decisions {ct_dir}/decisions.json \
-  -o {project_root}/references.bib
+1. `key`
+2. `draft_context.quote`
+3. `draft_context.use_summary`
+4. `current_bib.display`
+5. `current_bib.concern`
+6. `candidates[].display` + `candidates[].evidence`
+7. `recommended_action` + `confidence`
+8. 每个选项的落盘后果
+
+复杂 card 示例:
+
+```markdown
+### verbeek-2015 需要你判断
+
+正文用途:
+> Verbeek 的 mediation theory 说明技术中介身体经验。
+
+用途摘要:正文在概括 postphenomenology 的框架性论点。
+
+当前条目:
+Verbeek, Peter-Paul (2015) Beyond Interaction: A Short Introduction to Mediation Theory.
+
+疑点:
+当前条目是短介绍,可能不足以支撑正文中的框架性概括。
+
+候选替换:
+Rosenberger and Verbeek (eds.) (2015) Postphenomenological Investigations.
+
+证据:
+- vault overview 显示该书聚焦 human-technology relations 和 postphenomenology。
+
+Agent 建议:replace;confidence=medium。
+
+选项后果:
+1. 替换为候选 edited volume → decisions.by_key[key].bib_source = vault:{picked_slug},重导 references.bib
+2. 保留当前候选 → decisions.by_key[key].bib_source = vault:{current_slug},重导 references.bib
+3. search more → 暂不改 bib,记录为 draft_rewrites/vault_todo follow-up
+4. skip → 本轮不出 bib skeleton 或跳过
 ```
 
-**最终打印**:
+批量同类 card 示例:
 
-```
-✅ Wrap-up done.
+```markdown
+下面 3 条都是同类 metadata/译名清理问题,agent 证据充分,建议批量接受:
 
-  📄 draft:           {draft_path}
-  📋 decisions:       {ct_dir}/decisions.json
-  📚 references.bib:  {project_root}/references.bib
+1. toole-2023 — 当前中译本作者含中文名 + English Name;建议只保留中文名。
+2. tsing-2015 — 当前中译本作者含中文名 + English Name;建议只保留中文名。
+3. wajcman-2015 — 当前中译本作者含中文名 + English Name;建议只保留中文名。
 
-  vault todos:    {len(vault_todo)} 条 ({ct_dir}/decisions.json 的 vault_todo 字段)
-  draft rewrites: {len(draft_rewrites)} 条 ({ct_dir}/decisions.json 的 draft_rewrites 字段)
-```
-
-如果有 vault_todo, 提示用户:
-```
-💡 加待跑书目: 把 decisions.json 里 vault_todo 的 process_book_cmd 复制到新 Claude 会话批跑。
+选项后果:
+- 接受本组 → 立即修改对应 bib/cache,重导 references.bib,写 decisions.json
+- 逐条审 → 主进程改为逐条 card 提问
+- 跳过本组 → 记录 skip,继续下一组
 ```
 
-如果有 draft_rewrites, 提示:
+**miss_recover / miss_orphan 提问**:
+
+- `miss_recover`:展示 mention 上下文 + recovery title/author/year + process_book_cmd + confidence。选项:加待跑列表 / 改 draft 引用 / 跳过。
+- `miss_orphan`:展示 mention 上下文 + “在线也没找到”。选项:标 vault TODO / 改 draft 引用 / 跳过。
+
+**每组答复后的立即 apply 协议**:
+
+主进程收到用户对一组 cards 的裁决后,必须立刻执行:
+
+1. 读当前 `{ct_dir}/decisions.json`。不存在则初始化 `{by_key:{}, vault_todo:[], draft_rewrites:[], summary:{}}`。
+2. 将本组裁决写入 `decisions.by_key`。auto-ok 可以按批写入,needs-user 必须带用户裁决 note。
+3. 若用户裁决要求改 bib / draft / local cache,立即 Edit 对应文件。
+4. 运行 `quasi-helpers citation emit-bib {ct_dir}/manifest.json --biblio {ct_dir}/biblio.json --decisions {ct_dir}/decisions.json -o {project_root}/references.bib`。
+5. 向用户报告本轮修改了哪些 key、重导路径、剩余 `needs_user/unresolved/miss` 数。
+6. 再进入下一组 cards。
+
+禁止把多个组的用户答案存在对话上下文里等最后统一 apply。
+
+### 2.5 — final summary + references.bib path
+
+所有 pending 组处理完后,主进程只做最终汇总,不再集中 apply 一次。此时 `{ct_dir}/decisions.json` 已经随着每组答复增量更新,`references.bib` 也已在每轮 apply 后重导。
+
+最终打印:
+
+```text
+Wrap-up citation review done.
+
+  draft:          {draft_path}
+  review cards:   {ct_dir}/review-cards.json
+  decisions:      {ct_dir}/decisions.json
+  references.bib: {project_root}/references.bib
+
+  vault todos:    {len(vault_todo)} 条
+  draft rewrites: {len(draft_rewrites)} 条
 ```
-💡 改 draft 引用: decisions.json 里 draft_rewrites 列了 N 条 cite 你要回去改 draft, 改完跑 /quasi:wrap-up <draft> --citation-only 重新出 .bib。
-```
+
+如果有 vault_todo,提示用户把 `decisions.json` 里 `vault_todo[].process_book_cmd` 复制到新 Claude 会话批跑。
+
+如果有 draft_rewrites,提示用户按 `decisions.json` 里的 `draft_rewrites` 回改 draft,改完跑 `/quasi:wrap-up <draft> --citation-only` 重新审引用。
 
 **硬约束**:
 - Phase 1 必须全部完成才进入 Phase 2 (proofread 改字会让 parse 行号失效)
-- Phase 2.2 + 2.3 完成才进入 2.4 (TUI 需要全量数据)
-- TUI 是主进程串行驱动, 不要拆 agent (AskUserQuestion 必须在主上下文)
+- Phase 2.2 + 2.3 完成才进入 2.4 (主进程需要完整 review cards / recoveries)
+- CC-native review 是主进程串行驱动,不要拆 agent,不要转 HTML/TUI
 
 ## Phase 3 — CLEANUP
 
@@ -424,8 +401,9 @@ quasi-helpers citation emit-bib {ct_dir}/manifest.json \
 | Phase 1 prepare | `.quasi/proofread/{stem}/sections.json` | 存在则复用 section manifest |
 | Phase 2.1 | `{ct_dir}/manifest.json` | 存在则可复用 parse/resolve 结果 |
 | Phase 2.2 | `{ct_dir}/verdicts/batch-*.json` | 对已有 batch 不重复跑 citecheck-agent |
+| Phase 2.2 merge | `{ct_dir}/review-cards.json` | batch verdicts 未变则复用 |
 | Phase 2.3 | `no_recover` flag 或 `recovery-{key}.json` | flag 开启则跳过;已有 recovery 则复用 |
-| Phase 2.4 | `{ct_dir}/decisions.json` | 存在则可直接 emit-bib |
+| Phase 2.4 per group | `{ct_dir}/decisions.json` | 已有 key 不重复问;从 pending key 继续 |
 | Phase 3 | 用户触发词 | 用户未明确审完则不 cleanup |
 
 ## 输出
@@ -438,11 +416,12 @@ quasi-helpers citation emit-bib {ct_dir}/manifest.json \
     ├── biblio.json
     ├── parse.json
     ├── manifest.json
+    ├── review-cards.json      # citecheck-agent 批输出合并后的 CC-native cards
     ├── verdicts/
-    │   ├── batch-001.json     # citecheck-agent context-fit notes
+    │   ├── batch-001.json     # citecheck-agent review cards
     │   ├── batch-002.json
     │   └── recovery-{key}.json # search-agent online recoveries
-    └── decisions.json         # ← TUI 收集的最终决策
+    └── decisions.json         # ← CC-native review 增量收集的最终决策
 
 (project_root)/
 └── references.bib             # ← 最终输出

@@ -35,7 +35,7 @@ separate:
 | `quasi-download` | `book candidates|fetch`; `paper fetch`; `accept` |
 | `quasi-extract` | `epub|ocr|split` text extraction |
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
-| `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|emit-bib`; `localise scan|write` |
+| `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write` |
 | `quasi-translate` | immersive translation |
 
 Removed legacy bins:

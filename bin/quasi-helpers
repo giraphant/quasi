@@ -10,11 +10,12 @@
 #       prepare draft.md → sections.json + 末尾 <!-- proofread:* --> 记录块
 #       cleanup 审完后清记录块
 #
-#   quasi-helpers citation {parse|biblio|resolve|emit-bib} [args...]
-#       parse     draft.md → parse.json
-#       biblio    vault frontmatter → biblio.json
-#       resolve   parse.json + biblio.json → manifest.json
-#       emit-bib  manifest.json + biblio.json → references.bib (draft-level)
+#   quasi-helpers citation {parse|biblio|resolve|review-cards|emit-bib} [args...]
+#       parse         draft.md → parse.json
+#       biblio        vault frontmatter → biblio.json
+#       resolve       parse.json + biblio.json → manifest.json
+#       review-cards  verdicts/batch-*.json → review-cards.json
+#       emit-bib      manifest.json + biblio.json → references.bib (draft-level)
 #
 #   quasi-helpers localise {scan|write} [args...]
 #       scan    book overviews → ISBN-keyed cndouban pending state
@@ -40,7 +41,7 @@ LLM agent dispatches. Called from skill main process; never from agents.
 
 Usage:
   quasi-helpers proofread {prepare|cleanup} [args...]
-  quasi-helpers citation  {parse|biblio|resolve|emit-bib} [args...]
+  quasi-helpers citation  {parse|biblio|resolve|review-cards|emit-bib} [args...]
   quasi-helpers localise  {scan|write} [args...]
 
 Each nested subcommand has its own --help, e.g.:
