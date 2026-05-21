@@ -44,7 +44,8 @@ description: >
 - Phase 1 必须全部完成才进入 Phase 2;proofread 改字会让 citation parse 行号失效。
 - Phase 2.2 + 2.3 必须完成才进入 Phase 2.4;主进程需要完整 review cards / recoveries 才能问用户。
 - Phase 2.4 是 Claude Code 主进程驱动的 CC-native review,不要拆给 agent,不要转 HTML/TUI。
-- 主进程每收到一组用户裁决,必须立即执行一轮 apply:增量写 `decisions.json`、按需修改文件、重导 bibliography、报告本轮改动和剩余 pending。
+- Phase 2.4 默认每轮最多 4 张 card:主进程先用普通消息展示这 1-4 张 card 的必要上下文,再用 `AskUserQuestion` 收同一轮裁决。不要让用户在 terminal 里一次读十几张 card。
+- 主进程每收到一轮用户裁决,必须立即执行一轮 apply:增量写 `decisions.json`、按需修改文件、重导 bibliography、报告本轮改动和剩余 pending。
 - Phase 3 cleanup 只在用户明确说审完或清理记录块后执行。
 
 ## 工作流
@@ -55,12 +56,12 @@ description: >
 │   ├─ 2.1 parse + resolve                         (deterministic)
 │   ├─ 2.2 citecheck-agent 批(single + multi only)  → review cards
 │   ├─ 2.3 search-agent 批(miss)                    → online recovery
-│   ├─ 2.4 CC-native 审定(主进程透传 review cards)   ← 每组答复后立即 apply
+│   ├─ 2.4 CC-native 审定(AskUserQuestion 每轮≤4张) ← 每轮答复后立即 apply
 │   └─ 2.5 final summary + references.bib path
 └─ Phase 3  CLEANUP     ─ 等用户审完触发("审完了" 等)删 proofread 记录块
 ```
 
-agent 不直接裁决引用是否正确,只产出可问人的 review card。**主进程在主上下文里透传 card 的正文用途、当前条目、候选证据、建议和后果**,让用户裁决。用户每答完一组,主进程立刻落盘并重导,不把答案攒到最后。
+agent 不直接裁决引用是否正确,只产出可问人的 review card。**主进程在主上下文里透传 card 的正文用途、当前条目、候选证据、建议和后果**,让用户裁决。主进程每轮最多展开 4 张 card,随后用 `AskUserQuestion` 一次收这 1-4 张的裁决;用户每答完一轮,主进程立刻落盘并重导,不把答案攒到最后。
 
 旧 `render.py` 仅作为源码归档参考,skill 不再调用。
 
@@ -234,7 +235,7 @@ verdict 文件,也不决定是否进入后续用户审定。
 
 ### 2.4 — CC-native review cards 审定 (主进程, 关键步骤)
 
-**主进程驱动**, **不要派 agent**, **不要转 HTML/TUI**。读所有 artifacts,按 review card 状态和 miss recovery 分箱。凡是问用户,都通过 Claude Code 主进程透传上下文和证据。
+**主进程驱动**, **不要派 agent**, **不要转 HTML/TUI**。读所有 artifacts,按 review card 状态和 miss recovery 分箱。凡是问用户,都通过 Claude Code 主进程透传上下文和证据,并默认用 `AskUserQuestion` 收结构化裁决。
 
 ```python
 manifest = read({ct_dir}/manifest.json)
@@ -269,7 +270,7 @@ for e in manifest.entries:
             bins["miss_orphan"].append(e)
 ```
 
-**先打印一次 summary**: 让用户知道本轮要过多少条。
+**先打印一次 queue summary**: 让用户知道总量和当前优先级,但不要展开所有 card。
 
 ```text
 Citation review:
@@ -278,12 +279,19 @@ Citation review:
   unresolved:   {len(unresolved)} 条
   miss+recover: {len(miss_recover)} 条
   miss+orphan:  {len(miss_orphan)} 条
-  本轮需要人工裁决: {len(needs_user)+len(unresolved)+len(miss_recover)+len(miss_orphan)} 条
+  总需人工裁决: {len(needs_user)+len(unresolved)+len(miss_recover)+len(miss_orphan)} 条
 ```
 
 **Review card 提问格式**:
 
-每次可以问 1 条复杂 card,或合并 2-4 条同类简单 card。凡是问用户,问题正文必须包含:
+默认每轮最多处理 4 张 card。主进程先用普通消息展开当前 1-4 张 card 的必要上下文,再调用一次 `AskUserQuestion`:
+
+- `questions` 数组中每个 question 对应 1 张 card。
+- 每轮 `questions` 数量必须是 1-4;复杂 card 单独成轮,同类简单 card 可合并到同一轮。
+- 每个 question 提供 2-4 个落盘后果清晰的选项,例如:按推荐处理 / 保留当前 / search more / skip 或 vault_todo。
+- 不要把 5 张以上 card 展开在同一轮;更不要一次性倾倒十几张 card。
+
+凡是问用户,普通消息中的 card 正文必须包含:
 
 1. `key`
 2. `draft_context.quote`
@@ -325,42 +333,72 @@ Agent 建议:replace;confidence=medium。
 4. skip → 本轮不出 bib skeleton 或跳过
 ```
 
-批量同类 card 示例:
+四张以内同轮示例:
 
 ```markdown
-下面 3 条都是同类 metadata/译名清理问题,agent 证据充分,建议批量接受:
+本轮处理 3/18:下面 3 条都是同类 metadata/译名清理问题,agent 证据充分,建议批量接受。
 
-1. toole-2023 — 当前中译本作者含中文名 + English Name;建议只保留中文名。
-2. tsing-2015 — 当前中译本作者含中文名 + English Name;建议只保留中文名。
-3. wajcman-2015 — 当前中译本作者含中文名 + English Name;建议只保留中文名。
+Card 1 — toole-2023
+正文用途: 引用声音/听觉技术材料。
+当前条目: 中译本作者含中文名 + English Name。
+建议: 只保留中文名。confidence=high。
+选项后果:按推荐处理会立即修改对应 bib/cache,写 decisions.by_key[toole-2023],重导 references.bib。
 
-选项后果:
-- 接受本组 → 立即修改对应 bib/cache,重导 references.bib,写 decisions.json
-- 逐条审 → 主进程改为逐条 card 提问
-- 跳过本组 → 记录 skip,继续下一组
+Card 2 — tsing-2015
+正文用途: 引用多物种关系和资本主义废墟材料。
+当前条目: 中译本作者含中文名 + English Name。
+建议: 只保留中文名。confidence=high。
+选项后果:按推荐处理会立即修改对应 bib/cache,写 decisions.by_key[tsing-2015],重导 references.bib。
+
+Card 3 — wajcman-2015
+正文用途: 引用数字资本主义中的时间压力材料。
+当前条目: 中译本作者含中文名 + English Name。
+建议: 只保留中文名。confidence=high。
+选项后果:按推荐处理会立即修改对应 bib/cache,写 decisions.by_key[wajcman-2015],重导 references.bib。
 ```
+
+随后调用 `AskUserQuestion`:
+
+```python
+AskUserQuestion(questions=[
+  {
+    "header": "toole-2023",
+    "question": "toole-2023 怎么处理?",
+    "options": [
+      {"label": "按推荐", "description": "只保留中文名,立即写 decisions 并重导 bib"},
+      {"label": "保留当前", "description": "保留现有 bib/cache 条目,记录 keep"},
+      {"label": "跳过", "description": "本轮不改,记录 skip"},
+    ],
+    "multiSelect": False,
+  },
+  # 本轮最多再放 3 个同形 question;复杂 card 单独成轮。
+])
+```
+
+收到这轮 1-4 个答案后,马上执行 apply;不要继续展示下一轮 card 后再统一处理。
 
 **miss_recover / miss_orphan 提问**:
 
 - `miss_recover`:展示 mention 上下文 + recovery title/author/year + process_book_cmd + confidence。选项:加待跑列表 / 改 draft 引用 / 跳过。
 - `miss_orphan`:展示 mention 上下文 + “在线也没找到”。选项:标 vault TODO / 改 draft 引用 / 跳过。
+- miss 类条目也遵守每轮最多 4 张 card 的限制,并用 `AskUserQuestion` 一次收当前轮裁决。
 
-**每组答复后的立即 apply 协议**:
+**每轮答复后的立即 apply 协议**:
 
-主进程收到用户对一组 cards 的裁决后,必须立刻执行:
+主进程收到用户对当前 1-4 张 cards 的 `AskUserQuestion` 裁决后,必须立刻执行:
 
 1. 读当前 `{ct_dir}/decisions.json`。不存在则初始化 `{by_key:{}, vault_todo:[], draft_rewrites:[], summary:{}}`。
-2. 将本组裁决写入 `decisions.by_key`。auto-ok 可以按批写入,needs-user 必须带用户裁决 note。
+2. 将本轮裁决写入 `decisions.by_key`。auto-ok 可以按批写入,needs-user 必须带用户裁决 note。
 3. 若用户裁决要求改 bib / draft / local cache,立即 Edit 对应文件。
 4. 运行 `quasi-helpers citation emit-bib {ct_dir}/manifest.json --biblio {ct_dir}/biblio.json --decisions {ct_dir}/decisions.json -o {project_root}/references.bib`。
 5. 向用户报告本轮修改了哪些 key、重导路径、剩余 `needs_user/unresolved/miss` 数。
-6. 再进入下一组 cards。
+6. 再展示下一轮最多 4 张 cards 并调用下一次 `AskUserQuestion`。
 
-禁止把多个组的用户答案存在对话上下文里等最后统一 apply。
+禁止把多个轮次的用户答案存在对话上下文里等最后统一 apply。
 
 ### 2.5 — final summary + references.bib path
 
-所有 pending 组处理完后,主进程只做最终汇总,不再集中 apply 一次。此时 `{ct_dir}/decisions.json` 已经随着每组答复增量更新,`references.bib` 也已在每轮 apply 后重导。
+所有 pending 轮次处理完后,主进程只做最终汇总,不再集中 apply 一次。此时 `{ct_dir}/decisions.json` 已经随着每轮答复增量更新,`references.bib` 也已在每轮 apply 后重导。
 
 最终打印:
 
@@ -383,7 +421,7 @@ Wrap-up citation review done.
 **硬约束**:
 - Phase 1 必须全部完成才进入 Phase 2 (proofread 改字会让 parse 行号失效)
 - Phase 2.2 + 2.3 完成才进入 2.4 (主进程需要完整 review cards / recoveries)
-- CC-native review 是主进程串行驱动,不要拆 agent,不要转 HTML/TUI
+- CC-native review 是主进程串行驱动,每轮最多 4 张 card 并用 `AskUserQuestion` 收裁决;不要拆 agent,不要转 HTML/TUI
 
 ## Phase 3 — CLEANUP
 

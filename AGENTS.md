@@ -137,6 +137,17 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.36.1** (2026-05-21): **Wrap-up citation review uses four-card AskUserQuestion rounds.**
+  - `wrap-up` Phase 2.4 now tells the main process to show a short queue
+    summary, expand at most four review cards, and collect the current round's
+    decisions with `AskUserQuestion`.
+  - Each `AskUserQuestion` question maps to one review card; complex cards run
+    alone, while simple same-kind cards can share a round up to the four-question
+    tool limit.
+  - After each round, the main process must immediately update
+    `decisions.json`, apply needed local edits, re-emit `references.bib`, and
+    report remaining pending cards before showing the next round.
+
 - **0.36.0** (2026-05-21): **Wrap-up citation review moves to Claude Code-native review cards.**
   - `quasi-helpers citation review-cards` merges `citecheck-agent` batch
     outputs into `.quasi/citation/{stem}/review-cards.json`, preserving
