@@ -235,7 +235,7 @@ verdict 文件,也不决定是否进入后续用户审定。
 
 ### 2.4 — CC-native review cards 审定 (主进程, 关键步骤)
 
-**主进程驱动**, **不要派 agent**, **不要转 HTML/TUI**。读所有 artifacts,按 review card 状态和 miss recovery 分箱。凡是问用户,都通过 Claude Code 主进程透传上下文和证据,并默认用 `AskUserQuestion` 收结构化裁决。
+**主进程驱动**, 读所有 artifacts,按 review card 状态和 miss recovery 分箱。凡是问用户,都通过 Claude Code 主进程透传上下文和证据,并默认用 `AskUserQuestion` 收结构化裁决。
 
 ```python
 manifest = read({ct_dir}/manifest.json)
