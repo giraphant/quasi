@@ -138,7 +138,12 @@ export const AuthorSchema = z.object({
 ---
 type: author
 name: Sara Ahmed
-themes: [affect-theory, queer-phenomenology, feminist-theory, racism, killjoy]
+themes:
+  - affect-theory
+  - queer-phenomenology
+  - feminist-theory
+  - racism
+  - killjoy
 rating: 5
 ---
 ```
@@ -186,12 +191,17 @@ export const BookSchema = z.object({
 ---
 type: book
 title: "Nightwork: Sexuality, Pleasure, and Corporate Masculinity in a Tokyo Hostess Club"
-authors: ["Anne Allison"]
+authors:
+  - Anne Allison
 year: 1994
 publisher: "University of Chicago Press"
 isbn: "978-0226014876"
 category: monograph
-themes: [japan-studies, gender, corporate-masculinity, ethnography]
+themes:
+  - japan-studies
+  - gender
+  - corporate-masculinity
+  - ethnography
 rating: 4
 ---
 ```
@@ -202,12 +212,15 @@ rating: 4
 ---
 type: book
 title: "The Affect Theory Reader"
-authors: ["Melissa Gregg", "Gregory J. Seigworth"]
+authors:
+  - Melissa Gregg
+  - Gregory J. Seigworth
 year: 2010
 publisher: "Duke University Press"
 isbn: "978-0822347767"
 category: edited-volume
-themes: [affect-theory]
+themes:
+  - affect-theory
 rating: 5
 ---
 ```
@@ -255,10 +268,14 @@ export const ChapterSchema = z.object({
 ---
 type: chapter
 title: "第1章 一种地方类型"
-authors: ["Anne Allison"]
+authors:
+  - Anne Allison
 year: 1994
 book: "allison-nightwork-1994"
-themes: [hostess-club, communitas, space]
+themes:
+  - hostess-club
+  - communitas
+  - space
 rating: 1
 ---
 ```
@@ -312,10 +329,16 @@ export const PaperSchema = z.object({
 ---
 type: paper
 title: "Happy Objects"
-authors: ["Sara Ahmed"]
+authors:
+  - Sara Ahmed
 year: 2010
 journal: "The Affect Theory Reader"
-themes: [affect-theory, happiness, queer-theory, sticky-affect, feminist-killjoy]
+themes:
+  - affect-theory
+  - happiness
+  - queer-theory
+  - sticky-affect
+  - feminist-killjoy
 rating: 2
 doi: "10.1215/9780822393047-001"
 ---
@@ -363,7 +386,10 @@ export const JournalSchema = z.object({
 ---
 type: journal
 title: "British Journal of Sociology"
-themes: [sociology, social-theory, uk-academia]
+themes:
+  - sociology
+  - social-theory
+  - uk-academia
 rating: 3
 papers_scanned: 852
 papers_kept: 16
@@ -549,16 +575,38 @@ export const PaperBodySchema = {
 
 ### 5.2 YAML frontmatter 风格
 
-数组用 **inline flow form**,不用 block list:
+数组用 **block list**(标准 YAML 序列),不用 inline flow form:
 
 ```yaml
 # ✓ 正确
+authors:
+  - Sara Ahmed
+themes:
+  - affect-theory
+  - queer-theory
+
+# ✗ 错误(易被 Ulysses 等 Markdown 编辑器破坏成 `[a, b](#)`)
 authors: [Sara Ahmed]
 themes: [affect-theory, queer-theory]
+```
+
+**为什么 block list**:Marple reader 的 vault 文件常被 Ulysses / Bear / iA Writer 等编辑器二次编辑;
+这些编辑器把 `[a, b]` 识别为 markdown 链接残骸,会咬成 `[a, b](#)` 损坏数据。
+Block list 没有 `[` `]` 触发点,跨编辑器稳定。
+
+**空列表 → 整行省略**(不写 `themes: []`,也不写 `themes: null`):
+
+```yaml
+# ✓ 没有 themes 字段就完全不出现
+type: chapter
+title: ...
+authors:
+  - Anne Allison
+year: 1994
+book: ...
 
 # ✗ 错误
-authors:
-- Sara Ahmed
+themes: []
 ```
 
 Key 按 **schema 字段声明顺序** 排列(autofix 自动做):
@@ -567,19 +615,10 @@ Key 按 **schema 字段声明顺序** 排列(autofix 自动做):
 # author (canonical order):
 type: author
 name: Sara Ahmed
-themes: [affect-theory, queer-theory]
+themes:
+  - affect-theory
+  - queer-theory
 rating: 5
-```
-
-**长数组不折行**(autofix 用 `width=4096`):
-
-```yaml
-# ✓ 单行
-themes: [affect-theory, happiness, phenomenology, queer-theory, feminist-killjoy]
-
-# ✗ PyYAML 默认 80 字符折行
-themes: [affect-theory, happiness, phenomenology, queer-theory,
-  feminist-killjoy]
 ```
 
 ### 5.3 跨 type 同名规则
@@ -623,7 +662,8 @@ reader 看 frontmatter type 决定如何渲染同名 H2。
 - **Q12 关键概念 跨 4 type 统一 table**:跨 vault union 可得整库概念图谱
 - **Q13 金句要点 跨 author/chapter/paper 统一 blockquote-list**:语义都是"原文金句"
 - **Q14 H1 = 实体展示名 不带装饰后缀**:为 Obsidian 标题栏服务
-- **Q15 YAML 风格统一**:flow form + schema key 顺序 + 不折行,跟 SPEC 示例对齐
+- **Q15 YAML 风格统一**:block list + schema key 顺序 + 空列表省略,跟 SPEC §5.2 对齐
+  (block list 而非 flow form 的根因:Ulysses 等编辑器把 `[a, b]` 咬成 `[a, b](#)` 损坏)
 - **Q16 bin/ 模式 而非 \$CLAUDE_PLUGIN_ROOT**:后者在 CC 2.1.139 未注入(GitHub #9354);
   bin/ shim 自己用 realpath 找 plugin 根 + 维护 venv,无 env 依赖
 - **Q17 pydantic V2 而非 zod**:用户基础设施是 Python,且 Pydantic 错误信息富,LLM 修复 prompt 友好
@@ -637,14 +677,14 @@ LLM 生成新文档时**应当**:
 3. 不引入新字段,除非已经在 SPEC 中
 4. **rating 用数字 1..5,不是 ★ 字符串**(reader 渲染层负责显示 ★)
 5. themes 用 hyphen-joined 形式(`affect-theory` 不是 `affect theory`)
-6. **authors 永远是数组**(单作者也用 `["Sara Ahmed"]`,不是 `"Sara Ahmed"`)
+6. **authors 永远是数组**(单作者也用 block list 单元素,不是 scalar);见 §5.2
 
 **Body 约定**:
 1. 必填 H2 全部生成,**用 SPEC 列的 canonical 4 字标题**,不要发明同义变体
 2. H2 之下的 block 形状必须匹配(`kind: table` 就真生成 markdown table,不是描述性段落)
 3. 跨项目内容用 `## 项目关联` + `### <项目名>` 嵌套,**不要把项目名写进 H2**
 4. **H1 = 实体展示名**,不要装饰后缀(详见 §5.1)
-5. **YAML 数组用 inline flow form** `[a, b]`,不用 block list(详见 §5.2)
+5. **YAML 数组用 block list**(每项 `  - value`),不用 inline flow form;空列表整行省略(详见 §5.2)
 6. 长尾自定义 H2 可以加,但 Phase 3 开 strict 之后会被拒;尽量约束在 SPEC 内
 
 **如果发现 SPEC 不覆盖你的需求,先 PR SPEC,不要私自扩展字段或 H2。**

@@ -95,9 +95,18 @@ optional:
 </frontmatter_schema_B>
 
 <yaml_style>
-- 数组用 flow form: `authors: [Foo]`,`themes: [a, b, c]`
-- **禁用** block list: `authors:\n- Foo`
-- 长数组不折行
+- 数组用 **block list**:
+  ```yaml
+  authors:
+    - Foo
+  themes:
+    - a
+    - b
+    - c
+  ```
+- **禁用** inline flow form (`authors: [Foo]`、`themes: [a, b, c]`)
+  理由:Ulysses / Bear / iA Writer 等 Markdown 编辑器会把 `[a, b]` 咬成 `[a, b](#)` 破坏 YAML
+- 空列表 → 整行省略(不写 `themes: []`)
 - key 顺序:
   - A: type → title → authors → year → book → doi → themes → rating
   - B: type → title → authors → year → journal → doi → themes → rating
@@ -177,10 +186,15 @@ metadata 块**不要被 markdown ## H2 包起来**,它就是裸的粗体标签�
 ---
 type: chapter
 title: "{chapter_label} {中文标题}"
-authors: [{chapter_author1}, {chapter_author2}]
+authors:
+  - {chapter_author1}
+  - {chapter_author2}
 year: {year}
 book: {book_slug}
-themes: [theme1, theme2, theme3]
+themes:
+  - theme1
+  - theme2
+  - theme3
 ---
 
 # {chapter_label} {中文标题}
@@ -252,11 +266,16 @@ themes: [theme1, theme2, theme3]
 ---
 type: paper
 title: "{title}"
-authors: [{author1}, {author2}]
+authors:
+  - {author1}
+  - {author2}
 year: {year}
 journal: "{journal}"
 doi: "{doi}"
-themes: [theme1, theme2, theme3]
+themes:
+  - theme1
+  - theme2
+  - theme3
 ---
 
 # {中文标题}

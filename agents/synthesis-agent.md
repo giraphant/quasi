@@ -210,9 +210,18 @@ H1 = `# {full_name}` (**无装饰后缀**)。
 ## YAML style (所有 mode 通用)
 
 <yaml_style>
-- 数组用 flow form: `authors: [Anne Allison]`、`themes: [a, b, c]`
-- **禁用** block list `authors:\n- a`
-- 长数组不折行
+- 数组用 **block list**:
+  ```yaml
+  authors:
+    - Anne Allison
+  themes:
+    - a
+    - b
+    - c
+  ```
+- **禁用** inline flow form (`authors: [Anne Allison]`、`themes: [a, b, c]`)
+  理由:Ulysses / Bear / iA Writer 等 Markdown 编辑器会把 `[a, b]` 咬成 `[a, b](#)` 破坏 YAML
+- 空列表 → 整行省略(不写 `themes: []`)
 - key 顺序按 schema 声明
 - 字符串值仅在含冒号/引号时加引号
 </yaml_style>

@@ -89,7 +89,12 @@ def read_frontmatter(path: Path) -> FrontmatterDoc:
 
 
 def dump_frontmatter(data: dict[str, Any]) -> str:
-    """Serialize frontmatter with quasi's stable YAML style."""
+    """Serialize frontmatter with quasi's stable YAML style.
+
+    `default_flow_style=False` is required by SPEC §5.2 (block-list arrays).
+    Ulysses / Bear / iA Writer corrupt inline flow arrays (`[a, b]` → `[a, b](#)`);
+    block lists have no `[` `]` for them to bite.
+    """
 
     return yaml.safe_dump(
         data,

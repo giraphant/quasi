@@ -109,8 +109,12 @@ block_kinds:
 types:
   author:
     frontmatter:
-      required: [type, name]
-      optional: [themes, rating]
+      required:
+        - type
+        - name
+      optional:
+        - themes
+        - rating
       strict_notes:
         type: author
     body:
@@ -126,10 +130,20 @@ types:
 
   book:
     frontmatter:
-      required: [type, title, authors, publisher, category]
-      optional: [year, isbn, themes, rating]
+      required:
+        - type
+        - title
+        - authors
+        - publisher
+        - category
+      optional:
+        - year
+        - isbn
+        - themes
+        - rating
+      strict_notes:
         type: book
-        authors: array, even for one author
+        authors: block-form array, even for one author
     body:
       required:
         - {h2: 核心论点, kind: paragraph}
@@ -142,11 +156,19 @@ types:
 
   chapter:
     frontmatter:
-      required: [type, title, authors, book]
-      optional: [year, doi, themes, rating]
+      required:
+        - type
+        - title
+        - authors
+        - book
+      optional:
+        - year
+        - doi
+        - themes
+        - rating
       strict_notes:
         type: chapter
-        authors: array, even for one author
+        authors: block-form array, even for one author
     body:
       required:
         - {h2: 核心论点, kind: paragraph}
@@ -160,12 +182,20 @@ types:
 
   paper:
     frontmatter:
-      required: [type, title, authors, journal, themes]
-      optional: [year, doi, rating]
+      required:
+        - type
+        - title
+        - authors
+        - journal
+        - themes
+      optional:
+        - year
+        - doi
+        - rating
       strict_notes:
         type: paper
-        authors: array, even for one author
-        themes: non-empty array
+        authors: block-form array, even for one author
+        themes: non-empty block-form array
     body:
       required:
         - {h2: 核心论点, kind: paragraph}
