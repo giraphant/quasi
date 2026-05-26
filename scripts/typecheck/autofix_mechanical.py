@@ -83,15 +83,14 @@ def reorder_frontmatter(fm: dict, type_name: str) -> dict:
     return out
 
 
-# Force lists to flow style (`[a, b]`) so single-author / themes arrays
-# stay on one line. Dicts (the frontmatter itself) stay in block style.
-def _represent_list_flow(dumper, data):
-    return dumper.represent_sequence(
-        "tag:yaml.org,2002:seq", data, flow_style=True
-    )
-
-
-yaml.SafeDumper.add_representer(list, _represent_list_flow)
+# Lists render as block-form sequences (SPEC §5.2):
+#   themes:
+#     - a
+#     - b
+# Flow form (`[a, b]`) is forbidden because Ulysses / Bear / iA Writer corrupt
+# it into `[a, b](#)` on round-trip. `default_flow_style=False` on `safe_dump`
+# handles this without a custom representer — kept as a comment so nobody adds
+# one back.
 
 
 VAULT_DEFAULT = PROJECT_ROOT / "vault"
@@ -373,8 +372,8 @@ def fix_file(path: Path) -> tuple[str, list[str]] | None:
 
     Reassembles the file and compares to original. If reassembled text differs,
     write it — this catches both schema fixes AND pure YAML format normalization
-    (e.g. block-form lists → flow-form). Idempotent: files already canonical
-    are skipped.
+    (e.g. flow-form lists → block-form per SPEC §5.2). Idempotent: files
+    already canonical are skipped.
     """
     original_text = path.read_text(encoding="utf-8")
     m = FM_RE.match(original_text)
@@ -402,8 +401,8 @@ def fix_file(path: Path) -> tuple[str, list[str]] | None:
     # Reorder by schema canonical key order (cosmetic).
     new_fm = reorder_frontmatter(new_fm, canon)
 
-    # Reassemble with canonical YAML form (flow-style lists, schema-ordered keys,
-    # no line wrapping so long arrays stay on one line).
+    # Reassemble with canonical YAML form (block-form lists per SPEC §5.2,
+    # schema-ordered keys, `width=4096` keeps long scalar values from wrapping).
     new_fm_yaml = yaml.safe_dump(
         new_fm,
         allow_unicode=True,
@@ -419,7 +418,7 @@ def fix_file(path: Path) -> tuple[str, list[str]] | None:
     all_changes = fm_changes + body_changes
     if not all_changes:
         # Schema-level no change, but text differs → pure YAML format
-        # normalization (e.g. block-form lists → flow-form).
+        # normalization (e.g. flow-form lists → block-form per SPEC §5.2).
         all_changes = ["normalize yaml format"]
 
     return new_text, all_changes

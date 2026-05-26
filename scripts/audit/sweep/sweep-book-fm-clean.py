@@ -2,9 +2,9 @@
 """
 清洗 vault/books/*/00-overview.md 的 frontmatter:
   - title:   剥掉 markdown 强调、剥掉前缀作者名、剥掉外层引号、剥掉 "— 书籍概览" 后缀
-  - authors: 解开 [[slug|Name]] wikilink, 输出为干净的 YAML flow list
+  - authors: 解开 [[slug|Name]] wikilink, 输出为 YAML block list (SPEC §5.2)
 
-策略: 用 yaml.safe_load 解析 frontmatter 拿到结构化值,但**只在原文里替换 title:/authors: 这两行**,
+策略: 用 yaml.safe_load 解析 frontmatter 拿到结构化值,但**只在原文里替换 title:/authors: 这两块**,
 其他字段一行不动 —— 把 diff 控制到最小,不引入 year 引号、source 空值之类的无意义改动。
 
 干跑 (默认): 只打印将要修改的样本和总数
@@ -61,28 +61,43 @@ def clean_title(raw, authors_clean: list[str]) -> str:
     return t.strip()
 
 
-def render_authors_inline(authors: list[str]) -> str:
-    parts = []
+def _scalar(a: str) -> str:
+    """Quote a scalar value only when YAML safety requires it."""
+    if any(c in a for c in [",", ":", "#", "[", "]", "'", '"']):
+        return yaml.safe_dump(a, default_style="'", allow_unicode=True).strip()
+    return a
+
+
+def render_authors_block(authors: list[str]) -> str:
+    """Render `authors:` as a YAML block list per SPEC §5.2. Returns the full
+    multi-line field text including the `authors:` header. Example:
+
+        authors:
+          - Foo
+          - Bar
+    """
+    lines = ["authors:"]
     for a in authors:
-        if any(c in a for c in [",", ":", "#", "[", "]", "'", '"']):
-            parts.append(yaml.safe_dump(a, default_style="'", allow_unicode=True).strip())
-        else:
-            parts.append(a)
-    return "[" + ", ".join(parts) + "]"
+        lines.append(f"  - {_scalar(a)}")
+    return "\n".join(lines)
 
 
-def render_title_inline(title: str) -> str:
-    if any(c in title for c in [":", "#"]) or title != title.strip():
-        return yaml.safe_dump(title, default_style="'", allow_unicode=True).strip()
-    return title
+def render_title_field(title: str) -> str:
+    """Render `title: value` as a single line."""
+    return f"title: {_scalar(title)}"
 
 
-def replace_field_line(fm_block: str, key: str, new_value_inline: str) -> tuple[str, bool]:
-    """Replace the line `key: ...` in fm_block. YAML flow-list values that wrap
-    onto a second line are not used in this vault, so single-line replacement is safe."""
-    pat = re.compile(rf"^({re.escape(key)}):[ \t]*.*$", re.MULTILINE)
-    new_line = f"{key}: {new_value_inline}"
-    new_block, n = pat.subn(new_line, fm_block, count=1)
+def replace_field(fm_block: str, key: str, new_field_text: str) -> tuple[str, bool]:
+    """Replace the `key: ...` field in fm_block, including any block-list
+    continuation lines (`  - item`) immediately below it.
+
+    `new_field_text` is the complete replacement starting with `key:`
+    (single-line for scalars, multi-line for block lists)."""
+    pat = re.compile(
+        rf"^{re.escape(key)}:[ \t]*.*(?:\n[ \t]+-.*)*",
+        re.MULTILINE,
+    )
+    new_block, n = pat.subn(new_field_text, fm_block, count=1)
     return new_block, n > 0
 
 
@@ -138,14 +153,15 @@ def main() -> int:
 
         new_block = fm_block
         if authors_changed:
-            new_block, ok = replace_field_line(new_block, "authors", render_authors_inline(new_authors))
+            authors_text = render_authors_block(new_authors)
+            new_block, ok = replace_field(new_block, "authors", authors_text)
             if not ok:
-                # field absent — append before end
-                new_block = new_block.rstrip("\n") + f"\nauthors: {render_authors_inline(new_authors)}"
+                new_block = new_block.rstrip("\n") + f"\n{authors_text}"
         if title_changed:
-            new_block, ok = replace_field_line(new_block, "title", render_title_inline(new_title))
+            title_text = render_title_field(new_title)
+            new_block, ok = replace_field(new_block, "title", title_text)
             if not ok:
-                new_block = new_block.rstrip("\n") + f"\ntitle: {render_title_inline(new_title)}"
+                new_block = new_block.rstrip("\n") + f"\n{title_text}"
 
         if new_block == fm_block:
             continue
