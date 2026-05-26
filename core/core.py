@@ -94,10 +94,13 @@ def dump_frontmatter(data: dict[str, Any]) -> str:
     `default_flow_style=False` is required by SPEC §5.2 (block-list arrays).
     Ulysses / Bear / iA Writer corrupt inline flow arrays (`[a, b]` → `[a, b](#)`);
     block lists have no `[` `]` for them to bite.
+
+    Empty list values are dropped entirely (SPEC §5.2: empty list → omit field).
     """
 
+    cleaned = {k: v for k, v in data.items() if not (isinstance(v, list) and not v)}
     return yaml.safe_dump(
-        data,
+        cleaned,
         allow_unicode=True,
         sort_keys=False,
         default_flow_style=False,

@@ -401,6 +401,9 @@ def fix_file(path: Path) -> tuple[str, list[str]] | None:
     # Reorder by schema canonical key order (cosmetic).
     new_fm = reorder_frontmatter(new_fm, canon)
 
+    # Drop empty list values entirely (SPEC §5.2: empty list → omit field).
+    new_fm = {k: v for k, v in new_fm.items() if not (isinstance(v, list) and not v)}
+
     # Reassemble with canonical YAML form (block-form lists per SPEC §5.2,
     # schema-ordered keys, `width=4096` keeps long scalar values from wrapping).
     new_fm_yaml = yaml.safe_dump(

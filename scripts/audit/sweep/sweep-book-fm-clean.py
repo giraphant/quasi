@@ -62,10 +62,19 @@ def clean_title(raw, authors_clean: list[str]) -> str:
 
 
 def _scalar(a: str) -> str:
-    """Quote a scalar value only when YAML safety requires it."""
-    if any(c in a for c in [",", ":", "#", "[", "]", "'", '"']):
+    """Quote a scalar value unless bare emission round-trips to the same
+    string (YAML identity gate). Catches subtle traps a hand-rolled denylist
+    misses: `Yes` / `No` / `Null` (booleans), `@home` / `\`x\`` (reserved
+    indicators), `- Foo` (flow→list), numeric strings, etc."""
+    if not a or "\n" in a:
         return yaml.safe_dump(a, default_style="'", allow_unicode=True).strip()
-    return a
+    try:
+        roundtrip = yaml.safe_load(f"k: {a}")
+    except yaml.YAMLError:
+        roundtrip = None
+    if isinstance(roundtrip, dict) and roundtrip.get("k") == a:
+        return a
+    return yaml.safe_dump(a, default_style="'", allow_unicode=True).strip()
 
 
 def render_authors_block(authors: list[str]) -> str:
@@ -87,18 +96,31 @@ def render_title_field(title: str) -> str:
     return f"title: {_scalar(title)}"
 
 
+_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:")
+# A YAML block-list item line: any indent, `-`, then EOL or whitespace.
+# Crucially rejects `---` (frontmatter fence) and `-X` (non-list scalar).
+_LIST_ITEM_RE = re.compile(r"^[ \t]*-($|[ \t])")
+
+
 def replace_field(fm_block: str, key: str, new_field_text: str) -> tuple[str, bool]:
-    """Replace the `key: ...` field in fm_block, including any block-list
-    continuation lines (`  - item`) immediately below it.
+    """Replace the `key: ...` field in fm_block. Line-scanner — consumes the
+    `key:` line plus any immediately-following block-list continuation lines
+    (`- item` at any indent). Stops at the next top-level key, the `---`
+    fence, blank line, or end of block.
 
     `new_field_text` is the complete replacement starting with `key:`
     (single-line for scalars, multi-line for block lists)."""
-    pat = re.compile(
-        rf"^{re.escape(key)}:[ \t]*.*(?:\n[ \t]+-.*)*",
-        re.MULTILINE,
-    )
-    new_block, n = pat.subn(new_field_text, fm_block, count=1)
-    return new_block, n > 0
+    lines = fm_block.split("\n")
+    target = re.compile(rf"^{re.escape(key)}:(?:[ \t].*)?$")
+    for i, line in enumerate(lines):
+        if not target.match(line):
+            continue
+        end = i + 1
+        while end < len(lines) and _LIST_ITEM_RE.match(lines[end]):
+            end += 1
+        new_lines = lines[:i] + new_field_text.split("\n") + lines[end:]
+        return "\n".join(new_lines), True
+    return fm_block, False
 
 
 def main() -> int:

@@ -73,6 +73,38 @@ def test_autofix_emits_block_lists(tmp_path: Path) -> None:
     assert "[affect-theory" not in after, after
 
 
+def test_autofix_omits_empty_optional_list(tmp_path: Path) -> None:
+    """Per SPEC §5.2: empty list value → omit field entirely."""
+    fp = tmp_path / "vault" / "papers" / "no-themes.md"
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(
+        "---\n"
+        "type: chapter\n"
+        "title: Empty themes paper\n"
+        "authors: [Foo]\n"
+        "year: 2020\n"
+        "book: foo-bar-2020\n"
+        "themes: []\n"
+        "---\n"
+        "\n"
+        "## 核心论点\n"
+        "body.\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(AUTOFIX), "--path", str(fp), "--write"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+
+    after = fp.read_text(encoding="utf-8")
+    assert "themes:" not in after, f"Empty themes should be dropped:\n{after}"
+    assert "themes: []" not in after, after
+
+
 def _write_book_fixture(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -108,6 +140,45 @@ def test_sweep_clean_emits_block_lists(tmp_path: Path) -> None:
     assert "[Anne Allison]" not in after, after
 
 
+def test_sweep_clean_consumes_unindented_block_list_remnant(tmp_path: Path) -> None:
+    """Pre-existing block-list authors written at column 0 must be fully
+    consumed when replaced — no stale `- ...` line should leak below the new
+    authors block."""
+    project = tmp_path / "project"
+    fp = project / "vault" / "books" / "test-book-2020" / "00-overview.md"
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(
+        "---\n"
+        "type: book\n"
+        "title: Test Book\n"
+        "authors:\n"
+        "- '[[test-slug|Real Name]]'\n"
+        "- '[[other-slug|Other Name]]'\n"
+        "year: 2020\n"
+        "publisher: Test Press\n"
+        "category: monograph\n"
+        "---\n"
+        "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SWEEP_CLEAN), "--write"],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+    after = fp.read_text(encoding="utf-8")
+    # The old wikilinks should be fully consumed and replaced.
+    assert "[[test-slug" not in after, f"Old wikilink leaked:\n{after}"
+    assert "[[other-slug" not in after, f"Old wikilink leaked:\n{after}"
+    # The new block list should appear, no stale unindented items below it.
+    assert "authors:\n  - Real Name\n  - Other Name\nyear: 2020" in after, after
+
+
 # ─── source-tree grep guard ───────────────────────────────────────────────
 
 
@@ -128,12 +199,12 @@ def _flow_array_violations_in(text: str) -> list[tuple[int, str]]:
 
 
 def test_no_flow_arrays_in_agent_templates() -> None:
-    scan_files = [
-        PLUGIN_ROOT / "agents" / "analyse-agent.md",
-        PLUGIN_ROOT / "agents" / "synthesis-agent.md",
-        PLUGIN_ROOT / "agents" / "audit-agent.md",
-        PLUGIN_ROOT / "scripts" / "schemas" / "SPEC.md",
-    ]
+    """Scan every agent .md + the schema spec for unguarded flow-form arrays
+    on canonical list keys. Negative-example blocks marked with ❌/禁用/
+    wrong/错误 within the prior 6 lines are exempt."""
+    scan_files: list[Path] = sorted((PLUGIN_ROOT / "agents").glob("*.md"))
+    scan_files.append(PLUGIN_ROOT / "scripts" / "schemas" / "SPEC.md")
+
     violations: list[str] = []
     for path in scan_files:
         text = path.read_text(encoding="utf-8")
