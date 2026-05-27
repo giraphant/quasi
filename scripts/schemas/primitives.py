@@ -5,7 +5,7 @@ Each entity schema uses them à la carte.
 """
 
 from typing import Annotated
-from pydantic import Field, StringConstraints
+from pydantic import BeforeValidator, Field, StringConstraints
 
 # ─── 字符串原语 ─────────────────────────────────────────────
 
@@ -41,6 +41,16 @@ Rating = Annotated[int, Field(ge=1, le=5)]
 DOI = Annotated[
     str,
     StringConstraints(pattern=r"^10\.\d+/.+", strip_whitespace=True),
+]
+
+# ─── ISBN ─────────────────────────────────────────────
+
+# ISBN: 接受 int 或 str(YAML 未加引号时会被解析为 int),统一 coerce 为 str。
+# schema 不校验 ISBN-10/13 格式,留给 lint。
+ISBN = Annotated[
+    str,
+    BeforeValidator(lambda v: str(v) if isinstance(v, int) else v),
+    StringConstraints(strip_whitespace=True),
 ]
 
 # ─── 注意 ─────────────────────────────────────────────

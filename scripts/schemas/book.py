@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from .primitives import Name, Title, ShortString, Year, Rating, DOI
+from .primitives import Name, Title, ShortString, Year, Rating, DOI, ISBN
 
 
 class BookSchema(BaseModel):
@@ -33,9 +33,9 @@ class BookSchema(BaseModel):
     )
 
     # ─── 唯一识别码 + 类别 ───────────────────────────────────
-    isbn: Optional[str] = Field(
+    isbn: Optional[ISBN] = Field(
         default=None,
-        description="ISBN;schema 不强制格式,lint 单独检查",
+        description="ISBN;接受 int|str,coerce 为 str;格式校验留给 lint",
     )
     doi: Optional[DOI] = Field(default=None)
     category: Literal["monograph", "edited-volume", "handbook", "other"] = Field(
