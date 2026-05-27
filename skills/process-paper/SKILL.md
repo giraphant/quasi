@@ -34,6 +34,8 @@ description: >
 - `search-agent` 只返回 `picked/candidates/localisations`,不写文件。picked 的 `oa_url`/`url` 传给 download-agent。
 - `download-agent` 负责 fetch + inspect + accept,成功后返回稳定 `sources/{slug}.pdf` 或 `sources/{slug}.txt`。PDF 优先;ScienceDirect PDF 被浏览器中间页拦住时允许 `.txt` 正文兜底。接收 `oa_url`/`url` 作为 hint URL。
 - `analyse-agent` 只写 `vault/papers/{slug}.md`;输入可为 `.pdf` 或 `.txt`;audit escalated 时由本 skill 触发一次重做。
+- `analyse-agent` 按 paper 目标结构写出完整分析和可靠 metadata。
+- 事实 metadata (`title/authors/year/journal/doi`) 必须由 search/frontmatter/PDF 证据传入或核读获得。
 
 ## 硬约束
 
@@ -152,6 +154,11 @@ reason:  audit escalated {item.kind}: {item.reason}
     audit = Agent("quasi:audit-agent", foreground=True, prompt=f"path: {output_path}")
     if audit.audit_result.escalated:
         report(f"audit still escalated for {output_path} after one regeneration pass"); return
+
+# Step 3: OPEN IN MARPLE (best-effort UX)
+# Open the final paper page if Marple CLI is available. This must never fail the workflow;
+# on failure, print the manual command and continue.
+Bash(f"/opt/homebrew/bin/marple-cli open '{output_path}' || marple-cli open '{output_path}' || echo 'Marple open skipped; run: marple-cli open {output_path}'")
 ```
 
 ## 断点续跑

@@ -26,6 +26,7 @@ description: >
 - `download-agent` 只获取本轮 paper PDF;本 skill 写 `pdf_path/status/failure_note`。
 - `analyse-agent` 每篇论文一个 background worker;引用提取和 dedupe 由主进程完成。
 - `synthesis-agent` 只写最终 topic synthesis / reading list。
+- 论文分析 agent 写出可靠 metadata、完整分析和可解析引用段落；本 workflow 在 AUDIT 阶段统一运行 audit-agent。
 
 ## 硬约束
 
@@ -79,8 +80,17 @@ output_dir: sources/
         return
 
     Agent("quasi:analyse-agent", foreground=True,
-          prompt=f"type: B, input: {seed_item['path']}, "
-                 f"output: vault/topics/{topic_slug}/seed.md, topic: {topic_desc}")
+          prompt=f"""\
+type: B
+title: {seed_meta.title}
+authors: {seed_meta.authors}
+year: {seed_meta.year}
+journal: {seed_meta.journal}
+doi: {seed}
+input: {seed_item['path']}
+output: vault/topics/{topic_slug}/seed.md
+topic: {topic_desc}
+""")
 
     analysis = Read(f"vault/topics/{topic_slug}/seed.md")
     citations = parse_citation_section(analysis)
@@ -165,8 +175,17 @@ output_dir: sources/
     acquired = get_acquired(manifest, round_num)
     for paper in acquired:
         Agent("quasi:analyse-agent", background=True,
-              prompt=f"type: B, input: {paper.pdf_path}, "
-                     f"output: vault/topics/{topic_slug}/{paper.key}.md, topic: {topic_desc}")
+              prompt=f"""\
+type: B
+title: {paper.title}
+authors: {paper.authors}
+year: {paper.year}
+journal: {paper.journal}
+doi: {paper.doi}
+input: {paper.pdf_path}
+output: vault/topics/{topic_slug}/{paper.key}.md
+topic: {topic_desc}
+""")
 
     while not all_analyzed:
         sleep(30)
@@ -188,9 +207,9 @@ if not exists(f"vault/topics/{topic_slug}-synthesis.md"):
                  f"output_path: vault/topics/{topic_slug}-synthesis.md, "
                  f"reading_list_path: vault/topics/{topic_slug}-reading-list.md, topic: ...")
 
-# TYPECHECK
-# 校验 + 修复本次滚雪球产出的所有 paper 分析(在 vault/topics/{slug}/ 下)。
-# synthesis.md 自身不打 type,不在 schema 校验范围内 —— typecheck 只扫子目录里的论文。
+# AUDIT
+# 对本次滚雪球产出的所有 paper 分析(在 vault/topics/{slug}/ 下)运行 audit-agent。
+# synthesis.md 自身不打 type,不在 schema 校验范围内 —— audit 只扫子目录里的论文。
 audit = Agent("quasi:audit-agent", foreground=True,
               prompt=f"path: vault/topics/{topic_slug}/")
 
@@ -201,15 +220,31 @@ if audit.audit_result.escalated:
             report(f"audit escalated unknown topic paper path: {item.path}")
             continue
         Agent("quasi:analyse-agent", foreground=True,
-              prompt=f"type: B, input: {paper.pdf_path}, "
-                     f"output: {item.path}, topic: {topic_desc}\n"
-                     f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+              prompt=f"""\
+type: B
+title: {paper.title}
+authors: {paper.authors}
+year: {paper.year}
+journal: {paper.journal}
+doi: {paper.doi}
+input: {paper.pdf_path}
+output: {item.path}
+topic: {topic_desc}
+overwrite: true
+reason: audit escalated {item.kind}: {item.reason}
+""")
 
     audit = Agent("quasi:audit-agent", foreground=True,
                   prompt=f"path: vault/topics/{topic_slug}/")
     if audit.audit_result.escalated:
         report("audit still has escalated topic items after one regeneration pass")
         return
+
+# OPEN IN MARPLE (best-effort UX)
+# Open the final topic synthesis page. The reading list path is reported but not
+# opened by default. This must never fail the workflow.
+final_page = f"vault/topics/{topic_slug}-synthesis.md"
+Bash(f"/opt/homebrew/bin/marple-cli open '{final_page}' || marple-cli open '{final_page}' || echo 'Marple open skipped; run: marple-cli open {final_page}'")
 ```
 
 ## 状态
@@ -247,7 +282,7 @@ Status enum:
 | Phase 0 | `manifest.json` | 存在则跳过 |
 | Phase N | `rounds_completed >= N` | 跳过已完成轮次 |
 | FINAL | `synthesis.md` | 存在则跳过 |
-| TYPECHECK | 无 —— 幂等,可重复跑 | 上次 typecheck clean 时几乎无成本 |
+| AUDIT | 无 —— 幂等,可重复跑 | 上次 audit clean 时几乎无成本 |
 
 ## 输出
 

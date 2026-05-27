@@ -26,6 +26,7 @@ description: >
 - manifest `status` 控制 downstream phase;warning 字段不能替代可消费状态。
 - 书籍子流程必须保持和 `process-book` 的 chapter manifest / output 命名一致。
 - 本 skill 允许跨书/论文 background fan-out,但同一文件只能由一个 agent 写。
+- analyse/synthesis 按目标类型产出语义完整、metadata 可靠的 Markdown；本 workflow 在 Phase 6 统一运行 audit-agent。
 
 ## 硬约束
 
@@ -227,8 +228,19 @@ for ch in all_chapters:
     # chapter_label: 由 slot + title 推导的人类可读标签（"第3章" / "前言" / "后记" / "第2章（附）"）
     if not exists(ch.output_path):
         Agent("quasi:analyse-agent", background=True,
-              prompt=f"type: A, book_title: ..., slot: {ch.slot}, chapter_label: ..., "
-                     f"input: ..., output: ..., topic: ...")
+              prompt=f"""\
+type: A
+book_slug: {book.slug}
+book_title: {book.title}
+slot: {ch.slot}
+chapter_label: {ch.chapter_label}
+chapter_title: {ch.title}
+year: {book.year}
+chapter_authors: {ch.authors or book.authors}
+input: processing/chapters/{book.slug}/{ch.filename}
+output: {ch.output_path}
+topic: {topic}
+""")
 
 while not all_done:
     sleep(30)
@@ -246,8 +258,17 @@ for paper in manifest.papers where status == "acquired":
     output_path = f"vault/papers/{paper.slug}.md"
     if not exists(output_path):
         Agent("quasi:analyse-agent", background=True,
-              prompt=f"type: B, title: ..., doi: ..., input: ..., "
-                     f"output: {output_path}, topic: ...")
+              prompt=f"""\
+type: B
+title: {paper.title}
+authors: {paper.authors}
+year: {paper.year}
+journal: {paper.journal}
+doi: {paper.doi}
+input: {paper.local_path}
+output: {output_path}
+topic: {topic}
+""")
 
 while not all_papers_done:
     sleep(30)
@@ -263,7 +284,7 @@ if not exists(profile_path):
                  f"book_overview_paths: {book_overview_paths}\npaper_paths: {paper_paths}")
 
 # 6. AUDIT
-# 校验 + 修复所有本次生成的文件,在源头止住 schema 漂移。
+# 对本次生成文件运行 audit-agent。
 # 每个 path 一个独立 Agent() 调用,顺序前台跑(audit-agent 单文件 ~30-60s)。
 audit_targets = [profile_path]
 for b in acquired_books:
@@ -294,16 +315,37 @@ for path in audit_targets:
             elif "/vault/books/" in p and "/ch" in basename(p):
                 b, ch = find_book_chapter_for_output(acquired_books, p)
                 Agent("quasi:analyse-agent", foreground=True,
-                      prompt=f"type: A, book_title: {b.title}, slot: {ch.slot}, chapter_label: {chapter_label}, "
-                             f"input: processing/chapters/{b.slug}/{ch.filename}, "
-                             f"output: {p}, topic: ...\n"
-                             f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+                      prompt=f"""\
+type: A
+book_slug: {b.slug}
+book_title: {b.title}
+slot: {ch.slot}
+chapter_label: {ch.chapter_label}
+chapter_title: {ch.title}
+year: {b.year}
+chapter_authors: {ch.authors or b.authors}
+input: processing/chapters/{b.slug}/{ch.filename}
+output: {p}
+topic: {topic}
+overwrite: true
+reason: audit escalated {item.kind}: {item.reason}
+""")
             elif "/vault/papers/" in p:
                 paper = find_manifest_paper_for_output(manifest, p)
                 Agent("quasi:analyse-agent", foreground=True,
-                      prompt=f"type: B, title: {paper.title}, doi: {paper.doi}, "
-                             f"input: {paper.local_path}, output: {p}, topic: ...\n"
-                             f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+                      prompt=f"""\
+type: B
+title: {paper.title}
+authors: {paper.authors}
+year: {paper.year}
+journal: {paper.journal}
+doi: {paper.doi}
+input: {paper.local_path}
+output: {p}
+topic: {topic}
+overwrite: true
+reason: audit escalated {item.kind}: {item.reason}
+""")
             else:
                 report(f"audit escalated unknown author-processing path: {p}")
 
@@ -327,6 +369,11 @@ for b in acquired_books:
     Bash("quasi-helpers localise write "
          f"--book-path vault/books/{b.slug}/00-overview.md "
          f"--candidates-file {candidates_file}")
+
+# 8. OPEN IN MARPLE (best-effort UX)
+# Open the final author profile. This must never fail the workflow; on failure,
+# print the manual command and continue.
+Bash(f"/opt/homebrew/bin/marple-cli open '{profile_path}' || marple-cli open '{profile_path}' || echo 'Marple open skipped; run: marple-cli open {profile_path}'")
 ```
 
 ## 状态
@@ -358,7 +405,7 @@ Paper status:
 | Phase 3c | `00-overview.md` | 存在则跳过该书 |
 | Phase 4 | `vault/papers/{paper.slug}.md` | 存在则跳过 |
 | Phase 5 | `vault/authors/{author-name}.md` | 存在则跳过 |
-| Phase 6 | 无 —— 幂等,可重复跑 | 上次 typecheck clean 时几乎无成本 |
+| Phase 6 | 无 —— 幂等,可重复跑 | 上次 audit clean 时几乎无成本 |
 | Phase 7 | `.quasi/localise/cndouban.json#by_isbn[isbn]` | 已存在 entry(status found/none)则 helper scan 跳过 |
 
 ## 输出

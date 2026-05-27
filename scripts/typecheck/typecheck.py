@@ -51,6 +51,19 @@ FM_RE = re.compile(r"^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$")
 H2_RE = re.compile(r"^## (?!#)(.+?)\s*$")
 H3_RE = re.compile(r"^### (?!#)")
 ANY_H_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def fence_open_marker(line: str) -> tuple[str, int] | None:
+    match = FENCE_OPEN_RE.match(line.rstrip("\r\n"))
+    if not match:
+        return None
+    marker = match.group(1)
+    return marker[0], len(marker)
+
+
+def is_fence_close(line: str, fence_char: str, fence_len: int) -> bool:
+    return re.match(rf"^ {{0,3}}{re.escape(fence_char)}{{{fence_len},}}\s*$", line.rstrip("\r\n")) is not None
 
 
 def split_frontmatter(text: str) -> tuple[dict | None, str]:
@@ -70,20 +83,30 @@ def extract_h2_sections(body: str) -> list[tuple[str, list[str]]]:
     """Return list of (heading, lines_under_heading_until_next_h2)."""
     sections: list[tuple[str, list[str]]] = []
     current: tuple[str, list[str]] | None = None
-    in_code = False
+    fence_char = ""
+    fence_len = 0
     for line in body.split("\n"):
-        if line.startswith("```"):
-            in_code = not in_code
+        if fence_char:
+            if current is not None:
+                current[1].append(line)
+            if is_fence_close(line, fence_char, fence_len):
+                fence_char = ""
+                fence_len = 0
+            continue
+
+        marker = fence_open_marker(line)
+        if marker:
+            fence_char, fence_len = marker
             if current is not None:
                 current[1].append(line)
             continue
-        if not in_code:
-            m = H2_RE.match(line)
-            if m:
-                if current is not None:
-                    sections.append(current)
-                current = (m.group(1).strip(), [])
-                continue
+
+        m = H2_RE.match(line)
+        if m:
+            if current is not None:
+                sections.append(current)
+            current = (m.group(1).strip(), [])
+            continue
         if current is not None:
             current[1].append(line)
     if current is not None:
@@ -94,12 +117,17 @@ def extract_h2_sections(body: str) -> list[tuple[str, list[str]]]:
 def extract_all_headings(body: str) -> list[tuple[int, str]]:
     """Return list of (level, heading_text) for all H1..H6 in body, ignoring code blocks."""
     out: list[tuple[int, str]] = []
-    in_code = False
+    fence_char = ""
+    fence_len = 0
     for line in body.split("\n"):
-        if line.startswith("```"):
-            in_code = not in_code
+        if fence_char:
+            if is_fence_close(line, fence_char, fence_len):
+                fence_char = ""
+                fence_len = 0
             continue
-        if in_code:
+        marker = fence_open_marker(line)
+        if marker:
+            fence_char, fence_len = marker
             continue
         m = ANY_H_RE.match(line)
         if m:
@@ -151,12 +179,17 @@ def detect_kind(lines: list[str]) -> str:
         return "empty"
 
     counts: Counter[str] = Counter()
-    in_code = False
+    fence_char = ""
+    fence_len = 0
     for line in cleaned:
-        if line.startswith("```"):
-            in_code = not in_code
+        if fence_char:
+            if is_fence_close(line, fence_char, fence_len):
+                fence_char = ""
+                fence_len = 0
             continue
-        if in_code:
+        marker = fence_open_marker(line)
+        if marker:
+            fence_char, fence_len = marker
             continue
         if re.match(r"^[-*]\s+", line):
             counts["bullet-list"] += 1

@@ -39,6 +39,7 @@ description: >
   (`slot/title/filename/word_count`)。
 - `analyse-agent` 每章一个 background worker,不得合并多章。
 - `synthesis-agent` 只写 `00-overview.md`;audit escalated 由本 skill 路由回生成阶段。
+- 生成类 agent 按目标类型写出完整分析和可靠 metadata；本 workflow 在 Step 5 统一运行 audit-agent。
 
 ## 硬约束
 
@@ -159,9 +160,19 @@ output_dir = f"vault/books/{book_slug}"
 for ch in selected:
     if not exists(f"{output_dir}/ch{ch.slot}-{ch.slug}.md"):
         Agent("quasi:analyse-agent", background=True,
-              prompt=f"type: A, book_title: ..., slot: {ch.slot}, chapter_label: {chapter_label}, "
-                     f"input: {chapters_dir}/{ch.filename}, "
-                     f"output: {output_dir}/ch{ch.slot}-{ch.slug}.md, topic: ...")
+              prompt=f"""\
+type: A
+book_slug: {book_slug}
+book_title: {book_meta.title}
+slot: {ch.slot}
+chapter_label: {ch.chapter_label}
+chapter_title: {ch.title}
+year: {book_meta.year}
+chapter_authors: {ch.authors or book_meta.authors}
+input: {chapters_dir}/{ch.filename}
+output: {output_dir}/ch{ch.slot}-{ch.slug}.md
+topic: {request.topic or ''}
+""")
 
 while Glob(f"{output_dir}/ch*.md").count < len(selected):
     sleep(30)
@@ -172,7 +183,7 @@ if not exists(f"{output_dir}/00-overview.md"):
           prompt=f"mode: book\noutput_dir: {output_dir}\nbook_title: ...\ntopic: ...")
 
 # Step 5: AUDIT
-# 校验 + 修复整本书目录(overview + 所有章节),在源头止住 schema 漂移。
+# 对整本书目录(overview + 所有章节)运行 audit-agent。
 audit = Agent("quasi:audit-agent", foreground=True,
               prompt=f"path: {output_dir}")
 
@@ -188,10 +199,21 @@ if audit.audit_result.escalated:
         elif basename(path).startswith("ch"):
             ch = find_manifest_chapter_for_output(manifest, path)
             Agent("quasi:analyse-agent", foreground=True,
-                  prompt=f"type: A, book_title: ..., slot: {ch.slot}, chapter_label: {chapter_label}, "
-                         f"input: {chapters_dir}/{ch.filename}, "
-                         f"output: {path}, topic: ...\n"
-                         f"overwrite: true\nreason: audit escalated {item.kind}: {item.reason}")
+                  prompt=f"""\
+type: A
+book_slug: {book_slug}
+book_title: {book_meta.title}
+slot: {ch.slot}
+chapter_label: {ch.chapter_label}
+chapter_title: {ch.title}
+year: {book_meta.year}
+chapter_authors: {ch.authors or book_meta.authors}
+input: {chapters_dir}/{ch.filename}
+output: {path}
+topic: {request.topic or ''}
+overwrite: true
+reason: audit escalated {item.kind}: {item.reason}
+""")
         else:
             report(f"audit escalated unknown book path: {path}")
 
@@ -214,7 +236,13 @@ if localise_scan.pending > 0:
          f"--book-path {output_dir}/00-overview.md "
          f"--candidates-file {candidates_file}")
 
-print(f"Done: {len(selected)} chapters, overview generated, typechecked, localised")
+# Step 7: OPEN IN MARPLE (best-effort UX)
+# The book page is the overview. This must never fail the workflow; on failure,
+# print the manual command and continue.
+final_page = f"{output_dir}/00-overview.md"
+Bash(f"/opt/homebrew/bin/marple-cli open '{final_page}' || marple-cli open '{final_page}' || echo 'Marple open skipped; run: marple-cli open {final_page}'")
+
+print(f"Done: {len(selected)} chapters, overview generated, audited, localised")
 ```
 
 ## 断点续跑

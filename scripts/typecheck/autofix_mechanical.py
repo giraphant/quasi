@@ -97,6 +97,19 @@ VAULT_DEFAULT = PROJECT_ROOT / "vault"
 
 FM_RE = re.compile(r"^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$")
 ANY_H_RE = re.compile(r"^(#{1,6})(\s+)(.+?)\s*$")
+FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def fence_open_marker(line: str) -> tuple[str, int] | None:
+    match = FENCE_OPEN_RE.match(line.rstrip("\r\n"))
+    if not match:
+        return None
+    marker = match.group(1)
+    return marker[0], len(marker)
+
+
+def is_fence_close(line: str, fence_char: str, fence_len: int) -> bool:
+    return re.match(rf"^ {{0,3}}{re.escape(fence_char)}{{{fence_len},}}\s*$", line.rstrip("\r\n")) is not None
 
 
 # ─── frontmatter fixes ─────────────────────────────────────────
@@ -344,13 +357,20 @@ def rename_h2_aliases(body: str, body_schema: BodySchema) -> tuple[str, list[str
     """Rewrite H2 alias headings to canonical names."""
     changes: list[str] = []
     out_lines: list[str] = []
-    in_code = False
+    fence_char = ""
+    fence_len = 0
     for line in body.split("\n"):
-        if line.startswith("```"):
-            in_code = not in_code
-            out_lines.append(line); continue
-        if in_code:
-            out_lines.append(line); continue
+        if fence_char:
+            out_lines.append(line)
+            if is_fence_close(line, fence_char, fence_len):
+                fence_char = ""
+                fence_len = 0
+            continue
+        marker = fence_open_marker(line)
+        if marker:
+            fence_char, fence_len = marker
+            out_lines.append(line)
+            continue
         m = re.match(r"^## (?!#)(.+?)\s*$", line)
         if not m:
             out_lines.append(line); continue

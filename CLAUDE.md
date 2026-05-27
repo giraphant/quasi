@@ -137,6 +137,18 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.36.2** (2026-05-27): **Audit emits diagnostic-first repair contracts.**
+  - `quasi-audit --path` now returns per-file `diagnostics[]` with explicit
+    `status`, `action`, and location fields instead of the older
+    `llm_editable` / `escalated` buckets.
+  - Mechanical audit fixes report their own diagnostics, including QUA-108
+    frontmatter flow-array to block-list rewrites and CJK body quote cleanup
+    that skips frontmatter, code, links, and wiki aliases.
+  - `audit-agent` now follows the diagnostics contract directly, applying only
+    the actions the audit runner declares safe and escalating everything else.
+  - `process-book`, `process-paper`, `process-author`, and `process-topic` now
+    best-effort open the final Marple page after successful completion.
+
 - **0.36.1** (2026-05-21): **Wrap-up citation review uses four-card AskUserQuestion rounds.**
   - `wrap-up` Phase 2.4 now tells the main process to show a short queue
     summary, expand at most four review cards, and collect the current round's
