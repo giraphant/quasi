@@ -201,3 +201,65 @@ def test_audit_rejects_removed_subcommands(tmp_path: Path):
 
     assert result.returncode == 2
     assert "unrecognized arguments: run" in result.stderr
+
+
+def test_audit_field_report_markdown_is_opt_in_and_read_only(tmp_path: Path):
+    project = tmp_path / "project"
+    paper = project / "vault" / "papers" / "flow-array.md"
+    write_paper(
+        paper,
+        """type: paper
+title: Flow Array Paper
+authors: [Aryn Martin, Donna Haraway]
+year: 2020
+journal: Endeavour
+themes: [chimerism, feminist technoscience]""",
+    )
+    original = paper.read_text(encoding="utf-8")
+
+    result = run_audit(project, "--path", "vault", "--report", "fields")
+
+    assert result.returncode == 0, result.stderr
+    assert "# Frontmatter field distribution" in result.stdout
+    assert "## Type: paper" in result.stdout
+    assert "| `authors` | 1 | 100.0% | `vault/papers/flow-array.md` |" in result.stdout
+    assert paper.read_text(encoding="utf-8") == original
+    assert not (project / ".quasi" / "audit" / "typecheck-results.json").exists()
+
+
+def test_audit_field_report_json_outputs_stable_payload(tmp_path: Path):
+    project = tmp_path / "project"
+    paper = project / "vault" / "papers" / "stable-payload.md"
+    write_paper(
+        paper,
+        """type: paper
+title: Stable Payload Paper
+authors:
+- Aryn Martin
+year: 2020
+journal: Endeavour
+themes:
+- chimerism""",
+    )
+
+    result = run_audit(project, "--path", "vault", "--report", "fields", "--format", "json")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["version"] == "quasi-audit.frontmatter-fields.v1"
+    assert payload["target"]["requested"] == "vault"
+    assert payload["target"]["exists"] is True
+    assert payload["summary"]["files_scanned"] == 1
+    assert payload["types"]["paper"]["files"] == 1
+    assert payload["types"]["paper"]["fields"]["title"]["coverage"] == 1.0
+
+
+def test_audit_field_report_missing_path_returns_two(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = run_audit(project, "--path", "vault", "--report", "fields")
+
+    assert result.returncode == 2
+    assert "# Frontmatter field distribution" in result.stdout
+    assert "path does not exist" in result.stdout

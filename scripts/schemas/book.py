@@ -11,13 +11,13 @@ from __future__ import annotations
 from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from .primitives import Name, Title, ShortString, Year, Rating
+from .primitives import Name, Title, ShortString, Year, Rating, DOI
 
 
 class BookSchema(BaseModel):
     """Analytical overview of a book. Aligns with BibTeX @book / @collection."""
 
-    model_config = ConfigDict(extra="allow", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     type: Literal["book"]
 
@@ -37,6 +37,7 @@ class BookSchema(BaseModel):
         default=None,
         description="ISBN;schema 不强制格式,lint 单独检查",
     )
+    doi: Optional[DOI] = Field(default=None)
     category: Literal["monograph", "edited-volume", "handbook", "other"] = Field(
         default="monograph",
         description="书籍类别;BibTeX export 时驱动 @book vs @collection + author vs editor",

@@ -1,17 +1,5 @@
 """quasi-vault schema definitions (Pydantic V2 + dataclasses).
 
-Frontmatter schemas (Pydantic):
-    AuthorSchema · BookSchema · ChapterSchema · PaperSchema
-
-Body schemas (dataclass):
-    AUTHOR_BODY · BOOK_BODY · CHAPTER_BODY · PAPER_BODY
-
-Registry:
-    TYPE_REGISTRY    — canonical type → (frontmatter schema, body schema)
-    TYPE_ALIASES     — old type names → canonical
-    canonical_type() — string → canonical | None
-    schema_for_type() — string → (schemas) | None
-
 See SPEC.md for the spec; this module is its executable form.
 """
 
@@ -19,7 +7,11 @@ from .primitives import Name, Title, ShortString, Year, Rating, DOI
 from .author import AuthorSchema
 from .book import BookSchema
 from .chapter import ChapterSchema
+from .image import ImageSchema
+from .journal import JournalSchema
+from .note import NoteSchema
 from .paper import PaperSchema
+from .topic import TopicSchema
 from .body import (
     BlockKind,
     BodySection,
@@ -27,12 +19,18 @@ from .body import (
     AUTHOR_BODY,
     BOOK_BODY,
     CHAPTER_BODY,
+    IMAGE_BODY,
+    JOURNAL_BODY,
+    NOTE_BODY,
     PAPER_BODY,
+    TOPIC_BODY,
 )
 from .registry import (
     TYPE_REGISTRY,
     TYPE_ALIASES,
+    DEPRECATED_TYPE_ALIASES,
     canonical_type,
+    deprecated_canonical_type,
     schema_for_type,
 )
 
@@ -40,13 +38,15 @@ __all__ = [
     # primitives
     "Name", "Title", "ShortString", "Year", "Rating", "DOI",
     # frontmatter schemas
-    "AuthorSchema", "BookSchema", "ChapterSchema", "PaperSchema",
+    "AuthorSchema", "BookSchema", "ChapterSchema",
+    "ImageSchema", "JournalSchema", "NoteSchema", "PaperSchema", "TopicSchema",
     # body
     "BlockKind", "BodySection", "BodySchema",
-    "AUTHOR_BODY", "BOOK_BODY", "CHAPTER_BODY", "PAPER_BODY",
+    "AUTHOR_BODY", "BOOK_BODY", "CHAPTER_BODY",
+    "IMAGE_BODY", "JOURNAL_BODY", "NOTE_BODY", "PAPER_BODY", "TOPIC_BODY",
     # registry
-    "TYPE_REGISTRY", "TYPE_ALIASES",
-    "canonical_type", "schema_for_type",
+    "TYPE_REGISTRY", "TYPE_ALIASES", "DEPRECATED_TYPE_ALIASES",
+    "canonical_type", "deprecated_canonical_type", "schema_for_type",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

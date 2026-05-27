@@ -54,6 +54,7 @@ from schemas import (  # noqa: E402
     BodySchema,
     TYPE_REGISTRY,
     canonical_type,
+    deprecated_canonical_type,
     schema_for_type,
 )
 
@@ -217,8 +218,8 @@ def fix_frontmatter(fm: dict, raw_type: str | None, file_path: Path) -> tuple[di
     changes: list[str] = []
     out = dict(fm)
 
-    # 1. Canonicalize type.
-    canon = canonical_type(raw_type)
+    # 1. Canonicalize deprecated type aliases only in this migration tool.
+    canon = canonical_type(raw_type) or deprecated_canonical_type(raw_type)
     if canon and raw_type != canon:
         out["type"] = canon
         changes.append(f"type: {raw_type!r} → {canon!r}")
@@ -405,14 +406,14 @@ def fix_file(path: Path) -> tuple[str, list[str]] | None:
         return None
     body = m.group(2)
     raw_type = fm.get("type")
-    canon = canonical_type(raw_type)
+    canon = canonical_type(raw_type) or deprecated_canonical_type(raw_type)
     if canon is None:
         return None  # unknown / no type: skip
 
     new_fm, fm_changes = fix_frontmatter(fm, raw_type, path)
     body_changes: list[str] = []
 
-    schemas = schema_for_type(raw_type)
+    schemas = schema_for_type(canon)
     if schemas:
         _, body_schema = schemas
         body, alias_changes = rename_h2_aliases(body, body_schema)

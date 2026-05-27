@@ -305,3 +305,9 @@ PAPER_BODY = BodySchema(
         ),
     ],
 )
+
+
+TOPIC_BODY = BodySchema(type_name="topic", sections=[])
+JOURNAL_BODY = BodySchema(type_name="journal", sections=[])
+NOTE_BODY = BodySchema(type_name="note", sections=[])
+IMAGE_BODY = BodySchema(type_name="image", sections=[])

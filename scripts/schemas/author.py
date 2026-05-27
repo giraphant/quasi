@@ -15,12 +15,7 @@ from .primitives import Name, Rating
 class AuthorSchema(BaseModel):
     """Profile of a scholar. One file per author."""
 
-    model_config = ConfigDict(
-        # Phase 1: 允许未知字段(只 warn);Phase 3 改为 'forbid' 严格化
-        extra="allow",
-        # 严格类型(不自动 coerce):'STS' 不会被当成 list[str]
-        strict=True,
-    )
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     type: Literal["author"] = Field(
         description="类型判别符,固定为字面量 'author'"

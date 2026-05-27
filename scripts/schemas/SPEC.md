@@ -1,9 +1,9 @@
 # quasi-vault Schema Specification
 
 ```
-Version : 0.1.0-draft
-Status  : 评审中 — 待用户拍板后冻结,作为后续 lint / autofix / 生成约定的事实标准
-Last    : 2026-05-11
+Version : 0.3.0
+Status  : active — canonical schema source for lint / autofix / generation
+Last    : 2026-05-27
 ```
 
 ## 0. 文档定位
@@ -22,23 +22,25 @@ Last    : 2026-05-11
 
 ## 1. 类型系统总览
 
-vault 中的"实体文档"使用 5 个 canonical type:
+vault 中的被打 `type` 文档使用 8 个 canonical type。短名是唯一合法 schema;旧的长名(`paper-analysis` / `book-overview` / `chapter-summary` / `author-profile` 等)只作为 deprecated diagnostics 或 migration input,不再是合法 type。
 
-| `type`    | 实体                  | 主要路径                                 | 当前数量 | 当前命名 |
-| --------- | --------------------- | ---------------------------------------- | -------- | -------- |
-| `author`  | 学者档案              | `vault/authors/<slug>.md`                | 229      | `author-profile` |
-| `book`    | 一本书的整体分析      | `vault/books/<slug>/00-overview.md`      | 779      | `book-overview` |
-| `chapter` | 书的一个章节分析      | `vault/books/<slug>/chXX-*.md`           | 8093     | `chapter-summary` |
-| `paper`   | 论文分析(含期刊文章)  | `vault/papers/*.md` & `vault/journals/*/<doi>.md` | 1651 | `paper-analysis` / `journal-article-analysis` |
-| `journal` | 期刊档案              | `vault/journals/<slug>/00-profile.md`(待建) | 0       | (将由 `journal-synthesis` 升级或新建) |
+| `type`    | 文档                  | 主要路径                                 | 当前数量 |
+| --------- | --------------------- | ---------------------------------------- | -------- |
+| `author`  | 学者档案              | `vault/authors/<slug>.md`                | 312 |
+| `book`    | 一本书的整体分析      | `vault/books/<slug>/00-overview.md`      | 1067 |
+| `chapter` | 书的一个章节分析      | `vault/books/<slug>/chXX-*.md`           | 11956 |
+| `paper`   | 期刊论文分析          | `vault/papers/*.md`                      | 2244 |
+| `journal` | 期刊 overview/resources 页面 | `vault/journals/<slug>/{00-overview,01-resources}.md` | 11 |
+| `topic`   | 主题 overview/resources 页面 | `vault/topics/<slug>/{00-overview,01-resources}.md` | 12 |
+| `note`    | 自由笔记或批注        | `vault/notes/*.md`                       | 18 |
+| `image`   | 本地图片对象 metadata | `vault/images/<slug>/image.md`           | 8 |
 
 ### 不在 type 体系内
 
-下列文档**不打 `type`,作为自由格式存在**,reader 仍展示但不参与 schema 校验:
+下列文档仍作为自由格式存在,reader 可展示但不参与 schema 校验:
 
-- `topic-synthesis` 8 条(在 `vault/topics/`):跨实体的研究综合,语义不属于"实体"轴
-- `vault/journals/<slug>/00-scan.md`:原始扫描报告,机器生成,非分析输出
-- `vault/.obsidian/` / `.makemd/` 等编辑器配置(已自然跳过)
+- `vault/.obsidian/` / `.makemd/` 等编辑器配置
+- 未带 frontmatter 或未带 `type` 的临时草稿
 
 ## 2. 共享原语 (`primitives.py`)
 
@@ -181,7 +183,7 @@ export const BookSchema = z.object({
   rating:    Rating.optional(),                   // number 1..5
 });
 // chapters_analyzed 不存在 schema —— reader 从子章节 count 派生
-// topic 不存在 schema —— 工作流分组通过 themes / topic-synthesis 表达
+// book frontmatter 不写 topic —— 跨实体综合使用独立的 topic overview/resources 页面
 // edition / note 删除 —— rare,有需要时用 markdown 正文表达
 ```
 
@@ -230,7 +232,7 @@ rating: 5
 - **保留并 canonical 化**:`title` / `author` / `year` / `themes` / `rating` / `publisher`
 - **新增字段**:`isbn`、`category`(默认 monograph)
 - **删除字段**(原有但不再保留):
-  - `topic`(84% 在用)—— 工作流字段,通过 themes / topic-synthesis 表达
+  - `topic`(旧工作流字段)—— book frontmatter 不写 topic;跨实体综合使用独立的 topic overview/resources 页面
   - `chapters_analyzed`(83% 在用)—— reader 从子章节 count 派生
   - `edition`(1 条)—— rare,需要时写 note
   - `source`(70 条)—— 与 title 信息重叠
@@ -365,41 +367,148 @@ doi: "10.1215/9780822393047-001"
 
 ### 3.5 `journal`
 
-**新增类型**。期刊档案(`vault/journals/<slug>/00-profile.md`)。
-
-> 第一阶段不强制为现有 12 个期刊目录创建 profile。Schema 落地、其他 type 稳定后再决定是否运行 `process-journal` agent 批量生成。
+期刊目录下的 overview/resources 页面。它不是 profile schema;扫描结果、阅读清单、候选论文等内容留在正文 H2 里。
 
 ```ts
 export const JournalSchema = z.object({
-  type:           z.literal('journal'),
-  title:          Title,                          // 期刊全名
-  themes:         Themes.optional(),              // 期刊主题范围
-  rating:         Rating.optional(),              // 期刊整体相关度
-  papers_scanned: z.number().int().nonnegative().optional(),  // 已扫描文章数
-  papers_kept:    z.number().int().nonnegative().optional(),  // 入库文章数
-});
+  type:    z.literal('journal'),
+  kind:    z.enum(['overview', 'resources']),
+  journal: z.string().min(2),
+}).strict();
 ```
 
-**示例**(假设):
+**示例 — overview**:
 
 ```yaml
 ---
 type: journal
-title: "British Journal of Sociology"
-themes:
-  - sociology
-  - social-theory
-  - uk-academia
-rating: 3
-papers_scanned: 852
-papers_kept: 16
+kind: overview
+journal: British Journal of Sociology
 ---
 ```
 
-**与现状差异**:
-- 目前 8 条 `journal-synthesis` 可考虑迁移为 `journal`(或保留为 free-form synthesis)
-- 12 个期刊目录中其他 `00-synthesis.md` 文件按需迁移
-- **第一阶段**:schema 定义就位但不迁移,等 SPEC 其余部分稳定再启动
+**示例 — resources**:
+
+```yaml
+---
+type: journal
+kind: resources
+journal: British Journal of Sociology
+---
+```
+
+**规则**:
+- `kind` 只允许 `overview` / `resources`
+- frontmatter 只允许 `type` / `kind` / `journal`
+- `journal-synthesis` 等旧 type 只作为 deprecated diagnostics,不参与正常 schema 识别
+
+---
+
+### 3.6 `topic`
+
+主题目录下的 overview/resources 页面。研究问题、阅读清单、滚雪球结果和过程记录放在正文 H2 中,不拆成新的 frontmatter `kind`。
+
+```ts
+export const TopicSchema = z.object({
+  type:  z.literal('topic'),
+  kind:  z.enum(['overview', 'resources']),
+  topic: z.string().min(2),
+}).strict();
+```
+
+**示例 — overview**:
+
+```yaml
+---
+type: topic
+kind: overview
+topic: 密码学的社会建构
+---
+```
+
+**示例 — resources**:
+
+```yaml
+---
+type: topic
+kind: resources
+topic: 密码学的社会建构
+---
+```
+
+**规则**:
+- `kind` 只允许 `overview` / `resources`
+- frontmatter 只允许 `type` / `kind` / `topic`
+- `topic-synthesis` / `reading-list` / `research-note` 等旧 type 只作为 deprecated diagnostics,不参与正常 schema 识别
+
+---
+
+### 3.7 `note`
+
+自由笔记或批注。批注用 `annotates` 指向被批注的 vault 文档;普通想法笔记可省略。
+
+```ts
+export const NoteSchema = z.object({
+  type:      z.literal('note'),
+  title:     Title,
+  created:   z.coerce.date(),
+  annotates: z.string().optional(),
+  themes:    Themes.optional(),
+}).strict();
+```
+
+**示例 — 批注**:
+
+```yaml
+---
+type: note
+title: 对《English and American Tool Builders》的批注
+annotates: vault/books/roe-english-american-tool-builders-1916/00-overview.md
+created: 2026-05-27
+---
+```
+
+**示例 — 自由笔记**:
+
+```yaml
+---
+type: note
+title: Sociology of Gap
+created: 2026-05-23
+---
+```
+
+**规则**:
+- frontmatter 只允许 `type` / `title` / `created` / `annotates` / `themes`
+- `themes` 为空时整行省略,不要写 `themes: []`
+- 正文自由格式,不校验 H2 schema
+
+---
+
+### 3.8 `image`
+
+本地图片对象 metadata。图片文件本身不进 frontmatter,由路径约定 `vault/images/<slug>/image.md` 旁边的 `original.<ext>` 表示。
+
+```ts
+export const ImageSchema = z.object({
+  type:  z.literal('image'),
+  title: Title,
+}).strict();
+```
+
+**示例**:
+
+```yaml
+---
+type: image
+title: Micrometer
+---
+```
+
+**规则**:
+- frontmatter 只允许 `type` / `title`
+- 原图路径由目录约定派生,不写进 frontmatter
+- 正文自由格式,不校验 H2 schema
 
 ## 4. Body Schemas(正文结构 schema)
 
@@ -652,9 +761,9 @@ reader 看 frontmatter type 决定如何渲染同名 H2。
 - **Q3 author 的 year/source 删除**:8% / 7% 非空率,语义不明,保留是噪音
 - **Q4 孤儿字段一律删**:仅出现于 <2% 文档的字段视为 LLM 临场漂移,无消费方
 - **Q5 .strict() 分三阶段**:一刀切会让 vault 100% 红
-- **Q6 topic 暂不入 type 体系**:研究问题 ≠ 实体,先保留为自由文档
+- **Q6 topic 入 type 体系但保持轻量**:`type: topic` 只校验 overview/resources 页面的最小 frontmatter;研究内容放正文
 - **Q7 primitives.py 保留**:不是继承基类,是值层验证器;现规模不必 inline
-- **Q8 journal 第一阶段不迁移**:type 定义就位但目录不动,稳定其余 4 个 type 后再决定
+- **Q8 journal 入 type 体系但保持轻量**:`type: journal` 只校验 overview/resources 页面的最小 frontmatter;扫描统计放正文
 - **Q9 author.title → name**:author 是"人"实体,用 name 比 title 语义对路;
   跨 type 的"展示名"由 reader 侧 `entry.displayName` accessor 统一(`name || title`)
 - **Q10 authors 永远数组**:消费端代码无需 `typeof author === 'string' ? ... : author.map(...)`
@@ -672,12 +781,14 @@ reader 看 frontmatter type 决定如何渲染同名 H2。
 
 LLM 生成新文档时**应当**:
 
-1. `type` 字段必须是 4 个 canonical 之一(`author` / `book` / `chapter` / `paper`)
+1. `type` 字段必须是 8 个 canonical 之一(`author` / `book` / `chapter` / `paper` / `topic` / `journal` / `note` / `image`)
 2. 必填字段一定填(参考各 type 的 required 列表)
 3. 不引入新字段,除非已经在 SPEC 中
 4. **rating 用数字 1..5,不是 ★ 字符串**(reader 渲染层负责显示 ★)
 5. themes 用 hyphen-joined 形式(`affect-theory` 不是 `affect theory`)
 6. **authors 永远是数组**(单作者也用 block list 单元素,不是 scalar);见 §5.2
+7. topic / journal 只写 `kind: overview` 或 `kind: resources`,不要发明 workflow-stage kind
+8. note / image 正文自由;frontmatter 只写 schema 明确列出的轻量字段
 
 **Body 约定**:
 1. 必填 H2 全部生成,**用 SPEC 列的 canonical 4 字标题**,不要发明同义变体
@@ -694,12 +805,12 @@ LLM 生成新文档时**应当**:
 **已完成**(✓):
 
 - ✓ `schemas/primitives.py` 实现(Pydantic V2)
-- ✓ `schemas/{author,book,chapter,paper,body,registry,__init__}.py` 实现
+- ✓ `schemas/{author,book,chapter,paper,topic,journal,note,image,body,registry,__init__}.py` 实现
 - ✓ `scripts/typecheck/typecheck.py` —— 校验器
 - ✓ `scripts/typecheck/autofix_mechanical.py` —— Layer 1 机械修复
 - ✓ `bin/quasi-typecheck` + `bin/quasi-autofix-mechanical` —— shim 命令
 - ✓ `agents/typecheck-agent.md` —— 自包含 agent
-- ✓ 端到端测试:4 个不同 type 的文件全部 clean
+- ✓ 端到端测试:8 个 canonical type 的 schema 行为覆盖
 
 **待办**(按依赖排序):
 
@@ -712,4 +823,4 @@ LLM 生成新文档时**应当**:
 
 ---
 
-**冻结条件**:用户审阅本 SPEC,确认 5 个 type 形状、primitives 选择、删除字段清单。冻结后这份文档为后续所有工作的事实标准;之后修改需走"先改 SPEC、再改实现"的顺序。
+**冻结条件**:用户审阅本 SPEC,确认 8 个 type 形状、primitives 选择、删除字段清单。冻结后这份文档为后续所有工作的事实标准;之后修改需走"先改 SPEC、再改实现"的顺序。

@@ -36,6 +36,7 @@ from core import project_root  # noqa: E402
 from schemas import (  # noqa: E402
     BodySchema,
     canonical_type,
+    deprecated_canonical_type,
     schema_for_type,
 )
 
@@ -220,6 +221,8 @@ def detect_kind(lines: list[str]) -> str:
 
 def check_body(body: str, body_schema: BodySchema) -> list[dict]:
     violations: list[dict] = []
+    if not body_schema.sections:
+        return violations
 
     # ─── Global heading-level drift: entire doc shifted down ─────
     global_offset = detect_global_level_drift(body)
@@ -331,14 +334,19 @@ def check_file(path: Path) -> dict:
     result["type"] = canon
 
     if canon is None:
-        result["frontmatter_errors"].append({
-            "type": "unknown_type",
-            "raw_type": raw_type,
-        })
+        deprecated = deprecated_canonical_type(raw_type)
+        if deprecated:
+            result["frontmatter_errors"].append({
+                "type": "deprecated_type",
+                "raw_type": raw_type,
+                "canonical_type": deprecated,
+            })
+        else:
+            result["frontmatter_errors"].append({
+                "type": "unknown_type",
+                "raw_type": raw_type,
+            })
         return result
-
-    if raw_type != canon:
-        result["type_rename"] = {"from": raw_type, "to": canon}
 
     schemas = schema_for_type(raw_type)
     if not schemas:
@@ -360,7 +368,7 @@ def check_file(path: Path) -> dict:
 # ─── report rendering ──────────────────────────────────────────
 
 
-TYPE_ORDER = ["author", "book", "chapter", "paper", "unknown"]
+TYPE_ORDER = ["author", "book", "chapter", "paper", "topic", "journal", "note", "image", "unknown"]
 
 
 def build_report(stats: dict, total_files: int) -> str:
@@ -370,10 +378,10 @@ def build_report(stats: dict, total_files: int) -> str:
         f"Generated: {datetime.now(timezone.utc).isoformat()}Z",
         f"Total files scanned: {total_files}",
         "",
-        "Per-type summary(clean = 0 frontmatter errors + 0 body violations + no type rename):",
+        "Per-type summary(clean = 0 frontmatter errors + 0 body violations):",
         "",
-        "| Type | Total | Clean | Type rename | FM errors | Body violations |",
-        "|---|---:|---:|---:|---:|---:|",
+        "| Type | Total | Clean | FM errors | Body violations |",
+        "|---|---:|---:|---:|---:|",
     ]
     for t in TYPE_ORDER:
         s = stats.get(t)
@@ -382,7 +390,6 @@ def build_report(stats: dict, total_files: int) -> str:
         lines.append(
             f"| `{t}` | {s['total']} | {s['clean']} "
             f"({s['clean'] / s['total'] * 100:.0f}%) "
-            f"| {s['type_rename_needed']} "
             f"| {s['fm_errors_total']} | {s['body_errors_total']} |"
         )
     lines.append("")
@@ -528,8 +535,7 @@ def run_typecheck(target: Path, *, quiet: bool = False, write_report: bool = Tru
                 f"  {t:10} {s['total']:6}  "
                 f"clean: {s['clean']:6} ({clean_pct:4.0f}%)  "
                 f"fm_err: {s['fm_errors_total']:6}  "
-                f"body_err: {s['body_errors_total']:6}  "
-                f"type_rename: {s['type_rename_needed']:6}"
+                f"body_err: {s['body_errors_total']:6}"
             )
         rel_out = OUT_DIR.relative_to(PROJECT_ROOT) if OUT_DIR.is_relative_to(PROJECT_ROOT) else OUT_DIR
         if write_report:

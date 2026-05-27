@@ -20,7 +20,7 @@ from .primitives import Name, Title, ShortString, Year, Rating, DOI
 class PaperSchema(BaseModel):
     """A journal article analysis."""
 
-    model_config = ConfigDict(extra="allow", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     type: Literal["paper"]
 

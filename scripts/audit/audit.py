@@ -511,10 +511,25 @@ def _run_audit(argv: list[str]) -> int:
         description="Run diagnostic-first vault audit for agents.",
     )
     ap.add_argument("--path", default="vault", help="File or directory to audit")
+    ap.add_argument("--report", choices=["fields"], help="Run an explicit read-only report instead of the default diagnostic audit")
+    ap.add_argument("--format", choices=["markdown", "json"], help="Output format for --report fields")
     args = ap.parse_args(argv)
+
+    if args.format is not None and args.report is None:
+        ap.error("--format requires --report fields")
 
     root = _project_root()
     target = _resolve_target(args.path, root)
+
+    if args.report == "fields":
+        fd_mod = _load("quasi_audit_field_distribution_run", "scripts/audit/field_distribution.py")
+        return fd_mod.run_fields_report(
+            requested_path=args.path,
+            target=target,
+            root=root,
+            output_format=args.format or "markdown",
+        )
+
     if not target.exists():
         print_json({
             "version": "quasi-audit.diagnostics.v1",
