@@ -137,6 +137,12 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.36.3** (2026-05-28): **Schema accepts numeric ISBNs and audit reports strict fields.**
+  - `BookSchema.isbn` now accepts `int | str` input and coerces ISBN values to
+    strings, so numeric YAML/JSON ISBNs validate instead of failing type checks.
+  - `quasi-audit --path` now surfaces strict frontmatter field diagnostics for
+    schema fields that need maintainer attention.
+
 - **0.36.2** (2026-05-27): **Audit emits diagnostic-first repair contracts.**
   - `quasi-audit --path` now returns per-file `diagnostics[]` with explicit
     `status`, `action`, and location fields instead of the older
