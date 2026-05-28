@@ -521,6 +521,12 @@ def _run_audit(argv: list[str]) -> int:
     root = _project_root()
     target = _resolve_target(args.path, root)
 
+    # Refresh the vault's self-describing schema snapshot (.quasi/schema.json)
+    # on every run so external readers (Marple) can check conformance natively.
+    # Idempotent: only rewrites when the schema actually changed (QUA-97).
+    emit_mod = _load("quasi_audit_emit_schema", "scripts/audit/emit_schema.py")
+    emit_mod.write_snapshot(root)
+
     if args.report == "fields":
         fd_mod = _load("quasi_audit_field_distribution_run", "scripts/audit/field_distribution.py")
         return fd_mod.run_fields_report(
