@@ -63,6 +63,13 @@
       "title": "Kagi session token",
       "description": "Kagi Session Link URL or raw session token for Douban Chinese-edition discovery. Stored in the system keychain and passed to kagi-cli as KAGI_SESSION_TOKEN.",
       "sensitive": true
+    },
+    "superset_agent": {
+      "type": "string",
+      "title": "Superset agent",
+      "description": "Agent name passed to superset agents run --agent for delegated quasi workflows. Leave empty to use copilot.",
+      "default": "copilot",
+      "sensitive": true
     }
   }
 }

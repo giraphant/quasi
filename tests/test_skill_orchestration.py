@@ -156,3 +156,11 @@ def test_process_paper_accepts_pdf_preferred_text_source_contract():
     assert "sources/{slug}.txt" in text
     assert "source_file" in text
     assert "source_pdf" not in text
+
+
+def test_process_topic_superset_agent_uses_shell_default_contract():
+    text = (PLUGIN_ROOT / "skills" / "process-topic" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert '--agent "${{QUASI_SUPERSET_AGENT:-copilot}}"' in text
+    assert "superset_agent = env" not in text
+    assert "--agent claude" not in text

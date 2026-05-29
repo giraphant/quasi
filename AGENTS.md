@@ -39,7 +39,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 - Claude Code injects configured values into hook/MCP/LSP/monitor subprocesses as `CLAUDE_PLUGIN_OPTION_<KEY>`.
 - Bash tool subprocesses do not receive those variables directly.
 - `hooks/hooks.json` registers a `PreToolUse` Bash hook that runs `scripts/hooks/inject-userconfig.py`.
-- For commands containing a bare `quasi-` word, the hook prepends `export ...;` with `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and each configured `QUASI_<KEY>`.
+- For commands containing a bare `quasi-` word, the hook prepends `export ...;` with `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and each configured `QUASI_<KEY>`; for `superset agents run`, it prepends only the configured `QUASI_SUPERSET_AGENT`.
 - Scripts read only `QUASI_*` service variables, not `CLAUDE_PLUGIN_OPTION_*`.
 - Kagi is special only at the subprocess edge: quasi reads `QUASI_KAGI_SESSION_TOKEN` and maps it to `KAGI_SESSION_TOKEN` for `kagi` CLI calls.
 - Do not document a Configure option as current unless it exists in `plugin.json#userConfig` and is forwarded by `_KEYS`.
@@ -56,6 +56,7 @@ Current userConfig mapping:
 | `cookiecloud_ezproxy_base_url` | `CLAUDE_PLUGIN_OPTION_COOKIECLOUD_EZPROXY_BASE_URL` | `QUASI_COOKIECLOUD_EZPROXY_BASE_URL` | `scripts/download/cookiecloud.py` |
 | `immersive_auth_key` | `CLAUDE_PLUGIN_OPTION_IMMERSIVE_AUTH_KEY` | `QUASI_IMMERSIVE_AUTH_KEY` | `scripts/translate/immersive_translate.py` |
 | `kagi_session_token` | `CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN` | `QUASI_KAGI_SESSION_TOKEN` | `scripts/search/search.py`, `scripts/search/sources/douban_cn.py`, `scripts/download/download.py` |
+| `superset_agent` | `CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT` | `QUASI_SUPERSET_AGENT` | `skills/process-topic/SKILL.md` |
 
 ### State and handoff contracts
 

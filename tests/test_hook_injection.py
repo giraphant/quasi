@@ -94,3 +94,83 @@ def test_hook_keeps_quasi_user_config_injection():
     assert "QUASI_KAGI_SESSION_TOKEN=session-token" in updated
     assert "CLAUDE_PLUGIN_ROOT=/plugin/root" in updated
     assert "CLAUDE_PLUGIN_DATA=/plugin/data" in updated
+
+
+def test_hook_injects_superset_agent_for_superset_agent_runs():
+    out = run_hook(
+        "superset agents run --workspace \"$SUPERSET_WORKSPACE_ID\" --prompt 'Run /quasi:process-paper' --json --quiet",
+        {
+            "CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT": "copilot",
+            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
+            "CLAUDE_PLUGIN_DATA": "/plugin/data",
+        },
+    )
+
+    updated = out["hookSpecificOutput"]["updatedInput"]["command"]
+    assert "QUASI_SUPERSET_AGENT=copilot" in updated
+    assert "superset agents run --workspace" in updated
+
+
+def test_hook_limits_superset_agent_runs_to_superset_agent_config():
+    out = run_hook(
+        "superset agents run --workspace \"$SUPERSET_WORKSPACE_ID\" --prompt 'Run /quasi:process-paper' --json --quiet",
+        {
+            "CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT": "copilot",
+            "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
+            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
+            "CLAUDE_PLUGIN_DATA": "/plugin/data",
+        },
+    )
+
+    updated = out["hookSpecificOutput"]["updatedInput"]["command"]
+    assert "QUASI_SUPERSET_AGENT=copilot" in updated
+    assert "QUASI_KAGI_SESSION_TOKEN" not in updated
+
+
+def test_hook_limits_superset_agent_runs_even_when_prompt_contains_quasi_command_text():
+    out = run_hook(
+        "superset agents run --workspace \"$SUPERSET_WORKSPACE_ID\" --prompt 'Run quasi-search and /quasi:process-paper' --json --quiet",
+        {
+            "CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT": "copilot",
+            "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
+            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
+            "CLAUDE_PLUGIN_DATA": "/plugin/data",
+        },
+    )
+
+    updated = out["hookSpecificOutput"]["updatedInput"]["command"]
+    assert "QUASI_SUPERSET_AGENT=copilot" in updated
+    assert "QUASI_KAGI_SESSION_TOKEN" not in updated
+
+
+def test_hook_injects_all_config_for_compound_superset_then_quasi_command():
+    out = run_hook(
+        "superset agents run --workspace \"$SUPERSET_WORKSPACE_ID\" --json --quiet && quasi-search book --title X",
+        {
+            "CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT": "copilot",
+            "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
+            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
+            "CLAUDE_PLUGIN_DATA": "/plugin/data",
+        },
+    )
+
+    updated = out["hookSpecificOutput"]["updatedInput"]["command"]
+    assert "QUASI_SUPERSET_AGENT=copilot" in updated
+    assert "QUASI_KAGI_SESSION_TOKEN=session-token" in updated
+
+
+def test_hook_ignores_quoted_quasi_command_text_without_target_command():
+    payload = {"tool_input": {"command": "echo 'Run quasi-search and superset agents run later'"}}
+    result = subprocess.run(
+        [sys.executable, str(HOOK)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        env={
+            "CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT": "copilot",
+            "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
+        },
+        check=True,
+    )
+
+    assert result.stdout == ""

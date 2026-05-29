@@ -8,8 +8,9 @@ processes. Bash tool subprocesses do NOT get those env vars.
 
 This hook bridges that gap. It runs in the hook subprocess (which does get
 the env), inspects the Bash command Claude is about to run, and — for
-`quasi-*` commands only — prepends a `QUASI_<KEY>='<value>' ...` env
-prefix to the command. Non-quasi commands pass through untouched.
+`quasi-*` commands — prepends a `QUASI_<KEY>='<value>' ...` env prefix to
+the command. Superset agent dispatches get only the Superset-specific option.
+Other commands pass through untouched.
 
 Net effect: quasi scripts can `os.environ['QUASI_X']` and get the values
 the user set at plugin install time, including sensitive ones stored in
@@ -36,12 +37,41 @@ _KEYS = [
     "COOKIECLOUD_EZPROXY_BASE_URL",
     "IMMERSIVE_AUTH_KEY",
     "KAGI_SESSION_TOKEN",
+    "SUPERSET_AGENT",
 ]
+_SUPERSET_KEYS = ["SUPERSET_AGENT"]
 
-# Match `quasi-` as a bare command word: at start of line/string or after
-# a shell separator (whitespace, ;, &, |, &&, ||, etc.). Avoids matching
-# substrings inside paths or quoted strings.
+# Match command words at start of line/string or after shell separators.
+# Detection runs against text with quoted spans blanked out, so prompt text like
+# `--prompt 'Run quasi-search'` does not trigger broad config injection.
 _QUASI_CMD = re.compile(r"(?:^|[\s;&|`(])quasi-")
+_SUPERSET_AGENTS_RUN = re.compile(r"(?:^|[\s;&|`(])superset\s+agents\s+run(?:$|[\s;&|`)])")
+
+
+def _blank_quoted_spans(cmd: str) -> str:
+    chars = list(cmd)
+    quote: str | None = None
+    escaped = False
+    for i, ch in enumerate(chars):
+        if escaped:
+            if quote:
+                chars[i] = " "
+            escaped = False
+            continue
+        if ch == "\\" and quote != "'":
+            if quote:
+                chars[i] = " "
+            escaped = True
+            continue
+        if quote:
+            chars[i] = " "
+            if ch == quote:
+                quote = None
+            continue
+        if ch in {"'", '"'}:
+            chars[i] = " "
+            quote = ch
+    return "".join(chars)
 
 
 def main() -> None:
@@ -51,9 +81,13 @@ def main() -> None:
         return
 
     cmd = payload.get("tool_input", {}).get("command", "")
-    if not cmd or not _QUASI_CMD.search(cmd):
+    unquoted_cmd = _blank_quoted_spans(cmd)
+    is_quasi = bool(_QUASI_CMD.search(unquoted_cmd))
+    is_superset_agents_run = bool(_SUPERSET_AGENTS_RUN.search(unquoted_cmd))
+    if not cmd or not (is_quasi or is_superset_agents_run):
         return
 
+    keys = _KEYS if is_quasi else _SUPERSET_KEYS
     exports: list[str] = []
 
     # Propagate the plugin path vars too: Bash-tool subprocesses don't inherit
@@ -66,7 +100,7 @@ def main() -> None:
         if val:
             exports.append(f"{plugin_var}={shlex.quote(val)}")
 
-    for key in _KEYS:
+    for key in keys:
         val = os.environ.get(f"CLAUDE_PLUGIN_OPTION_{key}", "").strip()
         if val:
             exports.append(f"QUASI_{key}={shlex.quote(val)}")

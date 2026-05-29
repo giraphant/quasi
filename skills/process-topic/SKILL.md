@@ -30,6 +30,7 @@ description: >
 - **禁止用 TaskOutput 检查委派出去的 agent**:会卡住。**必须用 Glob 轮询 vault 产物**
   (`vault/papers/{slug}.md` / `vault/books/{slug}/00-overview.md`)判完成。
 - **每个条目独立 dispatch 一次** `superset agents run`:一篇 paper / 一本 book = 一次委派。
+- **Superset agent 可配置**:从 `QUASI_SUPERSET_AGENT` 读取 `--agent`,为空时默认 `copilot`。
 - **不囤副本**:topic 目录下不放任何论文 / 书的分析 `.md`,只放 manifest + 索引页。
 - **并发上限 ~5**:同 workspace 同时 fire 的委派 agent 不超过 5 个。
 - **Dispatcher context 卫生**:Glob 轮询只看完成数 vs 总数,不逐一列举文件名;委派完成通知是
@@ -91,7 +92,7 @@ status enum:
 │    主进程判断: 搜不到/非结构化 → 自行 kagi + dokobot
 │    → 候选写 manifest.items (status=discovered)
 ├─ Phase 1-N  SNOWBALL
-│    每个 discovered 条目: superset agents run --agent claude
+│    每个 discovered 条目: superset agents run --agent ${QUASI_SUPERSET_AGENT:-copilot}
 │      (跑 /quasi:process-paper|book) → 异步 fire (并发 ~5)
 │    Glob 轮询 vault 产物判完成 → status=analysed
 │    读各条目核心理论段 → 取引用 → dedupe 进 manifest (新 round, source=citation)
@@ -111,7 +112,6 @@ workspace = env("SUPERSET_WORKSPACE_ID")
 if not workspace:
     report("SUPERSET_WORKSPACE_ID 未注入;process-topic 需在 superset 会话内运行。停止。")
     return
-
 topic_dir = f"vault/topics/{topic_slug}"
 manifest_path = f"{topic_dir}/manifest.json"
 MAX_ROUNDS = 5
@@ -129,7 +129,7 @@ def dispatch_item(slug, item):
            else f"vault/books/{slug}/00-overview.md")
     Bash(f"""superset agents run \
   --workspace "$SUPERSET_WORKSPACE_ID" \
-  --agent claude \
+  --agent "${{QUASI_SUPERSET_AGENT:-copilot}}" \
   --prompt {shquote(ask + f" Write {out}; tag frontmatter topics: [{topic_slug}]; report final path + status.")} \
   --json --quiet""")
     item["status"] = "processing"
