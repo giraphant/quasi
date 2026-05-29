@@ -36,4 +36,8 @@ class PaperSchema(BaseModel):
 
     # ─── 可选 ─────────────────────────────────────────────
     doi: Optional[DOI] = Field(default=None)
+    topics: list[str] = Field(
+        default_factory=list,
+        description="所属 topic 语料的 slug 数组;供前端按成员反查;允许空",
+    )
     rating: Optional[Rating] = Field(default=None)

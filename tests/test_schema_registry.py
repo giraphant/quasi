@@ -251,6 +251,62 @@ def test_analysis_schemas_reject_extra_fields_and_chapter_doi() -> None:
         })
 
 
+def test_entities_accept_topics_membership_field() -> None:
+    author_schema, _ = registry.schema_for_type("author")
+    book_schema, _ = registry.schema_for_type("book")
+    chapter_schema, _ = registry.schema_for_type("chapter")
+    paper_schema, _ = registry.schema_for_type("paper")
+
+    author = author_schema.model_validate({
+        "type": "author",
+        "name": "Aryn Martin",
+        "topics": ["social-construction-cryptography"],
+    })
+    assert author.topics == ["social-construction-cryptography"]
+
+    book = book_schema.model_validate({
+        "type": "book",
+        "title": "Test Book",
+        "authors": ["Aryn Martin"],
+        "year": 2020,
+        "publisher": "Test Press",
+        "topics": ["smartphone-repair", "iphone-proprietary-screws"],
+    })
+    assert book.topics == ["smartphone-repair", "iphone-proprietary-screws"]
+
+    chapter = chapter_schema.model_validate({
+        "type": "chapter",
+        "title": "Test Chapter",
+        "authors": ["Aryn Martin"],
+        "year": 2020,
+        "book": "test-book-2020",
+        "topics": ["smartphone-repair"],
+    })
+    assert chapter.topics == ["smartphone-repair"]
+
+    paper = paper_schema.model_validate({
+        "type": "paper",
+        "title": "Test Paper",
+        "authors": ["Aryn Martin"],
+        "year": 2020,
+        "journal": "Test Journal",
+        "themes": ["test"],
+        "topics": ["smartphone-repair"],
+    })
+    assert paper.topics == ["smartphone-repair"]
+
+    # topics is optional: omitting it yields an empty list, never an error.
+    bare = paper_schema.model_validate({
+        "type": "paper",
+        "title": "Test Paper",
+        "authors": ["Aryn Martin"],
+        "year": 2020,
+        "journal": "Test Journal",
+        "themes": ["test"],
+    })
+    assert bare.topics == []
+
+
 def test_typecheck_allows_freeform_note_and_image_bodies(tmp_path: Path) -> None:
     note_fp = tmp_path / "note.md"
     note_fp.write_text(

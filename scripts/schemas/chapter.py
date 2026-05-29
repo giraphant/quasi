@@ -40,4 +40,8 @@ class ChapterSchema(BaseModel):
         default_factory=list,
         description="章节级主题;允许空(章节经常没有独立主题标签)",
     )
+    topics: list[str] = Field(
+        default_factory=list,
+        description="所属 topic 语料的 slug 数组;供前端按成员反查;允许空",
+    )
     rating: Optional[Rating] = Field(default=None)

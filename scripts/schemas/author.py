@@ -29,6 +29,10 @@ class AuthorSchema(BaseModel):
         default_factory=list,
         description="研究方向标签数组;允许空但 lint warn '0 themes 可能漏写'",
     )
+    topics: list[str] = Field(
+        default_factory=list,
+        description="所属 topic 语料的 slug 数组;供前端按成员反查;允许空",
+    )
 
     rating: Optional[Rating] = Field(
         default=None,
