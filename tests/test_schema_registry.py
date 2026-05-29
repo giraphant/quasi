@@ -47,12 +47,10 @@ def test_topic_and_journal_validate_lightweight_frontmatter() -> None:
     topic_schema.model_validate({
         "type": "topic",
         "kind": "overview",
-        "topic": "密码学的社会建构",
     })
     topic_schema.model_validate({
         "type": "topic",
         "kind": "resources",
-        "topic": "密码学的社会建构",
     })
     journal_schema.model_validate({
         "type": "journal",
@@ -79,6 +77,11 @@ def test_topic_and_journal_reject_extra_fields_and_old_kind_values() -> None:
         topic_schema.model_validate({
             "type": "topic",
             "kind": "reading-list",
+        })
+    with pytest.raises(ValidationError):
+        topic_schema.model_validate({
+            "type": "topic",
+            "kind": "overview",
             "topic": "密码学的社会建构",
         })
     with pytest.raises(ValidationError):
@@ -96,7 +99,6 @@ def test_typecheck_allows_freeform_topic_and_journal_bodies(tmp_path: Path) -> N
         "---\n"
         "type: topic\n"
         "kind: overview\n"
-        "topic: 密码学的社会建构\n"
         "---\n"
         "\n"
         "# 密码学的社会建构\n"

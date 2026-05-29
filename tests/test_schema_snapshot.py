@@ -28,7 +28,7 @@ EXPECTED_REQUIRED = {
     "journal": ["kind", "journal"],
     "note": ["title", "created"],
     "paper": ["title", "authors", "year", "journal", "themes"],
-    "topic": ["kind", "topic"],
+    "topic": ["kind"],
 }
 
 
