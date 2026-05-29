@@ -1,11 +1,9 @@
 ---
 name: quasi:process-paper
-description: >
-  Use when the user wants to search, download, and analyse a single academic
-  paper from a DOI, title, author, or existing source file.
+description: Use when the user wants to search, download, and analyse a single academic paper from a DOI, title, author, or existing source file.
 ---
 
-# Process Paper — 单论文处理
+# Process Paper — 论文处理
 
 ## 任务
 

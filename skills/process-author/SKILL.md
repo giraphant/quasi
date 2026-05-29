@@ -1,8 +1,6 @@
 ---
-name: quasi:process-author
-description: >
-  Use when the user wants to build an author profile from a scholar's
-  representative books and papers.
+name: quasi: process-author
+description: Use when the user wants to build an author profile from a scholar's representative books and papers.
 ---
 
 # Process Author — 作者处理

@@ -1,15 +1,13 @@
 ---
 name: quasi:process-topic
-description: >
-  Use when the user wants to build a navigable topic review and reading-list
-  index over the vault from a research question, theme, or optional seed paper.
+description: Use when the user wants to build a navigable topic review and reading-list index over the vault from a research question, theme, or optional seed paper.
 ---
 
-# Process Topic — 主题综述 + 阅读清单索引
+# Process Topic — 话题处理
 
 ## 任务
 
-把一个主题构建成 vault 上可导航的综述 + 阅读清单索引。
+用滚雪球（snowball）研究法来发现与梳理文献脉络。
 
 ## 输入
 
@@ -21,20 +19,14 @@ description: >
 
 ## 硬约束
 
-- **运行时依赖 superset**:per-item 处理用 `superset agents run` 委派整条
-  process-paper / process-book。`$SUPERSET_WORKSPACE_ID` 由会话注入;**缺失即报错并停**,
-  不要用 `superset workspaces list --local` 猜(可能命中错误 worktree / 分支)。
-- **不用 in-harness Agent 工具委派 per-item 管线**:被 spawn 的 subagent 是叶子层,拿不到
-  Agent 工具、无法再嵌套。整条 process-paper / process-book 必须经 `superset agents run`
-  这个 Bash 子进程委派给顶层 agent。
-- **禁止用 TaskOutput 检查委派出去的 agent**:会卡住。**必须用 Glob 轮询 vault 产物**
-  (`vault/papers/{slug}.md` / `vault/books/{slug}/00-overview.md`)判完成。
-- **每个条目独立 dispatch 一次** `superset agents run`:一篇 paper / 一本 book = 一次委派。
+- 不在主进程中调用 process-topic 之外的任何技能。不在主进程中调用 search-agent 之外的任何 agent。
+- 所有任务分派采用 **Superset CLI** 委托。处理用 `superset agents run` 委派整条 process-paper / process-book / process-author。`$SUPERSET_WORKSPACE_ID` 由会话注入;**缺失即报错并停**,不要用 `superset workspaces list --local` 猜(可能命中错误 worktree / 分支)。
+- **禁止用 TaskOutput 检查委派出去的 Super CLI 进程**:会卡住。**必须用 Glob 轮询 vault 产物** (`vault/papers/{slug}.md` / `vault/books/{slug}/00-overview.md`)判完成。
+- **每个条目独立 dispatch 一次** `superset agents run`:一篇 paper / 一本 book / 一位 author = 一次委派。
 - **Superset agent 可配置**:从 `QUASI_SUPERSET_AGENT` 读取 `--agent`,为空时默认 `copilot`。
 - **不囤副本**:topic 目录下不放任何论文 / 书的分析 `.md`,只放 manifest + 索引页。
 - **并发上限 ~5**:同 workspace 同时 fire 的委派 agent 不超过 5 个。
-- **Dispatcher context 卫生**:Glob 轮询只看完成数 vs 总数,不逐一列举文件名;委派完成通知是
-  冗余信息,收到无需额外处理;阶段间不回顾前序输出,关键状态都在磁盘 manifest 上。
+- **Dispatcher context 卫生**:Glob 轮询只看完成数 vs 总数,不逐一列举文件名;委派完成通知是冗余信息,收到无需额外处理;阶段间不回顾前序输出,关键状态都在磁盘 manifest 上。
 
 ## 状态
 
@@ -73,16 +65,6 @@ status enum:
 
 `round` 控制本轮扩展;`rounds_completed` 只在本轮全部 analysed + 引用提取完成后递增。
 
-## Agent / Helper 合同
-
-- `search-agent`(foreground)— 只补 metadata,本 skill 写回 manifest。
-- **per-item 委派**(`superset agents run`,**不是** Agent 工具)— 跑 `/quasi:process-paper`
-  或 `/quasi:process-book`,各自内部派 download / analyse / audit worker,落正常 vault 目录。
-- `synthesis-agent`(foreground,最终一次)— 写 `00-overview.md` + `01-resources.md`,
-  主进程判断是否生 `02+` 子页。
-- `audit-agent`(foreground,收尾)— 只校验 topic 页(`type: topic`);论文 / 书由各自
-  process-paper / book 内部审计,不在此重复。
-
 ## 工作流
 
 ```
@@ -95,11 +77,10 @@ status enum:
 │    每个 discovered 条目: superset agents run --agent ${QUASI_SUPERSET_AGENT:-copilot}
 │      (跑 /quasi:process-paper|book) → 异步 fire (并发 ~5)
 │    Glob 轮询 vault 产物判完成 → status=analysed
-│    读各条目核心理论段 → 取引用 → dedupe 进 manifest (新 round, source=citation)
+│    读各条目「核心引用」部分 → 取引用 → dedupe 进 manifest (新 round, source=citation)
 │    new_refs == 0 → 退出循环
 ├─ DEAD-END  RE-DISCOVER (用户闸门)
-│    轻信号提取 → AskUserQuestion 提议查询词
-│    → 拒 → FINAL;  选 → DISCOVER 新种子 → 回 SNOWBALL
+│    轻信号提取 → AskUserQuestion 提议查询词 → 拒 → FINAL;  选 → DISCOVER 新种子 → 回 SNOWBALL
 ├─ FINAL  synthesis-agent → 00-overview.md ([[wikilink]]) + 01-resources.md
 └─ AUDIT (topic 页) + Marple open (00-overview)
 ```

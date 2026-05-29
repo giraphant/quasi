@@ -1,8 +1,6 @@
 ---
 name: quasi:process-book
-description: >
-  Use when the user wants to process a book from title, author, ISBN, or source
-  file into chapter analyses and a book overview.
+description: Use when the user wants to process a book from title, author, ISBN, or source file into chapter analyses and a book overview.
 ---
 
 # Process Book — 书籍处理

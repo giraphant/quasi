@@ -1,8 +1,6 @@
 ---
-name: quasi:wrap-up
-description: >
-  Use when the user wants to finalise a draft by proofreading text and checking
-  citations, or clean up proofread records after review.
+name: quasi:process-draft
+description: Use when the user wants to finalise a draft by proofreading text and checking citations, or clean up proofread records after review.
 ---
 
 # Wrap-Up — 文章收尾
