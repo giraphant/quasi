@@ -1,7 +1,7 @@
 # quasi-vault Schema Specification
 
 ```
-Version : 0.3.0
+Version : 0.4.0
 Status  : active — canonical schema source for lint / autofix / generation
 Last    : 2026-05-27
 ```
