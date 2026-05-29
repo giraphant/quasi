@@ -138,6 +138,22 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.37.2** (2026-05-29): **Fix mechanical autofix stripping the `topics` support field.**
+  - 0.37.0 (QUA-36) added `topics` as an optional membership field on the
+    book / paper / chapter / author schemas and SPEC.md, but left `topics`
+    in `scripts/typecheck/autofix_mechanical.py::ORPHAN_FIELDS`. Mechanical
+    autofix therefore deleted the field as an orphan, undoing topic
+    membership written by `process-topic` (and any hand-added `topics`).
+  - Fix: removed `"topics"` from `ORPHAN_FIELDS`. The legacy singular
+    `"topic"` stays an orphan — SPEC keeps dropping it; membership lives on
+    the plural `topics` list. The schema field set and the orphan list were
+    never linked by a test, so the QUA-36 schema change shipped without
+    anything catching the mismatch.
+  - Regression guard: `tests/test_block_list_yaml.py::`
+    `test_autofix_keeps_topics_drops_singular_topic` feeds a fixture with
+    both `topic` and `topics` through autofix and asserts `topics` survives
+    while singular `topic` is dropped. Full suite 100 passing.
+
 - **0.37.1** (2026-05-29): **Configurable Superset agent for process-topic dispatch.**
   - New `superset_agent` userConfig option (default `copilot`) forwarded as
     `QUASI_SUPERSET_AGENT`; `process-topic` dispatches

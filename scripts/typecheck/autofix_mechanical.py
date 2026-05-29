@@ -168,8 +168,7 @@ ORPHAN_FIELDS = {
     "concepts",
     "round",
     "source_type",
-    "topic",
-    "topics",
+    "topic",  # singular legacy field — dropped per SPEC; plural `topics` is a kept support field
     "editors",
     "edition",
     "note",
