@@ -128,6 +128,7 @@ export const AuthorSchema = z.object({
   type:    z.literal('author'),
   name:    Name,                    // 作者全名,作为该 entity 的展示名
   themes:  Themes,                  // 研究方向标签
+  topics:  z.array(z.string()).optional(),  // 所属 topic 语料的 slug 数组(可选,默认 [])
   rating:  Rating.optional(),       // 整体学术评分(可选,数字 1..5)
 });
 // 不开 .strict() —— 迁移期保留未知字段为 lint warning
@@ -154,6 +155,7 @@ rating: 5
 - `type: author-profile` → `type: author`
 - **`title` → `name`**(author 是"人",用 name 更对路;跨 type 统一用 `entry.displayName` accessor)
 - **删除字段**:`author`(与 name 冗余;wikilink 由路径派生)、`year`(8% 非空)、`source`(7% 非空)、`has-profile`(3% 非空)
+- **新增字段**:`topics`(可选,默认 `[]`)——所属 topic 语料的 slug 数组,格式同 `themes`。供前端阅读器按「`topics` 包含 `<slug>`」反查 topic 成员;与 topic 页的 `[[wikilink]]` 互补(双向可达)。
 - **格式收紧**:rating ★ 字符串 → number(~10 条);themes 单字符串 → 数组(~5 条)
 
 ---
@@ -180,10 +182,10 @@ export const BookSchema = z.object({
 
   // 学术分析字段
   themes:    Themes.optional(),
+  topics:    z.array(z.string()).optional(),       // 所属 topic 语料的 slug 数组(可选,默认 [])
   rating:    Rating.optional(),                   // number 1..5
 });
 // chapters_analyzed 不存在 schema —— reader 从子章节 count 派生
-// book frontmatter 不写 topic —— 跨实体综合使用独立的 topic overview/resources 页面
 // edition / note 删除 —— rare,有需要时用 markdown 正文表达
 ```
 
@@ -232,10 +234,10 @@ rating: 5
 - **保留并 canonical 化**:`title` / `author` / `year` / `themes` / `rating` / `publisher`
 - **新增字段**:`isbn`、`category`(默认 monograph)
 - **删除字段**(原有但不再保留):
-  - `topic`(旧工作流字段)—— book frontmatter 不写 topic;跨实体综合使用独立的 topic overview/resources 页面
   - `chapters_analyzed`(83% 在用)—— reader 从子章节 count 派生
   - `edition`(1 条)—— rare,需要时写 note
   - `source`(70 条)—— 与 title 信息重叠
+- **新增字段**:`topics`(可选,默认 `[]`)——所属 topic 语料的 slug 数组,格式同 `themes`。供前端阅读器按「`topics` 包含 `<slug>`」反查 topic 成员;与 topic 页的 `[[wikilink]]` 互补(双向可达)。
 - **同义字段合并**(autofix):
   - `book_title` / `book_author` / `book_year` → `title` / `author` / `year`
   - `authors` → `author`
@@ -243,7 +245,7 @@ rating: 5
   - `tags` → `themes`
   - 9 个 `chapters_*` 变体 → 全删(派生)
 - **publisher 大量补全**:当前仅 6% 填,fix-agent 调 WorldCat / OpenAlex 批量补
-- **删除孤儿字段**:`has-overview` / `analyzed` / `confidence` / `selective_reading` / `selection_note` / `scope_note` / `source_file` / `source_note` / `source_type` / `slug` / `status` / `structure` / `version` / `supersedes` / `overall_rating` / `avg_relevance` / `chapters_missing` / `relevance` / `date` / `concepts` / `book` / `topics` —— 20+ 个 <1% 字段
+- **删除孤儿字段**:`has-overview` / `analyzed` / `confidence` / `selective_reading` / `selection_note` / `scope_note` / `source_file` / `source_note` / `source_type` / `slug` / `status` / `structure` / `version` / `supersedes` / `overall_rating` / `avg_relevance` / `chapters_missing` / `relevance` / `date` / `concepts` / `book` —— 20+ 个 <1% 字段
 
 ---
 
@@ -260,6 +262,7 @@ export const ChapterSchema = z.object({
   book:    z.string().min(2),                  // 父书 slug,如 "allison-nightwork-1994"
   doi:     z.string().regex(/^10\.\d+\//).optional(),  // 部分章节(尤其论文集里的)有 DOI
   themes:  Themes.optional(),                  // 章节级主题(31% 非空,可空)
+  topics:  z.array(z.string()).optional(),     // 所属 topic 语料的 slug 数组(可选,默认 [])
   rating:  Rating.optional(),                  // number 1..5
 });
 ```
@@ -294,9 +297,10 @@ rating: 1
   - `slot`(32% 在用)—— 字符串版章节序号,冗余
   - `relevance`(99% 填但有异常值)—— 数据 bug,语义不清
   - `book` / `book_title`(旧)—— 与新 `book` 字段(slug)冲突
-  - `chapter_title` / `chapter_label` / `chapter-author` / `editors` / `publisher` / `pages` / `tags` / `topic` / `topics` / `word_count_est` / `status` —— ~11 个孤儿字段
+  - `chapter_title` / `chapter_label` / `chapter-author` / `editors` / `publisher` / `pages` / `tags` / `topic` / `word_count_est` / `status` —— ~10 个孤儿字段(注:`topics` 已作为支持字段保留,见上方 schema)
 - **`year` 必填**:当前 100% 填,直接收紧
 - **`themes` 保持 optional**:章节级主题经常没有
+- **新增字段**:`topics`(可选,默认 `[]`)——所属 topic 语料的 slug 数组,格式同 `themes`。供前端阅读器按「`topics` 包含 `<slug>`」反查 topic 成员;与 topic 页的 `[[wikilink]]` 互补(双向可达)。
 
 ---
 
@@ -321,6 +325,7 @@ export const PaperSchema = z.object({
   journal: z.string().min(2),                   // 必填 —— paper = 期刊论文
   doi:     z.string().regex(/^10\.\d+\//).optional(),
   themes:  Themes,                              // 必填(论文应有主题)
+  topics:  z.array(z.string()).optional(),      // 所属 topic 语料的 slug 数组(可选,默认 [])
   rating:  Rating.optional(),                   // number 1..5
 });
 ```
@@ -358,7 +363,7 @@ doi: "10.1215/9780822393047-001"
   - `date` → `year`(50 条;需人工挑出"分析日期"误用)
   - `score` → `rating`(数字)
   - `paper_title` → `title`
-- **删除孤儿字段**(~15 个 <2%):`reviewed_book` / `reviewed_author` / `terminal` / `notes` / `note` / `status` / `volume` / `pages` / `citations` / `source_type` / `translators` / `round` / `concepts` / `topic` / `relevance`
+- **删除孤儿字段**(~14 个 <2%):`reviewed_book` / `reviewed_author` / `terminal` / `notes` / `note` / `status` / `volume` / `pages` / `citations` / `source_type` / `translators` / `round` / `concepts` / `relevance`(旧 `topic` 单数字段同样删除;复数 `topics` 作为支持字段保留,见上方 schema)
 - **doi 校验**:1614 条有 doi,空字符串和格式错的 lint 报告
 - **journal 大量补全**:当前只有 10% 显式 `journal` 字段;~140 条 `source: <书名>` 需要 review 决定迁去 chapter 还是改 journal
 - **themes hyphen-joined**:`"affect theory"` → `"affect-theory"`
@@ -412,7 +417,6 @@ journal: British Journal of Sociology
 export const TopicSchema = z.object({
   type:  z.literal('topic'),
   kind:  z.enum(['overview', 'resources']),
-  topic: z.string().min(2),
 }).strict();
 ```
 
@@ -422,7 +426,6 @@ export const TopicSchema = z.object({
 ---
 type: topic
 kind: overview
-topic: 密码学的社会建构
 ---
 ```
 
@@ -432,13 +435,13 @@ topic: 密码学的社会建构
 ---
 type: topic
 kind: resources
-topic: 密码学的社会建构
 ---
 ```
 
 **规则**:
 - `kind` 只允许 `overview` / `resources`
-- frontmatter 只允许 `type` / `kind` / `topic`
+- topic 页 frontmatter 只允许 `type` / `kind`。topic 页自包含(文件夹 slug + H1
+  确定身份),不写 `topic` 字段;主题成员关系反向挂在实体的 `topics: [slug]` 上。
 - `topic-synthesis` / `reading-list` / `research-note` 等旧 type 只作为 deprecated diagnostics,不参与正常 schema 识别
 
 ---
