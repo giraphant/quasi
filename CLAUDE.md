@@ -138,6 +138,16 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.37.1** (2026-05-29): **Configurable Superset agent for process-topic dispatch.**
+  - New `superset_agent` userConfig option (default `copilot`) forwarded as
+    `QUASI_SUPERSET_AGENT`; `process-topic` dispatches
+    `superset agents run --agent ${QUASI_SUPERSET_AGENT:-copilot}` instead of
+    hardcoding `claude`.
+  - `inject-userconfig` hook injects only `QUASI_SUPERSET_AGENT` for
+    `superset agents run` commands, and blanks quoted spans before command
+    detection so prompt text like `--prompt 'Run quasi-search'` no longer
+    triggers broad config injection.
+
 - **0.37.0** (2026-05-29): **Process-topic becomes vault-native review + reading-list indexing.**
   - `process-topic` now discovers papers and books with `quasi-search`, delegates
     item processing to `process-paper` / `process-book`, and indexes accepted vault
