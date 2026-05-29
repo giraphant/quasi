@@ -160,16 +160,25 @@ if not exists(manifest_path) or not read_json(manifest_path).get("items"):
 
 # Phase 1-N: SNOWBALL
 manifest = read_json(manifest_path)
+new_refs = 0   # hoisted: DEAD-END gate reads this even if the round loop never runs
 for round_num in range(manifest["rounds_completed"] + 1, MAX_ROUNDS + 1):
+    # Resume reconcile: promote already-finished processing items before this round.
+    for s, it in manifest["items"].items():
+        if it["status"] == "processing" and exists(it["vault_path"]):
+            it["status"] = "analysed"
+    write_json(manifest_path, manifest)
+
+    # pending = this round's unfinished items: fresh discovered + stranded processing
+    # (fired on a previous run but no vault product yet) -- re-fire those.
     pending = [(s, it) for s, it in manifest["items"].items()
-               if it["round"] == round_num and it["status"] == "discovered"]
+               if it["round"] == round_num
+               and (it["status"] == "discovered"
+                    or (it["status"] == "processing" and not exists(it["vault_path"])))]
     if not pending:
         break
 
-    # Fire delegations in waves of CONCURRENCY; resume-safe (skip analysed).
+    # Fire delegations in waves of CONCURRENCY.
     for s, it in pending:
-        if it["status"] == "analysed" and exists(it["vault_path"]):
-            continue
         dispatch_item(s, it)
         write_json(manifest_path, manifest)
         while count(processing(manifest)) >= CONCURRENCY:
@@ -207,9 +216,11 @@ if new_refs == 0 and not exists(f"{topic_dir}/00-overview.md"):
         question=f"主题 {topic_desc} 的结构化扩展到头了。是否用这些查询词再发现一轮?",
         options=signals + ["不再发现,直接综述"])
     if choice not in ("不再发现,直接综述", REJECTED):
-        # New seed query -- re-run DISCOVER for this query, then loop SNOWBALL.
-        # (主进程判断是否补 kagi。新候选写入 items 的新 round。)
-        ...  # mirror Phase 0 discover with the chosen query, then re-enter SNOWBALL
+        # New seed query: mirror Phase 0 DISCOVER for `choice` (主进程判断是否补 kagi),
+        # append candidates as a fresh round = rounds_completed + 1 with status=discovered,
+        # write manifest, then re-run this SNOWBALL block to process the new round.
+        discover_into(manifest, choice, round=manifest["rounds_completed"] + 1, source="user")
+        write_json(manifest_path, manifest)
 
 # FINAL: synthesis
 if not exists(f"{topic_dir}/00-overview.md"):
