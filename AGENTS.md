@@ -137,6 +137,16 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.37.0** (2026-05-29): **Process-topic becomes vault-native review + reading-list indexing.**
+  - `process-topic` now discovers papers and books with `quasi-search`, delegates
+    item processing to `process-paper` / `process-book`, and indexes accepted vault
+    products with topic-page `[[wikilinks]]` plus entity `topics: [slug]` membership.
+  - Topic frontmatter now carries only `type` / `kind`; paper, book, chapter, and
+    author schemas gain optional `topics` membership lists. Schema contract version
+    is bumped to 0.4.0.
+  - Resume handling reconciles stranded processing items by checking whether the
+    delegated vault product already exists before re-dispatching work.
+
 - **0.36.3** (2026-05-28): **Schema accepts numeric ISBNs and audit reports strict fields.**
   - `BookSchema.isbn` now accepts `int | str` input and coerces ISBN values to
     strings, so numeric YAML/JSON ISBNs validate instead of failing type checks.
