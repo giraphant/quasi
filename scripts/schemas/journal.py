@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
-from .primitives import ShortString
+from .primitives import ShortString, Title
 
 
 class JournalSchema(BaseModel):
@@ -14,6 +14,7 @@ class JournalSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     type: Literal["journal"]
+    title: Title
     kind: Literal["overview", "resources"] = Field(
         description="页面类型: overview 为综合页,resources 为资源页"
     )

@@ -1,9 +1,9 @@
 # quasi-vault Schema Specification
 
 ```
-Version : 0.4.0
+Version : 0.5.0
 Status  : active — canonical schema source for lint / autofix / generation
-Last    : 2026-05-27
+Last    : 2026-05-30
 ```
 
 ## 0. 文档定位
@@ -377,6 +377,7 @@ doi: "10.1215/9780822393047-001"
 ```ts
 export const JournalSchema = z.object({
   type:    z.literal('journal'),
+  title:   Title,
   kind:    z.enum(['overview', 'resources']),
   journal: z.string().min(2),
 }).strict();
@@ -387,6 +388,7 @@ export const JournalSchema = z.object({
 ```yaml
 ---
 type: journal
+title: British Journal of Sociology
 kind: overview
 journal: British Journal of Sociology
 ---
@@ -397,6 +399,7 @@ journal: British Journal of Sociology
 ```yaml
 ---
 type: journal
+title: British Journal of Sociology
 kind: resources
 journal: British Journal of Sociology
 ---
@@ -404,7 +407,8 @@ journal: British Journal of Sociology
 
 **规则**:
 - `kind` 只允许 `overview` / `resources`
-- frontmatter 只允许 `type` / `kind` / `journal`
+- frontmatter 只允许 `type` / `title` / `kind` / `journal`
+- `title` 必填 —— 供前端 / Marple 统一显示页面标题;期刊页 `title` 即期刊名,与 `journal` 字段重复是预期的(所有页面类型一律带 `title`)
 - `journal-synthesis` 等旧 type 只作为 deprecated diagnostics,不参与正常 schema 识别
 
 ---
@@ -416,6 +420,7 @@ journal: British Journal of Sociology
 ```ts
 export const TopicSchema = z.object({
   type:  z.literal('topic'),
+  title: Title,
   kind:  z.enum(['overview', 'resources']),
 }).strict();
 ```
@@ -425,6 +430,7 @@ export const TopicSchema = z.object({
 ```yaml
 ---
 type: topic
+title: 密码学的社会建构
 kind: overview
 ---
 ```
@@ -434,14 +440,16 @@ kind: overview
 ```yaml
 ---
 type: topic
+title: 密码学的社会建构
 kind: resources
 ---
 ```
 
 **规则**:
 - `kind` 只允许 `overview` / `resources`
-- topic 页 frontmatter 只允许 `type` / `kind`。topic 页自包含(文件夹 slug + H1
-  确定身份),不写 `topic` 字段;主题成员关系反向挂在实体的 `topics: [slug]` 上。
+- topic 页 frontmatter 只允许 `type` / `title` / `kind`。`title` 必填(人读主题标题,
+  与 H1 一致),供前端 / Marple 直接显示;文件夹 slug 仍是稳定身份键,不写 `topic` 字段;
+  主题成员关系反向挂在实体的 `topics: [slug]` 上。
 - `topic-synthesis` / `reading-list` / `research-note` 等旧 type 只作为 deprecated diagnostics,不参与正常 schema 识别
 
 ---

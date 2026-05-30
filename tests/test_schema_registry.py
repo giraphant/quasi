@@ -46,19 +46,23 @@ def test_topic_and_journal_validate_lightweight_frontmatter() -> None:
 
     topic_schema.model_validate({
         "type": "topic",
+        "title": "社会建构论",
         "kind": "overview",
     })
     topic_schema.model_validate({
         "type": "topic",
+        "title": "社会建构论",
         "kind": "resources",
     })
     journal_schema.model_validate({
         "type": "journal",
+        "title": "British Journal of Sociology",
         "kind": "overview",
         "journal": "British Journal of Sociology",
     })
     journal_schema.model_validate({
         "type": "journal",
+        "title": "British Journal of Sociology",
         "kind": "resources",
         "journal": "British Journal of Sociology",
     })
@@ -76,20 +80,30 @@ def test_topic_and_journal_reject_extra_fields_and_old_kind_values() -> None:
     with pytest.raises(ValidationError):
         topic_schema.model_validate({
             "type": "topic",
+            "title": "密码学的社会建构",
             "kind": "reading-list",
         })
     with pytest.raises(ValidationError):
         topic_schema.model_validate({
             "type": "topic",
+            "title": "密码学的社会建构",
             "kind": "overview",
             "topic": "密码学的社会建构",
         })
+    # title 现在必填:缺 title 应被拒
+    with pytest.raises(ValidationError):
+        topic_schema.model_validate({
+            "type": "topic",
+            "kind": "overview",
+        })
+    # 其它额外字段仍被 .strict() 拒绝
     with pytest.raises(ValidationError):
         journal_schema.model_validate({
             "type": "journal",
+            "title": "British Journal of Sociology",
             "kind": "overview",
             "journal": "British Journal of Sociology",
-            "title": "British Journal of Sociology",
+            "issn": "0007-1315",
         })
 
 
@@ -98,6 +112,7 @@ def test_typecheck_allows_freeform_topic_and_journal_bodies(tmp_path: Path) -> N
     topic_fp.write_text(
         "---\n"
         "type: topic\n"
+        "title: 密码学的社会建构\n"
         "kind: overview\n"
         "---\n"
         "\n"
@@ -114,6 +129,7 @@ def test_typecheck_allows_freeform_topic_and_journal_bodies(tmp_path: Path) -> N
     journal_fp.write_text(
         "---\n"
         "type: journal\n"
+        "title: British Journal of Sociology\n"
         "kind: resources\n"
         "journal: British Journal of Sociology\n"
         "---\n"

@@ -25,10 +25,10 @@ EXPECTED_REQUIRED = {
     "book": ["title", "authors", "year", "publisher"],
     "chapter": ["title", "authors", "year", "book"],
     "image": ["title"],
-    "journal": ["kind", "journal"],
+    "journal": ["title", "kind", "journal"],
     "note": ["title", "created"],
     "paper": ["title", "authors", "year", "journal", "themes"],
-    "topic": ["kind"],
+    "topic": ["title", "kind"],
 }
 
 

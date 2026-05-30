@@ -138,6 +138,48 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.37.5** (2026-05-30): **`topic` / `journal` pages gain required `title`
+  (schema contract 0.4.0 → 0.5.0) + process-topic dispatch/polling hardening.**
+  - `TopicSchema` and `JournalSchema` now require `title: Title` so every page
+    type carries a human title for the reader / Marple frontend without
+    parsing H1. journal `title` = 期刊名 (redundant with `journal` by design —
+    every page type is uniform). Breaking field addition → schema contract
+    version bumped `0.4.0 → 0.5.0` (`SPEC.md`, `scripts/schemas/__init__.py`).
+  - Stale consumers caught the same way 0.37.2's `topics` mismatch was — the
+    schema shipped without anyone downstream tracking it. Updated together:
+    `SPEC.md` §3.5/§3.6 (TS defs, YAML examples, rules), `synthesis-agent.md`
+    §J/§T (added the missing `<frontmatter_schema>` block — it had none),
+    `process-topic` synthesis dispatch prompt (now emits `title: {topic}`),
+    and `topic.py` docstring. The published Marple snapshot
+    (`scripts/audit/emit_schema.py` → `.quasi/schema.json`) reads live models,
+    so it self-updates; its expected-required table in
+    `test_schema_snapshot.py` was bumped.
+  - Tests: `test_schema_registry.py` (3 cases: lightweight validate now needs
+    `title`; the old "journal-with-title is rejected" case became "extra field
+    rejected" + a new "missing `title` rejected"; freeform-body fixtures gain
+    `title`) and `test_schema_snapshot.py` (required tables). Full suite 209
+    passing.
+  - **process-topic** (problem the user flagged — tree dispatch wasn't stable):
+    - New hard constraint at the top: 主进程只编排,绝不亲自处理 — every
+      `process-*` / `synthesis` / `audit` step goes through `superset agents
+      run`; the main process never runs `/quasi:process-*` or the `quasi-*`
+      pipeline itself.
+    - Completion polling moved off the main process: instead of the main
+      process Glob-polling vault products (which floods its context on long
+      delegated runs), it now dispatches one clean `general-purpose` poll-agent
+      per batch with the batch's `vault_path` list. The agent loops `ls`/`test
+      -f` every 60s until all present or 30min timeout, returns a compact
+      `{present, missing, elapsed_s}`. read-only; main process updates the
+      manifest from the result.
+    - Added the `## Agent / Helper 合同` section the orchestration schema
+      requires (process-topic was missing it — `test_active_skills_follow_
+      runtime_schema` was already red on the prior commit) and houses the
+      poll-agent contract there.
+    - Fixed `test_process_topic_superset_agent_uses_shell_default_contract`
+      which asserted double-brace `${{...}}` — the rest of the codebase (and
+      the 0.37.1 runtime contract) uses single-brace `${QUASI_SUPERSET_AGENT:
+      -copilot}`; the test was over-escaped, the SKILL was correct.
+
 - **0.37.2** (2026-05-29): **Fix mechanical autofix stripping the `topics` support field.**
   - 0.37.0 (QUA-36) added `topics` as an optional membership field on the
     book / paper / chapter / author schemas and SPEC.md, but left `topics`

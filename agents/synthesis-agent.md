@@ -148,6 +148,13 @@ H1 = `# {full_name}` (**无装饰后缀**)。
 2. 若提供 `reading_list_path`,从已读 frontmatter 和 H1 信息整理 reading list 并写入该路径。
 3. 按下方模板生成 `{output_path}`。
 
+<frontmatter_schema>
+mode: topic   → required: type=topic, title(min=2 max=280), kind(overview|resources)
+mode: journal → required: type=journal, title(min=2 max=280), kind(overview|resources), journal(min=2)
+- `title` 必填:人读页面标题,**与 H1 一致**。topic 页 title = 主题名;journal 页 title = 期刊名(与 `journal` 字段重复是预期的)。
+- frontmatter 不允许任何其它字段(`.strict()`)。
+</frontmatter_schema>
+
 ### 综合报告模板
 
 ```
