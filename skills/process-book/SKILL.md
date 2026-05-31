@@ -54,7 +54,7 @@ description: Use when the user wants to process a book from title, author, ISBN,
 
 ```
 主进程 (dispatcher)
-├─ Step 0: 定位 source + search metadata + 必要时 download-agent
+├─ Step 0: local duplicate/resume recall + 必要时 search/download
 ├─ Step 1: extract-agent (sonnet, 前台) → 提取+验证+修复
 ├─ Step 2: 主进程读 manifest.json → 筛选章节
 ├─ Step 3: analyse-agent ×N (opus, 后台并行) → Glob 轮询
@@ -69,17 +69,24 @@ description: Use when the user wants to process a book from title, author, ISBN,
 # 0. 从用户请求提取搜索线索。book_slug 不是输入,而是 Step 0 的结果。
 request = parse_user_request()  # title/query, author?, year_hint?, isbn?, source_path?, slug_hint?, topic?
 
-# Step 0: SOURCE + METADATA
-# 先用 source_path/slug_hint/query 在 sources/ 中找已存在源文件;再用 search-agent
-# 补齐 metadata 和 canonical slug。找不到源文件时,用 search 结果交给 download-agent 获取。
-source_file = find_existing_source(
-    source_path=request.source_path,
-    slug_hint=request.slug_hint,
-    title=request.title or request.query,
-    author=request.author,
-)
+# Step 0: LOCAL RECALL + METADATA
+# 先查本地成果/中间态:overview/source/chapter manifest/chapter outputs。exact miss 后用
+# author surname + year/isbn + 非虚词 title keywords 在 vault/books、processing、sources 做 rg fuzzy recall。
+# rg 只召回候选;inspect 后 high-confidence 才复用/续跑,多候选只列证据,不要盲目跳过。
+local = find_local_book_state(request)
 
-search = Agent("quasi:search-agent", foreground=True, prompt=f"""\
+if local.high_confidence:
+    book_slug = local.slug
+    source_file = local.source_file
+    book_meta = local.metadata
+    if local.overview_path:
+        report(f"已有书籍页面,无需重复处理: {local.overview_path}"); return
+    chapters_dir = f"processing/chapters/{book_slug}/"  # manifest/ch*.md 决定后续跳过点
+else:
+    if local.candidates:
+        report_candidate_list(local.candidates, note="rg fuzzy recall only; do not blindly skip")
+    # 本地没有 high-confidence completed/source/partial state 时,才用 search-agent 补 canonical metadata/slug。
+    search = Agent("quasi:search-agent", foreground=True, prompt=f"""\
 task: find canonical metadata for this book
 context:
   kind: book
@@ -90,13 +97,13 @@ context:
 constraints:
   count: 1
 """)
-book_meta = search.picked
-book_slug = book_meta["slug"]
-
-if not source_file:
+    book_meta = search.picked
+    book_slug = book_meta["slug"]
     source_file = Glob(f"sources/{book_slug}.epub") or Glob(f"sources/{book_slug}.pdf")
+    chapters_dir = f"processing/chapters/{book_slug}/"
 
-if not source_file:
+if not source_file and not exists(f"{chapters_dir}/manifest.json"):
+    # 只有没有 local source/extracted state 时才 download。
     # download-agent 内部完成 fetch → inspect → accept,并返回 year_evidence。
     # 主进程只根据 per_item[0].status 分支。
 
@@ -247,7 +254,7 @@ print(f"Done: {len(selected)} chapters, overview generated, audited, localised")
 
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
-| Step 0 | `sources/{slug}.{epub,pdf}` | 存在则跳过 download-agent |
+| Step 0 | local recall: `00-overview.md` / `sources/{slug}.{epub,pdf}` / `processing/chapters/{slug}/manifest.json` / `ch{slot}-*.md`; exact miss 后 `rg fuzzy recall` | 在 search/download 前确认是否已完成或可续跑;高置信才跳过/复用,多候选只列证据 |
 | Step 1 | `{chapters_dir}/manifest.json` | 存在则跳过 extract-agent |
 | Step 3 | `ch{slot}-*.md` | 存在则跳过该章 |
 | Step 4 | `00-overview.md` | 存在则跳过 |

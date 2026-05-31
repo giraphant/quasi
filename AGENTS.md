@@ -138,6 +138,16 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.37.6** (2026-05-31): **Step 0 uses local-first duplicate/resume recall before search/download.**
+  - `process-book` and `process-paper` now check local completed outputs,
+    accepted sources, caches/manifests, and rg fuzzy candidates before calling
+    `search-agent` / `download-agent`, so slug stopword drift is less likely to
+    duplicate work.
+  - `process-author` now checks existing author profile/manifest/discovery
+    caches first and reconciles representative works against local final/source
+    /partial artifacts before acquisition.
+  - Regression tests assert local recall/reconcile precedes search/download.
+
 - **0.37.5** (2026-05-30): **`topic` / `journal` pages gain required `title`
   (schema contract 0.4.0 → 0.5.0) + process-topic dispatch/polling hardening.**
   - `TopicSchema` and `JournalSchema` now require `title: Title` so every page

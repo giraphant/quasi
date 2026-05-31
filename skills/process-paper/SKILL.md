@@ -16,6 +16,7 @@ description: Use when the user wants to search, download, and analyse a single a
 - `doi`,或
 - `slug`(`sources/{slug}.pdf` 或 `sources/{slug}.txt` 已存在时),或
 - `title + author`
+- `year_hint`:可选,用于 Step 0 rg fuzzy recall
 - `translate`:可选布尔值
 
 `slug` canonical 格式:`{author-surname}-{short-title}-{year}`（全库唯一,
@@ -44,11 +45,10 @@ description: Use when the user wants to search, download, and analyse a single a
 
 ```
 主进程 (dispatcher)
-├─ Step 0: ENSURE METADATA + SOURCED
-│   ├─ 若 --slug 且 sources/{slug}.pdf 或 sources/{slug}.txt 已存在 → 跳过 search/download
-│   │   ├─ 若 vault/papers/{slug}.md 存在 → 读 frontmatter 拿 metadata
-│   │   └─ 否则 → search-agent 返回 metadata,主进程可写 `.quasi/papers/{slug}.search.json` 缓存
-│   └─ 否则 → search-agent 返回 metadata + download-agent (kind=paper, items=[1])
+├─ Step 0: LOCAL DUPLICATE/RESUME RECALL + METADATA/SOURCE
+│   ├─ exact local: vault/papers/{slug}.md / sources/{slug}.pdf|txt / .quasi/papers/{slug}.search.json
+│   ├─ exact miss → rg fuzzy recall (`vault/papers`, `sources`, `.quasi/papers`) → inspect frontmatter/cache/source evidence
+│   └─ 无 high-confidence completed/source/cache 候选时 → search-agent + download-agent
 ├─ Step 1: analyse-agent (type=B, 前台) → vault/papers/{slug}.md
 └─Step 2: audit-agent (前台) → 校验 + 一次重做循环
 ```
@@ -59,31 +59,31 @@ description: Use when the user wants to search, download, and analyse a single a
 args = parse_args()  # --doi / --slug / --title+--author / --translate
 project = "$CLAUDE_PROJECT_DIR"
 
-existing_pdf = f"sources/{args.slug}.pdf" if args.slug and Glob(f"sources/{args.slug}.pdf") else None
-existing_txt = f"sources/{args.slug}.txt" if args.slug and Glob(f"sources/{args.slug}.txt") else None
-existing_source = existing_pdf or existing_txt
+# Step 0: LOCAL RECALL + METADATA/SOURCE
+# 先查本地成果/缓存/source: vault/papers/{slug}.md、sources/{slug}.pdf|txt、
+# .quasi/papers/{slug}.search.json。exact miss 后用 DOI/author/year/title keywords
+# 在 vault/papers、sources、.quasi/papers 做 rg fuzzy recall;只高置信复用,不要盲目跳过。
+local = find_local_paper_state(args)
 
-# Step 0: ENSURE METADATA + SOURCED
-if args.slug and existing_source:
-    slug = args.slug
-    if exists(f"vault/papers/{slug}.md"):
-        # 已有 vault 文件 → frontmatter 拿 metadata（题目/作者/年/doi/journal）
-        paper_meta = read_frontmatter(f"vault/papers/{slug}.md")
-    else:
-        # 没 vault 文件 → search-agent 只返回 metadata；落盘缓存由本 skill 写。
-        search = Agent("quasi:search-agent", foreground=True, prompt=f"""\
-task: fetch metadata for paper with slug {slug}
-context:
-  kind: paper
-  slug: {slug}                         # search-agent 从 slug 反解 author/title/year
-constraints:
-  count: 1
-""")
+if local.high_confidence:
+    slug = local.slug
+    paper_meta = local.metadata
+    source_file = local.pdf or local.txt
+    if local.vault_path:
+        report(f"已有论文页面,无需重复处理: {local.vault_path}"); return
+elif local.candidates:
+    report_candidate_list(local.candidates, note="rg fuzzy recall only; do not blindly skip")
+
+if local.high_confidence and source_file:
+    # high-confidence source/cache candidate but no vault output: skip download;
+    # 若 metadata cache/frontmatter 足够,直接 analyse;只有缺必要 metadata 时才 search-agent。
+    if not paper_meta or missing_required_metadata(paper_meta):
+        search = Agent("quasi:search-agent", foreground=True, prompt=f"kind: paper\nslug: {slug}\nmetadata only")
         paper_meta = search.picked
         write_json(f".quasi/papers/{slug}.search.json", search)
-    source_file = existing_source
-else:
-    # 完整 search + download 路径
+
+if not local.high_confidence:
+    # 本地没有 completed/source/cache high-confidence 候选时,才完整 search + download。
     search = Agent("quasi:search-agent", foreground=True, prompt=f"""\
 task: find this paper by {'doi=' + args.doi if args.doi else 'title+author=' + args.title + ' / ' + args.author}
 context:
@@ -163,8 +163,7 @@ Bash(f"/opt/homebrew/bin/marple-cli open '{output_path}' || marple-cli open '{ou
 
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
-| Step 0 search | `.quasi/papers/{slug}.search.json` | 存在则跳过 search-agent |
-| Step 0 download | `sources/{slug}.pdf` 或 `sources/{slug}.txt` | 存在则跳过 download-agent；两者都存在时优先 `.pdf` |
+| Step 0 | local recall: `vault/papers/{slug}.md` / `sources/{slug}.pdf|txt` / `.quasi/papers/{slug}.search.json`; exact miss 后 `rg fuzzy recall` | 在 search/download/analyse 前确认是否已完成或已有 source/cache;PDF 优先,cache 只补 metadata,多候选只列证据 |
 | Step 1 | `vault/papers/{slug}.md` | 存在则跳过 analyse-agent |
 | Step 2 | 无 —— 幂等 | 上次 audit clean 时几乎无成本 |
 

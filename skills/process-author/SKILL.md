@@ -40,8 +40,9 @@ description: Use when the user wants to build an author profile from a scholar's
 
 ```
 主进程 (dispatcher)
-├─ Phase 1: search-agent (opus, 前台) → manifest
-├─ Phase 2: download-agent (sonnet, 前台) × 2 → kind=book + kind=paper
+├─ Phase 0: local author/work recall + manifest/cache resume
+├─ Phase 1: search-agent (opus, 前台, only missing discovery) → manifest
+├─ Phase 2: local representative-work reconcile → download-agent (sonnet, 前台) × 2
 ├─ Phase 3: 书籍处理
 │   ├─ 逐本: extract-agent (sonnet, 前台)
 │   ├─ 主进程: 读 manifest → 全部章节
@@ -58,15 +59,35 @@ description: Use when the user wants to build an author profile from a scholar's
 
 ```python
 author_name, full_name = parse_args()
+profile_path = f"vault/authors/{author_name}.md"
 manifest_path = f".quasi/authors/{author_name}/manifest.json"
+books_path  = f".quasi/authors/{author_name}/books.json"
+papers_path = f".quasi/authors/{author_name}/papers.json"
 
-# 1. DISCOVER — two structured search-agent calls (kind=book + kind=paper).
+# 0. LOCAL AUTHOR/WORK RECALL — before search-agent/download-agent.
+# 先看 author profile / manifest / discovery caches;exact miss 后在 authors/books/papers/sources
+# 做一把 rg fuzzy recall。高置信 profile 直接跳过;高置信 manifest/cache 则续跑。
+if exists(profile_path):
+    report(f"已有作者 profile,无需重复处理: {profile_path}"); return
+
+if not exists(manifest_path):
+    inspected_author = inspect_author_candidates(rg_fuzzy_recall(
+        tokens=[full_name, author_name, author_surname(full_name), topic],
+        paths=["vault/authors/*.md", "vault/books/*/00-overview.md", "vault/papers/*.md",
+               "sources/*", ".quasi/authors/*/manifest.json"],
+    ))
+    if inspected_author.high_confidence_profile:
+        report(f"已有作者 profile,无需重复处理: {inspected_author.profile_path}"); return
+    if inspected_author.high_confidence_manifest:
+        manifest_path = inspected_author.manifest_path
+    elif inspected_author.candidates:
+        report_candidate_list(inspected_author.candidates, note="local author recall only; do not blindly skip")
+
+# 1. DISCOVER — two structured search-agent calls (kind=book + kind=paper), only for missing caches.
 # search-agent only returns curated JSON; it never writes files. The skill main
 # process may cache those JSON payloads, then merges them into the manifest that
 # Phase 2+ expects.
 if not exists(manifest_path):
-    books_path  = f".quasi/authors/{author_name}/books.json"
-    papers_path = f".quasi/authors/{author_name}/papers.json"
 
     if not exists(books_path):
         books_search = Agent("quasi:search-agent", foreground=True, prompt=f"""\
@@ -115,12 +136,16 @@ constraints:
     }
     write_json(manifest_path, manifest)
 
-# 2. ACQUIRE — two structured download-agent calls (kind=book + kind=paper),
+# 2. ACQUIRE — 先 reconcile representative works 的本地 final/source/partial artifacts,
+# 再 download 仍是 discovered 且没有本地 output/source 的 item。completed/partial 从 artifact 推断,
+# 不新增 manifest status。
+manifest = reconcile_representative_works_with_local_artifacts(manifest)
 # skill merges per-item status + year_evidence back into the manifest.
 # Batch policy: year_mismatch / year_ambiguous books DO NOT pause; skill
 # accepts tmp_path → sources/{slug}.{ext} (slug authoritative), keeps
 # status="acquired" so Phase 3 consumes the book, and records year_review /
 # year_evidence / year_warning for end-of-run report.
+write_json(manifest_path, manifest)
 manifest = read_json(manifest_path)
 
 # 2a. Books
@@ -272,6 +297,8 @@ while not all_papers_done:
     sleep(30)
 
 # 5. SYNTHESIS (mode=author 走大一统 synthesis-agent)
+# 如果作者 profile 不存在但代表作已有 final outputs,直接复用这些 outputs 做 synthesis,
+# 不因为旧 slug/本次 slug 微差而重新下载或分析。vault/authors/{author_name}.md 才表示作者完成。
 profile_path = f"vault/authors/{author_name}.md"
 if not exists(profile_path):
     paper_paths = [f"vault/papers/{p.slug}.md" for p in manifest.papers if status == "acquired"]
@@ -378,6 +405,10 @@ Bash(f"/opt/homebrew/bin/marple-cli open '{profile_path}' || marple-cli open '{p
 
 `.quasi/authors/{author_name}/manifest.json` 由本 skill 主进程维护。
 
+`completed` / `partial` 不写成新的 manifest status; completed/partial is inferred from artifact:
+`vault/authors/{author_name}.md`、`vault/books/{book.slug}/00-overview.md`、`vault/papers/{paper.slug}.md`
+是 final outputs;`sources/*`、`processing/chapters/*/manifest.json`、`ch*.md` 是可续跑 state。
+
 Book status:
 - `discovered` — 已由 search-agent 选入代表作清单,尚未获取文件。
 - `acquired` — `sources/{slug}.{ext}` 已可供 Phase 3 使用。
@@ -396,13 +427,13 @@ Paper status:
 
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
-| Phase 1 | `manifest.json` | 存在则跳过 |
-| Phase 2 | manifest `status` | acquired / failed 跳过（重跑只处理 discovered）；year 问题存在 `year_review` |
+| Phase 0/1 | local recall: `vault/authors/{author_name}.md` / manifest / discovery caches | profile 已有则跳过;manifest/cache 已有则续跑或只 search 缺的一侧;候选低置信度只列证据 |
+| Phase 2 | representative works local reconcile | 已有 book/paper final output、source、chapter manifest 或 paper cache 时先复用/续跑;只有仍缺 source/output 的 discovered item 才 download |
 | Phase 3a | `{chapters_dir}/manifest.json` | 存在则跳过提取 |
 | Phase 3b | `ch{NN}-*.md` | 存在则跳过该章 |
 | Phase 3c | `00-overview.md` | 存在则跳过该书 |
 | Phase 4 | `vault/papers/{paper.slug}.md` | 存在则跳过 |
-| Phase 5 | `vault/authors/{author-name}.md` | 存在则跳过 |
+| Phase 5 | `vault/authors/{author-name}.md` | 存在则跳过；若 profile 不存在但代表作 outputs 已存在,直接复用 outputs synthesis |
 | Phase 6 | 无 —— 幂等,可重复跑 | 上次 audit clean 时几乎无成本 |
 | Phase 7 | `.quasi/localise/cndouban.json#by_isbn[isbn]` | 已存在 entry(status found/none)则 helper scan 跳过 |
 
