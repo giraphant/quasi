@@ -28,7 +28,9 @@ EXPECTED_REQUIRED = {
     "journal": ["title", "kind", "journal"],
     "note": ["title", "created"],
     "paper": ["title", "authors", "year", "journal", "themes"],
+    "talk": ["title", "date", "media"],
     "topic": ["title", "kind"],
+    "transcript": ["title", "talk"],
 }
 
 

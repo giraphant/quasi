@@ -320,6 +320,10 @@ def fix_frontmatter(fm: dict, raw_type: str | None, file_path: Path) -> tuple[di
     if canon == "chapter":
         # chapter wants `book` field (already set above)
         orphans_to_drop.discard("editors")  # if present, harmless drop ok
+    if canon == "talk":
+        # talk.date is a required field (录制日期); the global orphan list drops
+        # `date` conservatively for paper, so keep it here (cf. book/publisher).
+        orphans_to_drop.discard("date")
     for field in list(out.keys()):
         if field in orphans_to_drop and field not in ("type", "title", "authors", "year",
                                                        "themes", "rating", "book", "journal",

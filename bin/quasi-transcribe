@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# quasi-transcribe — deterministic multi-engine transcription for process-talk.
+#
+# Usage:
+#   quasi-transcribe run --media FILE --slug SLUG [--title T] [--engines a,b,c] [--lang auto]
+#   quasi-transcribe classify (--slug SLUG | --transcript FILE)
+#   quasi-transcribe silent --slug SLUG --title T --date YYYY-MM-DD --media FILE
+#
+# Emits JSON to stdout. The skill orchestrates; analyse-agent reads the
+# per-engine transcripts this leaves under .quasi/talks/<slug>/.
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
+PYTHON="$DATA_DIR/.venv/bin/python"
+
+[ -x "$PYTHON" ] || "$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
+
+exec "$PYTHON" "$PLUGIN_ROOT/scripts/transcribe/transcribe.py" "$@"

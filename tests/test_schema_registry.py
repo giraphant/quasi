@@ -25,6 +25,8 @@ def test_registry_uses_only_short_canonical_types() -> None:
         "journal",
         "note",
         "image",
+        "talk",
+        "transcript",
     }
     for type_name in registry.TYPE_REGISTRY:
         assert registry.canonical_type(type_name) == type_name
@@ -389,3 +391,123 @@ def test_typecheck_reports_deprecated_type_instead_of_renaming(tmp_path: Path) -
     assert result["frontmatter_errors"] == [
         {"type": "deprecated_type", "raw_type": "paper-analysis", "canonical_type": "paper"}
     ]
+
+
+def test_talk_and_transcript_validate_frontmatter() -> None:
+    talk_schema, talk_body = registry.schema_for_type("talk")
+    transcript_schema, transcript_body = registry.schema_for_type("transcript")
+
+    # full talk
+    talk_schema.model_validate({
+        "type": "talk",
+        "title": "Lajilao",
+        "date": "2024-11-08",
+        "speaker": ["Zhou Pengan"],
+        "themes": ["e-waste", "repair"],
+        "rating": 4,
+        "media": "recording.mp4",
+    })
+    # silent / minimal talk: speaker + themes omitted (empty defaults)
+    talk_schema.model_validate({
+        "type": "talk",
+        "title": "Luxun and Lianhuanhua",
+        "date": "2024-10-09",
+        "media": "recording.mp4",
+    })
+    transcript_schema.model_validate({
+        "type": "transcript",
+        "title": "Lajilao — 转写",
+        "talk": "lajilao-20241108",
+    })
+
+    # talk body enforces the six fixed four-char H2; transcript body is freeform
+    assert talk_body.type_name == "talk"
+    assert [s.h2 for s in talk_body.sections] == [
+        "核心论点", "分节摘要", "关键概念", "项目关联", "文献人物", "时间脉络",
+    ]
+    assert all(len(s.h2) == 4 for s in talk_body.sections)
+    assert transcript_body.sections == []
+
+
+def test_talk_and_transcript_reject_extra_and_missing_fields() -> None:
+    talk_schema, _ = registry.schema_for_type("talk")
+    transcript_schema, _ = registry.schema_for_type("transcript")
+
+    # extra field rejected (strict + forbid)
+    with pytest.raises(ValidationError):
+        talk_schema.model_validate({
+            "type": "talk", "title": "X", "date": "2024-11-08",
+            "media": "recording.mp4", "speakers": ["typo-key"],
+        })
+    # media is required
+    with pytest.raises(ValidationError):
+        talk_schema.model_validate({"type": "talk", "title": "X", "date": "2024-11-08"})
+    # date is required
+    with pytest.raises(ValidationError):
+        talk_schema.model_validate({"type": "talk", "title": "X", "media": "recording.mp4"})
+    # transcript needs talk + title
+    with pytest.raises(ValidationError):
+        transcript_schema.model_validate({"type": "transcript", "title": "X — 转写"})
+
+
+def test_typecheck_passes_full_and_silent_talk_bodies(tmp_path: Path) -> None:
+    full = tmp_path / "full.md"
+    full.write_text(
+        "---\n"
+        "type: talk\n"
+        "title: Lajilao\n"
+        "date: 2024-11-08\n"
+        "speaker:\n  - Zhou Pengan\n"
+        "themes:\n  - e-waste\n"
+        "media: recording.mp4\n"
+        "---\n\n# 垃圾佬\n\n"
+        "## 核心论点\n正文论点。\n\n"
+        "## 分节摘要\n### 研究起点\n展开。\n\n### 三阶段框架\n展开。\n\n"
+        "## 关键概念\n| 概念 | 英文 | 定义 |\n|------|------|------|\n| 垃圾佬 | Lajilao | 定义 |\n\n"
+        "## 项目关联\n- 与 [[network-society-20241108]] 同场异源\n\n"
+        "## 文献人物\n- Zhou Pengan — 讲者\n\n"
+        "## 时间脉络\n- `[00:00]` 开场 — 引入\n- `[03:09]` 三阶段框架 — 概述\n",
+        encoding="utf-8",
+    )
+    # silent template MUST conform to the body schema (h3 stub + bullets)
+    silent = tmp_path / "silent.md"
+    silent.write_text(
+        "---\n"
+        "type: talk\n"
+        "title: Luxun and Lianhuanhua\n"
+        "date: 2024-10-09\n"
+        "media: recording.mp4\n"
+        "---\n\n# Luxun and Lianhuanhua\n\n"
+        "## 核心论点\n（录制无有效音频,无法摘要)\n\n"
+        "## 分节摘要\n### （无）\n（录制无有效音频,无法摘要)\n\n"
+        "## 关键概念\n| 概念 | 英文 | 定义 |\n|------|------|------|\n| （无） |  |  |\n\n"
+        "## 项目关联\n- （暂无;待有效音源)\n\n"
+        "## 文献人物\n- （录制无有效音频,无法摘要)\n\n"
+        "## 时间脉络\n- `[00:00]` （静音,无可标注内容)\n",
+        encoding="utf-8",
+    )
+
+    full_result = check_file(full)
+    silent_result = check_file(silent)
+
+    assert full_result["frontmatter_errors"] == []
+    assert full_result["body_violations"] == []
+    assert silent_result["frontmatter_errors"] == []
+    assert silent_result["body_violations"] == []
+
+
+def test_typecheck_allows_freeform_transcript_body(tmp_path: Path) -> None:
+    fp = tmp_path / "transcript.md"
+    fp.write_text(
+        "---\n"
+        "type: transcript\n"
+        "title: Lajilao — 转写\n"
+        "talk: lajilao-20241108\n"
+        "---\n\n# 垃圾佬 — 转写\n\n"
+        "> whisper/soniox 自动转写,未校对。\n\n"
+        "`[00:00]` 开场介绍 ...\n\n`[00:45]` 研究起点 ...\n",
+        encoding="utf-8",
+    )
+    result = check_file(fp)
+    assert result["frontmatter_errors"] == []
+    assert result["body_violations"] == []

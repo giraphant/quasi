@@ -29,7 +29,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 - `QUA_PROJECT_ROOT` is a legacy/local script override still accepted by some migration code; do not introduce it into active skill or agent contracts.
 - `vault/` holds user-facing reading outputs.
 - `sources/` holds accepted source files.
-- `processing/chapters/` and `processing/translations/` hold user-inspectable intermediates.
+- `processing/chapters/`, `processing/translations/`, and `processing/talks/` (per-engine talk transcripts) hold user-inspectable intermediates.
 - `.quasi/` holds orchestration state, manifests, caches, proofread/citation state, audit output, localise cache, and temp downloads.
 
 ### Configure option and env flow
@@ -56,6 +56,7 @@ Current userConfig mapping:
 | `cookiecloud_ezproxy_base_url` | `CLAUDE_PLUGIN_OPTION_COOKIECLOUD_EZPROXY_BASE_URL` | `QUASI_COOKIECLOUD_EZPROXY_BASE_URL` | `scripts/download/cookiecloud.py` |
 | `immersive_auth_key` | `CLAUDE_PLUGIN_OPTION_IMMERSIVE_AUTH_KEY` | `QUASI_IMMERSIVE_AUTH_KEY` | `scripts/translate/immersive_translate.py` |
 | `kagi_session_token` | `CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN` | `QUASI_KAGI_SESSION_TOKEN` | `scripts/search/search.py`, `scripts/search/sources/douban_cn.py`, `scripts/download/download.py` |
+| `soniox_api_key` | `CLAUDE_PLUGIN_OPTION_SONIOX_API_KEY` | `QUASI_SONIOX_API_KEY` | `scripts/transcribe/engines.py` |
 | `superset_agent` | `CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT` | `QUASI_SUPERSET_AGENT` | `skills/process-topic/SKILL.md` |
 
 ### State and handoff contracts
@@ -78,6 +79,7 @@ quasi-download book candidates|fetch ...
 quasi-download paper fetch ...
 quasi-download accept ...
 quasi-extract epub|ocr|split ...
+quasi-transcribe run|classify|silent ...
 quasi-audit --path ...
 quasi-helpers proofread prepare|cleanup ...
 quasi-helpers citation parse|biblio|resolve|review-cards|emit-bib ...
@@ -137,6 +139,46 @@ When changing config, runtime state, or handoff contracts:
 - For manifest or marketplace changes, run `claude plugin validate plugins/quasi`.
 
 ## Recent Changes
+
+- **0.38.0** (2026-06-05): **New `quasi:process-talk` skill — recording → multi-engine
+  ensemble transcription → structured talk summary (QUA-182).**
+  - New `talk` + `transcript` schema types (schema contract **0.5.0 → 0.6.0**):
+    `talk` = `vault/talks/<slug>/talk.md` (TalkSchema frontmatter `type/title/date/
+    speaker/themes/rating/media` + six fixed four-char H2 body `核心论点 / 时间脉络 /
+    分节摘要 / 关键概念 / 项目关联 / 文献人物` — `时间脉络` is video-specific, replacing
+    paper's `理论框架`; `文献人物` replaces `核心引用`; Q&A folds into `分节摘要`).
+    `transcript` = `vault/talks/<slug>/transcript.md`, lightweight freeform body
+    (timestamped), frontmatter `type/title/talk`. Registered in `scripts/schemas/`
+    (`talk.py`, `transcript.py`, `body.py`, `registry.py`, `__init__.py`), mirrored
+    into `audit-agent.md`, snapshot/registry tests bumped. `autofix_mechanical`
+    keeps `talk.date` (the global orphan list drops `date` for paper).
+  - **Transcription is a multi-engine ENSEMBLE** (`scripts/transcribe/` +
+    `bin/quasi-transcribe`): `run` extracts 16k mono wav and runs Soniox
+    (`stt-async-v4`, cloud, highest quality + word timestamps, needs
+    `soniox_api_key`) + Apple `SpeechTranscriber` (on-device, macOS 26, compiled
+    from `apple_stt.swift`) + Parakeet-v3 (mlx, English/European, auto-skipped for
+    Chinese) in parallel; each engine's SRT lands under `processing/talks/<slug>/`
+    (tracked, user-inspectable intermediates like `processing/chapters/` — kept so
+    the summary can be re-run without re-transcribing / re-paying Soniox) and
+    the primary (Soniox-preferred) assembles `transcript.md` plus a tracked
+    `recording.srt` (named to match `recording.<ext>` so video players auto-load
+    it as subtitles). `classify` does a
+    text-only live/DEAD verdict; `silent` writes the schema-conforming "no usable
+    audio" `talk.md`. Engines fail-soft (empty on error) so the ensemble degrades.
+  - `analyse-agent` gains a `type: T` (talk) mode: reads all engine transcripts and
+    **cross-references by timestamp** (agreement ≈ truth, disagreement = the
+    proper-noun/homophone/jargon spans to adjudicate), then writes `talk.md` per
+    TALK_BODY, back-filling `speaker` / `themes`. Minimal additive change — A/B
+    untouched.
+  - New `soniox_api_key` userConfig (sensitive) → `QUASI_SONIOX_API_KEY` via the
+    inject-userconfig hook `_KEYS`. New `skills/process-talk/SKILL.md` (single-talk,
+    Step-0 local recall, `quasi-transcribe` + `analyse-agent` + `audit-agent`).
+  - System deps for transcription: `ffmpeg`, `whisper-cli` (optional engine +
+    language detect), `swiftc` (Apple), `uvx` (Parakeet). All optional/fail-soft
+    except at least one working engine.
+  - Tests: `test_transcribe.py` (SRT parse, Soniox word-boundary grouping, classify,
+    silent/transcript body conformance), `test_schema_registry.py` +
+    `test_schema_snapshot.py` extended for `talk`/`transcript`. Full suite 114 pass.
 
 - **0.37.6** (2026-05-31): **Step 0 uses local-first duplicate/resume recall before search/download.**
   - `process-book` and `process-paper` now check local completed outputs,
