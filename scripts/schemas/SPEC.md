@@ -1,7 +1,7 @@
 # quasi-vault Schema Specification
 
 ```
-Version : 0.5.0
+Version : 0.6.0
 Status  : active — canonical schema source for lint / autofix / generation
 Last    : 2026-05-30
 ```
@@ -22,7 +22,7 @@ Last    : 2026-05-30
 
 ## 1. 类型系统总览
 
-vault 中的被打 `type` 文档使用 8 个 canonical type。短名是唯一合法 schema;旧的长名(`paper-analysis` / `book-overview` / `chapter-summary` / `author-profile` 等)只作为 deprecated diagnostics 或 migration input,不再是合法 type。
+vault 中的被打 `type` 文档使用 10 个 canonical type。短名是唯一合法 schema;旧的长名(`paper-analysis` / `book-overview` / `chapter-summary` / `author-profile` 等)只作为 deprecated diagnostics 或 migration input,不再是合法 type。
 
 | `type`    | 文档                  | 主要路径                                 | 当前数量 |
 | --------- | --------------------- | ---------------------------------------- | -------- |
@@ -34,6 +34,8 @@ vault 中的被打 `type` 文档使用 8 个 canonical type。短名是唯一合
 | `topic`   | 主题 overview/resources 页面 | `vault/topics/<slug>/{00-overview,01-resources}.md` | 12 |
 | `note`    | 自由笔记或批注        | `vault/notes/*.md`                       | 18 |
 | `image`   | 本地图片对象 metadata | `vault/images/<slug>/image.md`           | 8 |
+| `talk`    | 会议/讲座录制的摘要   | `vault/talks/<slug>/talk.md`             | 0 |
+| `transcript` | 讲座的带时间戳转写 | `vault/talks/<slug>/transcript.md`       | 0 |
 
 ### 不在 type 体系内
 
@@ -519,6 +521,65 @@ title: Micrometer
 **规则**:
 - frontmatter 只允许 `type` / `title`
 - 原图路径由目录约定派生,不写进 frontmatter
+- 正文自由格式,不校验 H2 schema
+
+---
+
+### 3.9 `talk`
+
+会议/讲座录制(video/audio)的结构化摘要。转写本体是同目录的 `transcript.md`;
+媒体本体 `recording.<ext>` 不入库(gitignore)。由 `quasi:process-talk` 生成。
+
+```ts
+export const TalkSchema = z.object({
+  type:    z.literal('talk'),
+  title:   Title,
+  date:    z.string().date(),          // 录制日期(整日 ISO)
+  speaker: z.array(Name).optional(),   // 讲者姓名(可关联 vault/authors/)
+  themes:  z.array(z.string()).optional(),  // 复用全库 themes 词表
+  rating:  Rating.optional(),
+  media:   ShortString,                // 媒体文件名
+}).strict();
+```
+
+**示例**:
+
+```yaml
+---
+type: talk
+title: "Lajilao"
+date: 2024-11-08
+speaker:
+  - Zhou Pengan
+themes:
+  - e-waste
+  - repair
+media: recording.mp4
+---
+```
+
+**规则**:
+- key 顺序:`type → title → date → speaker → themes → rating → media`
+- `speaker` / `themes` 为空时**省略整键**(不写 `[]`);静音/失败录制常为空
+- 正文为六个固定**四字 H2**(见 §4),顺序字样不得变动,缺内容保留标题写「（…)」
+
+---
+
+### 3.10 `transcript`
+
+讲座的带 `[hh:mm:ss]` 时间戳全文转写(多引擎集成,机器生成,tracked)。
+lightweight 类型,正文自由(无固定 H2),`talk` 字段反向引用所属 talk slug。
+
+```ts
+export const TranscriptSchema = z.object({
+  type:  z.literal('transcript'),
+  title: Title,
+  talk:  ShortString,                  // 所属 talk 的 slug
+}).strict();
+```
+
+**规则**:
+- frontmatter 只允许 `type` / `title` / `talk`
 - 正文自由格式,不校验 H2 schema
 
 ## 4. Body Schemas(正文结构 schema)

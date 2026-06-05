@@ -12,7 +12,9 @@ from .image import ImageSchema
 from .journal import JournalSchema
 from .note import NoteSchema
 from .paper import PaperSchema
+from .talk import TalkSchema
 from .topic import TopicSchema
+from .transcript import TranscriptSchema
 from .body import (
     BodySchema,
     AUTHOR_BODY,
@@ -22,19 +24,23 @@ from .body import (
     JOURNAL_BODY,
     NOTE_BODY,
     PAPER_BODY,
+    TALK_BODY,
     TOPIC_BODY,
+    TRANSCRIPT_BODY,
 )
 
 
 TYPE_REGISTRY: dict[str, tuple[Type[BaseModel], BodySchema]] = {
-    "author":  (AuthorSchema,  AUTHOR_BODY),
-    "book":    (BookSchema,    BOOK_BODY),
-    "chapter": (ChapterSchema, CHAPTER_BODY),
-    "image":   (ImageSchema,   IMAGE_BODY),
-    "journal": (JournalSchema, JOURNAL_BODY),
-    "note":    (NoteSchema,    NOTE_BODY),
-    "paper":   (PaperSchema,   PAPER_BODY),
-    "topic":   (TopicSchema,   TOPIC_BODY),
+    "author":     (AuthorSchema,     AUTHOR_BODY),
+    "book":       (BookSchema,       BOOK_BODY),
+    "chapter":    (ChapterSchema,    CHAPTER_BODY),
+    "image":      (ImageSchema,      IMAGE_BODY),
+    "journal":    (JournalSchema,    JOURNAL_BODY),
+    "note":       (NoteSchema,       NOTE_BODY),
+    "paper":      (PaperSchema,      PAPER_BODY),
+    "talk":       (TalkSchema,       TALK_BODY),
+    "topic":      (TopicSchema,      TOPIC_BODY),
+    "transcript": (TranscriptSchema, TRANSCRIPT_BODY),
 }
 
 

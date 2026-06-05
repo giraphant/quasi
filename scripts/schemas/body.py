@@ -307,7 +307,59 @@ PAPER_BODY = BodySchema(
 )
 
 
+# ─── talk body schema ────────────────────────────────────────
+#
+# 6 个固定四字 H2,顺序与字样不得变动,缺内容时保留标题写「（…)」(silent/short
+# 模板亦遵守 —— 见 scripts/transcribe/silent.py)。前五节与 paper 平行(`文献人物`
+# 列表对应 paper 的 `核心引用`,问答并入 `分节摘要` 不单列);`时间脉络`(视频时间轴
+# 导航)是 talk 专属,放最后当导航附录。
+
+TALK_BODY = BodySchema(
+    type_name="talk",
+    sections=[
+        BodySection(
+            h2="核心论点",
+            kind="paragraph",
+            required=True,
+            description="这场讲座的中心主张、问题意识、贡献(2-4 段)",
+        ),
+        BodySection(
+            h2="分节摘要",
+            kind="h3-sections",
+            required=True,
+            child_kind="paragraph",
+            description="按内容实质分节(H3 小标题);摘要主体;问答并入此处",
+        ),
+        BodySection(
+            h2="关键概念",
+            kind="table",
+            required=True,
+            description="讲座提出/反复使用的核心概念表;无则保留表头写一行",
+        ),
+        BodySection(
+            h2="项目关联",
+            kind="bullet-list",
+            required=True,
+            description="与 vault/authors、BTS 综述议题、同系列讲座的关联;无则写「（暂无)」",
+        ),
+        BodySection(
+            h2="文献人物",
+            kind="bullet-list",
+            required=True,
+            description="讲座点到的学者、著作、概念来源(列表);无则写一行说明",
+        ),
+        BodySection(
+            h2="时间脉络",
+            kind="bullet-list",
+            required=True,
+            description="视频时间轴导航(talk 专属,置末);每行一段,带起始 `[mm:ss]`(取自 transcript)",
+        ),
+    ],
+)
+
+
 TOPIC_BODY = BodySchema(type_name="topic", sections=[])
 JOURNAL_BODY = BodySchema(type_name="journal", sections=[])
 NOTE_BODY = BodySchema(type_name="note", sections=[])
 IMAGE_BODY = BodySchema(type_name="image", sections=[])
+TRANSCRIPT_BODY = BodySchema(type_name="transcript", sections=[])

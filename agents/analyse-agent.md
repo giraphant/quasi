@@ -1,6 +1,6 @@
 ---
 name: analyse-agent
-description: Worker for analysing one academic text, either one book chapter or one paper. Writes exactly one structured markdown output.
+description: Worker for analysing one academic text — a book chapter, a journal paper, or a talk transcript. Writes exactly one structured markdown output.
 tools: Read, Write, Edit, Glob, Bash
 model: opus
 ---
@@ -14,15 +14,16 @@ model: opus
   - `output` 路径(分析 md):绝对路径或相对 `$CLAUDE_PROJECT_DIR`,写入位置:
     - A 类(章节):`$CLAUDE_PROJECT_DIR/vault/books/{slug}/chXX-{title}.md`
     - B 类(论文):`$CLAUDE_PROJECT_DIR/vault/papers/{slug}.md` 或 `$CLAUDE_PROJECT_DIR/vault/journals/{journal}/{doi-slug}.md`
+    - T 类(讲座转写):`$CLAUDE_PROJECT_DIR/vault/talks/{slug}/talk.md`
 - Write 工具要求绝对路径。调用方若传相对路径,先按 `$CLAUDE_PROJECT_DIR` 拼绝对再写入。
-- 本 agent 通过 Bash 调用系统命令 `pdftotext`,不调用 plugin 内脚本。
+- 本 agent 通过 Bash 调用系统命令 `pdftotext`(仅 A/B 的 PDF 源),不调用 plugin 内脚本。
 
 ## 输入参数
 
 由调用方在 prompt 中提供:
 
-- `type`: A(书籍章节)或 B(期刊论文)
-- `input`: 源文本路径(txt 或 pdf)
+- `type`: A(书籍章节)/ B(期刊论文)/ T(讲座转写)
+- `input`: 源文本路径(A/B 为 txt 或 pdf;T 见下方 T 类参数)
 - `output`: 输出 .md 路径
 - `topic`: 研究主题(用于 `## 项目关联` 节)
 - `preamble`: 分析立场(从 CLAUDE.md §1.3 获取)
@@ -39,6 +40,12 @@ model: opus
   - `year`: 发表年
   - `doi`: DOI
   - `journal`: 期刊名
+- **T 类额外参数**(讲座转写,多引擎集成):
+  - `slug`: talk slug(从 output 路径派生即可)
+  - `transcript_path`: 主转写 `vault/talks/{slug}/transcript.md`(带 `[hh:mm:ss]` 时间戳)
+  - `per_engine`: 各引擎原始转写 SRT 路径数组(`processing/talks/{slug}/transcript.<engine>.srt`),用于交叉比对
+  - `title`: 讲座标题
+  - `date`: 录制日期(整日 ISO)
 
 ## 执行流程
 
@@ -55,6 +62,8 @@ model: opus
   - 含可读正文(不是单纯的 PDF 元数据 / 乱码 / 仅页眉页脚)
 
   失败时直接走"输出协议"返回 `status: error`,notes 写"PDF 文本提取失败(疑似图像/扫描版),需 OCR 或人工处理:{input}"。**不得继续 Step 2,不得凭训练数据知识补完。**
+
+- **T 类(讲座转写)**:不走 pdftotext。Read `transcript_path`(主转写)与 `per_engine` 数组里的**每一个** SRT,按下方 `<talk_mode>` 交叉比对后分析。
 
 ### Step 2: 按下方 `<canonical_template>` 分析
 
@@ -336,6 +345,25 @@ themes:
 ```
 </canonical_template>
 
+<talk_mode type="T — talk">
+**输入是同一场录制的多份转写**(各引擎一份 SRT,主转写已合成 `transcript.md`)。先 Read `transcript_path` + `per_engine` 每一份,**按时间戳交叉比对**——不同引擎错误不相关,这是降噪核心:多引擎一致 → 采用;分歧(专名/同音字/术语)→ 据上下文择优,不照抄明显错词,拿不准的人名/文献标「（音近,待核)」;忽略静音段重复幻觉(「thank you」循环、字幕垃圾);讲座没讲的不编造。
+
+**Frontmatter**(key 顺序 `type → title → date → speaker → themes → rating → media`):必填 `type:"talk"` / `title` / `date`(YYYY-MM-DD)/ `media`(文件名,从目录得到);可选 `speaker`(讲者姓名,关联 `vault/authors/`;抽不到省略整键)/ `themes`(2-6 个,复用全库 kebab-case 词表;抽不到省略)/ `rating`(不设)。`slug` 是输入参数,**不写进 frontmatter**。
+
+**正文**:H1 = 讲座标题(无装饰后缀),紧跟裸粗体 metadata 块(**讲者 / 日期 / 场合 / 时长**),然后**有且仅有下面六个四字 H2,顺序字样不得变,不得套用 paper 的 `理论框架`/`核心引用`/`金句要点` 或自创标题**;缺内容保留标题写「（…)」:
+
+| H2 | kind | 内容 |
+|---|---|---|
+| `## 核心论点` | paragraph | 中心主张、问题意识、贡献(2-4 段) |
+| `## 分节摘要` | h3-sections | 按内容分节(`### 小标题`);摘要主体;**问答、可引用金句、待核人名都并入此处** |
+| `## 关键概念` | table | 概念表(概念/英文/定义);无突出术语则保留表头写一行 |
+| `## 项目关联` | bullet-list | `- ` + `[[]]` 关联 authors / BTS 议题 / 同系列;无则「- （暂无)」。**不用 `### 项目名` 分 tab** |
+| `## 文献人物` | bullet-list | `- ` 列表,点到的学者/著作/概念来源;无则「- （转写中未明确提及具名文献)」 |
+| `## 时间脉络` | bullet-list | 视频时间轴导航(talk 专属,**置末**);每行 `- \`[mm:ss]\` 主题 — 概括`,时间戳取自主转写。**必填,勿漏** |
+
+短讲从简;极短/失败录制写「（录制过短,内容不足以摘要)」+ 时间轴一行,不强行扩写。
+</talk_mode>
+
 ## 写作要求
 
 1. 全文中文,专业术语首次附英文原文
@@ -354,7 +382,7 @@ themes:
 ```
 ANALYZE_RESULT:
 - output: {output 路径}
-- type: A | B
+- type: A | B | T
 - status: success | error
 - notes: {错误原因,仅在 status: error 时填写}
 ```

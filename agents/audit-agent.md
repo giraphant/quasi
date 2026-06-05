@@ -231,6 +231,39 @@ types:
       optional:
         - {h2: 金句要点, kind: blockquote-list}
         - {h2: 项目关联, kind: h3-project-tabs, child_kind: numbered-list}
+
+  talk:
+    frontmatter:
+      required:
+        - type
+        - title
+        - date
+        - media
+      optional:
+        - speaker
+        - themes
+        - rating
+      strict_notes:
+        type: talk
+        date: whole-day ISO (YYYY-MM-DD)
+        speaker: block-form array; omit entirely when empty
+        themes: block-form array; omit entirely when empty
+        arrays: block-form array, not flow array
+    body:
+      # six fixed four-char H2, all required, fixed order; missing content keeps
+      # the heading with a "（…)" placeholder (live + silent both conform).
+      # 时间脉络 (video time-axis) is talk-specific and sits LAST as an appendix.
+      required:
+        - {h2: 核心论点, kind: paragraph}
+        - {h2: 分节摘要, kind: h3-sections, child_kind: paragraph}
+        - {h2: 关键概念, kind: table}
+        - {h2: 项目关联, kind: bullet-list}
+        - {h2: 文献人物, kind: bullet-list}
+        - {h2: 时间脉络, kind: bullet-list}
+
+  # transcript (vault/talks/<slug>/transcript.md): lightweight, freeform body
+  # (no required H2); frontmatter required = type, title, talk. Like note/image,
+  # not enumerated above — only its frontmatter is checked.
 ```
 
 Schema interpretation:

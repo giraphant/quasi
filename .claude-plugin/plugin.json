@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "quasi",
   "description": "Academic research toolkit — search, download, extract, analyze, synthesize",
-  "version": "0.37.6",
+  "version": "0.38.0",
   "author": {
     "name": "ramu"
   },
@@ -62,6 +62,12 @@
       "type": "string",
       "title": "Kagi session token",
       "description": "Kagi Session Link URL or raw session token for Douban Chinese-edition discovery. Stored in the system keychain and passed to kagi-cli as KAGI_SESSION_TOKEN.",
+      "sensitive": true
+    },
+    "soniox_api_key": {
+      "type": "string",
+      "title": "Soniox API key",
+      "description": "API key for the Soniox stt-async-v4 speech-to-text engine, used by process-talk as the highest-quality transcription engine in the ensemble. Get one at https://soniox.com. Stored in the system keychain.",
       "sensitive": true
     },
     "superset_agent": {
