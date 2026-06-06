@@ -58,27 +58,19 @@ quasi-extract 已 subcommand 化(epub / ocr / split):
 
 **手动 manifest 处理**：manifest.json 中有 `start_page`/`end_page` → 映射为 `start`/`end`，走手动模式。
 
-### 阶段 2: 验证（全章覆盖，但每章只看头尾少量行）
+### 阶段 2: 验证
 
-提取脚本已写出 `{chapters_dir}/manifest.json`，含 `extracted_count`、每章 `word_count`/`title`/`filename`（PDF 还有 `start_page`）、以及 `skipped`（被跳过条目及原因）。
-
-**每一章都要过一眼，不做抽检**——单独某两章交界处截错（别的章都好）只能靠全覆盖才抓得到。但 OCR 书的章首格式很不稳定，靠脚本硬判「有没有章节标志」会误报，所以截断/乱码的判断交给你（agent）肉眼看。关键硬约束：**每章只看头尾各约 8 行，绝不整章通读**——这样既全覆盖、又不会把上下文撑爆（卡住的根因就是旧版每章读 200 行）。
-
-1. **机械预检（只 Read 一次 `manifest.json`，不读正文）：**
-   - `extracted_count == 0` → 无输出（见阶段 1 扫描版分支，报告需 OCR）
-   - `extracted_count > 100` → 碎片化
-   - 一条 Bash `ls {chapters_dir}/*.txt | wc -l`，数目应等于 `extracted_count`（**不要逐文件 `test`/`wc`**——字数已在 manifest 里）
-   - 记下每章 `word_count`：异常短、或与邻章字数突变的章，是交界截错的信号，重点看
-2. **全章轻量肉眼检查（一条 Bash 出摘要，一次读完，不要每章单独发几十个 Read）：**
+1. Read `{chapters_dir}/manifest.json`。`extracted_count == 0` → 报告需 OCR（见阶段 1 扫描版分支）；`extracted_count > 100` → 碎片化，回阶段 1 重切；否则继续。
+2. 跑这条命令拿每章头尾摘要，读它的输出：
    ```
-   for f in {chapters_dir}/*.txt; do echo "===== $f ====="; head -n 8 "$f"; echo " …(中略)… "; tail -n 8 "$f"; echo; done
+   for f in {chapters_dir}/*.txt; do echo "===== $f ====="; head -n 8 "$f"; echo " …… "; tail -n 8 "$f"; echo; done
    ```
-   对照这份摘要逐章看：
-   - **结尾是否成句**：最后一行停在半句话 = 疑似被截断（最常出现在相邻两章的交界，如第 5、6 章之间）
-   - **开头是否接得上**：不是上一章漏下来的尾巴（章首标志可有可无，OCR 经常缺，别据此就判失败）
-   - **正文是否可读**：非乱码、非纯页眉页脚
-   - 哪一章可疑，再单独 Read 那一章多读几行确认
-3. **通过标准：** 机械预检无致命项（有输出、count 一致、非碎片化），且摘要里没有截断/乱码。个别短章（前言/扉页）不算失败。
+3. 逐章看摘要，发现问题记下章名：
+   - 结尾停在半句话 → 截断
+   - 开头是上一章漏下来的内容 → 交界切错
+   - 正文乱码 / 全是页眉页脚 → 提取失败
+   不确定的章，单独 Read 那一章确认。
+4. 无问题 → 通过。个别短章（前言/扉页）不算问题。
 
 ### 阶段 3: 修复（仅当阶段 2 发现问题）
 

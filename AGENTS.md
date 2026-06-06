@@ -140,6 +140,16 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.38.2** (2026-06-06): **extract-agent 阶段 2 prompt trimmed to instructions
+  only.** The 0.38.1 prompt carried maintainer-facing rationale (why it used to
+  stick, root cause, the "绝不整章通读" prohibition) inside the agent's runtime
+  instructions — but the agent only ever receives the head+tail digest, so the
+  prohibition is moot and the history is noise. Rewritten to four action steps:
+  read `manifest.json` (empty → OCR; >100 → re-split), run the head/tail digest
+  command and read its output, eyeball each chapter for truncation / boundary
+  mis-cut / garble (Read a single chapter only if unsure), pass. No behaviour
+  change; the "why" stays here in the changelog where maintainers read it.
+
 - **0.38.1** (2026-06-06): **extract-agent validation no longer floods its own
   context (QUA-186).** The agent "经常卡住" because its 阶段 2 验证 read head+tail
   (~100+100 lines) *and* `wc -l`'d **every** chapter file — a 40-chapter book dumped
