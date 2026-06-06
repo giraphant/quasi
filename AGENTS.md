@@ -39,7 +39,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 - Claude Code injects configured values into hook/MCP/LSP/monitor subprocesses as `CLAUDE_PLUGIN_OPTION_<KEY>`.
 - Bash tool subprocesses do not receive those variables directly.
 - `hooks/hooks.json` registers a `PreToolUse` Bash hook that runs `scripts/hooks/inject-userconfig.py`.
-- For commands containing a bare `quasi-` word, the hook prepends `export ...;` with `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and each configured `QUASI_<KEY>`; for `superset agents run`, it prepends only the configured `QUASI_SUPERSET_AGENT`.
+- For commands containing a bare `quasi-` word, the hook prepends `export ...;` with `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and each configured `QUASI_<KEY>`; for `superset agents create`, it prepends only the configured `QUASI_SUPERSET_AGENT`. (There is no `superset agents run` in the current CLI; dispatch is `agents create`.)
 - Scripts read only `QUASI_*` service variables, not `CLAUDE_PLUGIN_OPTION_*`.
 - Kagi is special only at the subprocess edge: quasi reads `QUASI_KAGI_SESSION_TOKEN` and maps it to `KAGI_SESSION_TOKEN` for `kagi` CLI calls.
 - Do not document a Configure option as current unless it exists in `plugin.json#userConfig` and is forwarded by `_KEYS`.
@@ -139,6 +139,56 @@ When changing config, runtime state, or handoff contracts:
 - For manifest or marketplace changes, run `claude plugin validate plugins/quasi`.
 
 ## Recent Changes
+
+- **0.39.0** (2026-06-06): **process-topic Superset dispatch moves from the
+  removed `agents run` to `agents create`, plus prompt-file transport,
+  completion sentinels, and update-safe completion polling (QUA-187).**
+  - Current Superset CLI (0.2.x) exposes only `agents create` / `agents list`
+    (and `terminals create`); there is **no `agents run`** (it errors
+    `Unknown command: run`) and **no transcript/status/logs/result** command
+    for a session. `agents create` is fire-and-forget — it returns only a
+    `sessionId`. So completion can only be judged from vault artifacts, never
+    by querying the session. All of this is now documented as a hard
+    constraint in `skills/process-topic/SKILL.md`.
+  - **Dispatch verb**: every `superset agents run` template/example in
+    `process-topic` is now `superset agents create`. The `--agent
+    "${QUASI_SUPERSET_AGENT:-copilot}"` contract is unchanged.
+  - **Hook**: `scripts/hooks/inject-userconfig.py` now matches `superset
+    agents create` (regex `_SUPERSET_AGENTS_CREATE`) to inject only
+    `QUASI_SUPERSET_AGENT`; it no longer matches the dead `agents run`.
+    `test_hook_injection.py` updated (create-form injection + a guard that
+    the removed `agents run` form gets no injection). The active-contract
+    line in this file / `AGENTS.md` updated accordingly.
+  - **Prompt-file transport**: long synthesis/audit/refine prompts no longer
+    go through argv (copilot is `promptTransport: argv`; long Chinese prompts
+    with quotes/numbered sections are fragile there). The skill writes a task
+    file `.quasi/process-topic-runs/{slug}.prompt.md` and dispatches a short
+    `Read … and perform it exactly` prompt. `--attachment` is a confirmed
+    alternative (Superset uploads the file and injects an `# Attached files`
+    absolute path into the prompt); prompt-file is preferred for being
+    deterministic.
+  - **Completion sentinels + poll modes**: poll-agent now supports `exists`
+    (first-time generation), `mtime_changed` (overwrite/update), and
+    `sentinel` (agent writes `.quasi/process-topic-runs/{run_id}.json`).
+    Update/refine completion requires **sentinel AND mtime change** — a
+    sentinel can land a beat before the file flush, and a sentinel alone does
+    not prove the target actually changed.
+  - **Refine mode + `final_status` state machine**: manifest gains `mode`
+    (`generate` | `refine`) and `final_status`
+    (`missing`/`generated`/`needs_update`/`updated`). FINAL is skipped only
+    when `final_status ∈ {generated, updated}` — an explicit refine/update
+    request is **not** skipped just because `00-overview.md` already exists.
+  - **Smoke test**: `skills/process-topic/smoke-dispatch.sh` (live,
+    maintainer-run, not CI) proves `agents create` creates a file and that
+    prompt-file dispatch updates an existing file with sentinel+mtime
+    detection. Validated live: both pass in ~15s on a real-backend agent
+    preset. Note: the configured `copilot` preset routes through a local
+    model proxy (`monster.json` → `ANTHROPIC_BASE_URL`); when that backend
+    stalls, sessions are created but never produce output and there is no
+    transcript to inspect — the skill detects this via poll timeout (the
+    QUA-187 reproduction's "20 minutes, no change" was this backend stall,
+    not a Superset/mechanism fault).
+  - No schema-contract change; no Python script changes beyond the hook.
 
 - **0.38.0** (2026-06-05): **New `quasi:process-talk` skill — recording → multi-engine
   ensemble transcription → structured talk summary (QUA-182).**

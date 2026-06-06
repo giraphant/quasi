@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "quasi",
   "description": "Academic research toolkit — search, download, extract, analyze, synthesize",
-  "version": "0.38.0",
+  "version": "0.39.0",
   "author": {
     "name": "ramu"
   },
@@ -73,7 +73,7 @@
     "superset_agent": {
       "type": "string",
       "title": "Superset agent",
-      "description": "Agent name passed to superset agents run --agent for delegated quasi workflows. Leave empty to use copilot.",
+      "description": "Agent name passed to superset agents create --agent for delegated quasi workflows. Leave empty to use copilot.",
       "default": "copilot",
       "sensitive": true
     }
