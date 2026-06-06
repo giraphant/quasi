@@ -190,6 +190,40 @@ When changing config, runtime state, or handoff contracts:
     not a Superset/mechanism fault).
   - No schema-contract change; no Python script changes beyond the hook.
 
+- **0.38.2** (2026-06-06): **extract-agent 阶段 2 prompt trimmed to instructions
+  only.** The 0.38.1 prompt carried maintainer-facing rationale (why it used to
+  stick, root cause, the "绝不整章通读" prohibition) inside the agent's runtime
+  instructions — but the agent only ever receives the head+tail digest, so the
+  prohibition is moot and the history is noise. Rewritten to four action steps:
+  read `manifest.json` (empty → OCR; >100 → re-split), run the head/tail digest
+  command and read its output, eyeball each chapter for truncation / boundary
+  mis-cut / garble (Read a single chapter only if unsure), pass. No behaviour
+  change; the "why" stays here in the changelog where maintainers read it.
+
+- **0.38.1** (2026-06-06): **extract-agent validation no longer floods its own
+  context (QUA-186).** The agent "经常卡住" because its 阶段 2 验证 read head+tail
+  (~100+100 lines) *and* `wc -l`'d **every** chapter file — a 40-chapter book dumped
+  ~8,000 lines (≈120–160k tokens) into the sonnet subagent, which then slowed,
+  looped, or ran out of context.
+  - Full per-chapter coverage is **kept** (sampling was rejected: an isolated
+    mid-book boundary mis-cut — e.g. between ch5/ch6 — is only catchable by looking
+    at every chapter; and OCR'd chapter-start formatting is too unstable for a
+    script to judge heading presence, so truncation/garble judgment stays with the
+    agent's eye). The fix is **volume per chapter**, not coverage.
+  - `agents/extract-agent.md` 阶段 2 rewritten: mechanical pre-check reads only
+    `manifest.json` (`extracted_count`, per-chapter `word_count`, fragmentation
+    >100, file-count via one `ls | wc -l`; neighbour `word_count` jumps flag
+    boundary mis-cuts). Then a **single** Bash `for f … head -n 8; tail -n 8`
+    command emits one head+tail digest of **all** chapters, read in one shot —
+    every chapter eyeballed for truncation/garble at ~16 lines each instead of 200,
+    and ~1 tool call instead of ~80. "每章只看头尾少量行，绝不整章通读" is the stated
+    hard constraint; chapter-start markers are explicitly treated as optional
+    (OCR-unreliable).
+  - 阶段 3 修复: per-chapter / boundary re-extract uses the manifest's `start_page`;
+    after a re-run the head+tail digest is re-run; still capped at 2 rounds.
+  - Output contract (`EXTRACT_RESULT`), CLI surface, and manifest schema unchanged —
+    pure agent-prompt fix, no Python/test changes.
+
 - **0.38.0** (2026-06-05): **New `quasi:process-talk` skill — recording → multi-engine
   ensemble transcription → structured talk summary (QUA-182).**
   - New `talk` + `transcript` schema types (schema contract **0.5.0 → 0.6.0**):

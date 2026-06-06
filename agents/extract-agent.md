@@ -60,20 +60,23 @@ quasi-extract 已 subcommand 化(epub / ocr / split):
 
 ### 阶段 2: 验证
 
-对 `{chapters_dir}` 下每个 txt 文件：
-1. Read 前 100 行 + 后 100 行（<200 行读全部），Bash `wc -l` 拿行数
-2. 检查：
-   - 开头有章节标志（标题/章节号/作者）
-   - 结尾自然结束（不截断）
-   - 内容可读（非乱码）
-   - 长度 >50 词
-3. txt 文件数与 manifest.json 一致
-4. 总数 >100 → 视为碎片化
+1. Read `{chapters_dir}/manifest.json`。`extracted_count == 0` → 报告需 OCR（见阶段 1 扫描版分支）；`extracted_count > 100` → 碎片化，回阶段 1 重切；否则继续。
+2. 跑这条命令拿每章头尾摘要，读它的输出：
+   ```
+   for f in {chapters_dir}/*.txt; do echo "===== $f ====="; head -n 8 "$f"; echo " …… "; tail -n 8 "$f"; echo; done
+   ```
+3. 逐章看摘要，发现问题记下章名：
+   - 结尾停在半句话 → 截断
+   - 开头是上一章漏下来的内容 → 交界切错
+   - 正文乱码 / 全是页眉页脚 → 提取失败
+   不确定的章，单独 Read 那一章确认。
+4. 无问题 → 通过。个别短章（前言/扉页）不算问题。
 
-### 阶段 3: 修复（验证失败时）
+### 阶段 3: 修复（仅当阶段 2 发现问题）
 
-- 按问题清单重新提取相关章节
-- 再次验证
+- 个别可疑章 / 交界截错 → `--pages {start_page}-{end}` + `--title`（`start_page` 取自 manifest）重提取相关章
+- 系统性问题（碎片化 / 大面积乱码 / count 全错）→ 删除 `chapters_dir` 全量重跑（PDF 改走手动 `--chapters`）
+- 重跑后重新跑一遍阶段 2 的头尾摘要确认
 - 最多 2 轮，仍失败则报告 `status: failed`
 
 ## 输出协议
