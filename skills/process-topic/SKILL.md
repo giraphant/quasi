@@ -143,6 +143,12 @@ poll-agent 支持三种判完成模式,主进程按任务选:
 
 所有委派都用 `superset agents create`,异步 fire,完成靠 poll-agent 判。
 
+所有 dispatch prompt 必须以前置约束开头,防止下游 agent 把内容处理任务误判为软件开发分支工作:
+
+```text
+This is a vault/content processing task, not a software development task. Do not create, enter, or switch git worktrees or branches. Do not run git worktree, git switch, or git checkout. Work only in the current checkout and write only the requested vault outputs. If you believe a separate branch/worktree is needed, stop and report cwd + branch instead.
+```
+
 ### 短 prompt 形态(首次生成单条目 / 首次收口)
 
 短任务直接把 prompt 放 argv。
@@ -153,7 +159,7 @@ poll-agent 支持三种判完成模式,主进程按任务选:
 superset agents create \
   --workspace "$SUPERSET_WORKSPACE_ID" \
   --agent "${QUASI_SUPERSET_AGENT:-copilot}" \
-  --prompt "Run /quasi:process-paper for DOI {doi} (slug {slug}). Write vault/papers/{slug}.md; tag frontmatter topics: [{topic_slug}]; report final path + status." \
+  --prompt "This is a vault/content processing task, not a software development task. Do not create, enter, or switch git worktrees or branches. Do not run git worktree, git switch, or git checkout. Work only in the current checkout and write only the requested vault outputs. If you believe a separate branch/worktree is needed, stop and report cwd + branch instead. Run /quasi:process-paper for DOI {doi} (slug {slug}). Write vault/papers/{slug}.md; tag frontmatter topics: [{topic_slug}]; report final path + status." \
   --json --quiet
 ```
 
@@ -163,7 +169,7 @@ superset agents create \
 superset agents create \
   --workspace "$SUPERSET_WORKSPACE_ID" \
   --agent "${QUASI_SUPERSET_AGENT:-copilot}" \
-  --prompt "Run /quasi:process-book for slug {slug} (title {title}, authors {authors}). Write vault/books/{slug}/00-overview.md; tag frontmatter topics: [{topic_slug}]; report final path + status." \
+  --prompt "This is a vault/content processing task, not a software development task. Do not create, enter, or switch git worktrees or branches. Do not run git worktree, git switch, or git checkout. Work only in the current checkout and write only the requested vault outputs. If you believe a separate branch/worktree is needed, stop and report cwd + branch instead. Run /quasi:process-book for slug {slug} (title {title}, authors {authors}). Write vault/books/{slug}/00-overview.md; tag frontmatter topics: [{topic_slug}]; report final path + status." \
   --json --quiet
 ```
 
@@ -173,7 +179,7 @@ superset agents create \
 superset agents create \
   --workspace "$SUPERSET_WORKSPACE_ID" \
   --agent "${QUASI_SUPERSET_AGENT:-copilot}" \
-  --prompt "Run /quasi:process-author for author {slug} (full_name {authors}). Build author profile from representative books and papers. Write vault/authors/{slug}.md; tag frontmatter topics: [{topic_slug}]; report final path + status." \
+  --prompt "This is a vault/content processing task, not a software development task. Do not create, enter, or switch git worktrees or branches. Do not run git worktree, git switch, or git checkout. Work only in the current checkout and write only the requested vault outputs. If you believe a separate branch/worktree is needed, stop and report cwd + branch instead. Run /quasi:process-author for author {slug} (full_name {authors}). Build author profile from representative books and papers. Write vault/authors/{slug}.md; tag frontmatter topics: [{topic_slug}]; report final path + status." \
   --json --quiet
 ```
 
@@ -187,7 +193,7 @@ superset agents create \
 superset agents create \
   --workspace "$SUPERSET_WORKSPACE_ID" \
   --agent "${QUASI_SUPERSET_AGENT:-copilot}" \
-  --prompt "Read .quasi/process-topic-runs/{slug}.prompt.md and perform it exactly. Write the sentinel .quasi/process-topic-runs/{run_id}.json when complete." \
+  --prompt "This is a vault/content processing task, not a software development task. Do not create, enter, or switch git worktrees or branches. Do not run git worktree, git switch, or git checkout. Work only in the current checkout and write only the requested vault outputs. If you believe a separate branch/worktree is needed, stop and report cwd + branch instead. Read .quasi/process-topic-runs/{slug}.prompt.md and perform it exactly. Write the sentinel .quasi/process-topic-runs/{run_id}.json when complete." \
   --json --quiet
 ```
 
@@ -211,7 +217,7 @@ poll-agent 用 `sentinel`+`mtime_changed` 合判:哨兵出现且每个 `updated`
 superset agents create \
   --workspace "$SUPERSET_WORKSPACE_ID" \
   --agent "${QUASI_SUPERSET_AGENT:-copilot}" \
-  --prompt "Synthesize topic review for '{topic_desc}' (slug {topic_slug}). Read vault/papers/ and vault/books/ entries tagged topics: [{topic_slug}]. Write vault/topics/{topic_slug}/00-overview.md (frontmatter: {type: topic, title: {topic}, kind: overview}) with [[wikilink]] references to vault entries. Write vault/topics/{topic_slug}/01-resources.md (frontmatter: {type: topic, title: {topic}, kind: resources}) with categorized reading list. title 必填,与 H1 一致。report final path + status." \
+  --prompt "This is a vault/content processing task, not a software development task. Do not create, enter, or switch git worktrees or branches. Do not run git worktree, git switch, or git checkout. Work only in the current checkout and write only the requested vault outputs. If you believe a separate branch/worktree is needed, stop and report cwd + branch instead. Synthesize topic review for '{topic_desc}' (slug {topic_slug}). Read vault/papers/ and vault/books/ entries tagged topics: [{topic_slug}]. Write vault/topics/{topic_slug}/00-overview.md (frontmatter: {type: topic, title: {topic}, kind: overview}) with [[wikilink]] references to vault entries. Write vault/topics/{topic_slug}/01-resources.md (frontmatter: {type: topic, title: {topic}, kind: resources}) with categorized reading list. title 必填,与 H1 一致。report final path + status." \
   --json --quiet
 ```
 
@@ -225,7 +231,7 @@ superset agents create \
 superset agents create \
   --workspace "$SUPERSET_WORKSPACE_ID" \
   --agent "${QUASI_SUPERSET_AGENT:-copilot}" \
-  --prompt "Read .quasi/process-topic-runs/{slug}.prompt.md and perform it exactly. Overwrite vault/topics/{topic_slug}/00-overview.md and 01-resources.md with the new framing. Write the sentinel .quasi/process-topic-runs/{run_id}.json when done." \
+  --prompt "This is a vault/content processing task, not a software development task. Do not create, enter, or switch git worktrees or branches. Do not run git worktree, git switch, or git checkout. Work only in the current checkout and write only the requested vault outputs. If you believe a separate branch/worktree is needed, stop and report cwd + branch instead. Read .quasi/process-topic-runs/{slug}.prompt.md and perform it exactly. Overwrite vault/topics/{topic_slug}/00-overview.md and 01-resources.md with the new framing. Write the sentinel .quasi/process-topic-runs/{run_id}.json when done." \
   --json --quiet
 ```
 
@@ -237,7 +243,7 @@ superset agents create \
 superset agents create \
   --workspace "$SUPERSET_WORKSPACE_ID" \
   --agent "${QUASI_SUPERSET_AGENT:-copilot}" \
-  --prompt "Run /quasi:audit on path vault/topics/{topic_slug}/. Check all generated topic pages. Apply local fixes if safe, escalate if not. report path + status." \
+  --prompt "This is a vault/content processing task, not a software development task. Do not create, enter, or switch git worktrees or branches. Do not run git worktree, git switch, or git checkout. Work only in the current checkout and write only the requested vault outputs. If you believe a separate branch/worktree is needed, stop and report cwd + branch instead. Run /quasi:audit on path vault/topics/{topic_slug}/. Check all generated topic pages. Apply local fixes if safe, escalate if not. report path + status." \
   --json --quiet
 ```
 

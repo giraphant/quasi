@@ -140,6 +140,19 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.39.1** (2026-06-08): **process-topic delegated prompts explicitly forbid branch/worktree switching.**
+  - Every `superset agents create --prompt` example in `skills/process-topic/SKILL.md`
+    now begins with the vault/content-processing preface: this is not a software
+    development task; do not create, enter, or switch git branches/worktrees; do
+    not run `git worktree`, `git switch`, or `git checkout`; if isolation seems
+    necessary, stop and report cwd + branch instead. This prevents delegated
+    process-paper/book/author/synthesis/audit agents from misrouting content work
+    into development-branch completion flows.
+  - The old live maintainer smoke script under `skills/process-topic/` is removed
+    from the active skill tree; the runtime contract is now guarded by
+    `test_skill_orchestration.py` instead.
+  - No schema-contract change; instruction/test-only release.
+
 - **0.39.0** (2026-06-06): **process-topic Superset dispatch moves from the
   removed `agents run` to `agents create`, plus prompt-file transport,
   completion sentinels, and update-safe completion polling (QUA-187).**

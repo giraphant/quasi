@@ -236,3 +236,16 @@ def test_process_topic_superset_agent_uses_shell_default_contract():
     assert '--agent "${QUASI_SUPERSET_AGENT:-copilot}"' in text
     assert "superset_agent = env" not in text
     assert "--agent claude" not in text
+
+
+def test_process_topic_dispatch_prompts_forbid_worktree_switching():
+    text = (PLUGIN_ROOT / "skills" / "process-topic" / "SKILL.md").read_text(encoding="utf-8")
+
+    required = [
+        "This is a vault/content processing task, not a software development task.",
+        "Do not create, enter, or switch git worktrees or branches.",
+        "Do not run git worktree, git switch, or git checkout.",
+        "If you believe a separate branch/worktree is needed, stop and report cwd + branch instead.",
+    ]
+    missing = [token for token in required if token not in text]
+    assert missing == []
