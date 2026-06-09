@@ -177,6 +177,7 @@ themes:
             "本段包含论点。",
             "打击:经济神话破灭,资金链断裂;影响深远!真的吗?以花岗岩为例(国家标准)。"
             "ISO 9000:1987 与比例 6:54 仍在,见(relational model)。"
+            "品牌 Yahoo!目录与游戏 Spacewar!很有名。到此为止吗?Baldwin 如是说。餐厅 Dans le Noir?很暗。"
             "行内代码 `中:文` 不改。链接 [t](https://e.com/中:文) 不改。",
         ),
         encoding="utf-8",
@@ -204,6 +205,13 @@ themes:
     assert "[t](https://e.com/中:文)" in updated
     # The period rule is intentionally absent — no half-width dot is rewritten.
     assert not any(d["id"] == "punctuation.cjk_halfwidth" and d["after"] == "。" for d in diagnostics)
+    # `!`/`?` inside a Latin name glued to CJK belong to the name — left alone.
+    assert "Yahoo!目录" in updated
+    assert "Spacewar!很有名" in updated
+    assert "Dans le Noir?很暗" in updated
+    # But a real Chinese question whose next sentence starts with a Latin name
+    # is a sentence boundary, not a name — it must still convert.
+    assert "到此为止吗？Baldwin" in updated
 
 
 def test_audit_body_schema_reports_agent_action_for_rewriteable_section(tmp_path: Path):

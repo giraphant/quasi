@@ -140,6 +140,33 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.40.1** (2026-06-09): **punctuation autofix guards `!`/`?` inside Latin
+  names.** A 5-agent adversarial review of the 0.40.0 dry-run over the live
+  16.9k-file vault confirmed colons, commas, semicolons, parens, and masking
+  (code/inline-code/links/wikilinks/frontmatter/`$…$` math) all clean — zero
+  false positives (one reviewer independently reimplemented the masking and
+  reproduced the change set exactly). It surfaced **one real bug class**: a
+  proper noun whose spelling ends in `!`/`?` glued onto Han text
+  (`Yahoo!目录`, `Spacewar!`, `Earth First!`, `Dans le Noir?黑暗餐厅`) had its
+  mark "corrected" to full-width — 33 such corruptions across the vault.
+  - Fix: `_is_ascii_alpha` guard in `_punctuation_replacements` — for `!`/`?`
+    (`LATIN_TOKEN_PUNCT`), skip when an ASCII letter sits immediately before the
+    mark and CJK immediately after (Latin-token-then-mark-then-CJK = the name
+    pattern). The mirror direction (CJK-then-mark-then-Latin) is deliberately
+    NOT guarded: `…会发生什么变化?Baldwin…` is a Chinese question whose next
+    sentence merely starts with a Latin name — a sentence boundary, not a name.
+    The first patch guarded both directions and wrongly killed ~19 such
+    legitimate questions; re-running the dry-run caught it, and the guard was
+    narrowed to one direction. Known residual: the `!Kung` click consonant
+    (1 occurrence) still converts — accepted over re-killing real questions.
+  - Two nested-paren cases (`(它们是世界的物质(再)配置)`) convert the inner CJK
+    pair but leave the outer half-width — cosmetic incomplete conversion, not
+    corruption; left as a known limitation.
+  - `test_audit_punctuation_style_makes_cjk_halfwidth_full_width` extended with
+    `Yahoo!目录` / `Spacewar!` / `Dans le Noir?` (unchanged) and a real Chinese
+    question before a Latin name (still converts). Full suite 117 pass.
+  - No schema-contract change. Vault not yet swept.
+
 - **0.40.0** (2026-06-09): **audit gains a CJK half-width→full-width
   punctuation autofix pass.** Mirrors the existing quote-style pass in
   `scripts/audit/audit.py`: a new `_run_punctuation_autofix` runs right after

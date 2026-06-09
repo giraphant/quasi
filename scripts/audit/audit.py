@@ -32,6 +32,11 @@ SENTENCE_BOUNDARY_RE = re.compile(r"[。！？!?\n]")
 # in a real vault its only half-width-in-CJK occurrences are bibliography
 # line-endings, where converting one of two dots makes the entry inconsistent.
 CJK_PUNCT_INLINE = {",": "，", ":": "：", ";": "；", "!": "！", "?": "？"}
+# `!` and `?` legitimately live inside Latin names/terms (Yahoo!, Spacewar!,
+# Dans le Noir?, the !Kung click consonant). When such a mark only touches CJK
+# because the name abuts Han text, the mark is part of the name, not sentence
+# punctuation — so skip it when the side opposite the CJK is an ASCII letter.
+LATIN_TOKEN_PUNCT = {"!", "?"}
 PAREN_PAIR_RE = re.compile(r"\(([^()\n]{0,200})\)")
 
 
@@ -366,6 +371,10 @@ def _is_cjk(ch: str) -> bool:
     return bool(ch) and CJK_RE.match(ch) is not None
 
 
+def _is_ascii_alpha(ch: str) -> bool:
+    return len(ch) == 1 and ch.isascii() and ch.isalpha()
+
+
 def _punctuation_replacements(masked: str) -> dict[int, str]:
     """Map body offsets to full-width replacements, decided on the masked body."""
     replacements: dict[int, str] = {}
@@ -373,10 +382,20 @@ def _punctuation_replacements(masked: str) -> dict[int, str]:
     for index, ch in enumerate(masked):
         if ch not in CJK_PUNCT_INLINE:
             continue
-        prev_cjk = index > 0 and _is_cjk(masked[index - 1])
-        next_cjk = index + 1 < length and _is_cjk(masked[index + 1])
-        if prev_cjk or next_cjk:
-            replacements[index] = CJK_PUNCT_INLINE[ch]
+        prev = masked[index - 1] if index > 0 else ""
+        nxt = masked[index + 1] if index + 1 < length else ""
+        prev_cjk = _is_cjk(prev)
+        next_cjk = _is_cjk(nxt)
+        if not (prev_cjk or next_cjk):
+            continue
+        # `Yahoo!目录`, `Dans le Noir?黑暗`: a Latin token ends in the mark and is
+        # glued straight onto CJK — the mark belongs to the name, so skip it. The
+        # mirror case (CJK before, Latin after, e.g. a real Chinese question `…变化?
+        # Baldwin…`) must NOT be skipped — that is a sentence boundary, not a name —
+        # so only the Latin-then-mark-then-CJK direction is guarded.
+        if ch in LATIN_TOKEN_PUNCT and next_cjk and _is_ascii_alpha(prev):
+            continue
+        replacements[index] = CJK_PUNCT_INLINE[ch]
 
     for match in PAREN_PAIR_RE.finditer(masked):
         if not CJK_RE.search(match.group(1)):
