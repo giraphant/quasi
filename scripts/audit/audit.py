@@ -26,6 +26,14 @@ LINK_TARGET_RE = re.compile(r"\]\([^\n)]*\)")
 WIKI_LINK_RE = re.compile(r"\[\[[^\]\n]*\]\]")
 SENTENCE_BOUNDARY_RE = re.compile(r"[。！？!?\n]")
 
+# Half-width → full-width punctuation in CJK context. Inline marks convert when
+# a CJK character sits immediately on either side; parentheses convert as a pair
+# only when their content contains CJK. The period (.) is intentionally excluded:
+# in a real vault its only half-width-in-CJK occurrences are bibliography
+# line-endings, where converting one of two dots makes the entry inconsistent.
+CJK_PUNCT_INLINE = {",": "，", ":": "：", ";": "；", "!": "！", "?": "？"}
+PAREN_PAIR_RE = re.compile(r"\(([^()\n]{0,200})\)")
+
 
 def _project_root() -> Path:
     return project_root()
@@ -354,6 +362,86 @@ def _run_quote_style_autofix(files: list[Path], root: Path) -> tuple[dict[str, l
     return diagnostics_by_path, modified_paths
 
 
+def _is_cjk(ch: str) -> bool:
+    return bool(ch) and CJK_RE.match(ch) is not None
+
+
+def _punctuation_replacements(masked: str) -> dict[int, str]:
+    """Map body offsets to full-width replacements, decided on the masked body."""
+    replacements: dict[int, str] = {}
+    length = len(masked)
+    for index, ch in enumerate(masked):
+        if ch not in CJK_PUNCT_INLINE:
+            continue
+        prev_cjk = index > 0 and _is_cjk(masked[index - 1])
+        next_cjk = index + 1 < length and _is_cjk(masked[index + 1])
+        if prev_cjk or next_cjk:
+            replacements[index] = CJK_PUNCT_INLINE[ch]
+
+    for match in PAREN_PAIR_RE.finditer(masked):
+        if not CJK_RE.search(match.group(1)):
+            continue
+        replacements[match.start()] = "（"
+        replacements[match.end() - 1] = "）"
+
+    return replacements
+
+
+def _punctuation_autofix_file(path: Path, root: Path) -> tuple[str | None, list[dict[str, Any]]]:
+    text = path.read_text(encoding="utf-8")
+    frontmatter, body, body_offset = _split_frontmatter_text(text)
+    masked = _mask_markdown_non_body(body)
+    replacements = _punctuation_replacements(masked)
+    if not replacements:
+        return None, []
+
+    # Every replacement is one character for one character, so offsets are stable
+    # between the old and new body — contexts can be read from both by index.
+    chars = list(body)
+    for index, replacement in replacements.items():
+        chars[index] = replacement
+    new_body = "".join(chars)
+
+    rel_path = _rel_path(path, root)
+    diagnostics: list[dict[str, Any]] = []
+    for index in sorted(replacements):
+        original = body[index]
+        replacement = replacements[index]
+        line, column = _line_column_for(text, body_offset + index)
+        diagnostics.append(_base_diag(
+            rel_path=rel_path,
+            diag_id="punctuation.cjk_halfwidth",
+            pass_name="punctuation_style",
+            severity="warning",
+            status="auto_fixed",
+            message="half-width punctuation in CJK context was made full-width",
+            action="none",
+            location={"line": line, "column": column},
+            before=original,
+            after=replacement,
+            before_context=_sentence_context(body, index, index + 1),
+            after_context=_sentence_context(new_body, index, index + 1),
+        ))
+
+    if frontmatter is None:
+        return new_body, diagnostics
+    return text[:body_offset] + new_body, diagnostics
+
+
+def _run_punctuation_autofix(files: list[Path], root: Path) -> tuple[dict[str, list[dict[str, Any]]], set[str]]:
+    diagnostics_by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    modified_paths: set[str] = set()
+    for path in files:
+        result, diagnostics = _punctuation_autofix_file(path, root)
+        if result is None:
+            continue
+        path.write_text(result, encoding="utf-8")
+        rel_path = _rel_path(path, root)
+        modified_paths.add(rel_path)
+        diagnostics_by_path[rel_path].extend(diagnostics)
+    return diagnostics_by_path, modified_paths
+
+
 def _frontmatter_error_action(err: dict[str, Any]) -> tuple[str, str]:
     loc = err.get("loc") or []
     field = loc[0] if loc else None
@@ -556,6 +644,7 @@ def _run_audit(argv: list[str]) -> int:
         root,
     )
     quote_diags, quote_modified = _run_quote_style_autofix(files, root)
+    punct_diags, punct_modified = _run_punctuation_autofix(files, root)
 
     typecheck_mod = _load("quasi_audit_typecheck_run", "scripts/typecheck/typecheck.py")
     typecheck_mod.run_typecheck(target, quiet=True, write_report=False)
@@ -563,11 +652,13 @@ def _run_audit(argv: list[str]) -> int:
     results = json.loads(results_path.read_text(encoding="utf-8"))
     typecheck_diags, detected_types = _typecheck_diagnostics(results, root)
 
-    diagnostics_by_path = _merge_diagnostics(mechanical_diags, quote_diags, typecheck_diags)
-    modified_paths = mechanical_modified | quote_modified
+    diagnostics_by_path = _merge_diagnostics(mechanical_diags, quote_diags, punct_diags, typecheck_diags)
+    modified_paths = mechanical_modified | quote_modified | punct_modified
     fix_counts = dict(fix_result["change_counts"])
     if quote_modified:
         fix_counts["quote_style"] = sum(len(items) for items in quote_diags.values())
+    if punct_modified:
+        fix_counts["punctuation_style"] = sum(len(items) for items in punct_diags.values())
 
     payload = _build_payload(
         requested_target=args.path,

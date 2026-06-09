@@ -140,6 +140,37 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.40.0** (2026-06-09): **audit gains a CJK half-width→full-width
+  punctuation autofix pass.** Mirrors the existing quote-style pass in
+  `scripts/audit/audit.py`: a new `_run_punctuation_autofix` runs right after
+  `_run_quote_style_autofix`, over the same `_mask_markdown_non_body` /
+  `_split_frontmatter_text` machinery, so code fences, inline code, link
+  targets, `[[wikilink]]`, and frontmatter are never touched.
+  - **Scope** (`CJK_PUNCT_INLINE` + `PAREN_PAIR_RE`): inline `, : ; ! ?` →
+    `，：；！？` convert only when a CJK char sits immediately on either side;
+    parentheses convert as a pair (`(…)` → `（…）`) only when the content
+    contains CJK. Each replacement is one-char-for-one-char, so body offsets
+    stay stable and before/after sentence contexts are read by index.
+    Diagnostics: `id: punctuation.cjk_halfwidth`, `pass: punctuation_style`,
+    `status: auto_fixed`, `action: none`; counted under
+    `fix_counts.punctuation_style`.
+  - **Period (`.`) deliberately excluded.** A read-only dry-run over the live
+    16.9k-file vault produced 108,239 changes across 5,438 files with zero
+    false positives on the inline+paren set — digit-flanked colons
+    (`ISO 9000:1987`, `6:54`, `Foucault 2008:63`), English/digit-only parens
+    (`(relational model)`, `(2011-12 IPO)`, `(1)`), and masked code/links all
+    correctly preserved. The only `.→。` hits (58) were bibliography
+    line-endings (`*活力物质*. 西北大学出版社.`), where converting the terminal
+    dot but not the title-separator dot makes the entry mix `. … 。`. So the
+    period rule is omitted entirely.
+  - `agents/audit-agent.md` core-principle line extended to name CJK
+    punctuation alongside quote style as body-only typography.
+  - Tests: `test_audit_cli.py::test_audit_punctuation_style_makes_cjk_halfwidth_full_width`
+    asserts the positive conversions plus the must-not-touch cases
+    (digit-flanked colon, English-only parens, inline-code/link masking, no
+    period rewrite). Full suite 117 pass.
+  - No schema-contract change.
+
 - **0.39.1** (2026-06-08): **process-topic delegated prompts explicitly forbid branch/worktree switching.**
   - Every `superset agents create --prompt` example in `skills/process-topic/SKILL.md`
     now begins with the vault/content-processing preface: this is not a software

@@ -157,6 +157,55 @@ themes:
     assert "\"仍在四反引号代码块内\" 不改" in updated
 
 
+def test_audit_punctuation_style_makes_cjk_halfwidth_full_width(tmp_path: Path):
+    project = tmp_path / "project"
+    paper = project / "vault" / "papers" / "punct-test-2020.md"
+    write_paper(
+        paper,
+        """type: paper
+title: 标点测试
+authors:
+- Aryn Martin
+year: 2020
+journal: Endeavour
+themes:
+- chimerism""",
+    )
+    original = paper.read_text(encoding="utf-8")
+    paper.write_text(
+        original.replace(
+            "本段包含论点。",
+            "打击:经济神话破灭,资金链断裂;影响深远!真的吗?以花岗岩为例(国家标准)。"
+            "ISO 9000:1987 与比例 6:54 仍在,见(relational model)。"
+            "行内代码 `中:文` 不改。链接 [t](https://e.com/中:文) 不改。",
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_audit(project, "--path", str(paper))
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    diagnostics = all_diagnostics(payload)
+    updated = paper.read_text(encoding="utf-8")
+
+    assert any(d["id"] == "punctuation.cjk_halfwidth" for d in diagnostics)
+    # CJK-adjacent inline marks and CJK-content parens convert.
+    assert "打击：经济神话破灭，资金链断裂；影响深远！真的吗？" in updated
+    assert "（国家标准）" in updated
+    assert "仍在，见" in updated
+    # Digit-flanked colons (standard numbers, ratios) stay half-width.
+    assert "ISO 9000:1987" in updated
+    assert "比例 6:54" in updated
+    # English-only parentheses stay half-width.
+    assert "见(relational model)" in updated
+    # Inline code and link targets are never touched.
+    assert "`中:文`" in updated
+    assert "[t](https://e.com/中:文)" in updated
+    # The period rule is intentionally absent — no half-width dot is rewritten.
+    assert not any(d["id"] == "punctuation.cjk_halfwidth" and d["after"] == "。" for d in diagnostics)
+
+
 def test_audit_body_schema_reports_agent_action_for_rewriteable_section(tmp_path: Path):
     project = tmp_path / "project"
     paper = project / "vault" / "papers" / "body-test-2020.md"

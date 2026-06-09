@@ -19,7 +19,7 @@ model: sonnet
 - 代码负责高置信机械修复。Agent 只处理 `diagnostics[].action` 指明的少量例外。
 - 只做本地最小修改。不要生成学术内容、不要补写不存在的实质段落、不要改正文/正式稿草稿。
 - 保留原事实和原措辞。需要新增缺失章节时只能插入占位 stub,不得编造内容。
-- quote style 只属于正文 markdown;frontmatter 的 YAML 引号不是正文 typography quote。
+- quote style 与 CJK 半角→全角标点都只属于正文 markdown;frontmatter、代码、链接、`[[wikilink]]` 不参与正文 typography。
 
 ## Step 1: run diagnostic transaction
 
