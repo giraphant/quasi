@@ -504,8 +504,14 @@ created: 2026-05-23
 
 ```ts
 export const ImageSchema = z.object({
-  type:  z.literal('image'),
-  title: Title,
+  type:    z.literal('image'),
+  title:   Title,
+  creator: z.array(Name).default([]),       // 创作者(摄影师/画家),可关联 vault/authors/
+  date:    ISODate.optional(),               // 创作/拍摄日期(整日 ISO)
+  source:  z.string().max(500).optional(),   // 出处: URL 或自由文本
+  themes:  z.array(z.string()).default([]),
+  topics:  z.array(z.string()).default([]),
+  rating:  Rating.optional(),
 }).strict();
 ```
 
@@ -515,12 +521,21 @@ export const ImageSchema = z.object({
 ---
 type: image
 title: Micrometer
+creator:
+  - Henry Maudslay
+date: 2024-11-08
+source: https://en.wikipedia.org/wiki/Micrometer_(device)
+themes:
+  - measurement
+rating: 4
 ---
 ```
 
 **规则**:
-- frontmatter 只允许 `type` / `title`
+- frontmatter 只允许 `type` / `title` / `creator` / `date` / `source` / `themes` / `topics` / `rating`;除 `type` / `title` 外全部可选,空值省略整键
 - 原图路径由目录约定派生,不写进 frontmatter
+- 技术性字段(宽高/格式/文件大小)由阅读器索引时从 `original.<ext>` 现场派生,**绝不**写进 frontmatter(QUA-175)
+- 描述(图片讲什么)写正文,不设 frontmatter 字段
 - 正文自由格式,不校验 H2 schema
 
 ---
