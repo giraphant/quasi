@@ -1,9 +1,9 @@
 # quasi-vault Schema Specification
 
 ```
-Version : 0.6.0
+Version : 0.7.0
 Status  : active — canonical schema source for lint / autofix / generation
-Last    : 2026-05-30
+Last    : 2026-06-11
 ```
 
 ## 0. 文档定位
@@ -507,7 +507,7 @@ export const ImageSchema = z.object({
   type:    z.literal('image'),
   title:   Title,
   creator: z.array(Name).default([]),       // 创作者(摄影师/画家),可关联 vault/authors/
-  date:    ISODate.optional(),               // 创作/拍摄日期(整日 ISO)
+  date:    z.string().date().optional(),      // 创作/拍摄日期(整日 ISO)
   source:  z.string().max(500).optional(),   // 出处: URL 或自由文本
   themes:  z.array(z.string()).default([]),
   topics:  z.array(z.string()).default([]),

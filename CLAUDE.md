@@ -140,6 +140,17 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.41.0** (2026-06-11): **image schema gains descriptive metadata fields (schema contract 0.6.0 → 0.7.0).**
+  - `ImageSchema` now accepts optional `creator`, `date`, `source`, `themes`,
+    `topics`, and `rating` alongside the existing required `type` / `title`, so
+    local image objects can carry human-curated descriptive metadata without
+    overloading the body.
+  - Technical image facts (width, height, format, file size) remain explicitly
+    path/indexer-derived from `vault/images/<slug>/original.<ext>` and must not
+    be persisted in frontmatter (QUA-175).
+  - `SPEC.md` §3.8 documents the expanded frontmatter shape and the plugin
+    manifest / marketplace versions are bumped to `0.41.0`.
+
 - **0.40.1** (2026-06-09): **punctuation autofix guards `!`/`?` inside Latin
   names.** A 5-agent adversarial review of the 0.40.0 dry-run over the live
   16.9k-file vault confirmed colons, commas, semicolons, parens, and masking

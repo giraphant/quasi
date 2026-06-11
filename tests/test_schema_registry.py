@@ -172,6 +172,16 @@ def test_note_and_image_validate_lightweight_frontmatter() -> None:
         "type": "image",
         "title": "Micrometer",
     })
+    image_schema.model_validate({
+        "type": "image",
+        "title": "Micrometer",
+        "creator": ["Henry Maudslay"],
+        "date": "2024-11-08",
+        "source": "https://en.wikipedia.org/wiki/Micrometer_(device)",
+        "themes": ["measurement"],
+        "topics": ["tools"],
+        "rating": 4,
+    })
 
     assert note_body.type_name == "note"
     assert note_body.sections == []
@@ -194,7 +204,7 @@ def test_note_and_image_reject_extra_fields() -> None:
         image_schema.model_validate({
             "type": "image",
             "title": "Micrometer",
-            "source": "catalog",
+            "width": 1024,
         })
 
 
