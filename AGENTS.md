@@ -140,6 +140,18 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.41.1** (2026-06-14): **process-talk gains local single-recording media
+  compression.**
+  - New `quasi-helpers talk compress-media --media F --output O` wraps a small
+    deterministic `ffmpeg`/`libx265` helper for one talk recording at a time,
+    matching the normal process-talk flow where the source recording often
+    lives outside `vault/talks`.
+  - `quasi:process-talk` now compresses video inputs locally to
+    `vault/talks/{slug}/recording.mp4` before transcription and then uses that
+    path for the rest of the workflow. Audio-only inputs skip compression.
+  - No schema-contract change; plugin manifest / marketplace versions are
+    bumped to `0.41.1`.
+
 - **0.41.0** (2026-06-11): **image schema gains descriptive metadata fields (schema contract 0.6.0 → 0.7.0).**
   - `ImageSchema` now accepts optional `creator`, `date`, `source`, `themes`,
     `topics`, and `rating` alongside the existing required `type` / `title`, so

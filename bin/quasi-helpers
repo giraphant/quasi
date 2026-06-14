@@ -21,6 +21,9 @@
 #       scan    book overviews → ISBN-keyed cndouban pending state
 #       write   search result localisations.zh → .quasi/localise/cndouban.json
 #
+#   quasi-helpers talk compress-media [args...]
+#       compress one talk recording to the requested output path
+#
 # Each nested subcommand has its own --help.
 
 set -e
@@ -43,11 +46,13 @@ Usage:
   quasi-helpers proofread {prepare|cleanup} [args...]
   quasi-helpers citation  {parse|biblio|resolve|review-cards|emit-bib} [args...]
   quasi-helpers localise  {scan|write} [args...]
+  quasi-helpers talk      compress-media [args...]
 
 Each nested subcommand has its own --help, e.g.:
   quasi-helpers proofread prepare --help
   quasi-helpers citation parse --help
   quasi-helpers localise scan --help
+  quasi-helpers talk compress-media --help
 HELP
     exit 0
 fi
@@ -65,9 +70,23 @@ case "$DOMAIN" in
     localise)
         exec "$PYTHON" "$PLUGIN_ROOT/scripts/localise/localise.py" "$@"
         ;;
+    talk)
+        SUBDOMAIN="${1:-}"
+        shift || true
+        case "$SUBDOMAIN" in
+            compress-media)
+                exec "$PYTHON" "$PLUGIN_ROOT/scripts/talk/compress_media.py" "$@"
+                ;;
+            *)
+                echo "quasi-helpers talk: unknown subcommand: $SUBDOMAIN" >&2
+                echo "valid: compress-media" >&2
+                exit 2
+                ;;
+        esac
+        ;;
     *)
         echo "quasi-helpers: unknown domain: $DOMAIN" >&2
-        echo "valid: proofread | citation | localise" >&2
+        echo "valid: proofread | citation | localise | talk" >&2
         exit 2
         ;;
 esac
