@@ -1,15 +1,12 @@
 """Google Books adapter — books only.
 
 HTTP path: googleapis.com/books/v1/volumes (unauthenticated).
-On HTTP 429 / RATE_LIMIT_EXCEEDED: dokobot fallback via google.com/search?tbm=bks.
+On HTTP 429 / RATE_LIMIT_EXCEEDED: return a rate-limit error.
 """
 
 from __future__ import annotations
 
 import json
-import re
-import shutil
-import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -23,8 +20,6 @@ SUPPORTS = ["book"]
 SOURCE_ID = "googlebooks"
 
 _BASE = "https://www.googleapis.com/books/v1/volumes"
-_DOKO_SEARCH = "https://www.google.com/search?tbm=bks&q={q}"
-_AUTHOR_YEAR_RE = re.compile(r"·\s*(\d{4})")
 
 
 # ---- mockable I/O primitives ----
@@ -48,43 +43,6 @@ def _http_status(url: str, timeout: int = 20) -> int:
         return 0
 
 
-def _dokobot_search(q: str, timeout: int = 60) -> list[dict]:
-    """Scrape Google Books via dokobot; return list of partial dicts (may be empty)."""
-    if not shutil.which("dokobot"):
-        raise RuntimeError("dokobot_unavailable")
-    url = _DOKO_SEARCH.format(q=urllib.parse.quote(q))
-
-    def _run(args):
-        return subprocess.run(
-            ["dokobot", "read", *args, url],
-            capture_output=True, text=True, timeout=timeout, check=False,
-        )
-
-    try:
-        r = _run(["--local"])
-        if r.returncode != 0 and "bridge" in (r.stderr or "").lower():
-            r = _run([])
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("dokobot_timeout")
-    except FileNotFoundError:
-        raise RuntimeError("dokobot_unavailable")
-
-    if r.returncode != 0:
-        raise RuntimeError(f"dokobot_rc={r.returncode}")
-
-    body = r.stdout or ""
-    lines = body.splitlines()
-    # Heuristic: "AUTHOR · YEAR" line → title is prev non-empty line.
-    results = [
-        {"title": lines[i - 1].strip() if i > 0 else "",
-         "authors": [a.strip() for a in lines[i].strip()[:m.start()].rstrip("·").strip().split(",") if a.strip()],
-         "year": int(m.group(1))}
-        for i, line in enumerate(lines)
-        if (m := _AUTHOR_YEAR_RE.search(line.strip()))
-    ]
-    return results, body  # type: ignore[return-value]
-
-
 # ---- normalisation ----
 
 def _normalise_item(info: dict) -> dict:
@@ -103,15 +61,6 @@ def _normalise_item(info: dict) -> dict:
     b["isbn_13"] = isbns.get("ISBN_13")
     b["isbn_10"] = isbns.get("ISBN_10")
     b["source_ids"]["googlebooks"] = info.get("id") or None
-    b["_sources"] = [SOURCE_ID]
-    return b
-
-
-def _normalise_doko(raw: dict) -> dict:
-    b = _s.BookRecord().to_dict()
-    b["title"]   = raw.get("title", "")
-    b["authors"] = raw.get("authors", [])
-    b["year"]    = raw.get("year")
     b["_sources"] = [SOURCE_ID]
     return b
 
@@ -169,14 +118,8 @@ def search_book(query: _s.BookQuery) -> _s.AdapterResult:
             rate_limited = True
 
     if rate_limited:
-        try:
-            doko_items, raw_body = _dokobot_search(q)
-            entries = [_normalise_doko(d) for d in doko_items[:query.limit]]
-            return _s.AdapterResult(source=SOURCE_ID, success=True, entries=entries,
-                                    raw_excerpts={"raw_doko_text": raw_body[:2000]})
-        except RuntimeError as exc:
-            return _s.AdapterResult(source=SOURCE_ID, success=False,
-                                    error=f"GB rate-limited, dokobot unavailable ({exc})")
+        return _s.AdapterResult(source=SOURCE_ID, success=False,
+                                error="Google Books API rate-limited")
 
     if data is None:
         return _s.AdapterResult(source=SOURCE_ID, success=False, error="Empty response")

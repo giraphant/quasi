@@ -334,44 +334,6 @@ def _is_sciencedirect_article_url(url: str) -> bool:
     )
 
 
-def _dokobot_read_url(url: str, timeout: int = 90) -> str | None:
-    if not shutil.which("dokobot"):
-        print("  Dokobot: unavailable, skipping ScienceDirect text fallback", file=sys.stderr)
-        return None
-
-    def _run(args):
-        return subprocess.run(
-            ["dokobot", "read", *args, url],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-
-    try:
-        result = _run(["--local"])
-        if result.returncode != 0 and "bridge" in (result.stderr or "").lower():
-            result = _run([])
-    except subprocess.TimeoutExpired:
-        print("  Dokobot: timed out", file=sys.stderr)
-        return None
-    except OSError as exc:
-        print(f"  Dokobot: {exc}", file=sys.stderr)
-        return None
-
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip().splitlines()
-        message = detail[0] if detail else f"exit {result.returncode}"
-        print(f"  Dokobot: {message[:160]}", file=sys.stderr)
-        return None
-
-    text = (result.stdout or "").strip()
-    if len(re.sub(r"\s+", "", text)) < 1000:
-        print(f"  Dokobot: extracted text too short ({len(text)} chars)", file=sys.stderr)
-        return None
-    return text
-
-
 def _is_pdf_data(data):
     """Check if raw bytes look like a PDF."""
     return data[:5] == b"%PDF-" or (
@@ -1472,14 +1434,10 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
     os.makedirs(output_dir, exist_ok=True)
     dest = os.path.join(output_dir, f"{safe_name}.pdf")
-    text_dest = os.path.join(output_dir, f"{safe_name}.txt")
 
     if os.path.exists(dest) and os.path.getsize(dest) > 1000:
         print(f"  EXISTS {dest}", file=sys.stderr)
         return dest
-    if os.path.exists(text_dest) and os.path.getsize(text_dest) > 1000:
-        print(f"  EXISTS {text_dest}", file=sys.stderr)
-        return text_dest
 
     def _verify_and_accept(path, source_name):
         """Verify downloaded file. Returns True if accepted, False if rejected."""
@@ -1610,19 +1568,6 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                     return dest
             except EZProxyCookieExpired:
                 pass
-
-    for article_url in sciencedirect_urls:
-        print(f"  ScienceDirect text fallback: {article_url[:80]}", file=sys.stderr)
-        text = _dokobot_read_url(article_url)
-        if not text:
-            continue
-        try:
-            Path(text_dest).write_text(text, encoding="utf-8")
-        except OSError as exc:
-            print(f"  ScienceDirect text fallback: {exc}", file=sys.stderr)
-            continue
-        if _verify_and_accept(text_dest, "ScienceDirect text"):
-            return text_dest
 
     print(f"  Could not download paper", file=sys.stderr)
     return None

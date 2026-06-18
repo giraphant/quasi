@@ -2,7 +2,7 @@
 
 Runs sweep scripts from scripts/audit/sweep/ to backfill vault
 frontmatter from various sources (Crossref / AA / OpenLibrary /
-OpenAlex / dokobot-Douban).
+OpenAlex / Douban).
 
 Migrated from scripts/search/search.py:1815-1866. This module is not exposed
 through the active `quasi-audit` CLI; run individual sweep scripts directly for

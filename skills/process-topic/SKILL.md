@@ -108,7 +108,7 @@ poll-agent 支持三种判完成模式,主进程按任务选:
 │
 ├─ Phase 0  DISCOVER
 │   Agent("quasi:search-agent", foreground=True) → 候选论文
-│   主进程补充: 搜不到/非结构化 → kagi + dokobot → 补 book / author 条目
+│   主进程补充: 搜不到/非结构化 → kagi → 补 book / author 条目
 │   → 候选写 manifest.items (status=discovered)
 │
 ├─ Phase 1-N  SNOWBALL (循环, 最多 5 轮)
@@ -274,7 +274,7 @@ Agent("general-purpose", prompt:
 1. 检查 $SUPERSET_WORKSPACE_ID — 缺失即报错并停
 2. 读取或创建 manifest.json;归一化 mode(generate / refine)与 final_status
 3. Phase 0: Agent("quasi:search-agent") 发现候选 → 写 manifest
-   搜不到 → 主进程 kagi + dokobot 补充 book/author 条目
+   搜不到 → 主进程 kagi 补充 book/author 条目
 4. SNOWBALL 循环 (最多 5 轮):
    a. 收集 status=discovered + stranded processing 条目
    b. 按 kind 选择 dispatch 模板(短 prompt 形态)→ superset agents create(异步 fire)

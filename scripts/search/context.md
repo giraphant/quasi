@@ -25,16 +25,16 @@ Removed since 0.24.0 (no back-compat): `books`, `papers`, `metadata`, `validate`
 
 ## Dependencies
 - Internal: used by `search-agent`, skill main processes of process-book / process-topic / process-author / wrap-up
-- External APIs: OpenAlex, Crossref, OpenLibrary, Google Books (HTTP + dokobot fallback for 429), Google Scholar (HTML scrape with proxy support)
-- Scrapers: Goodreads, StoryGraph (curl_cffi), Amazon, Douban CN (direct + dokobot for works-page)
+- External APIs: OpenAlex, Crossref, OpenLibrary, Google Books (HTTP; rate limits surface as adapter errors), Google Scholar (HTML scrape with proxy support)
+- Scrapers: Goodreads, StoryGraph (curl_cffi), Amazon, Douban CN (direct HTTP subject lookup)
 - Python: requests, beautifulsoup4, curl_cffi (all in scripts/requirements.txt)
 
 ## API Notes
 - **Crossref**: free, no auth, polite pool via `mailto` param. Best for humanities DOI coverage. Author search uses relevance sort + surname post-filter (citation-count sort buries niche authors).
 - **OpenAlex**: free, no auth. `ids.isbn` filter is unreliable — fall back to `?search=ISBN` (the adapter does this transparently). Provides citation counts, OA status, abstracts (via inverted index).
 - **Google Scholar**: HTML scrape, fragile. UA rotation + exponential backoff + CAPTCHA detection. Optional `QUASI_GOOGLE_SCHOLAR_PROXY_URL` env var. Both books and papers emitted via `[BOOK]` title-prefix discrimination.
-- **Google Books**: HTTP path returns 429 frequently — adapter falls back to `dokobot read` on google.com/search?tbm=bks. DSL via `q=isbn:X` / `inauthor:Y` / `intitle:Z`.
-- **Douban CN**: direct subject lookup (no dokobot) as primary; book search runs a zh sidecar lookup so Chinese editions can be returned without polluting canonical metadata.
+- **Google Books**: HTTP path may return 429; the adapter reports a rate-limit failure rather than using a browser fallback. DSL via `q=isbn:X` / `inauthor:Y` / `intitle:Z`.
+- **Douban CN**: direct HTTP subject lookup; book search runs a zh sidecar lookup so Chinese editions can be returned without polluting canonical metadata.
 
 ## Not in this bin (moved out in 0.24.0)
 - **Anna's Archive file search** → `quasi-download book candidates`

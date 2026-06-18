@@ -38,22 +38,28 @@ def test_title_dsl():
     assert "intitle:Cyborg" in mock_get.call_args[0][0]
 
 
-def test_429_triggers_dokobot_fallback():
-    """HTTP 429 → dokobot path (mocked)."""
+def test_429_returns_rate_limit_failure():
+    """HTTP 429 returns a plain adapter failure; no browser fallback."""
     import urllib.error
     exc = urllib.error.HTTPError(url="x", code=429, msg="Too Many Requests",
                                  hdrs=None, fp=None)  # type: ignore[arg-type]
     with patch("sources.googlebooks._http_get_json", side_effect=exc), \
-         patch("sources.googlebooks._http_status", return_value=429), \
-         patch("sources.googlebooks._dokobot_search", return_value=([], "")) as mock_doko:
+         patch("sources.googlebooks._http_status", return_value=429):
         r = googlebooks.search_book(search.BookQuery(title="Cyborg"))
-    assert r.success is True or r.success is False  # depends on dokobot mock — main point is no crash
-    assert mock_doko.called
+    assert r.success is False
+    assert r.entries == []
+    assert r.error == "Google Books API rate-limited"
+
+
+def test_no_dokobot_helpers_remain():
+    assert not hasattr(googlebooks, "_dokobot_search")
+    assert not hasattr(googlebooks, "_normalise_doko")
 
 
 def main():
     tests = [test_supports_book_only, test_isbn_dsl, test_author_dsl,
-             test_title_dsl, test_429_triggers_dokobot_fallback]
+             test_title_dsl, test_429_returns_rate_limit_failure,
+             test_no_dokobot_helpers_remain]
     failed = 0
     for t in tests:
         try:

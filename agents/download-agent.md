@@ -31,7 +31,6 @@ quasi-download paper fetch --doi "{doi}" --url "{url1}" --url "{url2}" \
   --title "{title}" --author "{author}" --slug {slug} --json
 # cascade (Phase 1): hint URLs → OA (+Crossref links) → Sci-Hub → Publisher Direct → EZProxy → Wayback
 # cascade (Phase 2, recovery): Kagi 搜标题 → 发现新 DOI/URL → 用新 DOI 重跑 OA/Sci-Hub/EZProxy
-# fallback: 若已授权 ScienceDirect article 页可达但 PDF 被浏览器中间页拦住,fetch 可用 dokobot 正文提取返回 .txt
 # --url 可重复;--title/--author 启用 Kagi 恢复(DOI cascade 全部失败时自动触发)
 
 # 论文：搜索验证 DOI + 发现 access URL
@@ -59,7 +58,7 @@ quasi-download accept --path {temp_path} --slug {slug} --kind book -o sources --
   - caller 已提供 `oa_url` / `url` 时，跳过 search、直接带 `--url` 给 fetch。
   - caller 的 DOI 与 search 返回的 DOI 不一致 → 用 search 的 DOI,在 DOWNLOAD_RESULT 里注明 `verdict_note: "DOI corrected from {original} to {verified}"`。
   - caller 无 DOI 但有 title+author → search 发现 DOI → 传给 fetch。search 也找不到 DOI → 仅靠 `--url` + Kagi recovery。
-  - `paper fetch --doi {doi} --url {url1} --url {url2} --title "{title}" --author "{author}" --slug {slug}` — bin 自行跑完整级联 + Kagi 恢复;PDF 仍优先。若 ScienceDirect PDF 被浏览器中间页拦住但 article 页可读,bin 可返回 `.txt` 正文源。不匹配就删除 `temp_path`,报 DOWNLOAD_FAILED。匹配后 `accept --kind paper`。
+  - `paper fetch --doi {doi} --url {url1} --url {url2} --title "{title}" --author "{author}" --slug {slug}` — bin 自行跑完整级联 + Kagi 恢复;PDF 仍优先。全部 PDF 路径失败则报 DOWNLOAD_FAILED。不匹配就删除 `temp_path`,报 DOWNLOAD_FAILED。匹配后 `accept --kind paper`。
 - **同源**下载间隔 ≥10 秒（AA rate-limit）。EZProxy 由 quasi-download CLI 内部全局限流（默认 30 秒最小间隔，跨进程串行），agent 不必手动间隔 EZProxy。跨源可并发。
 
 ### 书的 year_evidence（kind=book 专用）
@@ -131,7 +130,7 @@ DOWNLOAD_RESULT:
     - kind: paper
       slug: ...
       status: ok | download_failed
-      path: sources/{slug}.{pdf|txt}         # status == ok;PDF 优先,ScienceDirect fallback 可能是 txt
+      path: sources/{slug}.pdf              # status == ok
       source: oa | ezproxy | wayback | ...
       verdict_note: ...                     # 可选
       # 论文无 year_evidence 字段

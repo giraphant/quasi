@@ -293,54 +293,6 @@ def test_ezproxy_sciencedirect_url_tracking_deduplicates(monkeypatch, tmp_path):
     assert sciencedirect_urls == [article_url]
 
 
-def test_dokobot_read_url_falls_back_when_local_bridge_is_unavailable(monkeypatch):
-    mod = _load_module(DOWNLOAD, "download_dokobot_fallback_under_test")
-    calls: list[list[str]] = []
-
-    def fake_run(args, capture_output, text, timeout, check):
-        calls.append(args)
-        if "--local" in args:
-            return subprocess.CompletedProcess(args, 1, "", "local bridge unavailable")
-        body = "Making sense of conduct\nTherapist formulation\n" + "article body " * 120
-        return subprocess.CompletedProcess(args, 0, body, "")
-
-    monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/local/bin/dokobot")
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
-
-    text = mod._dokobot_read_url(
-        "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025",
-        timeout=5,
-    )
-
-    assert text.startswith("Making sense of conduct")
-    assert calls == [
-        [
-            "dokobot",
-            "read",
-            "--local",
-            "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025",
-        ],
-        [
-            "dokobot",
-            "read",
-            "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025",
-        ],
-    ]
-
-
-def test_dokobot_read_url_rejects_short_text(monkeypatch):
-    mod = _load_module(DOWNLOAD, "download_dokobot_short_text_under_test")
-
-    monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/local/bin/dokobot")
-    monkeypatch.setattr(
-        mod.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "too short", ""),
-    )
-
-    assert mod._dokobot_read_url("https://www.sciencedirect.com/science/article/pii/S0378216626001025") is None
-
-
 def test_inspect_downloaded_file_reads_txt_front_text(tmp_path):
     mod = _load_module(DOWNLOAD, "download_text_inspect_under_test")
     text_path = tmp_path / "paper.txt"
@@ -449,8 +401,8 @@ def test_accept_moves_temp_text_paper_to_sources(tmp_path):
     assert Path(payload["path"]).read_text(encoding="utf-8").startswith("Making sense")
 
 
-def test_download_paper_uses_sciencedirect_text_after_pdf_sources_fail(tmp_path, monkeypatch):
-    mod = _load_module(DOWNLOAD, "download_sciencedirect_text_flow_under_test")
+def test_download_paper_stops_after_pdf_sources_fail(tmp_path, monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_sciencedirect_no_text_flow_under_test")
     article_url = "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025"
 
     monkeypatch.setattr(mod, "download_pdf_from_url", lambda *args, **kwargs: False)
@@ -467,19 +419,6 @@ def test_download_paper_uses_sciencedirect_text_after_pdf_sources_fail(tmp_path,
         return False
 
     monkeypatch.setattr(mod, "_try_ezproxy_with_refresh", fake_ezproxy)
-    dokobot_calls = []
-
-    def fake_dokobot_read_url(url):
-        dokobot_calls.append(url)
-        if url != article_url:
-            return None
-        return (
-            "Making sense of conduct: A conversation analysis of therapist formulation "
-            "in interaction with autistic children\n"
-            + "therapist formulation autistic children " * 80
-        )
-
-    monkeypatch.setattr(mod, "_dokobot_read_url", fake_dokobot_read_url)
 
     result = mod.download_paper(
         doi="10.1016/j.pragma.2026.04.009",
@@ -491,12 +430,10 @@ def test_download_paper_uses_sciencedirect_text_after_pdf_sources_fail(tmp_path,
         ),
     )
 
-    assert result == str(tmp_path / "making-sense-conduct-2026.txt")
-    assert (tmp_path / "making-sense-conduct-2026.txt").read_text(encoding="utf-8").startswith(
-        "Making sense of conduct"
-    )
+    assert result is None
+    assert not hasattr(mod, "_dokobot_read_url")
+    assert not (tmp_path / "making-sense-conduct-2026.txt").exists()
     assert not (tmp_path / "making-sense-conduct-2026.pdf").exists()
-    assert dokobot_calls == [article_url]
 
 
 def test_ezproxy_throttle_first_call_does_not_wait(tmp_path):

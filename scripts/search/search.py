@@ -125,7 +125,6 @@ class AdapterResult:
     success: bool
     entries: list[dict] = field(default_factory=list)
     error: str | None = None
-    raw_excerpts: dict | None = None
 
 
 @dataclass
@@ -139,7 +138,6 @@ class SearchResponse:
         "sources_hit": [],
         "errors": [],
         "conflicts": [],
-        "raw_doko_excerpts": None,
     })
 
     def to_dict(self) -> dict:
@@ -551,7 +549,6 @@ def book_search(query: BookQuery, sources: list[str] | None = None) -> SearchRes
         "sources_hit": [],
         "errors": [],
         "conflicts": [],
-        "raw_doko_excerpts": None,
     }
     by_source: dict[str, list[dict]] = {}
 
@@ -570,10 +567,6 @@ def book_search(query: BookQuery, sources: list[str] | None = None) -> SearchRes
             if result.entries:
                 diagnostics["sources_hit"].append(src)
                 by_source[src] = result.entries
-            if result.raw_excerpts:
-                diagnostics["raw_doko_excerpts"] = (diagnostics["raw_doko_excerpts"] or {})
-                diagnostics["raw_doko_excerpts"].update(result.raw_excerpts)
-
     localisations = _book_localisations_zh(
         query,
         sources,
@@ -611,7 +604,7 @@ def paper_search(query: PaperQuery, sources: list[str] | None = None) -> SearchR
     sources = sources or DEFAULT_PAPER_SOURCES
     diagnostics = {
         "sources_attempted": list(sources), "sources_hit": [],
-        "errors": [], "conflicts": [], "raw_doko_excerpts": None,
+        "errors": [], "conflicts": [],
     }
     by_source: dict[str, list[dict]] = {}
 

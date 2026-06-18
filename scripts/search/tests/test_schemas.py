@@ -55,7 +55,7 @@ def test_search_response_envelope_shape():
     assert set(d.keys()) == {"kind", "query", "results", "localisations", "diagnostics"}
     assert d["diagnostics"] == {
         "sources_attempted": [], "sources_hit": [], "errors": [],
-        "conflicts": [], "raw_doko_excerpts": None,
+        "conflicts": [],
     }
 
 
