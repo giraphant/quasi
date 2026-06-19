@@ -36,6 +36,7 @@ separate:
 | `quasi-extract` | `epub|ocr|split` text extraction |
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
 | `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write`; `talk compress-media` |
+| `quasi-doctor` | runtime healthcheck: venv sync, core Python deps, optional external tools by profile |
 | `quasi-translate` | immersive translation |
 
 Removed legacy bins:
@@ -57,6 +58,7 @@ Removed legacy bins:
 - `scripts/localise/localise.py`: scale-facing ISBN-keyed cndouban cache helper.
 - `scripts/citation/citation.py`: deterministic draft citation helpers only.
 - `scripts/proofread/proofread.py`: deterministic proofread setup/cleanup only.
+- `scripts/doctor/doctor.py`: runtime healthcheck for venv sync, core Python deps, and optional system tools by profile.
 
 ## Active Agents
 

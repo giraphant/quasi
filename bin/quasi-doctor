@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# quasi-doctor — diagnose quasi runtime dependencies and external tools.
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
+PYTHON="$DATA_DIR/.venv/bin/python"
+
+if [ -x "$PYTHON" ]; then
+    exec "$PYTHON" "$PLUGIN_ROOT/scripts/doctor/doctor.py" "$@"
+fi
+
+exec python3 "$PLUGIN_ROOT/scripts/doctor/doctor.py" "$@"
