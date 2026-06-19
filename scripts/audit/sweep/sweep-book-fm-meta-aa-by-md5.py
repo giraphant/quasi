@@ -172,7 +172,7 @@ def main() -> int:
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--sleep", type=float, default=0.5)
-    ap.add_argument("--mirrors", default="https://annas-archive.gl,https://annas-archive.pk,https://annas-archive.gd")
+    ap.add_argument("--mirrors", default="https://annas-archive.pk,https://annas-archive.gd,https://annas-archive.gl")
     ap.add_argument("--misses-out", default="reports/book-meta-misses-after-md5.txt")
     args = ap.parse_args()
 

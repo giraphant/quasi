@@ -141,6 +141,20 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.41.2** (2026-06-19): **Anna's Archive mirror discovery hardens against domain and TLS churn.**
+  - `scripts/download/aa.py` now treats the current official domains as a static
+    first tier (`annas-archive.pk`, `.gd`, `.gl`) and falls back to the
+    Wikipedia infobox URL list when all static mirrors fail. The dynamic list is
+    cached under `${CLAUDE_PLUGIN_DATA:-~/.cache/quasi}/aa-mirrors.json` for 90
+    days so normal runs stay deterministic and do not depend on Wikipedia.
+  - AA HTML search, Fast Download API calls, and AA file streams use the shared
+    AA HTTP helper, which prefers `curl_cffi`'s Chrome TLS impersonation. This
+    avoids macOS system-Python LibreSSL failures observed against the 2026 AA
+    mirrors before HTTP starts.
+  - Legacy AA metadata sweep defaults are reordered to match the current static
+    mirror list, and `test_download_cli.py` guards both the official-domain list
+    and the Wikipedia recovery parser. No schema-contract change.
+
 - **0.41.1** (2026-06-14): **process-talk gains local single-recording media
   compression.**
   - New `quasi-helpers talk compress-media --media F --output O` wraps a small

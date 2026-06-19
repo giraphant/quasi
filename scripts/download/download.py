@@ -42,7 +42,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
 import requests
-from aa import get_aa_base_url, load_aa_config, search_aa  # noqa: E402
+from aa import aa_request, get_aa_base_url, load_aa_config, search_aa  # noqa: E402
 from core import print_json, project_root, resolve_project_path  # noqa: E402
 
 # --- Config ---
@@ -853,8 +853,8 @@ def aa_fast_download_url(base_url, md5, donator_key,
         api_url += f"&domain_index={domain_index}"
 
     try:
-        r = requests.get(api_url, headers=HEADERS_BROWSER, timeout=30)
-    except requests.RequestException as e:
+        r = aa_request("GET", api_url, timeout=30)
+    except Exception as e:
         print(f"  Fast API request failed: {e}", file=sys.stderr)
         return None, {}
 
@@ -993,7 +993,7 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
 
     if dl_url:
         print(f"  Downloading to: {dest}", file=sys.stderr)
-        if _stream_download(dl_url, dest, headers=HEADERS_BROWSER):
+        if _stream_download(dl_url, dest, headers=HEADERS_BROWSER, requester=aa_request):
             size_mb = os.path.getsize(dest) / (1024 * 1024)
             print(f"  Done! {size_mb:.1f} MB -> {dest}", file=sys.stderr)
             if _aa_verify(dest):
@@ -1014,7 +1014,7 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
             raise  # Quota exhausted, stop everything
         if not dl_url:
             continue
-        if _stream_download(dl_url, dest, headers=HEADERS_BROWSER):
+        if _stream_download(dl_url, dest, headers=HEADERS_BROWSER, requester=aa_request):
             size_mb = os.path.getsize(dest) / (1024 * 1024)
             print(f"  Done! {size_mb:.1f} MB -> {dest}", file=sys.stderr)
             if _aa_verify(dest):
@@ -1573,14 +1573,17 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
     return None
 
 
-def _stream_download(url, dest_path, headers=None):
+def _stream_download(url, dest_path, headers=None, requester=None):
     """Stream-download file with progress. Retries the whole transfer on
     transient connection / 5xx errors (chunked stream restarts from byte 0).
     """
 
     def _do():
-        r = requests.get(url, headers=headers or HEADERS_BROWSER,
-                         stream=True, timeout=120)
+        if requester:
+            r = requester("GET", url, timeout=120, stream=True)
+        else:
+            r = requests.get(url, headers=headers or HEADERS_BROWSER,
+                             stream=True, timeout=120)
         if r.status_code != 200:
             r.raise_for_status()  # routed through _retry's HTTP code check
             return False

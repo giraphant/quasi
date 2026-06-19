@@ -11,11 +11,22 @@ Returns the legacy {success, source, count, results} dict — caller
 (download-agent) consumes this directly.
 """
 
+import json
 import os
+import re
 import sys
+import time
 import urllib.parse
+from pathlib import Path
 
 import requests
+
+try:
+    from curl_cffi import requests as _cffi_requests
+    _HAS_CFFI = True
+except ImportError:
+    _cffi_requests = None
+    _HAS_CFFI = False
 
 try:
     from bs4 import BeautifulSoup
@@ -26,11 +37,15 @@ except ImportError:
 
 # --- Config ---
 
-DEFAULT_AA_MIRRORS = [
-    "https://annas-archive.gl",
+STATIC_AA_MIRRORS = [
     "https://annas-archive.pk",
     "https://annas-archive.gd",
+    "https://annas-archive.gl",
 ]
+DEFAULT_AA_MIRRORS = list(STATIC_AA_MIRRORS)
+AA_MIRROR_CACHE_TTL = 60 * 60 * 24 * 90
+WIKIPEDIA_AA_URL = "https://en.wikipedia.org/wiki/Anna%27s_Archive"
+_MIRROR_RE = re.compile(r"https://annas-archive\.[a-z0-9-]+/?", re.IGNORECASE)
 
 HEADERS_BROWSER = {
     "User-Agent": (
@@ -42,6 +57,167 @@ HEADERS_BROWSER = {
     "Accept-Language": "en-US,en;q=0.5",
     "Connection": "keep-alive",
 }
+
+HEADERS_WIKIPEDIA = {
+    "User-Agent": (
+        "quasi/0.41.2 "
+        "(https://github.com/giraphant/quasi; academic research mirror discovery)"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+
+def _request(method, url, *, timeout=30, stream=False, browser_tls=True, headers=None):
+    """Fetch pages with a browser-like TLS stack when requested.
+
+    On macOS system Python, requests often uses LibreSSL and fails against the
+    current AA mirrors before HTTP begins. curl_cffi is already a quasi runtime
+    dependency and gives these requests Chrome's TLS fingerprint. Non-AA helper
+    pages can opt out when a conventional TLS stack is more reliable.
+    """
+    if browser_tls and _HAS_CFFI:
+        return _cffi_requests.request(
+            method,
+            url,
+            headers=headers or HEADERS_BROWSER,
+            timeout=timeout,
+            allow_redirects=True,
+            impersonate="chrome",
+            stream=stream,
+        )
+    return requests.request(
+        method,
+        url,
+        headers=headers or HEADERS_BROWSER,
+        timeout=timeout,
+        allow_redirects=True,
+        stream=stream,
+    )
+
+
+def aa_request(method, url, *, timeout=30, stream=False):
+    """Public AA HTTP helper shared by the download module."""
+    return _request(method, url, timeout=timeout, stream=stream)
+
+
+def _normalise_mirror(url):
+    raw = (url or "").strip().strip("'\"")
+    if not raw:
+        return ""
+    raw = urllib.parse.unquote(raw)
+    m = _MIRROR_RE.search(raw)
+    if m:
+        raw = m.group(0)
+    if not raw.startswith(("http://", "https://")):
+        raw = "https://" + raw
+    parsed = urllib.parse.urlparse(raw)
+    host = parsed.netloc.lower()
+    if not host.startswith("annas-archive."):
+        return ""
+    return f"https://{host}"
+
+
+def _dedupe_mirrors(mirrors):
+    seen = set()
+    out = []
+    for mirror in mirrors:
+        mirror = _normalise_mirror(mirror)
+        if mirror and mirror not in seen:
+            seen.add(mirror)
+            out.append(mirror)
+    return out
+
+
+def _quasi_data_dir():
+    return Path(os.environ.get("CLAUDE_PLUGIN_DATA") or os.path.expanduser("~/.cache/quasi"))
+
+
+def _aa_mirror_cache_path():
+    return _quasi_data_dir() / "aa-mirrors.json"
+
+
+def _read_cached_wikipedia_mirrors(now=None):
+    now = time.time() if now is None else now
+    path = _aa_mirror_cache_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    fetched_at = float(data.get("fetched_at", 0) or 0)
+    if now - fetched_at > AA_MIRROR_CACHE_TTL:
+        return []
+    return _dedupe_mirrors(data.get("mirrors", []))
+
+
+def _write_cached_wikipedia_mirrors(mirrors, now=None):
+    mirrors = _dedupe_mirrors(mirrors)
+    if not mirrors:
+        return
+    path = _aa_mirror_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "source": WIKIPEDIA_AA_URL,
+                    "fetched_at": time.time() if now is None else now,
+                    "mirrors": mirrors,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _mirrors_from_wikipedia_html(html_text):
+    mirrors = []
+    if _HAS_BS4:
+        soup = BeautifulSoup(html_text, "html.parser")
+        for box in soup.select("table.infobox"):
+            for row in box.select("tr"):
+                heading = row.find("th")
+                if not heading:
+                    continue
+                label = heading.get_text(" ", strip=True).lower().rstrip(":")
+                if label not in {"url", "urls", "website"}:
+                    continue
+                for link in row.find_all("a", href=True):
+                    mirrors.append(link["href"])
+                mirrors.extend(_MIRROR_RE.findall(row.get_text(" ", strip=True)))
+        if not mirrors:
+            for link in soup.select("a.external[href]"):
+                mirrors.append(link["href"])
+    if not mirrors:
+        mirrors = _MIRROR_RE.findall(html_text)
+    return _dedupe_mirrors(mirrors)
+
+
+def wikipedia_aa_mirrors(now=None):
+    cached = _read_cached_wikipedia_mirrors(now=now)
+    if cached:
+        return cached
+    try:
+        r = _request(
+            "GET",
+            WIKIPEDIA_AA_URL,
+            timeout=20,
+            browser_tls=False,
+            headers=HEADERS_WIKIPEDIA,
+        )
+    except Exception as e:
+        print(f"  Wikipedia mirror lookup failed: {e}", file=sys.stderr)
+        return []
+    if r.status_code != 200:
+        print(f"  Wikipedia mirror lookup failed: HTTP {r.status_code}", file=sys.stderr)
+        return []
+    mirrors = _mirrors_from_wikipedia_html(r.text)
+    _write_cached_wikipedia_mirrors(mirrors, now=now)
+    return mirrors
 
 
 def load_aa_config():
@@ -56,25 +232,40 @@ def load_aa_config():
     return {"donator_key": donator_key, "mirrors": list(DEFAULT_AA_MIRRORS)}
 
 
-def get_aa_base_url(config):
-    """Find a reachable AA mirror."""
-    config_mirrors = config.get("mirrors", [])
-    seen = set()
-    all_mirrors = []
-    for m in config_mirrors + DEFAULT_AA_MIRRORS:
-        m = m.rstrip("/")
-        if m not in seen:
-            seen.add(m)
-            all_mirrors.append(m)
+def _first_reachable_mirror(mirrors):
+    for mirror in _dedupe_mirrors(mirrors):
+        last_error = None
+        for method in ("HEAD", "GET"):
+            try:
+                r = _request(method, mirror, timeout=10)
+                if r.status_code < 400:
+                    return mirror
+                last_error = f"HTTP {r.status_code}"
+            except Exception as e:
+                last_error = str(e)
+        if last_error:
+            print(f"  {mirror} -- unreachable: {last_error}", file=sys.stderr)
+    return None
 
-    for mirror in all_mirrors:
-        try:
-            r = requests.head(mirror, headers=HEADERS_BROWSER, timeout=10, allow_redirects=True)
-            if r.status_code < 400:
-                return mirror
-        except requests.RequestException:
-            print(f"  {mirror} -- unreachable", file=sys.stderr)
-            continue
+
+def get_aa_base_url(config):
+    """Find a reachable AA mirror.
+
+    Use the checked-in static mirror list first for deterministic offline-ish
+    behaviour. If those all fail, refresh the Wikipedia infobox mirror list and
+    try it as a dynamic recovery path.
+    """
+    config_mirrors = config.get("mirrors", [])
+    base = _first_reachable_mirror(config_mirrors + STATIC_AA_MIRRORS)
+    if base:
+        return base
+
+    wiki_mirrors = wikipedia_aa_mirrors()
+    if wiki_mirrors:
+        print("  Trying AA mirrors from Wikipedia", file=sys.stderr)
+        base = _first_reachable_mirror(wiki_mirrors)
+        if base:
+            return base
 
     print("Error: No AA mirror reachable.", file=sys.stderr)
     return None
@@ -164,8 +355,8 @@ def search_aa(query, fmt="pdf", lang=None, limit=5):
         url += f"&lang={lang}"
 
     try:
-        r = requests.get(url, headers=HEADERS_BROWSER, timeout=30)
-    except requests.RequestException as e:
+        r = _request("GET", url, timeout=30)
+    except Exception:
         return {
             "success": False,
             "source": "anna_archive",

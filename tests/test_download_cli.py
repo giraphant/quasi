@@ -10,6 +10,7 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 DOWNLOAD = PLUGIN_ROOT / "scripts" / "download" / "download.py"
 COOKIECLOUD = PLUGIN_ROOT / "scripts" / "download" / "cookiecloud.py"
+AA = PLUGIN_ROOT / "scripts" / "download" / "aa.py"
 
 
 def run_download(*args: str) -> subprocess.CompletedProcess[str]:
@@ -20,6 +21,60 @@ def run_download(*args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         timeout=10,
     )
+
+
+def test_aa_mirror_defaults_match_current_official_domains():
+    mod = _load_module(AA, "aa_mirrors_under_test")
+
+    assert mod.STATIC_AA_MIRRORS == [
+        "https://annas-archive.pk",
+        "https://annas-archive.gd",
+        "https://annas-archive.gl",
+    ]
+
+
+def test_aa_wikipedia_infobox_mirror_parser_prefers_url_row():
+    mod = _load_module(AA, "aa_wikipedia_parser_under_test")
+    html = """
+    <table class="infobox">
+      <tr><th>Founded</th><td><a href="https://annas-archive.org/old">old</a></td></tr>
+      <tr><th>URL</th><td>
+        <a href="https://annas-archive.pk/">annas-archive.pk</a>
+        <a href="https://annas-archive.gd/">annas-archive.gd</a>
+        <a href="https://annas-archive.gl/">annas-archive.gl</a>
+      </td></tr>
+    </table>
+    <a class="external" href="https://annas-archive.org/old">old</a>
+    """
+
+    assert mod._mirrors_from_wikipedia_html(html) == [
+        "https://annas-archive.pk",
+        "https://annas-archive.gd",
+        "https://annas-archive.gl",
+    ]
+
+
+def test_aa_base_url_uses_wikipedia_recovery_after_static_mirrors_fail(monkeypatch):
+    mod = _load_module(AA, "aa_wikipedia_recovery_under_test")
+    tried: list[str] = []
+
+    def fake_request(method, url, *, timeout=30, stream=False, browser_tls=True):
+        if method == "HEAD":
+            tried.append(url)
+        class Response:
+            status_code = 200 if url == "https://annas-archive.wf" else 503
+        return Response()
+
+    monkeypatch.setattr(mod, "_request", fake_request)
+    monkeypatch.setattr(mod, "wikipedia_aa_mirrors", lambda: ["https://annas-archive.wf"])
+
+    assert mod.get_aa_base_url({"mirrors": []}) == "https://annas-archive.wf"
+    assert tried == [
+        "https://annas-archive.pk",
+        "https://annas-archive.gd",
+        "https://annas-archive.gl",
+        "https://annas-archive.wf",
+    ]
 
 
 def test_download_help_exposes_agent_contract():

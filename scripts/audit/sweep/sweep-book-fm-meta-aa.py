@@ -182,7 +182,7 @@ def main() -> int:
     ap.add_argument("--sleep", type=float, default=0.5)
     ap.add_argument("--start-from", default="")
     ap.add_argument("--misses-out", default="reports/book-meta-misses-after-aa.txt")
-    ap.add_argument("--mirrors", default="https://annas-archive.gl,https://annas-archive.pk,https://annas-archive.gd")
+    ap.add_argument("--mirrors", default="https://annas-archive.pk,https://annas-archive.gd,https://annas-archive.gl")
     args = ap.parse_args()
 
     mirrors = [m.strip().rstrip("/") for m in args.mirrors.split(",") if m.strip()]
