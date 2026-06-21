@@ -88,6 +88,8 @@ quasi-doctor [--json] [--sync] [--profile ...]
 quasi-translate ...
 ```
 
+`quasi-extract ocr` defaults to **DS OCR2** (DeepSeek-OCR-2 via `mlx-vlm`, Apple Silicon). The engine pins **mlx-vlm==0.3.12** — 0.4+ bumped its transformers dependency to 5.x, which breaks this model's loader and generate path; 0.3.12 is the last version that runs DeepSeek-OCR-2 end-to-end. It also pulls torch/torchvision/addict/einops/matplotlib/tqdm (the model's remote-code imports), all via uvx — NOT in `requirements.txt`. OCR auto-falls-back to tesseract if uvx, the model (`QUASI_DSOCR2_MODEL`, a local BF16 dir or HF repo id), or Apple Silicon is missing; `--engine tesseract` forces tesseract. The DS OCR2 path writes a text-layer PDF (one page per input page) so the existing `split` flow is unchanged.
+
 Removed legacy bins must not reappear in active docs or prompts: `quasi-citation`, `quasi-proofread`, and `quasi-download batch`.
 
 ## Skill writing schema
@@ -118,6 +120,7 @@ Frontmatter `description` is only a routing hint. Skill descriptions should desc
 - Python dependencies are declared in `scripts/requirements.txt`.
 - `scripts/bootstrap-venv.sh` installs them into `${CLAUDE_PLUGIN_DATA}/.venv`, falling back to `~/.cache/quasi/.venv` outside plugin context.
 - Bootstrap runs from `hooks/hooks.json` on `SessionStart`; each shim also self-bootstraps if the venv is missing.
+- Optional out-of-venv deps (fail-soft, like the transcribe engines): `ffmpeg`/`whisper-cli`/`uvx` for transcription, `mlx-vlm` for DS OCR2 OCR.
 - Do not put pip installs back inside individual shims.
 - EZProxy global throttle state lives under `${CLAUDE_PLUGIN_DATA:-~/.cache/quasi}/ezproxy-throttle.state` and is owned by `scripts/download/download.py`.
 
@@ -140,6 +143,24 @@ When changing config, runtime state, or handoff contracts:
 - For manifest or marketplace changes, run `claude plugin validate plugins/quasi`.
 
 ## Recent Changes
+
+- **0.42.0** (2026-06-21): **`quasi-extract ocr` defaults to DeepSeek-OCR-2 (QUA-236).**
+  DS OCR2 produces far cleaner long text on scanned books — full-book MacKenzie
+  (484p) de-hyphenation: 2230 → 140 broken tokens (94% reduction vs the IA text
+  layer quasi ingests). Tesseract is retained as an automatic fallback.
+  - New `scripts/extract/ocr_dsocr2.py`: renders pages (PyMuPDF), one
+    `uvx mlx-vlm==0.3.12` subprocess loads the model ONCE and OCRs all pages,
+    writes a text-layer PDF (one page/input page) so `split` is unchanged. mlx-vlm
+    pinned to 0.3.12 (0.4+ broke this model: processor load + generate
+    `stopping_criteria`); load magic = `import mlx_vlm.generate`. uvx `--with
+    torch/torchvision/addict/einops/matplotlib/tqdm` (model remote-code imports,
+    load-time only). Fail-soft on missing uvx/model/non-Apple-Silicon.
+  - `scripts/extract/extract.py`: `--engine dsocr2|tesseract` (default `dsocr2`),
+    auto-fallback to `ocr_pdf.sh`. `agents/extract-agent.md`: wired the OCR→re-split
+    loop (was a dead-end that only reported "需 OCR"). bin/README/ARCHITECTURE,
+    CLAUDE+AGENTS, plugin/marketplace `0.41.2→0.42.0`, 4 new tests.
+  - Install for DS OCR2: ensure `mlx-community/DeepSeek-OCR-2-bf16` is in the HF
+    cache, set `QUASI_DSOCR2_MODEL` (optional; defaults to the repo id).
 
 - **0.41.2** (2026-06-19): **Anna's Archive mirror discovery hardens against domain and TLS churn.**
   - `scripts/download/aa.py` now treats the current official domains as a static

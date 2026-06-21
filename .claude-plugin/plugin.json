@@ -2,7 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "quasi",
   "description": "Academic research toolkit — search, download, extract, analyze, synthesize",
-  "version": "0.41.2",
+  "version": "0.42.0",
+  "version": "0.42.0",
   "author": {
     "name": "ramu"
   },

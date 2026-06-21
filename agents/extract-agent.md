@@ -33,8 +33,8 @@ quasi-extract 已 subcommand 化(epub / ocr / split):
   `quasi-extract split {source_file} --output-dir {chapters_dir} --chapters '<JSON>'`
 - 单章修复：
   `quasi-extract split {source_file} --output-dir {chapters_dir} --pages 15-32 --title "..."`
-- OCR：
-  `quasi-extract ocr {source_file} {source_file}-ocr.pdf`
+- OCR（默认 DS OCR2，本机无 MLX/模型时自动回退 tesseract）：
+  `quasi-extract ocr {source_file} {source_file}-ocr.pdf`（默认 `--engine dsocr2`；强制 tesseract 加 `--engine tesseract`）
 
 `--chapters` JSON 格式：`[{"title": "...", "start": 页码, "end": 页码}, ...]`
 
@@ -54,13 +54,20 @@ quasi-extract 已 subcommand 化(epub / ocr / split):
 2. 目录清晰 → 自动模式；模糊/复杂 → 构造 `--chapters` JSON 走手动模式
 3. 运行提取
 4. 输出 >100 章 → 视为碎片化，从 TOC 构造 JSON 重跑手动模式
-5. 无输出 → 可能扫描版，报告需 OCR
+5. 无输出 → 可能扫描版：执行「扫描版 OCR 流程」，不要只报告
+
+### 扫描版 OCR 流程（extracted_count == 0 时触发）
+
+1. `quasi-extract ocr {source_file} {source_file}-ocr.pdf`（默认 DS OCR2；长书耐心等，逐页进度打到 stderr）
+2. 把 OCR 产物当新源，重跑切分：`quasi-extract split {source_file}-ocr.pdf --output-dir {chapters_dir} ...`（沿用原 TOC/`--chapters` 决策；扫描版通常无 PDF 目录，倾向手动 `--chapters` JSON 或自动 pattern）
+3. 回阶段 2 重新验证（重读 manifest + 头尾摘要）
+4. OCR/重切后仍 `extracted_count == 0` 或大面积乱码 → 才报告 `status: failed` 并说明已尝试 OCR
 
 **手动 manifest 处理**：manifest.json 中有 `start_page`/`end_page` → 映射为 `start`/`end`，走手动模式。
 
 ### 阶段 2: 验证
 
-1. Read `{chapters_dir}/manifest.json`。`extracted_count == 0` → 报告需 OCR（见阶段 1 扫描版分支）；`extracted_count > 100` → 碎片化，回阶段 1 重切；否则继续。
+1. Read `{chapters_dir}/manifest.json`。`extracted_count == 0` → 执行「扫描版 OCR 流程」；`extracted_count > 100` → 碎片化，回阶段 1 重切；否则继续。
 2. 跑这条命令拿每章头尾摘要，读它的输出：
    ```
    for f in {chapters_dir}/*.txt; do echo "===== $f ====="; head -n 8 "$f"; echo " …… "; tail -n 8 "$f"; echo; done

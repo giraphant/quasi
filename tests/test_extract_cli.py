@@ -31,6 +31,30 @@ def test_extract_help_exposes_agent_contract():
     assert "quasi-extract epub" in result.stdout
     assert "quasi-extract ocr" in result.stdout
     assert "quasi-extract split" in result.stdout
+    # OCR engine switch is part of the documented surface.
+    assert "--engine dsocr2|tesseract" in result.stdout
+
+
+def test_ocr_help_exposes_engine_flag():
+    result = run_extract("ocr", "--help")
+
+    assert result.returncode == 0
+    assert "--engine" in result.stdout
+    assert "dsocr2" in result.stdout
+
+
+def test_ocr_rejects_unknown_engine():
+    result = run_extract("ocr", "x.pdf", "y.pdf", "--engine", "nope")
+
+    assert result.returncode == 2
+    assert "unknown engine" in result.stderr
+
+
+def test_ocr_engine_requires_value():
+    result = run_extract("ocr", "x.pdf", "--engine")
+
+    assert result.returncode == 2
+    assert "--engine requires a value" in result.stderr
 
 
 def test_extract_rejects_unknown_subcommand():

@@ -70,6 +70,10 @@ quasi-doctor [--json] [--sync] [--profile ...]
 quasi-translate ...
 ```
 
+`quasi-extract ocr` 默认走 **DS OCR2**（DeepSeek-OCR-2，mlx-vlm，Apple
+Silicon 本地）。需要时设 `QUASI_DSOCR2_MODEL` 指向本地 BF16 模型目录，
+缺 MLX/模型时自动回退 tesseract（`--engine tesseract` 可强制）。
+
 旧 `quasi-citation` 和 `quasi-proofread` bin 已移除;新流程走
 `quasi-helpers` 和 `quasi-audit`。
 

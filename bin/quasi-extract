@@ -5,8 +5,9 @@
 #   quasi-extract epub  SOURCE_EPUB CHAPTERS_DIR
 #       Extract chapter-level plain text from an EPUB.
 #
-#   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE]
-#       OCR a scanned PDF into a searchable PDF.
+#   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine dsocr2|tesseract]
+#       OCR a scanned PDF into a searchable PDF. Default engine dsocr2
+#       (DeepSeek-OCR-2 via mlx-vlm); auto-falls-back to tesseract if unavailable.
 #
 #   quasi-extract split INPUT.pdf --output-dir DIR [--max-chapters N | --chapters JSON | --pages RANGE --title T]
 #       Split a PDF into per-chapter files.
