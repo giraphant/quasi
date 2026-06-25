@@ -144,6 +144,12 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.42.2** (2026-06-25): **Cell Press EZProxy acquisition prioritises the working `showPdf` path and stops misclassifying publisher challenges as expired cookies.**
+  - Cell candidate order now preserves raw PII and tries `https://www.cell.com/action/showPdf?pii=<raw-PII>` before `/pdf/<raw-PII>.pdf`; raw PII is URL-encoded only when embedded in a URL, while ScienceDirect candidates use the normalized PII.
+  - EZProxy wraps non-proxied Cell candidates with `{login_url}{candidate_url}`, matching the working CookieCloud path observed for `S1364-6613(26)00108-7`; PDF acceptance now also honours `Content-Type: application/pdf`.
+  - Cloudflare / publisher challenge markers (`server: cloudflare`, `cf-ray`, `Just a moment`, `cf-chl`) no longer raise `EZProxyCookieExpired`; only the EZProxy login host or Shibboleth pages do.
+  - If Cell / ScienceDirect article HTML is reachable but PDF is blocked, `paper fetch` can save an article-like `.txt` fallback after title/structure checks. Tests cover raw-vs-normalized PII, showPdf ordering, EZProxy wrapping, challenge classification, and text fallback. No schema-contract change; plugin/marketplace `0.42.1→0.42.2`.
+
 - **0.42.1** (2026-06-25): **`quasi-download paper fetch` expands Cell Press / ScienceDirect article URLs before the DOI cascade.**
   - Cell Press fulltext URLs such as `cell.com/trends/cognitive-sciences/fulltext/S1364-6613(26)00108-7` now expand into the Cell `/pdf/...pdf`, Cell `/action/showPdf?pii=...`, and normalized ScienceDirect `/science/article/pii/...` variants before falling through to OA/Sci-Hub/EZProxy/Wayback.
   - If the caller provides only a Cell URL, quasi resolves the PII through Crossref `alternative-id` and continues with the canonical DOI; the reported example resolves to `10.1016/j.tics.2026.05.002`.

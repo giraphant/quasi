@@ -5,6 +5,7 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -343,20 +344,20 @@ def test_cell_fulltext_url_expands_to_pdf_urls():
 
     assert mod._is_cell_article_url(fulltext)
     assert mod._cell_pdf_urls_from_article_url(fulltext) == [
-        "https://www.cell.com/trends/cognitive-sciences/pdf/S1364-6613(26)00108-7.pdf",
         "https://www.cell.com/action/showPdf?pii=S1364-6613%2826%2900108-7",
+        "https://www.cell.com/trends/cognitive-sciences/pdf/S1364-6613%2826%2900108-7.pdf",
     ]
     assert mod._cell_sciencedirect_urls_from_pii(
         "S1364-6613(26)00108-7"
     ) == [
-        "https://www.sciencedirect.com/science/article/pii/S1364661326001087/pdfft?isDTMRedir=true&download=true",
         "https://www.sciencedirect.com/science/article/pii/S1364661326001087",
+        "https://www.sciencedirect.com/science/article/pii/S1364661326001087/pdfft?isDTMRedir=true&download=true",
     ]
     assert mod._cell_pdf_urls_from_article_url(
         "https://www-cell-com.eux.idm.oclc.org/trends/cognitive-sciences/fulltext/S1364-6613(26)00108-7"
-    )[0] == (
+    )[1] == (
         "https://www-cell-com.eux.idm.oclc.org/trends/cognitive-sciences/pdf/"
-        "S1364-6613(26)00108-7.pdf"
+        "S1364-6613%2826%2900108-7.pdf"
     )
     assert mod._cell_pdf_urls_from_article_url(
         "https://www.cell.com/about"
@@ -385,11 +386,117 @@ def test_cell_pii_resolves_to_doi_via_crossref(monkeypatch):
     assert mod._doi_from_cell_pii("S1364-6613(26)00108-7") == "10.1016/j.tics.2026.05.002"
 
 
+def test_ezproxy_login_detection_does_not_treat_cloudflare_as_cookie_expired():
+    mod = _load_module(DOWNLOAD, "download_cloudflare_detection_under_test")
+    cloudflare_html = b"""
+    <!DOCTYPE html><html><head><title>Just a moment...</title></head>
+    <body><script>window._cf_chl_opt = {}</script></body></html>
+    """
+
+    assert mod._is_cloudflare_challenge(
+        cloudflare_html,
+        {"server": "cloudflare", "cf-ray": "abc"},
+    )
+    mod._raise_if_ezproxy_login_page(
+        "https://www-cell-com.eux.idm.oclc.org/action/showPdf",
+        "https://login.eux.idm.oclc.org/login?url=",
+        cloudflare_html,
+        headers={"server": "cloudflare", "cf-ray": "abc"},
+    )
+
+
+def test_ezproxy_login_detection_raises_for_shibboleth_login():
+    mod = _load_module(DOWNLOAD, "download_shibboleth_detection_under_test")
+    shib_html = b"""
+    <html><head><title>Shibboleth Authentication Request</title></head>
+    <body><form><input type="password" name="password"></form></body></html>
+    """
+
+    try:
+        mod._raise_if_ezproxy_login_page(
+            "https://login.eux.idm.oclc.org/login?url=https://www.cell.com/action/showPdf",
+            "https://login.eux.idm.oclc.org/login?url=",
+            shib_html,
+            history_len=0,
+        )
+    except mod.EZProxyCookieExpired:
+        pass
+    else:
+        raise AssertionError("Shibboleth login page should raise EZProxyCookieExpired")
+
+
+def test_ezproxy_wraps_cell_showpdf_candidate_first(monkeypatch, tmp_path):
+    mod = _load_module(DOWNLOAD, "download_cell_ezproxy_candidate_under_test")
+    calls: list[str] = []
+
+    class FakeSession:
+        headers = {}
+
+        def get(self, url, **kwargs):
+            calls.append(url)
+            if "doi.org" in url:
+                return SimpleNamespace(
+                    url="https://www-cell-com.eux.idm.oclc.org/trends/cognitive-sciences/fulltext/S1364-6613(26)00108-7",
+                    content=b"<html>landing</html>",
+                    status_code=200,
+                    history=[object()],
+                    headers={},
+                )
+            return SimpleNamespace(
+                url="https://www-cell-com.eux.idm.oclc.org/action/showPdf?pii=S1364-6613%2826%2900108-7",
+                content=b"%PDF- cell via ezproxy",
+                status_code=200,
+                history=[object()],
+                headers={"content-type": "application/pdf;charset=UTF-8"},
+            )
+
+    monkeypatch.setattr(
+        mod,
+        "load_ezproxy_config",
+        lambda: {"login_url": "https://login.eux.idm.oclc.org/login?url=", "cookie": "x"},
+    )
+    monkeypatch.setattr(mod, "_build_ezproxy_session", lambda config: FakeSession())
+    monkeypatch.setattr(mod, "_ezproxy_throttle", lambda *a, **k: None)
+
+    result = mod.try_ezproxy_download(
+        "10.1016/j.tics.2026.05.002",
+        str(tmp_path / "paper.pdf"),
+        cell_pdf_urls=["https://www.cell.com/action/showPdf?pii=S1364-6613%2826%2900108-7"],
+    )
+
+    assert result is True
+    assert calls[1] == (
+        "https://login.eux.idm.oclc.org/login?url="
+        "https://www.cell.com/action/showPdf?pii=S1364-6613%2826%2900108-7"
+    )
+    assert (tmp_path / "paper.pdf").read_bytes().startswith(b"%PDF-")
+
+
+def test_write_text_fallback_from_article_html(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_cell_text_fallback_under_test")
+    html = b"""
+    <html><body><article>
+    <h1>Timescapes of non-human experience</h1>
+    <h2>Abstract</h2><p>Timescapes of non-human experience are discussed here.</p>
+    <h2>References</h2><p>Reference content.</p>
+    </article></body></html>
+    """ + b"article text " * 80
+    out = tmp_path / "paper.txt"
+
+    assert mod._write_text_fallback_from_html(
+        html,
+        str(out),
+        headers={"content-type": "text/html"},
+        expected_title="Timescapes of non-human experience",
+    )
+    assert "Timescapes of non-human experience" in out.read_text(encoding="utf-8")
+
+
 def test_download_paper_adds_cell_pdf_hints_before_fetch(monkeypatch, tmp_path):
     mod = _load_module(DOWNLOAD, "download_cell_hints_under_test")
     tried: list[str] = []
 
-    def fake_download_pdf_from_url(url, output_path, timeout=60):
+    def fake_download_pdf_from_url(url, output_path, timeout=60, **kwargs):
         tried.append(url)
         if "/action/showPdf" in url:
             Path(output_path).write_bytes(b"%PDF- cell")
@@ -407,7 +514,6 @@ def test_download_paper_adds_cell_pdf_hints_before_fetch(monkeypatch, tmp_path):
     assert result == str(tmp_path / "cell-paper.pdf")
     assert tried == [
         "https://www.cell.com/trends/cognitive-sciences/fulltext/S1364-6613(26)00108-7",
-        "https://www.cell.com/trends/cognitive-sciences/pdf/S1364-6613(26)00108-7.pdf",
         "https://www.cell.com/action/showPdf?pii=S1364-6613%2826%2900108-7",
     ]
 
@@ -563,7 +669,7 @@ def test_download_paper_stops_after_pdf_sources_fail(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "_kagi_discover_paper", lambda title, author=None: ([], []))
     monkeypatch.setattr(mod.time, "sleep", lambda seconds: None)
 
-    def fake_ezproxy(doi, output_path, sciencedirect_urls=None):
+    def fake_ezproxy(doi, output_path, sciencedirect_urls=None, **kwargs):
         if sciencedirect_urls is not None:
             sciencedirect_urls.append(article_url)
         return False

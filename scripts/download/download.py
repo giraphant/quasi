@@ -201,7 +201,9 @@ def load_ezproxy_config():
     return get_ezproxy_config(verbose=True)
 
 
-def _try_ezproxy_with_refresh(doi, output_path, sciencedirect_urls=None):
+def _try_ezproxy_with_refresh(doi, output_path, sciencedirect_urls=None,
+                              cell_pdf_urls=None, text_fallback_path=None,
+                              expected_author=None, expected_title=None):
     """Try EZProxy download; on expiry, invalidate cache + retry once.
 
     Clears the in-memory CookieCloud cache so the next call re-pulls fresh
@@ -213,6 +215,10 @@ def _try_ezproxy_with_refresh(doi, output_path, sciencedirect_urls=None):
             doi,
             output_path,
             sciencedirect_urls=sciencedirect_urls,
+            cell_pdf_urls=cell_pdf_urls,
+            text_fallback_path=text_fallback_path,
+            expected_author=expected_author,
+            expected_title=expected_title,
         )
     except EZProxyCookieExpired:
         try:
@@ -226,6 +232,10 @@ def _try_ezproxy_with_refresh(doi, output_path, sciencedirect_urls=None):
                 doi,
                 output_path,
                 sciencedirect_urls=sciencedirect_urls,
+                cell_pdf_urls=cell_pdf_urls,
+                text_fallback_path=text_fallback_path,
+                expected_author=expected_author,
+                expected_title=expected_title,
             )
         raise
 
@@ -266,14 +276,52 @@ def _ezproxy_cookie_header(ezproxy_config, url):
     return f"{cookie_name}={ezproxy_config['cookie']}"
 
 
-def _raise_if_ezproxy_login_page(final_url, login_url, content, history_len):
-    if final_url.startswith(login_url.rstrip("?").rsplit("/", 1)[0]):
-        lower_html = content[:2000].lower()
-        if b"shibboleth" in lower_html or (b"login" in lower_html and b"password" in lower_html):
-            raise EZProxyCookieExpired("EZProxy cookie expired — re-login in Chrome to let CookieCloud sync fresh cookies")
-        # Stayed on login page but no explicit auth form — still expired
-        if history_len == 0:
-            raise EZProxyCookieExpired("EZProxy cookie not accepted — re-login in Chrome to let CookieCloud sync fresh cookies")
+def _header_value(headers, name: str) -> str:
+    if not headers:
+        return ""
+    try:
+        return headers.get(name, "") or headers.get(name.lower(), "") or ""
+    except AttributeError:
+        return ""
+
+
+def _is_cloudflare_challenge(content, headers=None) -> bool:
+    lower_html = content[:10000].lower()
+    server = _header_value(headers, "server").lower()
+    return (
+        "cloudflare" in server
+        or bool(_header_value(headers, "cf-ray"))
+        or b"just a moment" in lower_html
+        or b"cf-chl" in lower_html
+        or b"challenge-platform" in lower_html
+    )
+
+
+def _is_pdf_response(content, headers=None) -> bool:
+    content_type = _header_value(headers, "content-type").lower()
+    return "application/pdf" in content_type or _is_pdf_data(content)
+
+
+def _looks_like_shibboleth_login(content) -> bool:
+    lower_html = content[:20000].lower()
+    return (
+        b"shibboleth authentication request" in lower_html
+        or (
+            b"shibboleth" in lower_html
+            and (b"login" in lower_html or b"password" in lower_html or b"saml" in lower_html)
+        )
+    )
+
+
+def _raise_if_ezproxy_login_page(final_url, login_url, content, history_len=0, headers=None):
+    if _is_cloudflare_challenge(content, headers):
+        return
+    login_host = urllib.parse.urlparse(login_url).hostname or ""
+    final_host = urllib.parse.urlparse(final_url).hostname or ""
+    if login_host and final_host == login_host:
+        raise EZProxyCookieExpired("EZProxy cookie not accepted — re-login in Chrome to let CookieCloud sync fresh cookies")
+    if _looks_like_shibboleth_login(content):
+        raise EZProxyCookieExpired("EZProxy cookie expired — re-login in Chrome to let CookieCloud sync fresh cookies")
 
 
 # Publisher PDF URL patterns: given a proxied landing page URL,
@@ -437,7 +485,7 @@ def _cell_pdf_urls_from_article_url(url: str) -> list[str]:
 
     pdf_parts = list(parts)
     pdf_parts[segment_index] = "pdf"
-    pdf_parts[segment_index + 1] = f"{pii}.pdf"
+    pdf_parts[segment_index + 1] = f"{urllib.parse.quote(pii, safe='')}.pdf"
 
     base_pdf = urllib.parse.urlunparse((
         parsed.scheme or "https",
@@ -458,7 +506,7 @@ def _cell_pdf_urls_from_article_url(url: str) -> list[str]:
     ))
 
     urls = []
-    for candidate in (base_pdf, show_pdf):
+    for candidate in (show_pdf, base_pdf):
         if candidate not in urls:
             urls.append(candidate)
     return urls
@@ -478,8 +526,8 @@ def _cell_sciencedirect_urls_from_pii(pii: str) -> list[str]:
     if not pii:
         return []
     return [
-        f"https://www.sciencedirect.com/science/article/pii/{pii}/pdfft?isDTMRedir=true&download=true",
         f"https://www.sciencedirect.com/science/article/pii/{pii}",
+        f"https://www.sciencedirect.com/science/article/pii/{pii}/pdfft?isDTMRedir=true&download=true",
     ]
 
 
@@ -497,11 +545,74 @@ def _is_cell_article_url(url: str) -> bool:
     return bool(_cell_pdf_urls_from_article_url(url))
 
 
+def _is_article_html_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    path = parsed.path.lower()
+    if _is_cell_host(parsed.hostname or ""):
+        return "/fulltext/" in path or "/abs/" in path
+    if _is_sciencedirect_article_url(url):
+        return "/pdfft" not in path and not path.rstrip("/").endswith("/pdf")
+    return False
+
+
 def _is_pdf_data(data):
     """Check if raw bytes look like a PDF."""
     return data[:5] == b"%PDF-" or (
         len(data) > 50000 and b"<html" not in data[:1000].lower()
     )
+
+
+def _html_to_text(data) -> str:
+    text = data.decode("utf-8", errors="ignore")
+    text = re.sub(r"(?is)<(script|style|noscript|svg)\b.*?</\1>", "\n", text)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</(?:p|div|section|article|header|footer|li|h[1-6]|tr)>", "\n", text)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = html.unescape(text)
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
+def _looks_like_article_text(text, expected_author=None, expected_title=None) -> bool:
+    if len(text.strip()) < 500:
+        return False
+    if expected_title and not _verify_text_content(text, expected_author, expected_title):
+        return False
+    lower = text.lower()
+    markers = [
+        "abstract",
+        "highlights",
+        "references",
+        "introduction",
+        "keywords",
+        "article info",
+    ]
+    return any(marker in lower for marker in markers)
+
+
+def _write_text_fallback_from_html(data, output_path, *, headers=None,
+                                   expected_author=None, expected_title=None,
+                                   source_label="HTML"):
+    if _is_pdf_response(data, headers):
+        return False
+    if _is_cloudflare_challenge(data, headers):
+        print(f"  {source_label}: PUBLISHER_CLOUDFLARE_CHALLENGE", file=sys.stderr)
+        return False
+    if _looks_like_shibboleth_login(data):
+        return False
+    content_type = _header_value(headers, "content-type").lower()
+    if content_type and not any(part in content_type for part in ("html", "text/plain", "text/html")):
+        return False
+
+    text = _html_to_text(data)
+    if not _looks_like_article_text(text, expected_author, expected_title):
+        print(f"  {source_label}: HTML not article-like", file=sys.stderr)
+        return False
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.write("\n")
+    print(f"  {source_label}: saved text fallback -> {os.path.basename(output_path)}", file=sys.stderr)
+    return True
 
 
 def _extract_pdf_text(pdf_path, max_pages=2, allow_raw_fallback=True):
@@ -830,7 +941,9 @@ def _build_ezproxy_session(config):
     return session
 
 
-def try_ezproxy_download(doi, output_path, sciencedirect_urls=None):
+def try_ezproxy_download(doi, output_path, sciencedirect_urls=None, cell_pdf_urls=None,
+                         text_fallback_path=None, expected_author=None,
+                         expected_title=None):
     """Download paper via EZProxy: login redirect → publisher PDF pattern → HTML scrape.
 
     Returns True on success (file written to output_path), False otherwise.
@@ -864,7 +977,7 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None):
     landing_html = resp.content
 
     # Check for expired session — no redirect means cookie not accepted
-    _raise_if_ezproxy_login_page(final_url, login_url, landing_html, len(resp.history))
+    _raise_if_ezproxy_login_page(final_url, login_url, landing_html, len(resp.history), getattr(resp, "headers", {}))
 
     if resp.status_code != 200:
         print(f"  EZProxy: HTTP {resp.status_code}", file=sys.stderr)
@@ -878,7 +991,7 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None):
     ):
         sciencedirect_urls.append(final_url)
 
-    def _try_ezproxy_candidate_url(candidate_url, label):
+    def _try_ezproxy_candidate_url(candidate_url, label, allow_text_fallback=False):
         request_url = candidate_url if _url_matches_ezproxy(candidate_url, config) else f"{login_url}{candidate_url}"
         print(f"  EZProxy {label}: {request_url[:80]}", file=sys.stderr)
         try:
@@ -887,8 +1000,12 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None):
                 label=f"EZProxy {label}",
             )
             data = pdf_resp.content
-            _raise_if_ezproxy_login_page(str(pdf_resp.url), login_url, data, len(pdf_resp.history))
-            if _is_pdf_data(data):
+            response_headers = getattr(pdf_resp, "headers", {})
+            _raise_if_ezproxy_login_page(str(pdf_resp.url), login_url, data, len(pdf_resp.history), response_headers)
+            if _is_cloudflare_challenge(data, response_headers):
+                print(f"  EZProxy {label}: PUBLISHER_CLOUDFLARE_CHALLENGE", file=sys.stderr)
+                return False
+            if _is_pdf_response(data, response_headers):
                 with open(output_path, "wb") as f:
                     f.write(data)
                 print(f"  OK {len(data) / 1024:.0f}KB -> {os.path.basename(output_path)}",
@@ -902,20 +1019,37 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None):
                     meta_pdf = f"{parsed.scheme}://{parsed.netloc}{meta_pdf}"
                 if meta_pdf != candidate_url:
                     return _try_ezproxy_candidate_url(meta_pdf, f"{label} citation_pdf_url")
+            if allow_text_fallback and text_fallback_path and _write_text_fallback_from_html(
+                data,
+                text_fallback_path,
+                headers=response_headers,
+                expected_author=expected_author,
+                expected_title=expected_title,
+                source_label=f"EZProxy {label}",
+            ):
+                return text_fallback_path
         except (requests.RequestException, TimeoutError, OSError):
             pass
         return False
 
+    for cell_pdf_url in cell_pdf_urls or []:
+        result = _try_ezproxy_candidate_url(cell_pdf_url, "Cell PDF")
+        if result:
+            return result
+
     for cell_pdf_url in _cell_pdf_urls_from_article_url(final_url):
-        if _try_ezproxy_candidate_url(cell_pdf_url, "Cell PDF"):
-            return True
+        result = _try_ezproxy_candidate_url(cell_pdf_url, "Cell PDF")
+        if result:
+            return result
 
     for sd_url in sciencedirect_urls or []:
-        if _try_ezproxy_candidate_url(sd_url, "ScienceDirect hint"):
-            return True
+        result = _try_ezproxy_candidate_url(sd_url, "ScienceDirect hint", allow_text_fallback=True)
+        if result:
+            return result
         for sd_pdf_url in _sciencedirect_pdf_urls_from_article_url(sd_url):
-            if _try_ezproxy_candidate_url(sd_pdf_url, "ScienceDirect PDF"):
-                return True
+            result = _try_ezproxy_candidate_url(sd_pdf_url, "ScienceDirect PDF")
+            if result:
+                return result
 
     # Step 2: Try known publisher PDF URL patterns
     for publisher_hint, pattern in PUBLISHER_PDF_PATTERNS:
@@ -1436,7 +1570,8 @@ def find_wayback_url(doi):
     return None
 
 
-def download_pdf_from_url(url, output_path, timeout=60):
+def download_pdf_from_url(url, output_path, timeout=60, *, text_fallback_path=None,
+                          expected_author=None, expected_title=None):
     """Download a PDF from URL. Returns True on success.
 
     Auto-injects EZProxy cookie for matching domains.
@@ -1456,23 +1591,24 @@ def download_pdf_from_url(url, output_path, timeout=60):
         def _do():
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read(), resp.geturl()
+                return resp.read(), resp.geturl(), resp.headers
 
-        data, final_url = _retry(_do, label=f"GET {url[:60]}")
-        if _is_pdf_data(data):
+        data, final_url, response_headers = _retry(_do, label=f"GET {url[:60]}")
+        if _is_pdf_response(data, response_headers):
             with open(output_path, "wb") as f:
                 f.write(data)
             print(f"  OK {len(data) / 1024:.0f}KB -> {os.path.basename(output_path)}",
                   file=sys.stderr)
             return True
-        # Check if this is an EZProxy login page
-        lower_data = data[:2000].lower()
-        if matches_ezproxy and (
-            b"login" in lower_data or b"auth" in lower_data
-            or b"ezproxy" in lower_data or b"shibboleth" in lower_data
-        ):
-            raise EZProxyCookieExpired(
-                "EZProxy cookie expired — re-login in Chrome to let CookieCloud sync fresh cookies"
+        if _is_cloudflare_challenge(data, response_headers):
+            print("  PUBLISHER_CLOUDFLARE_CHALLENGE", file=sys.stderr)
+            return False
+        if matches_ezproxy:
+            _raise_if_ezproxy_login_page(
+                final_url,
+                ezproxy.get("login_url", "") if ezproxy else "",
+                data,
+                headers=response_headers,
             )
         if _is_cell_url(final_url or url):
             meta_pdf = _extract_citation_pdf_url(data)
@@ -1482,7 +1618,23 @@ def download_pdf_from_url(url, output_path, timeout=60):
                     meta_pdf = f"{parsed.scheme}://{parsed.netloc}{meta_pdf}"
                 if meta_pdf not in {url, final_url}:
                     print(f"  Cell citation_pdf_url: {meta_pdf[:80]}", file=sys.stderr)
-                    return download_pdf_from_url(meta_pdf, output_path, timeout=timeout)
+                    return download_pdf_from_url(
+                        meta_pdf,
+                        output_path,
+                        timeout=timeout,
+                        text_fallback_path=text_fallback_path,
+                        expected_author=expected_author,
+                        expected_title=expected_title,
+                    )
+        if text_fallback_path and _write_text_fallback_from_html(
+            data,
+            text_fallback_path,
+            headers=response_headers,
+            expected_author=expected_author,
+            expected_title=expected_title,
+            source_label="Direct URL",
+        ):
+            return text_fallback_path
         print(f"  SKIP not-a-pdf ({len(data)} bytes)", file=sys.stderr)
         return False
     except EZProxyCookieExpired:
@@ -1659,10 +1811,14 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
     os.makedirs(output_dir, exist_ok=True)
     dest = os.path.join(output_dir, f"{safe_name}.pdf")
+    text_dest = os.path.join(output_dir, f"{safe_name}.txt")
 
     if os.path.exists(dest) and os.path.getsize(dest) > 1000:
         print(f"  EXISTS {dest}", file=sys.stderr)
         return dest
+    if os.path.exists(text_dest) and os.path.getsize(text_dest) > 1000:
+        print(f"  EXISTS {text_dest}", file=sys.stderr)
+        return text_dest
 
     def _verify_and_accept(path, source_name):
         """Verify downloaded file. Returns True if accepted, False if rejected."""
@@ -1678,9 +1834,20 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
     sciencedirect_urls: list[str] = []
 
+    cell_pdf_urls: list[str] = []
+    article_html_urls: list[str] = []
+
     def _remember_sciencedirect_url(candidate_url: str | None):
         if candidate_url and _is_sciencedirect_article_url(candidate_url) and candidate_url not in sciencedirect_urls:
             sciencedirect_urls.append(candidate_url)
+
+    def _remember_cell_pdf_url(candidate_url: str | None):
+        if candidate_url and _is_cell_url(candidate_url) and candidate_url not in cell_pdf_urls:
+            cell_pdf_urls.append(candidate_url)
+
+    def _remember_article_html_url(candidate_url: str | None):
+        if candidate_url and _is_article_html_url(candidate_url) and candidate_url not in article_html_urls:
+            article_html_urls.append(candidate_url)
 
     # Collect all hint URLs (deduplicated, order-preserving)
     hint_urls: list[str] = []
@@ -1692,14 +1859,17 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
             hint_urls.append(candidate_url)
 
     for u in ([url] if url else []) + (urls or []):
+        _remember_article_html_url(u)
         _add_hint_url(u)
         for cell_pdf_url in _cell_pdf_urls_from_article_url(u or ""):
+            _remember_cell_pdf_url(cell_pdf_url)
             _add_hint_url(cell_pdf_url)
         for sd_pdf_url in _sciencedirect_pdf_urls_from_article_url(u or ""):
             _add_hint_url(sd_pdf_url)
         cell_pii = _cell_pii_from_article_url(u or "")
         if cell_pii:
             for sd_url in _cell_sciencedirect_urls_from_pii(cell_pii):
+                _remember_article_html_url(sd_url)
                 _add_hint_url(sd_url)
 
     # --- Phase 1: provided identifiers ---
@@ -1709,8 +1879,21 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
         _remember_sciencedirect_url(hint_url)
         print(f"  Direct URL: {hint_url[:80]}", file=sys.stderr)
         try:
-            if download_pdf_from_url(hint_url, dest) and _verify_and_accept(dest, "Direct"):
-                return dest
+            direct_result = download_pdf_from_url(
+                hint_url,
+                dest,
+                text_fallback_path=(
+                    text_dest
+                    if _is_article_html_url(hint_url)
+                    else None
+                ),
+                expected_author=verify_author,
+                expected_title=verify_title,
+            )
+            if direct_result:
+                direct_path = direct_result if isinstance(direct_result, str) else dest
+                if _verify_and_accept(direct_path, "Direct"):
+                    return direct_path
         except EZProxyCookieExpired:
             print(f"  EZProxy cookie expired on hint URL, continuing...", file=sys.stderr)
         time.sleep(0.5)
@@ -1754,8 +1937,19 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
     if doi:
         print(f"  Trying EZProxy for {doi}...", file=sys.stderr)
         try:
-            if _try_ezproxy_with_refresh(doi, dest, sciencedirect_urls=sciencedirect_urls) and _verify_and_accept(dest, "EZProxy"):
-                return dest
+            ezproxy_result = _try_ezproxy_with_refresh(
+                doi,
+                dest,
+                sciencedirect_urls=article_html_urls + sciencedirect_urls,
+                cell_pdf_urls=cell_pdf_urls,
+                text_fallback_path=text_dest,
+                expected_author=verify_author,
+                expected_title=verify_title,
+            )
+            if ezproxy_result:
+                ezproxy_path = ezproxy_result if isinstance(ezproxy_result, str) else dest
+                if _verify_and_accept(ezproxy_path, "EZProxy"):
+                    return ezproxy_path
         except EZProxyCookieExpired:
             print(f"  EZProxy cookie expired, continuing...", file=sys.stderr)
         time.sleep(0.5)
