@@ -241,7 +241,8 @@ def _url_matches_ezproxy(url, ezproxy_config):
     if not ezproxy_config:
         return False
     host = urllib.parse.urlparse(url).hostname or ""
-    if _host_matches_domain(host, ezproxy_config["domain"]):
+    domain = ezproxy_config.get("domain", "")
+    if domain and _host_matches_domain(host, domain):
         return True
     for rec in ezproxy_config.get("cookie_records", []):
         if _host_matches_domain(host, rec.get("domain", "")):
@@ -263,6 +264,16 @@ def _ezproxy_cookie_header(ezproxy_config, url):
         )
     cookie_name = ezproxy_config.get("cookie_name", "ezproxy")
     return f"{cookie_name}={ezproxy_config['cookie']}"
+
+
+def _raise_if_ezproxy_login_page(final_url, login_url, content, history_len):
+    if final_url.startswith(login_url.rstrip("?").rsplit("/", 1)[0]):
+        lower_html = content[:2000].lower()
+        if b"shibboleth" in lower_html or (b"login" in lower_html and b"password" in lower_html):
+            raise EZProxyCookieExpired("EZProxy cookie expired — re-login in Chrome to let CookieCloud sync fresh cookies")
+        # Stayed on login page but no explicit auth form — still expired
+        if history_len == 0:
+            raise EZProxyCookieExpired("EZProxy cookie not accepted — re-login in Chrome to let CookieCloud sync fresh cookies")
 
 
 # Publisher PDF URL patterns: given a proxied landing page URL,
@@ -332,6 +343,158 @@ def _is_sciencedirect_article_url(url: str) -> bool:
         path.startswith("/science/article/pii/")
         or path.startswith("/science/article/abs/pii/")
     )
+
+
+def _sciencedirect_pdf_urls_from_article_url(url: str) -> list[str]:
+    if not _is_sciencedirect_article_url(url):
+        return []
+    parsed = urllib.parse.urlparse(url)
+    parts = parsed.path.split("/")
+    lowered = [part.lower() for part in parts]
+    try:
+        pii_index = lowered.index("pii") + 1
+    except ValueError:
+        return []
+    if pii_index >= len(parts) or not parts[pii_index]:
+        return []
+
+    article_path = "/".join(parts[:pii_index + 1])
+    candidates = [
+        urllib.parse.urlunparse((
+            parsed.scheme or "https",
+            parsed.netloc,
+            f"{article_path}/pdfft",
+            "",
+            "isDTMRedir=true&download=true",
+            "",
+        )),
+        urllib.parse.urlunparse((
+            parsed.scheme or "https",
+            parsed.netloc,
+            f"{article_path}/pdf",
+            "",
+            "",
+            "",
+        )),
+    ]
+    urls = []
+    for candidate in candidates:
+        if candidate not in urls:
+            urls.append(candidate)
+    return urls
+
+
+def _is_cell_host(host: str) -> bool:
+    host = host.lower().strip(".")
+    if host == "www.cell.com" or host.endswith(".cell.com"):
+        return True
+
+    for encoded_host in ("www-cell-com.", "cell-com."):
+        if host.startswith(encoded_host):
+            proxy_suffix = host[len(encoded_host):]
+            return _host_matches_domain(proxy_suffix, "oclc.org")
+    return False
+
+
+def _is_cell_url(url: str) -> bool:
+    return _is_cell_host(urllib.parse.urlparse(url).hostname or "")
+
+
+def _cell_pii_from_article_url(url: str) -> str | None:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or ""
+    if not _is_cell_host(host):
+        return None
+
+    parts = parsed.path.split("/")
+    lowered = [part.lower() for part in parts]
+    for segment in ("pdf", "fulltext", "abs"):
+        if segment in lowered:
+            segment_index = lowered.index(segment)
+            if segment_index + 1 < len(parts) and parts[segment_index + 1]:
+                return urllib.parse.unquote(parts[segment_index + 1]).removesuffix(".pdf")
+    return None
+
+
+def _normalise_cell_pii(pii: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", pii)
+
+
+def _cell_pdf_urls_from_article_url(url: str) -> list[str]:
+    """Return likely Cell Press PDF URLs for a cell.com article URL."""
+    pii = _cell_pii_from_article_url(url)
+    if not pii:
+        return []
+
+    parsed = urllib.parse.urlparse(url)
+    parts = parsed.path.split("/")
+    lowered = [part.lower() for part in parts]
+    segment_index = next(
+        lowered.index(segment)
+        for segment in ("pdf", "fulltext", "abs")
+        if segment in lowered
+    )
+
+    pdf_parts = list(parts)
+    pdf_parts[segment_index] = "pdf"
+    pdf_parts[segment_index + 1] = f"{pii}.pdf"
+
+    base_pdf = urllib.parse.urlunparse((
+        parsed.scheme or "https",
+        parsed.netloc,
+        "/".join(pdf_parts),
+        "",
+        "",
+        "",
+    ))
+
+    show_pdf = urllib.parse.urlunparse((
+        parsed.scheme or "https",
+        parsed.netloc,
+        "/action/showPdf",
+        "",
+        "pii=" + urllib.parse.quote(pii, safe=""),
+        "",
+    ))
+
+    urls = []
+    for candidate in (base_pdf, show_pdf):
+        if candidate not in urls:
+            urls.append(candidate)
+    return urls
+
+
+def _cell_pdf_urls_from_pii(pii: str) -> list[str]:
+    if not pii:
+        return []
+    return [
+        "https://www.cell.com/action/showPdf?pii="
+        + urllib.parse.quote(pii, safe="")
+    ]
+
+
+def _cell_sciencedirect_urls_from_pii(pii: str) -> list[str]:
+    pii = _normalise_cell_pii(pii)
+    if not pii:
+        return []
+    return [
+        f"https://www.sciencedirect.com/science/article/pii/{pii}/pdfft?isDTMRedir=true&download=true",
+        f"https://www.sciencedirect.com/science/article/pii/{pii}",
+    ]
+
+
+def _cell_pdf_urls_from_doi(doi: str) -> list[str]:
+    if not doi or not doi.startswith("10.1016/"):
+        return []
+    pii = doi.split("/", 1)[1]
+    pii = re.sub(r"^j\.[^.]+\.", "", pii)
+    if not pii.upper().startswith("S"):
+        return []
+    return _cell_pdf_urls_from_pii(pii)
+
+
+def _is_cell_article_url(url: str) -> bool:
+    return bool(_cell_pdf_urls_from_article_url(url))
 
 
 def _is_pdf_data(data):
@@ -701,13 +864,7 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None):
     landing_html = resp.content
 
     # Check for expired session — no redirect means cookie not accepted
-    if final_url.startswith(login_url.rstrip("?").rsplit("/", 1)[0]):
-        lower_html = landing_html[:2000].lower()
-        if b"shibboleth" in lower_html or (b"login" in lower_html and b"password" in lower_html):
-            raise EZProxyCookieExpired("EZProxy cookie expired — re-login in Chrome to let CookieCloud sync fresh cookies")
-        # Stayed on login page but no explicit auth form — still expired
-        if len(resp.history) == 0:
-            raise EZProxyCookieExpired("EZProxy cookie not accepted — re-login in Chrome to let CookieCloud sync fresh cookies")
+    _raise_if_ezproxy_login_page(final_url, login_url, landing_html, len(resp.history))
 
     if resp.status_code != 200:
         print(f"  EZProxy: HTTP {resp.status_code}", file=sys.stderr)
@@ -720,6 +877,45 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None):
         and final_url not in sciencedirect_urls
     ):
         sciencedirect_urls.append(final_url)
+
+    def _try_ezproxy_candidate_url(candidate_url, label):
+        request_url = candidate_url if _url_matches_ezproxy(candidate_url, config) else f"{login_url}{candidate_url}"
+        print(f"  EZProxy {label}: {request_url[:80]}", file=sys.stderr)
+        try:
+            pdf_resp = _retry(
+                lambda: session.get(request_url, allow_redirects=True, timeout=60),
+                label=f"EZProxy {label}",
+            )
+            data = pdf_resp.content
+            _raise_if_ezproxy_login_page(str(pdf_resp.url), login_url, data, len(pdf_resp.history))
+            if _is_pdf_data(data):
+                with open(output_path, "wb") as f:
+                    f.write(data)
+                print(f"  OK {len(data) / 1024:.0f}KB -> {os.path.basename(output_path)}",
+                      file=sys.stderr)
+                return True
+
+            meta_pdf = _extract_citation_pdf_url(data)
+            if meta_pdf:
+                if meta_pdf.startswith("/"):
+                    parsed = urllib.parse.urlparse(str(pdf_resp.url))
+                    meta_pdf = f"{parsed.scheme}://{parsed.netloc}{meta_pdf}"
+                if meta_pdf != candidate_url:
+                    return _try_ezproxy_candidate_url(meta_pdf, f"{label} citation_pdf_url")
+        except (requests.RequestException, TimeoutError, OSError):
+            pass
+        return False
+
+    for cell_pdf_url in _cell_pdf_urls_from_article_url(final_url):
+        if _try_ezproxy_candidate_url(cell_pdf_url, "Cell PDF"):
+            return True
+
+    for sd_url in sciencedirect_urls or []:
+        if _try_ezproxy_candidate_url(sd_url, "ScienceDirect hint"):
+            return True
+        for sd_pdf_url in _sciencedirect_pdf_urls_from_article_url(sd_url):
+            if _try_ezproxy_candidate_url(sd_pdf_url, "ScienceDirect PDF"):
+                return True
 
     # Step 2: Try known publisher PDF URL patterns
     for publisher_hint, pattern in PUBLISHER_PDF_PATTERNS:
@@ -1050,6 +1246,24 @@ def _get_json_urllib(url, timeout=15):
         return None
 
 
+def _doi_from_cell_pii(pii: str) -> str | None:
+    """Resolve an Elsevier/Cell PII to DOI via Crossref alternative-id."""
+    normalised = _normalise_cell_pii(pii)
+    if not normalised:
+        return None
+    url = (
+        "https://api.crossref.org/works"
+        f"?filter=alternative-id:{urllib.parse.quote(normalised, safe='')}"
+        "&rows=1"
+    )
+    data = _get_json_urllib(url)
+    for item in (data or {}).get("message", {}).get("items", []):
+        doi = item.get("DOI")
+        if doi:
+            return doi
+    return None
+
+
 def find_oa_url(doi):
     """Find Open Access URL for a DOI via Unpaywall + OpenAlex + S2."""
     if not doi:
@@ -1183,6 +1397,7 @@ def find_wayback_url(doi):
         return None
 
     pdf_urls = []
+    pdf_urls.extend(_cell_pdf_urls_from_doi(doi))
     if doi.startswith("10.1145/"):
         pdf_urls.append(f"https://dl.acm.org/doi/pdf/{doi}")
     elif doi.startswith("10.1007/"):
@@ -1234,15 +1449,16 @@ def download_pdf_from_url(url, output_path, timeout=60):
         }
         # Auto-inject EZProxy cookie if URL matches
         ezproxy = load_ezproxy_config()
-        if _url_matches_ezproxy(url, ezproxy):
+        matches_ezproxy = _url_matches_ezproxy(url, ezproxy)
+        if matches_ezproxy:
             headers["Cookie"] = _ezproxy_cookie_header(ezproxy, url)
 
         def _do():
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read()
+                return resp.read(), resp.geturl()
 
-        data = _retry(_do, label=f"GET {url[:60]}")
+        data, final_url = _retry(_do, label=f"GET {url[:60]}")
         if _is_pdf_data(data):
             with open(output_path, "wb") as f:
                 f.write(data)
@@ -1251,13 +1467,22 @@ def download_pdf_from_url(url, output_path, timeout=60):
             return True
         # Check if this is an EZProxy login page
         lower_data = data[:2000].lower()
-        if _url_matches_ezproxy(url, ezproxy) and (
+        if matches_ezproxy and (
             b"login" in lower_data or b"auth" in lower_data
             or b"ezproxy" in lower_data or b"shibboleth" in lower_data
         ):
             raise EZProxyCookieExpired(
                 "EZProxy cookie expired — re-login in Chrome to let CookieCloud sync fresh cookies"
             )
+        if _is_cell_url(final_url or url):
+            meta_pdf = _extract_citation_pdf_url(data)
+            if meta_pdf:
+                if meta_pdf.startswith("/"):
+                    parsed = urllib.parse.urlparse(final_url or url)
+                    meta_pdf = f"{parsed.scheme}://{parsed.netloc}{meta_pdf}"
+                if meta_pdf not in {url, final_url}:
+                    print(f"  Cell citation_pdf_url: {meta_pdf[:80]}", file=sys.stderr)
+                    return download_pdf_from_url(meta_pdf, output_path, timeout=timeout)
         print(f"  SKIP not-a-pdf ({len(data)} bytes)", file=sys.stderr)
         return False
     except EZProxyCookieExpired:
@@ -1460,10 +1685,22 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
     # Collect all hint URLs (deduplicated, order-preserving)
     hint_urls: list[str] = []
     _seen_urls: set[str] = set()
+
+    def _add_hint_url(candidate_url: str | None):
+        if candidate_url and candidate_url not in _seen_urls:
+            _seen_urls.add(candidate_url)
+            hint_urls.append(candidate_url)
+
     for u in ([url] if url else []) + (urls or []):
-        if u and u not in _seen_urls:
-            _seen_urls.add(u)
-            hint_urls.append(u)
+        _add_hint_url(u)
+        for cell_pdf_url in _cell_pdf_urls_from_article_url(u or ""):
+            _add_hint_url(cell_pdf_url)
+        for sd_pdf_url in _sciencedirect_pdf_urls_from_article_url(u or ""):
+            _add_hint_url(sd_pdf_url)
+        cell_pii = _cell_pii_from_article_url(u or "")
+        if cell_pii:
+            for sd_url in _cell_sciencedirect_urls_from_pii(cell_pii):
+                _add_hint_url(sd_url)
 
     # --- Phase 1: provided identifiers ---
 
@@ -1487,6 +1724,17 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
             if download_pdf_from_url(oa_url, dest) and _verify_and_accept(dest, "OA"):
                 return dest
             time.sleep(0.5)
+
+    if not doi:
+        for hint_url in hint_urls:
+            cell_pii = _cell_pii_from_article_url(hint_url)
+            if not cell_pii:
+                continue
+            resolved_doi = _doi_from_cell_pii(cell_pii)
+            if resolved_doi:
+                doi = resolved_doi
+                print(f"  Cell PII -> DOI: {doi}", file=sys.stderr)
+                break
 
     # 3. Sci-Hub
     if doi:
@@ -1543,6 +1791,33 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                 pass
             time.sleep(0.5)
 
+            for cell_pdf_url in _cell_pdf_urls_from_article_url(kagi_url):
+                if cell_pdf_url in _seen_urls:
+                    continue
+                _seen_urls.add(cell_pdf_url)
+                print(f"  Kagi Cell PDF URL: {cell_pdf_url[:80]}", file=sys.stderr)
+                try:
+                    if download_pdf_from_url(cell_pdf_url, dest) and _verify_and_accept(dest, "Kagi Cell URL"):
+                        return dest
+                except EZProxyCookieExpired:
+                    pass
+                time.sleep(0.5)
+
+            cell_pii = _cell_pii_from_article_url(kagi_url)
+            if cell_pii:
+                for sd_url in _cell_sciencedirect_urls_from_pii(cell_pii):
+                    if sd_url in _seen_urls:
+                        continue
+                    _seen_urls.add(sd_url)
+                    _remember_sciencedirect_url(sd_url)
+                    print(f"  Kagi Cell ScienceDirect URL: {sd_url[:80]}", file=sys.stderr)
+                    try:
+                        if download_pdf_from_url(sd_url, dest) and _verify_and_accept(dest, "Kagi Cell ScienceDirect URL"):
+                            return dest
+                    except EZProxyCookieExpired:
+                        pass
+                    time.sleep(0.5)
+
         # Try discovered DOIs (different from the original)
         for kagi_doi in kagi_dois:
             if kagi_doi == doi:
@@ -1559,6 +1834,11 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
             # Sci-Hub with new DOI
             if try_scihub_download(kagi_doi, dest) and _verify_and_accept(dest, "Kagi Sci-Hub"):
+                return dest
+            time.sleep(0.5)
+
+            # Publisher Direct with new DOI
+            if _try_publisher_direct(kagi_doi, dest) and _verify_and_accept(dest, "Kagi Publisher Direct"):
                 return dest
             time.sleep(0.5)
 

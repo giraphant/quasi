@@ -317,6 +317,101 @@ def test_sciencedirect_article_url_detection_accepts_native_and_ezproxy_urls():
     )
 
 
+def test_sciencedirect_article_url_expands_to_pdf_urls():
+    mod = _load_module(DOWNLOAD, "download_sciencedirect_pdf_url_under_test")
+
+    assert mod._sciencedirect_pdf_urls_from_article_url(
+        "https://www.sciencedirect.com/science/article/pii/S1364661326001087"
+    ) == [
+        "https://www.sciencedirect.com/science/article/pii/S1364661326001087/pdfft?isDTMRedir=true&download=true",
+        "https://www.sciencedirect.com/science/article/pii/S1364661326001087/pdf",
+    ]
+    assert mod._sciencedirect_pdf_urls_from_article_url(
+        "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S1364661326001087"
+    )[0] == (
+        "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/"
+        "S1364661326001087/pdfft?isDTMRedir=true&download=true"
+    )
+    assert mod._sciencedirect_pdf_urls_from_article_url(
+        "https://www.sciencedirect.com/topics/social-sciences/conversation-analysis"
+    ) == []
+
+
+def test_cell_fulltext_url_expands_to_pdf_urls():
+    mod = _load_module(DOWNLOAD, "download_cell_url_under_test")
+    fulltext = "https://www.cell.com/trends/cognitive-sciences/fulltext/S1364-6613(26)00108-7"
+
+    assert mod._is_cell_article_url(fulltext)
+    assert mod._cell_pdf_urls_from_article_url(fulltext) == [
+        "https://www.cell.com/trends/cognitive-sciences/pdf/S1364-6613(26)00108-7.pdf",
+        "https://www.cell.com/action/showPdf?pii=S1364-6613%2826%2900108-7",
+    ]
+    assert mod._cell_sciencedirect_urls_from_pii(
+        "S1364-6613(26)00108-7"
+    ) == [
+        "https://www.sciencedirect.com/science/article/pii/S1364661326001087/pdfft?isDTMRedir=true&download=true",
+        "https://www.sciencedirect.com/science/article/pii/S1364661326001087",
+    ]
+    assert mod._cell_pdf_urls_from_article_url(
+        "https://www-cell-com.eux.idm.oclc.org/trends/cognitive-sciences/fulltext/S1364-6613(26)00108-7"
+    )[0] == (
+        "https://www-cell-com.eux.idm.oclc.org/trends/cognitive-sciences/pdf/"
+        "S1364-6613(26)00108-7.pdf"
+    )
+    assert mod._cell_pdf_urls_from_article_url(
+        "https://www.cell.com/about"
+    ) == []
+
+
+def test_cell_doi_expands_pii_style_suffix_to_show_pdf_url():
+    mod = _load_module(DOWNLOAD, "download_cell_doi_under_test")
+
+    assert mod._cell_pdf_urls_from_doi("10.1016/S1364-6613(26)00108-7") == [
+        "https://www.cell.com/action/showPdf?pii=S1364-6613%2826%2900108-7"
+    ]
+    assert mod._cell_pdf_urls_from_doi("10.1016/j.pragma.2026.04.009") == []
+    assert mod._cell_pdf_urls_from_doi("10.1287/ijoc.2024.0736") == []
+
+
+def test_cell_pii_resolves_to_doi_via_crossref(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_cell_pii_doi_under_test")
+
+    def fake_get_json_urllib(url, timeout=15):
+        assert "filter=alternative-id:S1364661326001087" in url
+        return {"message": {"items": [{"DOI": "10.1016/j.tics.2026.05.002"}]}}
+
+    monkeypatch.setattr(mod, "_get_json_urllib", fake_get_json_urllib)
+
+    assert mod._doi_from_cell_pii("S1364-6613(26)00108-7") == "10.1016/j.tics.2026.05.002"
+
+
+def test_download_paper_adds_cell_pdf_hints_before_fetch(monkeypatch, tmp_path):
+    mod = _load_module(DOWNLOAD, "download_cell_hints_under_test")
+    tried: list[str] = []
+
+    def fake_download_pdf_from_url(url, output_path, timeout=60):
+        tried.append(url)
+        if "/action/showPdf" in url:
+            Path(output_path).write_bytes(b"%PDF- cell")
+            return True
+        return False
+
+    monkeypatch.setattr(mod, "download_pdf_from_url", fake_download_pdf_from_url)
+
+    result = mod.download_paper(
+        url="https://www.cell.com/trends/cognitive-sciences/fulltext/S1364-6613(26)00108-7",
+        output_dir=str(tmp_path),
+        filename="cell-paper",
+    )
+
+    assert result == str(tmp_path / "cell-paper.pdf")
+    assert tried == [
+        "https://www.cell.com/trends/cognitive-sciences/fulltext/S1364-6613(26)00108-7",
+        "https://www.cell.com/trends/cognitive-sciences/pdf/S1364-6613(26)00108-7.pdf",
+        "https://www.cell.com/action/showPdf?pii=S1364-6613%2826%2900108-7",
+    ]
+
+
 def test_ezproxy_sciencedirect_url_tracking_deduplicates(monkeypatch, tmp_path):
     mod = _load_module(DOWNLOAD, "download_ezproxy_sciencedirect_dedupe_under_test")
     article_url = "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025"

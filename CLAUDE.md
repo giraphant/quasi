@@ -144,6 +144,12 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.42.1** (2026-06-25): **`quasi-download paper fetch` expands Cell Press / ScienceDirect article URLs before the DOI cascade.**
+  - Cell Press fulltext URLs such as `cell.com/trends/cognitive-sciences/fulltext/S1364-6613(26)00108-7` now expand into the Cell `/pdf/...pdf`, Cell `/action/showPdf?pii=...`, and normalized ScienceDirect `/science/article/pii/...` variants before falling through to OA/Sci-Hub/EZProxy/Wayback.
+  - If the caller provides only a Cell URL, quasi resolves the PII through Crossref `alternative-id` and continues with the canonical DOI; the reported example resolves to `10.1016/j.tics.2026.05.002`.
+  - EZProxy now retries Cell / ScienceDirect hint URLs through the configured proxy and follows `citation_pdf_url` discovered on those pages. Direct unauthenticated live probes still get publisher 403s without EZProxy, but the resolver path is now adapted for the domain.
+  - Tests: `test_download_cli.py` adds Cell fulltext expansion, ScienceDirect PDF variants, PII→DOI, and fetch-order regression coverage. No schema-contract change; plugin/marketplace `0.42.0→0.42.1`.
+
 - **0.42.0** (2026-06-21): **`quasi-extract ocr` defaults to DeepSeek-OCR-2 (QUA-236).**
   DS OCR2 produces far cleaner long text on scanned books — full-book MacKenzie
   (484p) de-hyphenation: 2230 → 140 broken tokens (94% reduction vs the IA text
