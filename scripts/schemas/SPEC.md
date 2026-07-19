@@ -1,9 +1,9 @@
 # quasi-vault Schema Specification
 
 ```
-Version : 0.7.0
+Version : 0.7.1
 Status  : active — canonical schema source for lint / autofix / generation
-Last    : 2026-06-11
+Last    : 2026-07-19
 ```
 
 ## 0. 文档定位
@@ -179,6 +179,7 @@ export const BookSchema = z.object({
 
   // 唯一识别码 + 书籍类别
   isbn:      z.string().optional(),               // schema 不强制格式,lint 检查
+  doi:       z.string().regex(/^10\.\d+\//).optional(),
   category:  z.enum(['monograph', 'edited-volume', 'handbook', 'other'])
              .default('monograph').optional(),    // 决定 BibTeX export 用 author 还是 editor
 
@@ -310,13 +311,13 @@ rating: 1
 
 期刊论文分析。**paper 严格指期刊文章**;书的章节(包括论文集里的章节)归 `chapter` 类型,放在 `vault/books/<slug>/`。
 
-**与 chapter 的关系**:几乎是 chapter 的变体 —— 5/8 字段完全相同,只在容器引用处分叉。
+**与 chapter 的关系**:几乎是 chapter 的变体 —— 8/9 字段完全相同,只在容器引用处分叉。
 
 | paper | chapter |
 | --- | --- |
 | `journal` (期刊名) | `book` (父书 slug) |
-| `doi` (规则化格式) | — |
-| 其余 6 字段相同(`type` / `title` / `authors` / `year` / `themes` / `rating`) | |
+| `doi` (规则化格式,可选) | `doi` (规则化格式,可选) |
+| 其余 7 字段相同(`type` / `title` / `authors` / `year` / `themes` / `topics` / `rating`) | 同左 |
 
 ```ts
 export const PaperSchema = z.object({

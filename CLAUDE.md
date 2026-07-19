@@ -144,6 +144,11 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.42.3** (2026-07-19): **chapter schema restores optional DOI support (schema contract 0.7.0 → 0.7.1).**
+  - `ChapterSchema` again reuses the shared `DOI` primitive, matching the canonical SPEC and existing book/paper DOI behavior.
+  - Valid chapter DOI values pass while invalid DOI values and unrelated extra fields remain rejected; a `check_file()` regression test covers the typecheck entry path.
+  - `SPEC.md` also corrects its missing BookSchema DOI entry and stale paper/chapter DOI comparison. No vault content changes.
+
 - **0.42.2** (2026-06-25): **Cell Press EZProxy acquisition prioritises the working `showPdf` path and stops misclassifying publisher challenges as expired cookies.**
   - Cell candidate order now preserves raw PII and tries `https://www.cell.com/action/showPdf?pii=<raw-PII>` before `/pdf/<raw-PII>.pdf`; raw PII is URL-encoded only when embedded in a URL, while ScienceDirect candidates use the normalized PII.
   - EZProxy wraps non-proxied Cell candidates with `{login_url}{candidate_url}`, matching the working CookieCloud path observed for `S1364-6613(26)00108-7`; PDF acceptance now also honours `Content-Type: application/pdf`.

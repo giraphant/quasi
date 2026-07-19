@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from .primitives import Name, Title, ShortString, Year, Rating
+from .primitives import Name, Title, ShortString, Year, Rating, DOI
 
 
 class ChapterSchema(BaseModel):
@@ -36,6 +36,7 @@ class ChapterSchema(BaseModel):
     )
 
     # ─── 可选 ─────────────────────────────────────────────
+    doi: Optional[DOI] = Field(default=None)
     themes: list[str] = Field(
         default_factory=list,
         description="章节级主题;允许空(章节经常没有独立主题标签)",
