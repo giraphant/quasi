@@ -55,4 +55,4 @@ __all__ = [
     "canonical_type", "deprecated_canonical_type", "schema_for_type",
 ]
 
-__version__ = "0.7.1"
+__version__ = "0.7.0"

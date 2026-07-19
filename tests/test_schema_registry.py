@@ -214,7 +214,7 @@ def test_all_registered_frontmatter_schemas_forbid_extra_fields() -> None:
         assert schema.model_config.get("extra") == "forbid"
 
 
-def test_analysis_schemas_validate_doi_and_reject_extra_fields() -> None:
+def test_analysis_schemas_reject_extra_fields_and_chapter_doi() -> None:
     author_schema, _ = registry.schema_for_type("author")
     book_schema, _ = registry.schema_for_type("book")
     chapter_schema, _ = registry.schema_for_type("chapter")
@@ -229,15 +229,13 @@ def test_analysis_schemas_validate_doi_and_reject_extra_fields() -> None:
         "publisher": "Test Press",
         "doi": "10.1000/test",
     })
-    chapter = chapter_schema.model_validate({
+    chapter_schema.model_validate({
         "type": "chapter",
         "title": "Test Chapter",
         "authors": ["Aryn Martin"],
         "year": 2020,
         "book": "test-book-2020",
-        "doi": "10.4324/9781032672663-1",
     })
-    assert chapter.doi == "10.4324/9781032672663-1"
     paper_schema.model_validate({
         "type": "paper",
         "title": "Test Paper",
@@ -269,16 +267,7 @@ def test_analysis_schemas_validate_doi_and_reject_extra_fields() -> None:
             "authors": ["Aryn Martin"],
             "year": 2020,
             "book": "test-book-2020",
-            "doi": "4324/9781032672663-1",
-        })
-    with pytest.raises(ValidationError):
-        chapter_schema.model_validate({
-            "type": "chapter",
-            "title": "Test Chapter",
-            "authors": ["Aryn Martin"],
-            "year": 2020,
-            "book": "test-book-2020",
-            "pages": "1-20",
+            "doi": "10.1000/test",
         })
     with pytest.raises(ValidationError):
         paper_schema.model_validate({
@@ -290,28 +279,6 @@ def test_analysis_schemas_validate_doi_and_reject_extra_fields() -> None:
             "themes": ["test"],
             "book": "test-book-2020",
         })
-
-
-def test_typecheck_accepts_chapter_doi(tmp_path: Path) -> None:
-    chapter_fp = tmp_path / "chapter.md"
-    chapter_fp.write_text(
-        "---\n"
-        "type: chapter\n"
-        "title: Test Chapter\n"
-        "authors:\n"
-        "  - Aryn Martin\n"
-        "year: 2020\n"
-        "book: test-book-2020\n"
-        "doi: 10.4324/9781032672663-1\n"
-        "---\n"
-        "\n"
-        "# Test Chapter\n",
-        encoding="utf-8",
-    )
-
-    result = check_file(chapter_fp)
-
-    assert result["frontmatter_errors"] == []
 
 
 def test_entities_accept_topics_membership_field() -> None:

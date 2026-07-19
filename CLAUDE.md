@@ -144,10 +144,13 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
-- **0.42.3** (2026-07-19): **chapter schema restores optional DOI support (schema contract 0.7.0 → 0.7.1).**
-  - `ChapterSchema` again reuses the shared `DOI` primitive, matching the canonical SPEC and existing book/paper DOI behavior.
-  - Valid chapter DOI values pass while invalid DOI values and unrelated extra fields remain rejected; a `check_file()` regression test covers the typecheck entry path.
-  - `SPEC.md` also corrects its missing BookSchema DOI entry and stale paper/chapter DOI comparison. No vault content changes.
+- **0.42.4** (2026-07-19): **restore the previous chapter frontmatter contract after 0.42.3.**
+  - `ChapterSchema` again rejects `doi` as an unsupported extra field; the schema contract returns from `0.7.1` to `0.7.0`.
+  - Removes the stale chapter DOI allowance from the SPEC and restores the rejection regression test. Chapter-specific DOI values should be handled in vault data rather than by expanding the global schema.
+  - Supersedes 0.42.3; plugin/marketplace `0.42.3→0.42.4`.
+
+- **0.42.3** (2026-07-19): **temporarily added optional chapter DOI support (superseded by 0.42.4).**
+  - Restored the shared `DOI` primitive to `ChapterSchema` and raised the schema contract to `0.7.1`; reverted in the following release to keep the global schema stable.
 
 - **0.42.2** (2026-06-25): **Cell Press EZProxy acquisition prioritises the working `showPdf` path and stops misclassifying publisher challenges as expired cookies.**
   - Cell candidate order now preserves raw PII and tries `https://www.cell.com/action/showPdf?pii=<raw-PII>` before `/pdf/<raw-PII>.pdf`; raw PII is URL-encoded only when embedded in a URL, while ScienceDirect candidates use the normalized PII.

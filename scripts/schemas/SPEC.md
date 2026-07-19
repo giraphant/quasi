@@ -1,7 +1,7 @@
 # quasi-vault Schema Specification
 
 ```
-Version : 0.7.1
+Version : 0.7.0
 Status  : active — canonical schema source for lint / autofix / generation
 Last    : 2026-07-19
 ```
@@ -179,7 +179,6 @@ export const BookSchema = z.object({
 
   // 唯一识别码 + 书籍类别
   isbn:      z.string().optional(),               // schema 不强制格式,lint 检查
-  doi:       z.string().regex(/^10\.\d+\//).optional(),
   category:  z.enum(['monograph', 'edited-volume', 'handbook', 'other'])
              .default('monograph').optional(),    // 决定 BibTeX export 用 author 还是 editor
 
@@ -263,7 +262,6 @@ export const ChapterSchema = z.object({
   authors: Authors,                            // 章作者(永远数组;编著作里可与 book.authors 不同)
   year:    Year,                               // 通常等于父书 year
   book:    z.string().min(2),                  // 父书 slug,如 "allison-nightwork-1994"
-  doi:     z.string().regex(/^10\.\d+\//).optional(),  // 部分章节(尤其论文集里的)有 DOI
   themes:  Themes.optional(),                  // 章节级主题(31% 非空,可空)
   topics:  z.array(z.string()).optional(),     // 所属 topic 语料的 slug 数组(可选,默认 [])
   rating:  Rating.optional(),                  // number 1..5
@@ -288,7 +286,7 @@ rating: 1
 ---
 ```
 
-**与现状差异**(8093 条,22 字段 → 7 字段):
+**与现状差异**(8093 条,22 字段 → 8 字段):
 - `type: chapter-summary` → `type: chapter`
 - **`source` 重命名为 `book`,从书名字符串改为 slug**
   - 当前:`source: "Nightwork: Sexuality, Pleasure, ..."`
@@ -311,12 +309,12 @@ rating: 1
 
 期刊论文分析。**paper 严格指期刊文章**;书的章节(包括论文集里的章节)归 `chapter` 类型,放在 `vault/books/<slug>/`。
 
-**与 chapter 的关系**:几乎是 chapter 的变体 —— 8/9 字段完全相同,只在容器引用处分叉。
+**与 chapter 的关系**:7 个字段完全相同;容器引用分叉,`doi` 仅属于 paper。
 
 | paper | chapter |
 | --- | --- |
 | `journal` (期刊名) | `book` (父书 slug) |
-| `doi` (规则化格式,可选) | `doi` (规则化格式,可选) |
+| `doi` (规则化格式,可选) | — |
 | 其余 7 字段相同(`type` / `title` / `authors` / `year` / `themes` / `topics` / `rating`) | 同左 |
 
 ```ts
