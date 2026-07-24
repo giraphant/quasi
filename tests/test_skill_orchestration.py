@@ -283,3 +283,27 @@ def test_orchestrate_book_reconciles_chapter_count_before_reporting_ok():
     assert "analysedCount(sy) < chapters.length" in text, "book must reconcile synth's count against extract's"
     assert "chapters_incomplete" in text, "an unreconciled book must not report ok"
     assert "overwrite: true" in text, "synth must always regenerate or its count is stale"
+
+
+def test_orchestrate_retries_every_receipt_reading_agent():
+    """agent() returns null when the subagent dies on a terminal API error, and every call site
+    used to read that null as a content answer: a dead probe re-processes the whole author batch
+    (destructive re-extract), a dead audit reads as clean, a dead chapter leaves the book at 8/9
+    (Bowker 2005 — ch04 and ch07 both died, one refill round could only save one)."""
+    text = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+
+    assert "?? agent(" in text, "retryNull must re-dispatch on a null receipt"
+    # A receipt with a schema is one the script branches on, so it must go through retryNull.
+    lines = text.splitlines()
+    bare = []
+    for i, line in enumerate(lines):
+        if "await agent(" not in line:
+            continue
+        call = []                       # the call's own lines, up to the `})` that closes its opts
+        for nxt in lines[i:i + 6]:
+            call.append(nxt)
+            if "})" in nxt:
+                break
+        if any("schema:" in c for c in call):
+            bare.append(i + 1)
+    assert bare == [], f"receipt-reading agent() calls must use retryNull; bare at lines {bare}"
