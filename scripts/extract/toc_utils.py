@@ -164,4 +164,7 @@ def make_slug(slot: str, title: str) -> str:
     stripped = stripped.strip(' :：.-—–\t')
     base = stripped if re.search(r'\w', stripped) else t
     slug = re.sub(r'[^\w]+', '-', base).strip('-').lower()
-    return slug[:60].strip('-') or 'section'
+    if len(slug) > 60:
+        # 截到 60 内最后一个连字符,不切词中间;首 60 无连字符(单长词)时才硬截
+        slug = slug[:60].rsplit('-', 1)[0] or slug[:60]
+    return slug.strip('-') or 'section'

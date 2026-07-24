@@ -42,6 +42,11 @@ const SEARCH_SCHEMA = { type: 'object', properties: {
     slug: { type: 'string' }, title: { type: 'string' }, authors: { type: 'array' },
     year: {}, isbn: { type: 'string' }, doi: { type: 'string' },
     oa_url: { type: 'string' }, url: { type: 'string' }, journal: { type: 'string' } } } } } }
+// 存在性探针回执:图无 fs,批量前用一个 agent 一次性查哪些产物已在 vault(避免重跑已完成的书/论文,
+// 尤其避免对已入库的书做破坏性重 extract)。
+const PROBE_SCHEMA = { type: 'object', properties: {
+  books_done: { type: 'array', items: { type: 'string' } },
+  papers_done: { type: 'array', items: { type: 'string' } } } }
 
 // ── processBook:承重节点。author = parallel(books→processBook);topic = pipeline(items→router)。 ──
 // opts.batchYear=true(author 批量):year_mismatch/ambiguous 不冒泡卡点,download-agent 直接
@@ -132,21 +137,33 @@ async function processAuthor(name, m) {
   // 1. discover:两次 search(默认 book 5 / paper 10;meta.maxBooks/maxPapers 可下调,便于有界跑/测试),只读 candidates[]
   const nBooks = Number(m.maxBooks) || 5
   const nPapers = Number(m.maxPapers) || 10
-  const bk = await agent(authorSearchPrompt(full, topic, 'book', nBooks),
-    { agentType: 'quasi:search-agent', label: `search-books:${name}`, schema: SEARCH_SCHEMA })
-  const pp = await agent(authorSearchPrompt(full, topic, 'paper', nPapers),
-    { agentType: 'quasi:search-agent', label: `search-papers:${name}`, schema: SEARCH_SCHEMA })
+  const [bk, pp] = await parallel([
+    () => agent(authorSearchPrompt(full, topic, 'book', nBooks),
+      { agentType: 'quasi:search-agent', label: `search-books:${name}`, schema: SEARCH_SCHEMA }),
+    () => agent(authorSearchPrompt(full, topic, 'paper', nPapers),
+      { agentType: 'quasi:search-agent', label: `search-papers:${name}`, schema: SEARCH_SCHEMA }),
+  ])
   const books = (((bk && bk.candidates) || []).filter(b => b && b.slug)).slice(0, nBooks)
   const papers = (((pp && pp.candidates) || []).filter(p => p && p.slug)).slice(0, nPapers)
   if (!books.length && !papers.length) return { name, status: 'no_works' }
 
-  // 2. 代表作全并行:书走 processBook(batchYear:year 歧义不卡点、自动收),论文走 processPaper
+  // 2. 存在性探针:一次 agent 查哪些已在 vault → 跳过(不重跑、不破坏性重 extract),仍计入 synth
+  const probe = await agent(existsProbePrompt(books, papers),
+    { agentType: 'general-purpose', label: `probe-done:${name}`, schema: PROBE_SCHEMA })
+  const doneB = new Set((probe && probe.books_done) || [])
+  const doneP = new Set((probe && probe.papers_done) || [])
+  const freshBooks = books.filter(b => !doneB.has(b.slug))
+  const freshPapers = papers.filter(p => !doneP.has(p.slug))
+
+  // 3. 未完成的代表作全并行:书走 processBook(batchYear:year 歧义不卡点、自动收),论文走 processPaper
   const res = (await parallel([
-    ...books.map(b => () => processBook(b.slug, { ...b, topic }, { batchYear: true }).then(r => ({ kind: 'book', ...r }))),
-    ...papers.map(p => () => processPaper(p.slug, { ...p, topic }).then(r => ({ kind: 'paper', ...r }))),
+    ...freshBooks.map(b => () => processBook(b.slug, { ...b, topic }, { batchYear: true }).then(r => ({ kind: 'book', ...r }))),
+    ...freshPapers.map(p => () => processPaper(p.slug, { ...p, topic }).then(r => ({ kind: 'paper', ...r }))),
   ])).filter(Boolean)
-  const okBooks = res.filter(r => r.kind === 'book' && r.status === 'ok').map(r => r.slug)
-  const okPapers = res.filter(r => r.kind === 'paper' && r.status === 'ok').map(r => r.slug)
+  const okBooks = [...books.filter(b => doneB.has(b.slug)).map(b => b.slug),
+                   ...res.filter(r => r.kind === 'book' && r.status === 'ok').map(r => r.slug)]
+  const okPapers = [...papers.filter(p => doneP.has(p.slug)).map(p => p.slug),
+                    ...res.filter(r => r.kind === 'paper' && r.status === 'ok').map(r => r.slug)]
   const yearWarnings = res.filter(r => r.kind === 'book' && r.year_warning).map(r => ({ slug: r.slug, ...r.year_warning }))
   if (!okBooks.length && !okPapers.length) return { name, status: 'all_failed', tried: res.length }
 
@@ -210,6 +227,16 @@ output_dir: vault/books/${slug}
 book_title: ${m.title || ''}
 topic: ${m.topic || ''}
 若 00-overview.md 已存在且未设 overwrite,直接 no-op 返回 success。`
+}
+function existsProbePrompt(books, papers) {
+  const bl = books.map(b => `  - ${b.slug}`).join('\n')
+  const pl = papers.map(p => `  - ${p.slug}`).join('\n')
+  return `task: 只做文件存在性检查,不读内容、不改任何文件。对每个 slug 跑一次 test -f。
+books (查 vault/books/{slug}/00-overview.md 是否存在):
+${bl || '  (none)'}
+papers (查 vault/papers/{slug}.md 是否存在):
+${pl || '  (none)'}
+返回 books_done[] / papers_done[]:各只放"文件已存在"的 slug。`
 }
 function authorSearchPrompt(full, topic, kind, count) {
   return `task: find top ${count} representative ${kind}s by ${full}${topic ? ` on topic ${topic}` : ''}, sorted by citations
