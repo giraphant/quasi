@@ -12,12 +12,14 @@
 //   { agentType:'quasi:X' } 换成承载 agents/X.md 指令的 inline prompt。
 //   下面的图结构两种接法都不变。
 //
-// v0:只有 processBook 是真的;paper/author/topic 是 stub(见 §7 退役顺序)。
+// 已实现:processBook / processPaper / processAuthor
+//   author = parallel(books→processBook + papers→processPaper) → synth(author) → audit。
+// topic 仍 stub(见 §7 退役顺序)。
 
 export const meta = {
   name: 'process-material',
-  description: 'Unified acquisition→analysis graph: router(kind) → book (v0) | paper|author|topic (stub)',
-  phases: [{ title: 'Book' }],
+  description: 'Unified acquisition→analysis graph: router(kind) → book | paper | author | topic (stub)',
+  phases: [{ title: 'Book' }, { title: 'Paper' }, { title: 'Author' }],
 }
 
 // ── 回执 schema:不传 schema 时 agent() 返回散文字符串,脚本读不到字段。
@@ -34,13 +36,21 @@ const EX_SCHEMA = { type: 'object', required: ['status'], properties: {
 const AU_SCHEMA = { type: 'object', properties: {
   escalated: { type: 'array', items: { type: 'object', properties: {
     path: { type: 'string' }, kind: { type: 'string' }, reason: { type: 'string' } } } } } }
+// search-agent 回执:author discovery 读 candidates[](每项必须带 canonical slug)。
+const SEARCH_SCHEMA = { type: 'object', properties: {
+  candidates: { type: 'array', items: { type: 'object', required: ['slug'], properties: {
+    slug: { type: 'string' }, title: { type: 'string' }, authors: { type: 'array' },
+    year: {}, isbn: { type: 'string' }, doi: { type: 'string' },
+    oa_url: { type: 'string' }, url: { type: 'string' }, journal: { type: 'string' } } } } } }
 
 // ── processBook:承重节点。author = parallel(books→processBook);topic = pipeline(items→router)。 ──
-async function processBook(slug, m) {
+// opts.batchYear=true(author 批量):year_mismatch/ambiguous 不冒泡卡点,download-agent 直接
+// accept 入 sources 并把 year_evidence 作 warning,status 返回 ok(单本 book 入口不传,走卡点)。
+async function processBook(slug, m, opts = {}) {
   phase('Book')
 
   // download ── 回执:status/path/year_evidence   产物:PDF 落 sources/
-  const dl = await agent(bookDownloadPrompt(slug, m),
+  const dl = await agent(bookDownloadPrompt(slug, m, opts.batchYear),
     { agentType: 'quasi:download-agent', label: `download:${slug}`, schema: DL_SCHEMA })
   const item = (dl && dl.per_item && dl.per_item[0]) || {}
   if (item.status !== 'ok')
@@ -89,8 +99,78 @@ async function processBook(slug, m) {
   return { slug, status: 'ok', year_warning: ye && ye.verdict !== 'MATCH' ? ye : null }
 }
 
+// ── processPaper:paper spine(download → analyse type B → audit)。author/topic 复用。 ──
+async function processPaper(slug, m) {
+  phase('Paper')
+  const dl = await agent(paperDownloadPrompt(slug, m),
+    { agentType: 'quasi:download-agent', label: `download:${slug}`, schema: DL_SCHEMA })
+  const item = (dl && dl.per_item && dl.per_item[0]) || {}
+  if (item.status !== 'ok') return { slug, status: item.status || 'download_failed' }
+
+  await agent(paperAnalysePrompt(slug, m, item.path),
+    { agentType: 'quasi:analyse-agent', label: `analyse:${slug}` })
+
+  let au = await agent(`path: vault/papers/${slug}.md`,
+    { agentType: 'quasi:audit-agent', label: `audit:${slug}`, schema: AU_SCHEMA })
+  if (((au && au.escalated) || []).length) {
+    await agent(paperAnalysePrompt(slug, m, item.path) + `\noverwrite: true\nreason: audit escalated`,
+      { agentType: 'quasi:analyse-agent', label: `regen:${slug}` })
+    au = await agent(`path: vault/papers/${slug}.md`,
+      { agentType: 'quasi:audit-agent', label: `audit2:${slug}`, schema: AU_SCHEMA })
+    if (((au && au.escalated) || []).length) return { slug, status: 'audit_escalated', escalated: au.escalated }
+  }
+  return { slug, status: 'ok' }
+}
+
+// ── processAuthor:search → parallel(books→processBook + papers→processPaper) → synth(author) → audit。 ──
+// 复用已验证的 processBook / processPaper,当场消除 author 内联抄 book 的重复。
+async function processAuthor(name, m) {
+  phase('Author')
+  const topic = m.topic || ''
+  const full = m.full_name || m.fullName || name
+
+  // 1. discover:两次 search(book count 5 / paper count 10),只读 candidates[]
+  const bk = await agent(authorSearchPrompt(full, topic, 'book', 5),
+    { agentType: 'quasi:search-agent', label: `search-books:${name}`, schema: SEARCH_SCHEMA })
+  const pp = await agent(authorSearchPrompt(full, topic, 'paper', 10),
+    { agentType: 'quasi:search-agent', label: `search-papers:${name}`, schema: SEARCH_SCHEMA })
+  const books = ((bk && bk.candidates) || []).filter(b => b && b.slug)
+  const papers = ((pp && pp.candidates) || []).filter(p => p && p.slug)
+  if (!books.length && !papers.length) return { name, status: 'no_works' }
+
+  // 2. 代表作全并行:书走 processBook(batchYear:year 歧义不卡点、自动收),论文走 processPaper
+  const res = (await parallel([
+    ...books.map(b => () => processBook(b.slug, { ...b, topic }, { batchYear: true }).then(r => ({ kind: 'book', ...r }))),
+    ...papers.map(p => () => processPaper(p.slug, { ...p, topic }).then(r => ({ kind: 'paper', ...r }))),
+  ])).filter(Boolean)
+  const okBooks = res.filter(r => r.kind === 'book' && r.status === 'ok').map(r => r.slug)
+  const okPapers = res.filter(r => r.kind === 'paper' && r.status === 'ok').map(r => r.slug)
+  const yearWarnings = res.filter(r => r.kind === 'book' && r.year_warning).map(r => ({ slug: r.slug, ...r.year_warning }))
+  if (!okBooks.length && !okPapers.length) return { name, status: 'all_failed', tried: res.length }
+
+  // 3. synth(author):读书概览 + 论文页
+  await agent(authorSynthPrompt(name, full, topic, okBooks, okPapers),
+    { agentType: 'quasi:synthesis-agent', label: `synth-author:${name}` })
+
+  // 4. audit 作者 profile + 一次 escalation
+  let au = await agent(`path: vault/authors/${name}.md`,
+    { agentType: 'quasi:audit-agent', label: `audit-author:${name}`, schema: AU_SCHEMA })
+  if (((au && au.escalated) || []).length) {
+    await agent(authorSynthPrompt(name, full, topic, okBooks, okPapers) + `\noverwrite: true\nreason: audit escalated`,
+      { agentType: 'quasi:synthesis-agent', label: `regen-author:${name}` })
+    au = await agent(`path: vault/authors/${name}.md`,
+      { agentType: 'quasi:audit-agent', label: `audit2-author:${name}`, schema: AU_SCHEMA })
+    if (((au && au.escalated) || []).length) return { name, status: 'audit_escalated', escalated: au.escalated }
+  }
+
+  return { name, status: 'ok', books: okBooks.length, papers: okPapers.length,
+    book_failures: res.filter(r => r.kind === 'book' && r.status !== 'ok').length,
+    paper_failures: res.filter(r => r.kind === 'paper' && r.status !== 'ok').length,
+    year_warnings: yearWarnings.length ? yearWarnings : null }
+}
+
 // ── prompt builders:薄,只承载各 agent 期望的契约字段 ──
-function bookDownloadPrompt(slug, m) {
+function bookDownloadPrompt(slug, m, batchYear) {
   return `kind: book
 items:
   - slug: ${slug}
@@ -98,7 +178,9 @@ items:
     expected_title: ${m.title || ''}
     identifiers:
       isbn: ${m.isbn || ''}
-output_dir: sources/`
+output_dir: sources/${batchYear ? `
+batch_accept_year: true   # 批量模式:若 year_mismatch/ambiguous,仍 quasi-download accept 入 sources/{slug},
+                          # per_item.status 返回 ok 并附 year_evidence 作 warning(不保留为 tmp、不冒泡卡点)。` : ''}`
 }
 function extractPrompt(sourceFile, slug) {
   return `source_file: ${sourceFile}, chapters_dir: processing/chapters/${slug}/
@@ -127,15 +209,62 @@ book_title: ${m.title || ''}
 topic: ${m.topic || ''}
 若 00-overview.md 已存在且未设 overwrite,直接 no-op 返回 success。`
 }
+function authorSearchPrompt(full, topic, kind, count) {
+  return `task: find top ${count} representative ${kind}s by ${full}${topic ? ` on topic ${topic}` : ''}, sorted by citations
+context:
+  kind: ${kind}
+  author: ${full}
+  topic: ${topic}
+constraints:
+  count: ${count}
+  sort: citations
+输出 candidates[],每项带 canonical slug ({author-surname}-{short-title}-{year})、title、authors、year${kind === 'book' ? '、isbn' : '、doi、oa_url、journal'}。`
+}
+function paperDownloadPrompt(slug, m) {
+  return `kind: paper
+items:
+  - slug: ${slug}
+    expected_author: ${(m.authors && m.authors[0]) || m.author || ''}
+    expected_title: ${m.title || ''}
+    identifiers:
+      doi: ${m.doi || ''}
+      oa_url: ${m.oa_url || ''}
+      url: ${m.url || ''}
+output_dir: sources/`
+}
+function paperAnalysePrompt(slug, m, sourceFile) {
+  return `type: B
+title: ${m.title || ''}
+authors: ${(m.authors || []).join(', ')}
+year: ${m.year || ''}
+journal: ${m.journal || ''}
+doi: ${m.doi || ''}
+input: ${sourceFile}
+output: vault/papers/${slug}.md
+topic: ${m.topic || ''}
+若 output 已存在且未设 overwrite,直接 no-op 返回 success。`
+}
+function authorSynthPrompt(name, full, topic, okBooks, okPapers) {
+  const bops = okBooks.map(s => `vault/books/${s}/00-overview.md`)
+  const pps = okPapers.map(s => `vault/papers/${s}.md`)
+  return `mode: author
+author_name: ${name}
+full_name: ${full}
+topic: ${topic}
+output_path: vault/authors/${name}.md
+book_overview_paths: ${JSON.stringify(bops)}
+paper_paths: ${JSON.stringify(pps)}
+若 vault/authors/${name}.md 已存在且未设 overwrite,直接 no-op 返回 success。`
+}
 
 // ── router / 入口 ──
 async function router(kind, a) {
   switch (kind) {
     case 'book': return processBook(a.slug, a.meta || a)
-    case 'paper':
-    case 'author':
+    case 'paper': return processPaper(a.slug, a.meta || a)
+    case 'author': return processAuthor(a.name || a.author_name, a.meta || a)
     case 'topic':
-      throw new Error(`process-material v0: kind "${kind}" 未实现(仅 book)。见 docs/process-material-design.md §7`)
+      throw new Error(`process-material: kind "topic" 未实现(book/paper/author 已实现)。见 docs/process-material-design.md §7`)
     default:
       throw new Error(`process-material: 未知 kind "${kind}"`)
   }

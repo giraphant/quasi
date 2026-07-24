@@ -20,7 +20,7 @@ description: Use when the user wants to acquire and analyse a book, paper, autho
   - author:`author_name`(v0 未实现)
   - topic:`topic_slug + topic_desc`(v0 未实现)
 
-**v0 只实现 `kind=book`;其余 kind 图内直接抛"未实现"。** 见 `docs/process-material-design.md` §7。
+**已实现 `kind=book|paper|author`(author = 图内 `parallel(books→processBook + papers→processPaper)`);`topic` 图内抛"未实现"(仍用 `/quasi:process-topic`)。** 见 `docs/process-material-design.md` §7。
 
 ## 硬约束
 
@@ -50,16 +50,16 @@ description: Use when the user wants to acquire and analyse a book, paper, autho
 主进程(瘦入口:召回 + 编排 + 卡点 + 回填)
 ├─ 归一化 kind + args
 ├─ Step 0 本地召回/去重(图外,主进程)
-│    ├─ vault/books/{slug}/00-overview.md 存在 → 已完成,报告并 return(不跑图)
-│    ├─ exact miss → rg 模糊召回近似 slug → 命中则列候选,提示可能重复(勿盲目新建)
+│    ├─ 该 kind 产物存在(book:{slug}/00-overview / paper:{slug}.md / author:{name}.md)→ return
+│    ├─ exact miss → rg 模糊召回近似 key → 命中则列候选,提示可能重复(勿盲目新建)
 │    └─ 否则继续
-├─ Workflow(orchestrate.mjs, {kind, ...args}) → 后台跑 spine(采集→分析),完成回 result
+├─ Workflow(orchestrate.mjs, {kind, ...args}) → 后台跑图(采集→分析),完成回 result
 ├─ 读 result.status:
-│    ├─ ok               → 继续 LOCALISE
-│    ├─ year_ambiguous   → AskUserQuestion(把 year_evidence 原样给用户)→ 带决定重投(改 slug 或接受 recommended_year)
+│    ├─ ok               → 报告(kind 各异)→ LOCALISE
+│    ├─ year_ambiguous   → (仅单本 book)AskUserQuestion(year_evidence 原样)→ 带决定重投
 │    ├─ audit_escalated  → 报告 escalated,交人工
-│    └─ *_failed         → 报告失败原因
-├─ LOCALISE(仅 ok 后,图外):quasi-helpers localise scan → 有 pending 则 search-agent → quasi-helpers localise write
+│    └─ *_failed / no_works / all_failed → 报告失败
+├─ LOCALISE(仅 book,ok 后,图外):localise scan → pending 则 search-agent → localise write
 └─ marple open 最终产物(best-effort)
 ```
 
@@ -67,54 +67,58 @@ description: Use when the user wants to acquire and analyse a book, paper, autho
 
 ```python
 args = parse_request()   # kind + 该 kind 参数
-if args.kind not in ("book",):   # v0
-    report(f"process-material v0 只支持 kind=book;{args.kind} 待实现"); return
+if args.kind == "topic":
+    report("process-material 未实现 topic;用 /quasi:process-topic"); return
+if args.kind not in ("book", "paper", "author"):
+    report(f"未知 kind: {args.kind}"); return
 
-slug = args.slug
-overview = f"vault/books/{slug}/00-overview.md"
+# 该 kind 的主键 + 最终产物路径
+if args.kind == "book":    key, product = args.slug, f"vault/books/{args.slug}/00-overview.md"
+elif args.kind == "paper": key, product = args.slug, f"vault/papers/{args.slug}.md"
+else:                      key, product = args.name, f"vault/authors/{args.name}.md"     # author
 
-# Step 0: 本地召回/去重(主进程,图外)——mirror process-book Step 0
-if exists(overview):
-    report(f"已有书籍页面,无需重复处理: {overview}"); return
-# exact miss → rg 模糊召回,catch slug 漂移导致的重复;只列候选,不盲目新建
-dup = rg_fuzzy_recall(slug, args.meta)   # vault/books、sources、processing 里近似命中
+# Step 0: 本地召回/去重(主进程,图外)——mirror process-{book,paper,author} Step 0
+if exists(product):
+    report(f"已有产物,无需重复处理: {product}"); return
+dup = rg_fuzzy_recall(key, args.meta)   # 相应 vault 子树 + sources/processing 近似命中
 if dup.candidates:
     report_candidate_list(dup.candidates, note="rg fuzzy recall only; 可能重复,勿盲目新建")
 
-# 后台跑 spine。Workflow 返回 runId,完成时通知;拿到最终 result。
-result = Workflow(
-    scriptPath="$CLAUDE_PLUGIN_ROOT/skills/process-material/orchestrate.mjs",
-    args={"kind": args.kind, "slug": slug, "meta": args.meta},
-)
+# 后台跑图。book/paper 传 slug+meta;author 传 name+meta。
+wf_args = {"kind": args.kind, "meta": args.meta}
+wf_args["slug" if args.kind != "author" else "name"] = key
+result = Workflow(scriptPath="$CLAUDE_PLUGIN_ROOT/skills/process-material/orchestrate.mjs", args=wf_args)
 
-# 图冒泡上来的人工卡点
+# 人工卡点:仅单本 book 会 year_ambiguous(author 批量自动收、不冒泡)
 if result.status == "year_ambiguous":
-    # 把 result.year_evidence 原样给用户(含 tmp_path),让其改 slug 的 year 或接受 recommended_year
-    decision = AskUserQuestion(present=result.year_evidence)
-    result = Workflow(scriptPath="...", args={"kind": "book", "slug": decision.slug, "meta": args.meta,
-                                              "year_decision": decision.choice})
+    decision = AskUserQuestion(present=result.year_evidence)   # 含 tmp_path
+    wf_args["slug"], wf_args["year_decision"] = decision.slug, decision.choice
+    result = Workflow(scriptPath="...", args=wf_args)
 
 if result.status == "audit_escalated":
     report(f"audit 仍 escalated:{result.escalated};交人工"); return
-if result.status.endswith("_failed"):
+if result.status.endswith("_failed") or result.status in ("no_chapters", "no_works", "all_failed"):
     report(f"失败:{result.status}"); return
 
-# 成功
-slug = result.slug
-overview = f"vault/books/{slug}/00-overview.md"
-if result.get("year_warning"):
+# 成功报告(kind 各异)
+if args.kind == "book" and result.get("year_warning"):
     report(f"完成,但年份存疑:{result.year_warning}")
+if args.kind == "author":
+    report(f"作者完成:{result.books} 本书 / {result.papers} 篇论文"
+           + (f";{len(result.year_warnings)} 本年份存疑" if result.get("year_warnings") else "")
+           + (f";{result.book_failures}+{result.paper_failures} 项获取失败" if result.book_failures or result.paper_failures else ""))
 
-# Step 6: LOCALISE 中译本 metadata 回填(主进程调 bin + 按需 search-agent;按原书 ISBN 幂等)
-scan = Bash(f"quasi-helpers localise scan --path vault/books/{slug} --json")
-if scan.pending > 0:
-    search = Agent("quasi:search-agent", foreground=True,
-                   prompt=f"kind: book\ncontext: read {overview} and search metadata/localisations")
-    candidates_file = write_temp_json(search.localisations.zh.candidates)   # .quasi/temp/
-    Bash(f"quasi-helpers localise write --book-path {overview} --candidates-file {candidates_file}")
+# LOCALISE 中译本回填:仅 book(author 的书可日后按 process-book 单独补,v0 从略;paper 无)
+if args.kind == "book":
+    scan = Bash(f"quasi-helpers localise scan --path vault/books/{key} --json")
+    if scan.pending > 0:
+        search = Agent("quasi:search-agent", foreground=True,
+                       prompt=f"kind: book\ncontext: read {product} and search metadata/localisations")
+        candidates_file = write_temp_json(search.localisations.zh.candidates)   # .quasi/temp/
+        Bash(f"quasi-helpers localise write --book-path {product} --candidates-file {candidates_file}")
 
-# marple open(best-effort UX;失败不影响流程)
-Bash(f"/opt/homebrew/bin/marple-cli open '{overview}' || marple-cli open '{overview}' || echo skip")
+# marple open 最终产物(best-effort UX;失败不影响流程)
+Bash(f"/opt/homebrew/bin/marple-cli open '{product}' || marple-cli open '{product}' || echo skip")
 ```
 
 ## 断点续跑
