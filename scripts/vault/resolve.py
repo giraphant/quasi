@@ -9,10 +9,16 @@ vault resolve —— 判断候选 work 是否已在 vault,slug 漂移也能认�
 ``fourcade-economists-societies-2009``(连接词 + 年份漂移)—— 精确路径检查判它
 "没做过",于是造出重复条目。
 
-所以做两级匹配:
+所以做三级匹配:
   1. exact  —— 产物路径直接存在(``match: "slug"``)
   2. 标识符 —— ISBN(书,归一化成 ISBN-13)/ DOI(论文,小写去 doi.org 前缀)命中
                vault frontmatter,返回**vault 里真实的 slug**(``match: "isbn"|"doi"``)
+  3. 标题+作者姓 —— vault 条目本身就没有 ISBN/DOI 时唯一的兜底(全库约 9% 的书没
+               ``isbn``、7% 的论文没 ``doi``,前两级对它们必然 miss)。要求标题键
+               **唯一**命中且候选作者姓与 vault 条目作者有交集(``match: "title"``)。
+
+第三级刻意保守:误判(把没做过的当成做过)会**静默丢掉**一部作品,漏判只是多一条重复
+条目 —— 看得见、可合并。所以标题键撞到多条就直接拒绝匹配,不猜。
 
 调用方拿 ``vault_slug`` 去读已有产物(不是候选自己的 slug),漂移就不会变成重复。
 
@@ -22,7 +28,7 @@ vault resolve —— 判断候选 work 是否已在 vault,slug 漂移也能认�
     quasi-helpers vault resolve --items-file -   # stdin(书名带撇号时比 --items-json 安全)
     quasi-helpers vault resolve --items-json '[{"kind":"book","slug":"x","isbn":"9780226185903"}]'
 
-每项 ``{kind: "book"|"paper", slug, isbn?, doi?}``;输出
+每项 ``{kind: "book"|"paper", slug, isbn?, doi?, title?, authors?}``;输出
 ``{"resolved":[{kind, slug, vault_slug, path, match}], "scanned": {...}}``,
 未命中的 ``vault_slug``/``path``/``match`` 均为 ``null``。只读,不写任何文件。
 """
@@ -59,20 +65,59 @@ def normalise_doi(raw: Any) -> str | None:
     return text or None
 
 
+def title_keys(raw: Any) -> list[str]:
+    """标题比较键:完整标题 + 去副标题(首个冒号之前)。标点当空白、去冠词、小写。
+
+    两个键都进索引也都用于查找 —— 副标题在候选侧和 vault 侧经常一有一无
+    (``Sorting Things Out`` vs ``Sorting Things Out: Classification and Its
+    Consequences``)。返回列表里第 0 项是完整键,之后的是去副标题键(标题本来就没
+    副标题时只有一项)。
+    """
+    if raw in (None, "", [], {}):
+        return []
+    keys = []
+    for text in (str(raw), re.split(r"[:：]", str(raw), 1)[0]):
+        norm = re.sub(r"\s+", " ", re.sub(r"[^\w\s]+", " ", text.lower())).strip()
+        norm = re.sub(r"^(the|a|an)\s+", "", norm)
+        if norm and norm not in keys:
+            keys.append(norm)
+    return keys
+
+
+def surnames(raw: Any) -> set[str]:
+    """作者姓集合。``Bowker, Geoffrey C.`` 与 ``Geoffrey C. Bowker`` 都归到 ``bowker``:
+    有逗号取逗号前的末词,没逗号取整串末词(``José van Dijck`` / ``van Dijck, José`` → ``dijck``)。
+    """
+    items = raw if isinstance(raw, list) else [raw]
+    out: set[str] = set()
+    for item in items:
+        if not item:
+            continue
+        parts = re.sub(r"[^\w\s]+", " ", str(item).split(",")[0]).split()
+        if parts:
+            out.add(parts[-1].lower())
+    return out
+
+
 def _product_path(root: Path, kind: str, slug: str) -> Path:
     return (root / "vault" / "books" / slug / "00-overview.md" if kind == "book"
             else root / "vault" / "papers" / f"{slug}.md")
 
 
-def _index(root: Path, kind: str) -> dict[str, str]:
-    """vault 扫一遍 → {标识符: slug}。先出现的胜出(同一标识符多条目时保持确定)。"""
+def _index(root: Path, kind: str) -> tuple[dict[str, str], dict[str, list[tuple[str, set[str], bool]]]]:
+    """vault 扫一遍 → ({标识符: slug}, {标题键: [(slug, 作者姓, 是否去副标题键)]})。一趟扫盘建两个索引。
+
+    标识符索引先出现的胜出(同一标识符多条目时保持确定);标题索引保留全部条目,
+    由查找端判歧义。
+    """
     field, norm = ("isbn", normalise_isbn) if kind == "book" else ("doi", normalise_doi)
     if kind == "book":
         pairs = ((p.parent.name, p) for p in sorted((root / "vault" / "books").glob("*/00-overview.md")))
     else:
         pairs = ((p.stem, p) for p in sorted((root / "vault" / "papers").glob("*.md")))
 
-    out: dict[str, str] = {}
+    idents: dict[str, str] = {}
+    titles: dict[str, list[tuple[str, set[str], bool]]] = {}
     for slug, path in pairs:
         try:
             fm = read_frontmatter(path).frontmatter or {}
@@ -80,12 +125,32 @@ def _index(root: Path, kind: str) -> dict[str, str]:
             continue
         key = norm(fm.get(field))
         if key:
-            out.setdefault(key, slug)
-    return out
+            idents.setdefault(key, slug)
+        who = surnames(fm.get("authors"))
+        for i, tkey in enumerate(title_keys(fm.get("title"))):
+            titles.setdefault(tkey, []).append((slug, who, i > 0))
+    return idents, titles
+
+
+def _title_hit(titles: dict[str, list[tuple[str, set[str], bool]]], item: dict) -> str | None:
+    """标题键唯一命中 + 作者姓有交集才算数。歧义或作者对不上一律 None(宁漏勿误)。
+
+    两边都是"去副标题键"时拒绝:那意味着两个标题都有副标题、且副标题不同(否则完整键
+    早就命中了)—— 同一作者的多卷本正是这种形状(``Musik und Mathematik. Band 1:
+    Aphrodite`` vs ``… Band 1: Eros``),认成同一部会静默丢掉其中一卷。
+    """
+    who = surnames(item.get("authors") or item.get("author"))
+    if not who:
+        return None
+    for i, key in enumerate(title_keys(item.get("title"))):
+        entries = titles.get(key) or []
+        if len(entries) == 1 and entries[0][1] & who and not (i > 0 and entries[0][2]):
+            return entries[0][0]
+    return None
 
 
 def resolve(root: Path, items: list[dict]) -> dict:
-    indexes: dict[str, dict[str, str]] = {}
+    indexes: dict[str, tuple[dict[str, str], dict[str, list[tuple[str, set[str], bool]]]]] = {}
     resolved = []
 
     for item in items:
@@ -102,24 +167,30 @@ def resolve(root: Path, items: list[dict]) -> dict:
                              "path": str(_product_path(root, kind, slug).relative_to(root)), "match": "slug"})
             continue
 
-        # 2. 标识符(懒建索引:没有可用标识符的 item 不触发全 vault 扫描)
+        # 2/3. 标识符 → 标题+作者姓(懒建索引:两者都无可用输入的 item 不触发全 vault 扫描)
         field, norm = ("isbn", normalise_isbn) if kind == "book" else ("doi", normalise_doi)
         key = norm(item.get(field))
-        hit = None
-        if key:
+        titled = bool(title_keys(item.get("title")) and surnames(item.get("authors") or item.get("author")))
+        hit, how = None, None
+        if key or titled:
             if kind not in indexes:
                 indexes[kind] = _index(root, kind)
-            hit = indexes[kind].get(key)
+            idents, titles = indexes[kind]
+            hit = idents.get(key) if key else None
+            how = field if hit else None
+            if not hit and titled:
+                hit = _title_hit(titles, item)
+                how = "title" if hit else None
 
         resolved.append({
             "kind": kind, "slug": slug,
             "vault_slug": hit,
             "path": str(_product_path(root, kind, hit).relative_to(root)) if hit else None,
-            "match": field if hit else None,
+            "match": how,
         })
 
     return {"resolved": resolved,
-            "scanned": {k: len(v) for k, v in indexes.items()}}
+            "scanned": {k: {"identifiers": len(v[0]), "titles": len(v[1])} for k, v in indexes.items()}}
 
 
 def _load_items(args: argparse.Namespace) -> list[dict]:
@@ -139,7 +210,7 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="quasi-helpers vault resolve", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--items-json", help='JSON array of {kind, slug, isbn?, doi?}')
+    src.add_argument("--items-json", help='JSON array of {kind, slug, isbn?, doi?, title?, authors?}')
     src.add_argument("--items-file", help="path to that JSON array, or - for stdin")
     args = ap.parse_args(argv)
 

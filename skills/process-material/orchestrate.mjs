@@ -297,11 +297,14 @@ overwrite: true   # 即使 00-overview.md 已存在也要重读章节、重新�
 SYNTHESIS_RESULT 的 chapters_analyzed 必须是你**实际 Glob 到并读了**的 ch*.md 数量,不要估算。`
 }
 function existsProbePrompt(books, papers) {
-  // 判定全在 bin 里(slug 精确 + ISBN/DOI 两级匹配),agent 只跑命令 + 逐字转述——
+  // 判定全在 bin 里(slug 精确 → ISBN/DOI → 标题+作者姓,三级),agent 只跑命令 + 逐字转述——
   // 不靠 `test -f` 的退出码(bare test 无 stdout,harness 也不暴露非零码 → agent 会全判"存在")。
+  // title/authors 必须一起传:全库约 9% 的书没 isbn、7% 的论文没 doi,只传标识符对它们必然 miss。
   const items = [
-    ...books.map(b => ({ kind: 'book', slug: b.slug, isbn: b.isbn || null })),
-    ...papers.map(p => ({ kind: 'paper', slug: p.slug, doi: p.doi || null })),
+    ...books.map(b => ({ kind: 'book', slug: b.slug, isbn: b.isbn || null,
+                         title: b.title || null, authors: b.authors || null })),
+    ...papers.map(p => ({ kind: 'paper', slug: p.slug, doi: p.doi || null,
+                          title: p.title || null, authors: p.authors || null })),
   ]
   return `task: 判断下列候选是否已在 vault(只读检查,不改任何文件)。
 **原样运行**下面这条命令,它会打印一个 JSON;把其中的 resolved 数组逐字作为你的返回结果,
@@ -312,7 +315,7 @@ ${JSON.stringify(items)}
 JSON
 \`\`\`
 返回 {resolved:[{kind, slug, vault_slug, match}]}。vault_slug 为 null = 尚未处理;
-非 null 且与 slug 不同 = 同一作品已在 vault 但 slug 不同(标识符命中),照抄即可。`
+非 null 且与 slug 不同 = 同一作品已在 vault 但 slug 不同(标识符或标题命中),照抄即可。`
 }
 function authorSearchPrompt(full, topic, kind, count) {
   return `task: find top ${count} representative ${kind}s by ${full}${topic ? ` on topic ${topic}` : ''}, sorted by citations

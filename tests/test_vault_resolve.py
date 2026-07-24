@@ -24,12 +24,14 @@ def run_resolve(project: Path, items: list[dict]) -> dict:
     return json.loads(proc.stdout)
 
 
-def write_book(project: Path, slug: str, isbn: str | None) -> None:
+def write_book(project: Path, slug: str, isbn: str | None,
+               title: str = "A Book", authors: list[str] | None = None) -> None:
     path = project / "vault" / "books" / slug / "00-overview.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     isbn_line = f"isbn: {isbn}\n" if isbn is not None else ""
+    authors_line = "authors:\n" + "".join(f"  - {a}\n" for a in authors) if authors else ""
     path.write_text(
-        f"---\ntype: book\ntitle: A Book\nyear: 2009\n{isbn_line}---\n\n",
+        f'---\ntype: book\ntitle: "{title}"\nyear: 2009\n{isbn_line}{authors_line}---\n\n',
         encoding="utf-8",
     )
 
@@ -105,6 +107,89 @@ def test_book_and_paper_indexes_stay_separate(vault: Path) -> None:
         {"kind": "paper", "slug": "y-2009", "isbn": "9781400833139"},
     ])
     assert [i["vault_slug"] for i in out["resolved"]] == [None, None]
+
+
+def test_title_and_surname_match_when_the_vault_entry_has_no_isbn(tmp_path: Path) -> None:
+    """约 9% 的书 vault 里没有 isbn —— 前两级对它们必然 miss,于是每跑一次作者就多一条重复条目。"""
+    write_book(tmp_path, "star-boundary-objects-2015", None,
+               title="Boundary Objects and Beyond: Working with Leigh Star",
+               authors=["Geoffrey C. Bowker", "Stefan Timmermans"])
+    (item,) = run_resolve(tmp_path, [{
+        "kind": "book", "slug": "bowker-boundary-objects-and-beyond-2016",
+        "title": "Boundary Objects and Beyond: Working with Leigh Star",
+        "authors": ["Bowker, Geoffrey C."],
+    }])["resolved"]
+    assert item["match"] == "title"
+    assert item["vault_slug"] == "star-boundary-objects-2015"
+
+
+def test_subtitle_drift_still_matches(tmp_path: Path) -> None:
+    """副标题在候选侧和 vault 侧经常一有一无。"""
+    write_book(tmp_path, "star-boundary-objects-2015", None,
+               title="Boundary Objects and Beyond: Working with Leigh Star",
+               authors=["Geoffrey C. Bowker"])
+    (item,) = run_resolve(tmp_path, [{
+        "kind": "book", "slug": "drifted", "title": "Boundary Objects and Beyond",
+        "authors": ["Geoffrey C. Bowker"],
+    }])["resolved"]
+    assert item["match"] == "title"
+    assert item["vault_slug"] == "star-boundary-objects-2015"
+
+
+def test_ambiguous_title_key_refuses_to_match(tmp_path: Path) -> None:
+    """误判会静默丢掉一部作品,漏判只是多一条看得见的重复条目 —— 撞键就拒绝,不猜。"""
+    write_book(tmp_path, "bowker-essays-i-2001", None,
+               title="Collected Essays: Part I", authors=["Geoffrey C. Bowker"])
+    write_book(tmp_path, "bowker-essays-ii-2002", None,
+               title="Collected Essays: Part II", authors=["Geoffrey C. Bowker"])
+    out = run_resolve(tmp_path, [
+        {"kind": "book", "slug": "drifted", "title": "Collected Essays",
+         "authors": ["Geoffrey C. Bowker"]},
+        {"kind": "book", "slug": "drifted-i", "title": "Collected Essays: Part I",
+         "authors": ["Geoffrey C. Bowker"]},
+    ])
+    assert out["resolved"][0]["vault_slug"] is None          # 撞到两条 → 拒绝
+    assert out["resolved"][1]["vault_slug"] == "bowker-essays-i-2001"  # 全标题唯一 → 命中
+
+
+def test_title_hit_needs_an_author_surname_overlap(tmp_path: Path) -> None:
+    write_book(tmp_path, "bowker-sorting-1999", None,
+               title="Sorting Things Out", authors=["Geoffrey C. Bowker"])
+    out = run_resolve(tmp_path, [
+        {"kind": "book", "slug": "a", "title": "Sorting Things Out", "authors": ["Susan Leigh Star"]},
+    ])
+    assert out["resolved"][0]["vault_slug"] is None
+    assert out["scanned"]["book"]["titles"] > 0  # 确实查了索引,是作者对不上才拒的
+
+
+def test_title_without_authors_skips_the_vault_scan(tmp_path: Path) -> None:
+    """只有标题没有作者时匹配条件永不成立,不值得为它扫一遍全库。"""
+    write_book(tmp_path, "bowker-sorting-1999", None,
+               title="Sorting Things Out", authors=["Geoffrey C. Bowker"])
+    out = run_resolve(tmp_path, [{"kind": "book", "slug": "b", "title": "Sorting Things Out"}])
+    assert out["resolved"][0]["vault_slug"] is None
+    assert out["scanned"] == {}
+
+
+def test_differing_subtitles_never_match_on_the_stem_alone(tmp_path: Path) -> None:
+    """多卷本:vault 只有 Band 1 时,Band 2 必须判成"没做过"——认成同一部会静默丢掉一卷。"""
+    write_book(tmp_path, "kittler-musik-mathematik-1-2006", None,
+               title="Musik und Mathematik Band 1: Aphrodite", authors=["Friedrich Kittler"])
+    (item,) = run_resolve(tmp_path, [{
+        "kind": "book", "slug": "kittler-musik-mathematik-2-2009",
+        "title": "Musik und Mathematik Band 1: Eros", "authors": ["Friedrich Kittler"],
+    }])["resolved"]
+    assert item["vault_slug"] is None
+
+
+def test_identifier_wins_over_title(vault: Path) -> None:
+    """ISBN 是硬身份,标题只是兜底 —— 有 ISBN 就不该退到模糊匹配。"""
+    (item,) = run_resolve(vault, [{
+        "kind": "book", "slug": "drifted", "isbn": "9781400833139",
+        "title": "Something Else Entirely", "authors": ["Marion Fourcade"],
+    }])["resolved"]
+    assert item["match"] == "isbn"
+    assert item["vault_slug"] == "fourcade-economists-societies-2009"
 
 
 def test_bad_kind_is_reported_not_crashed(vault: Path) -> None:

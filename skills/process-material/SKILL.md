@@ -50,7 +50,7 @@ description: Use when the user wants to acquire and analyse a book, paper, autho
 主进程(瘦入口:召回 + 编排 + 卡点 + 回填)
 ├─ 归一化 kind + args
 ├─ Step 0 本地召回/去重(图外,主进程)
-│    ├─ book/paper:`quasi-helpers vault resolve`(slug 精确 + ISBN/DOI)命中 → return
+│    ├─ book/paper:`quasi-helpers vault resolve`(slug 精确 → ISBN/DOI → 标题+作者姓)命中 → return
 │    ├─ author:产物 vault/authors/{name}.md 存在 → return
 │    ├─ 均 miss → rg 模糊召回近似 key → 命中则列候选,提示可能重复(勿盲目新建)
 │    └─ 否则继续
@@ -79,10 +79,12 @@ elif args.kind == "paper": key, product = args.slug, f"vault/papers/{args.slug}.
 else:                      key, product = args.name, f"vault/authors/{args.name}.md"     # author
 
 # Step 0: 本地召回/去重(主进程,图外)——mirror process-{book,paper,author} Step 0
-# book/paper 走确定性两级匹配(slug 精确 + ISBN/DOI):同一作品换个 slug 也认得出,
-# 不靠 LLM 眼力。author 无标识符,仍用产物路径。
+# book/paper 走确定性三级匹配(slug 精确 → ISBN/DOI → 标题+作者姓):同一作品换个 slug 也认得出,
+# 不靠 LLM 眼力。title/authors 一定要带上——vault 条目自己没 ISBN/DOI 时前两级必然 miss。
+# author 无标识符,仍用产物路径。
 if args.kind in ("book", "paper"):
     ident = {"isbn": args.meta.get("isbn")} if args.kind == "book" else {"doi": args.meta.get("doi")}
+    ident |= {"title": args.meta.get("title"), "authors": args.meta.get("authors")}
     hit = bash(f"quasi-helpers vault resolve --items-json "
                f"'{json([{'kind': args.kind, 'slug': key, **ident}])}'")["resolved"][0]
     if hit["vault_slug"]:
@@ -134,7 +136,7 @@ Bash(f"/opt/homebrew/bin/marple-cli open '{product}' || marple-cli open '{produc
 
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
-| Step 0 召回 | `quasi-helpers vault resolve`(slug 精确 + ISBN/DOI);均 miss 后 rg 模糊召回 | `vault_slug` 非 null 则**跳过整跑**(slug 漂移也算已做);模糊命中只列候选 |
+| Step 0 召回 | `quasi-helpers vault resolve`(slug 精确 → ISBN/DOI → 标题+作者姓);均 miss 后 rg 模糊召回 | `vault_slug` 非 null 则**跳过整跑**(slug 漂移也算已做);模糊命中只列候选 |
 | spine(图) | 文件即状态:`sources/{slug}.*` / `processing/chapters/{slug}/` / `vault/books/{slug}/` | 重跑 skill,图内 agent 见 output 存在即 no-op;做完的章/概览秒过 |
 | 卡点重投 | `year_decision` | 用户拍板后带决定重投,只补未定的一步 |
 | LOCALISE | `.quasi/localise/cndouban.json#by_isbn[isbn]` | 已有 entry(found/none)则 helper scan 跳过 |
