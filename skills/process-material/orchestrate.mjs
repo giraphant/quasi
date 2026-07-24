@@ -229,14 +229,24 @@ topic: ${m.topic || ''}
 若 00-overview.md 已存在且未设 overwrite,直接 no-op 返回 success。`
 }
 function existsProbePrompt(books, papers) {
-  const bl = books.map(b => `  - ${b.slug}`).join('\n')
-  const pl = papers.map(p => `  - ${p.slug}`).join('\n')
-  return `task: 只做文件存在性检查,不读内容、不改任何文件。对每个 slug 跑一次 test -f。
-books (查 vault/books/{slug}/00-overview.md 是否存在):
-${bl || '  (none)'}
-papers (查 vault/papers/{slug}.md 是否存在):
-${pl || '  (none)'}
-返回 books_done[] / papers_done[]:各只放"文件已存在"的 slug。`
+  // slug 全是 [a-z0-9-],可安全塞进 python 字面量。命令自己算好 JSON,agent 只转述——
+  // 不靠 `test -f` 的退出码(bare test 无 stdout,harness 也不暴露非零码 → agent 会全判"存在")。
+  const bl = books.map(b => `("${b.slug}","vault/books/${b.slug}/00-overview.md")`).join(', ')
+  const pl = papers.map(p => `("${p.slug}","vault/papers/${p.slug}.md")`).join(', ')
+  return `task: 判断下列产物文件是否已存在(只做存在性检查,不读内容、不改任何文件)。
+**原样运行**下面这条命令,它会打印一行 JSON;把该 JSON 逐字作为你的返回结果,不要自行猜测存在性。
+\`\`\`bash
+python3 - <<'PY'
+import json, os
+books = [${bl}]
+papers = [${pl}]
+print(json.dumps({
+    "books_done": [s for s, p in books if os.path.isfile(p)],
+    "papers_done": [s for s, p in papers if os.path.isfile(p)],
+}))
+PY
+\`\`\`
+返回该命令打印的 {books_done, papers_done}(只含实际存在文件的 slug)。`
 }
 function authorSearchPrompt(full, topic, kind, count) {
   return `task: find top ${count} representative ${kind}s by ${full}${topic ? ` on topic ${topic}` : ''}, sorted by citations
