@@ -20,13 +20,28 @@ export const meta = {
   phases: [{ title: 'Book' }],
 }
 
+// ── 回执 schema:不传 schema 时 agent() 返回散文字符串,脚本读不到字段。
+//    只给脚本真正读字段的三个回执(download/extract/audit)加 schema;analyse/synth 回执不读,不加。
+const DL_SCHEMA = { type: 'object', required: ['per_item'], properties: {
+  per_item: { type: 'array', items: { type: 'object', required: ['status'], properties: {
+    slug: { type: 'string' }, status: { type: 'string' }, path: { type: 'string' },
+    tmp_path: { type: 'string' }, year_evidence: { type: 'object' } } } } } }
+const EX_SCHEMA = { type: 'object', required: ['status'], properties: {
+  status: { type: 'string' }, problems: { type: 'array' },
+  chapters: { type: 'array', items: { type: 'object', required: ['slot', 'filename', 'slug'], properties: {
+    slot: {}, title: { type: 'string' }, filename: { type: 'string' },
+    slug: { type: 'string' }, word_count: { type: 'number' } } } } } }
+const AU_SCHEMA = { type: 'object', properties: {
+  escalated: { type: 'array', items: { type: 'object', properties: {
+    path: { type: 'string' }, kind: { type: 'string' }, reason: { type: 'string' } } } } } }
+
 // ── processBook:承重节点。author = parallel(books→processBook);topic = pipeline(items→router)。 ──
 async function processBook(slug, m) {
   phase('Book')
 
   // download ── 回执:status/path/year_evidence   产物:PDF 落 sources/
   const dl = await agent(bookDownloadPrompt(slug, m),
-    { agentType: 'quasi:download-agent', label: `download:${slug}` })
+    { agentType: 'quasi:download-agent', label: `download:${slug}`, schema: DL_SCHEMA })
   const item = (dl && dl.per_item && dl.per_item[0]) || {}
   if (item.status !== 'ok')
     return { slug, status: item.status || 'download_failed',
@@ -34,7 +49,7 @@ async function processBook(slug, m) {
 
   // extract ── 章节列表从回执带回(脚本无 fs,不读 manifest)  产物:manifest+txt 落 processing/
   const ex = await agent(extractPrompt(item.path, slug),
-    { agentType: 'quasi:extract-agent', label: `extract:${slug}` })
+    { agentType: 'quasi:extract-agent', label: `extract:${slug}`, schema: EX_SCHEMA })
   if (!ex || ex.status === 'failed')
     return { slug, status: 'extract_failed', problems: ex && ex.problems }
   const chapters = ex.chapters || []
@@ -51,7 +66,7 @@ async function processBook(slug, m) {
 
   // audit + 一次 escalation 回环 ── 章用 chapters(在 scope 内)重投,概览用 synth 重投
   let au = await agent(`path: vault/books/${slug}`,
-    { agentType: 'quasi:audit-agent', label: `audit:${slug}` })
+    { agentType: 'quasi:audit-agent', label: `audit:${slug}`, schema: AU_SCHEMA })
   const esc = (au && au.escalated) || []
   if (esc.length) {
     await parallel(esc.map(e => () => {
@@ -65,7 +80,7 @@ async function processBook(slug, m) {
         { agentType: 'quasi:analyse-agent', label: `regen-ch:${slug}:${ch.slot}` })
     }))
     au = await agent(`path: vault/books/${slug}`,
-      { agentType: 'quasi:audit-agent', label: `audit2:${slug}` })
+      { agentType: 'quasi:audit-agent', label: `audit2:${slug}`, schema: AU_SCHEMA })
     if (((au && au.escalated) || []).length)
       return { slug, status: 'audit_escalated', escalated: au.escalated }
   }
