@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from toc_utils import is_skip, assign_slots, make_filename
+from toc_utils import is_skip, assign_slots, make_filename, make_slug
 
 try:
     import fitz  # PyMuPDF
@@ -196,6 +196,7 @@ def create_manifest(chapters: list[dict], skipped: list[dict],
                 'title': ch['title'],
                 'start_page': ch['start_page'],
                 'filename': make_filename(ch['slot'], ch['title']),
+                'slug': make_slug(ch['slot'], ch['title']),
                 'word_count': len('\n'.join(ch['content']).split()),
             }
             for ch in chapters

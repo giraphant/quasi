@@ -74,7 +74,7 @@ async function processBook(slug, m) {
       if (p.endsWith('/00-overview.md'))
         return agent(bookSynthPrompt(slug, m) + `\noverwrite: true\nreason: audit escalated ${e.kind}: ${e.reason}`,
           { agentType: 'quasi:synthesis-agent', label: `regen-synth:${slug}` })
-      const ch = chapters.find(c => p.endsWith(chFilename(c)))
+      const ch = chapters.find(c => p.endsWith(`ch${c.slot}-${c.slug}.md`))
       if (!ch) return Promise.resolve({ status: 'skip', note: `no chapter match for ${p}` })
       return agent(analyseChapterPrompt(slug, m, ch) + `\noverwrite: true\nreason: audit escalated ${e.kind}: ${e.reason}`,
         { agentType: 'quasi:analyse-agent', label: `regen-ch:${slug}:${ch.slot}` })
@@ -102,14 +102,9 @@ output_dir: sources/`
 }
 function extractPrompt(sourceFile, slug) {
   return `source_file: ${sourceFile}, chapters_dir: processing/chapters/${slug}/
-在 EXTRACT_RESULT 里附一个 "chapters" 数组(每项 slot/title/filename/slug/word_count),
-让调用方无需读 manifest 就能 fan-out。`
-}
-// 章节输出文件名 —— extract-agent 回执的 slug 可能已带 chNN- 前缀
-// (标题 "Chapter 1: ..." 被 slug 成 "ch01-..."),strip 掉,避免 ch01-ch01- 双前缀。
-function chFilename(ch) {
-  const s = String(ch.slug || '').replace(/^ch[0-9]+[a-z]?-/i, '')
-  return `ch${ch.slot}-${s}.md`
+在 EXTRACT_RESULT 里附一个 "chapters" 数组:逐字复制 manifest.json 的 chapters
+(每项 slot/title/filename/slug/word_count),不得改写 slug —— slug 由 extract 脚本
+确定性生成,是章节输出文件名的稳定标识。`
 }
 function analyseChapterPrompt(slug, m, ch) {
   return `type: A
@@ -121,7 +116,7 @@ chapter_title: ${ch.title || ''}
 year: ${m.year || ''}
 chapter_authors: ${ch.authors || (m.authors || []).join(', ')}
 input: processing/chapters/${slug}/${ch.filename}
-output: vault/books/${slug}/${chFilename(ch)}
+output: vault/books/${slug}/ch${ch.slot}-${ch.slug}.md
 topic: ${m.topic || ''}
 若 output 已存在且未设 overwrite,直接 no-op 返回 success。`
 }

@@ -142,3 +142,26 @@ def make_filename(slot: str, title: str, ext: str = 'txt') -> str:
     safe = re.sub(r'[^\w\s-]', '', title or '')[:50]
     safe = re.sub(r'\s+', '_', safe).strip('_')
     return f"{slot}_{safe}.{ext}"
+
+
+def make_slug(slot: str, title: str) -> str:
+    """章节 vault 输出用的稳定 slug（确定性），供 analysis 层拼 ``ch{slot}-{slug}.md``。
+
+    去掉标题里的章号前缀（Chapter N / 第N章 / N. / CH N），其余 slugify：保留 CJK、
+    lowercase、非词字符→连字符、截断。返回**裸** slug（不含 ch/slot 前缀）。
+    章号后无实义标题时回退整标题（"Chapter 1" → "chapter-1"），避免空 slug。
+
+    存进 manifest.json 后成为跨 run 稳定的章节身份，取代此前由 LLM 现编的 slug
+    （非确定性 → 续跑不幂等 + 前缀不一致 → 双前缀）。
+    """
+    t = (title or '').strip()
+    stripped = t
+    for pat in CHAPTER_PATTERNS:
+        m = pat.match(t)
+        if m:
+            stripped = t[m.end():]
+            break
+    stripped = stripped.strip(' :：.-—–\t')
+    base = stripped if re.search(r'\w', stripped) else t
+    slug = re.sub(r'[^\w]+', '-', base).strip('-').lower()
+    return slug[:60].strip('-') or 'section'

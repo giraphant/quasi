@@ -71,7 +71,13 @@ def test_pdf_split_manifest_uses_common_chapter_fields(tmp_path: Path):
             "title": "Chapter 1",
             "start_page": 1,
             "content": ["one two three"],
-        }
+        },
+        {
+            "slot": "02",
+            "title": "Chapter 2: Networks and Power",
+            "start_page": 4,
+            "content": ["a b"],
+        },
     ]
 
     split_chapters.create_manifest(
@@ -87,4 +93,8 @@ def test_pdf_split_manifest_uses_common_chapter_fields(tmp_path: Path):
     assert chapter["filename"] == "01_Chapter_1.txt"
     assert chapter["word_count"] == 3
     assert "file" not in chapter
-    assert manifest["extracted_count"] == 1
+    # deterministic bare slug (no ch/slot prefix); chapter-number-only title falls back to full
+    assert chapter["slug"] == "chapter-1"
+    # "Chapter 2:" prefix stripped, rest slugified
+    assert manifest["chapters"][1]["slug"] == "networks-and-power"
+    assert manifest["extracted_count"] == 2

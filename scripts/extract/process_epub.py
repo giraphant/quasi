@@ -13,7 +13,7 @@ import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
 
-from toc_utils import is_skip, assign_slots, make_filename
+from toc_utils import is_skip, assign_slots, make_filename, make_slug
 
 
 class HTMLTextExtractor(HTMLParser):
@@ -197,6 +197,7 @@ def process_epub(epub_path, output_dir):
                 'slot': e['slot'],
                 'title': e['title'],
                 'filename': filename,
+                'slug': make_slug(e['slot'], e['title']),
                 'word_count': len(e['text'].split()),
             })
 
