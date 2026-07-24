@@ -108,6 +108,10 @@ if result.status == "year_ambiguous":
 
 if result.status == "audit_escalated":
     report(f"audit 仍 escalated:{result.escalated};交人工"); return
+# chapters_incomplete = 章分析没跑齐(通常是瞬时 API 错误连着打死同一章)。产物本身没坏,
+# 重跑本 skill 只会补缺的那几章(已完成的章 agent 见文件即 no-op),所以提示重跑而不是报死。
+if result.status == "chapters_incomplete":
+    report(f"章节残缺 {result.analysed}/{result.expected};重跑本 skill 只补缺章"); return
 if result.status.endswith("_failed") or result.status in ("no_chapters", "no_works", "all_failed"):
     report(f"失败:{result.status}"); return
 

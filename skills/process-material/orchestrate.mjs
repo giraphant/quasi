@@ -65,6 +65,20 @@ const OCR_SCHEMA = { type: 'object', required: ['status'], properties: {
 // 缺信号时宁可多跑一轮(缺的章才会真写,其余 no-op)也不能默认通过。
 const analysedCount = (sy) => Number(sy && sy.chapters_analyzed) || 0
 
+// agent() 返回 null = agent 死在终端 API 错误上("Server error mid-response" /
+// "stream error: INTERNAL_ERROR"),跟"内容处理失败"不是一回事 —— 原地重投一次。
+// 没有这层时,一次瞬时 API 抖动就要靠整轮 refill 兜,而 refill 只有一轮:Bowker
+// memory-practices 实测 ch04/ch07 首轮双双死于 API 错误,refill 救回 ch04、ch07 又死一次
+// → 全书停在 8/9。
+// 写产物的 agent(analyse/synth)重投要带 OVERWRITE:走到这一步就说明上一次没产出,产物按
+// 定义不存在;给幂等 no-op 的许可反而让 agent 谎报成功(Bowker biodiversity 2000 实测:
+// analyse-ocr 报 success + notes"目标文件已存在,按幂等协议 no-op",紧接着的 audit 却
+// target.exists=false)。只读/命令型 agent(download/extract/audit/probe/search)不加。
+const OVERWRITE = '\noverwrite: true'
+const retryNull = async (prompt, opts, retrySuffix = '') =>
+  (await agent(prompt, opts)) ?? agent(prompt + retrySuffix,
+    { ...opts, label: `${opts.label}:retry` })
+
 // ── processBook:承重节点。author = parallel(books→processBook);topic = pipeline(items→router)。 ──
 // opts.batchYear=true(author 批量):year_mismatch/ambiguous 不冒泡卡点,download-agent 直接
 // accept 入 sources 并把 year_evidence 作 warning,status 返回 ok(单本 book 入口不传,走卡点)。
@@ -72,7 +86,7 @@ async function processBook(slug, m, opts = {}) {
   phase('Book')
 
   // download ── 回执:status/path/year_evidence   产物:PDF 落 sources/
-  const dl = await agent(bookDownloadPrompt(slug, m, opts.batchYear),
+  const dl = await retryNull(bookDownloadPrompt(slug, m, opts.batchYear),
     { agentType: 'quasi:download-agent', label: `download:${slug}`, schema: DL_SCHEMA })
   const item = (dl && dl.per_item && dl.per_item[0]) || {}
   if (item.status !== 'ok')
@@ -80,7 +94,7 @@ async function processBook(slug, m, opts = {}) {
              year_evidence: item.year_evidence, tmp_path: item.tmp_path }
 
   // extract ── 章节列表从回执带回(脚本无 fs,不读 manifest)  产物:manifest+txt 落 processing/
-  const ex = await agent(extractPrompt(item.path, slug),
+  const ex = await retryNull(extractPrompt(item.path, slug),
     { agentType: 'quasi:extract-agent', label: `extract:${slug}`, schema: EX_SCHEMA })
   if (!ex || ex.status === 'failed')
     return { slug, status: 'extract_failed', problems: ex && ex.problems }
@@ -89,27 +103,27 @@ async function processBook(slug, m, opts = {}) {
 
   // fan-out analyse ── 每章一个 agent;正文在 processing/,分析写 vault/;幂等 agent 自跳过已完成章 = 续跑
   await parallel(chapters.map(ch => () =>
-    agent(analyseChapterPrompt(slug, m, ch),
-      { agentType: 'quasi:analyse-agent', label: `analyse:${slug}:${ch.slot}`, schema: AN_SCHEMA })))
+    retryNull(analyseChapterPrompt(slug, m, ch),
+      { agentType: 'quasi:analyse-agent', label: `analyse:${slug}:${ch.slot}`, schema: AN_SCHEMA }, OVERWRITE)))
 
   // synth(book) + 完整性对账 ── synth 只递目录/slug,自己 Glob vault 的 ch*.md,所以回执的
   // chapters_analyzed 是**磁盘上真实的章数**;少于 extract 出的章数 = 有 analyse 空跑没落盘。
   // 补投一轮(幂等提示让已完成的章 no-op,只有缺的章真写)再 synth;仍然少就如实报残缺,不报 ok。
-  let sy = await agent(bookSynthPrompt(slug, m),
-    { agentType: 'quasi:synthesis-agent', label: `synth:${slug}`, schema: SY_SCHEMA })
+  let sy = await retryNull(bookSynthPrompt(slug, m),
+    { agentType: 'quasi:synthesis-agent', label: `synth:${slug}`, schema: SY_SCHEMA }, OVERWRITE)
   if (analysedCount(sy) < chapters.length) {
     log(`${slug}: 章节残缺 ${analysedCount(sy)}/${chapters.length},补投缺失章`)
     await parallel(chapters.map(ch => () =>
-      agent(analyseChapterPrompt(slug, m, ch),
-        { agentType: 'quasi:analyse-agent', label: `refill:${slug}:${ch.slot}`, schema: AN_SCHEMA })))
-    sy = await agent(bookSynthPrompt(slug, m),
-      { agentType: 'quasi:synthesis-agent', label: `synth2:${slug}`, schema: SY_SCHEMA })
+      retryNull(analyseChapterPrompt(slug, m, ch),
+        { agentType: 'quasi:analyse-agent', label: `refill:${slug}:${ch.slot}`, schema: AN_SCHEMA }, OVERWRITE)))
+    sy = await retryNull(bookSynthPrompt(slug, m),
+      { agentType: 'quasi:synthesis-agent', label: `synth2:${slug}`, schema: SY_SCHEMA }, OVERWRITE)
     if (analysedCount(sy) < chapters.length)
       return { slug, status: 'chapters_incomplete', analysed: analysedCount(sy), expected: chapters.length }
   }
 
   // audit + 一次 escalation 回环 ── 章用 chapters(在 scope 内)重投,概览用 synth 重投
-  let au = await agent(`path: vault/books/${slug}`,
+  let au = await retryNull(`path: vault/books/${slug}`,
     { agentType: 'quasi:audit-agent', label: `audit:${slug}`, schema: AU_SCHEMA })
   const esc = (au && au.escalated) || []
   if (esc.length) {
@@ -123,7 +137,7 @@ async function processBook(slug, m, opts = {}) {
       return agent(analyseChapterPrompt(slug, m, ch) + `\noverwrite: true\nreason: audit escalated ${e.kind}: ${e.reason}`,
         { agentType: 'quasi:analyse-agent', label: `regen-ch:${slug}:${ch.slot}` })
     }))
-    au = await agent(`path: vault/books/${slug}`,
+    au = await retryNull(`path: vault/books/${slug}`,
       { agentType: 'quasi:audit-agent', label: `audit2:${slug}`, schema: AU_SCHEMA })
     if (((au && au.escalated) || []).length)
       return { slug, status: 'audit_escalated', escalated: au.escalated }
@@ -136,42 +150,37 @@ async function processBook(slug, m, opts = {}) {
 // ── processPaper:paper spine(download → analyse type B → audit)。author/topic 复用。 ──
 async function processPaper(slug, m) {
   phase('Paper')
-  const dl = await agent(paperDownloadPrompt(slug, m),
+  const dl = await retryNull(paperDownloadPrompt(slug, m),
     { agentType: 'quasi:download-agent', label: `download:${slug}`, schema: DL_SCHEMA })
   const item = (dl && dl.per_item && dl.per_item[0]) || {}
   if (item.status !== 'ok') return { slug, status: item.status || 'download_failed' }
 
   let src = item.path
-  let an = await agent(paperAnalysePrompt(slug, m, src),
-    { agentType: 'quasi:analyse-agent', label: `analyse:${slug}`, schema: AN_SCHEMA })
-  // 回执为 null = agent 死在终端 API 错误上(Bowker biodiversity 首跑就是 "Connection closed
-  // mid-response")。这跟"内容处理失败"不是一回事,重投一次。书那边不用管:章节残缺会被下面的
-  // synth 对账抓到并自动补投。
-  if (!an) an = await agent(paperAnalysePrompt(slug, m, src),
-    { agentType: 'quasi:analyse-agent', label: `analyse-retry:${slug}`, schema: AN_SCHEMA })
+  let an = await retryNull(paperAnalysePrompt(slug, m, src),
+    { agentType: 'quasi:analyse-agent', label: `analyse:${slug}`, schema: AN_SCHEMA }, OVERWRITE)
 
   // 扫描版兜底 ── 无文本层的 PDF,analyse-agent 按契约返回 status:error + notes"需 OCR"
   // (明令不许凭训练知识补完)。书路径早有 quasi-extract ocr,论文路径原来到此直接失败
   // (Bowker biodiversity 2000)。补一段:OCR 出带文本层的 PDF,拿它重跑 analyse。
   if (an && an.status !== 'success' && /OCR|扫描|图像|scan/i.test(an.notes || '')) {
     const ocrPath = `.quasi/temp/${slug}.ocr.pdf`
-    const ocr = await agent(ocrPrompt(src, ocrPath),
+    const ocr = await retryNull(ocrPrompt(src, ocrPath),
       { agentType: 'general-purpose', label: `ocr:${slug}`, schema: OCR_SCHEMA })
     if (ocr && ocr.status === 'ok') {
       src = ocrPath
-      an = await agent(paperAnalysePrompt(slug, m, src) + `\nreason: 原 PDF 无文本层,已 OCR 后重跑`,
+      an = await retryNull(paperAnalysePrompt(slug, m, src) + OVERWRITE + `\nreason: 原 PDF 无文本层,已 OCR 后重跑`,
         { agentType: 'quasi:analyse-agent', label: `analyse-ocr:${slug}`, schema: AN_SCHEMA })
     }
   }
   if (!an || an.status !== 'success')
     return { slug, status: 'analyse_failed', notes: (an && an.notes) || null }
 
-  let au = await agent(`path: vault/papers/${slug}.md`,
+  let au = await retryNull(`path: vault/papers/${slug}.md`,
     { agentType: 'quasi:audit-agent', label: `audit:${slug}`, schema: AU_SCHEMA })
   if (((au && au.escalated) || []).length) {
     await agent(paperAnalysePrompt(slug, m, src) + `\noverwrite: true\nreason: audit escalated`,
       { agentType: 'quasi:analyse-agent', label: `regen:${slug}` })
-    au = await agent(`path: vault/papers/${slug}.md`,
+    au = await retryNull(`path: vault/papers/${slug}.md`,
       { agentType: 'quasi:audit-agent', label: `audit2:${slug}`, schema: AU_SCHEMA })
     if (((au && au.escalated) || []).length) return { slug, status: 'audit_escalated', escalated: au.escalated }
   }
@@ -189,9 +198,9 @@ async function processAuthor(name, m) {
   const nBooks = Number(m.maxBooks) || 5
   const nPapers = Number(m.maxPapers) || 10
   const [bk, pp] = await parallel([
-    () => agent(authorSearchPrompt(full, topic, 'book', nBooks),
+    () => retryNull(authorSearchPrompt(full, topic, 'book', nBooks),
       { agentType: 'quasi:search-agent', label: `search-books:${name}`, schema: SEARCH_SCHEMA }),
-    () => agent(authorSearchPrompt(full, topic, 'paper', nPapers),
+    () => retryNull(authorSearchPrompt(full, topic, 'paper', nPapers),
       { agentType: 'quasi:search-agent', label: `search-papers:${name}`, schema: SEARCH_SCHEMA }),
   ])
   const books = (((bk && bk.candidates) || []).filter(b => b && b.slug)).slice(0, nBooks)
@@ -199,9 +208,10 @@ async function processAuthor(name, m) {
   if (!books.length && !papers.length) return { name, status: 'no_works' }
 
   // 2. 存在性探针:一次 agent 查哪些已在 vault → 跳过(不重跑、不破坏性重 extract),仍计入 synth。
-  //    匹配是 slug 精确 + ISBN/DOI 标识符两级,所以搜索侧 slug 漂移(同一本书不同 slug)也认得出;
+  //    匹配是 slug 精确 → ISBN/DOI → 标题+作者姓三级,所以搜索侧 slug 漂移(同一本书不同 slug)也认得出;
   //    命中时 done.get(slug) 是 **vault 里真实的 slug**,下游读产物必须用它,否则 synth 读不到文件。
-  const probe = await agent(existsProbePrompt(books, papers),
+  //    这一步空回执的代价最大(全批当成没做过 → 对已入库的书做破坏性重 extract),所以必须重投。
+  const probe = await retryNull(existsProbePrompt(books, papers),
     { agentType: 'general-purpose', label: `probe-done:${name}`, schema: PROBE_SCHEMA })
   const resolved = ((probe && probe.resolved) || []).filter(r => r && r.slug && r.vault_slug)
   const doneB = new Map(resolved.filter(r => r.kind !== 'paper').map(r => [r.slug, r.vault_slug]))
@@ -222,19 +232,19 @@ async function processAuthor(name, m) {
   if (!okBooks.length && !okPapers.length) return { name, status: 'all_failed', tried: res.length }
 
   // 3. synth(author):读书概览 + 论文页。回执只用来判死活——没写出 profile 就别接着 audit 一个不存在的文件。
-  const sa = await agent(authorSynthPrompt(name, full, topic, okBooks, okPapers),
-    { agentType: 'quasi:synthesis-agent', label: `synth-author:${name}`, schema: SY_SCHEMA })
+  const sa = await retryNull(authorSynthPrompt(name, full, topic, okBooks, okPapers),
+    { agentType: 'quasi:synthesis-agent', label: `synth-author:${name}`, schema: SY_SCHEMA }, OVERWRITE)
   if (!sa || sa.status === 'error')
     return { name, status: 'synth_failed', books: okBooks.length, papers: okPapers.length,
              notes: sa && sa.notes }
 
   // 4. audit 作者 profile + 一次 escalation
-  let au = await agent(`path: vault/authors/${name}.md`,
+  let au = await retryNull(`path: vault/authors/${name}.md`,
     { agentType: 'quasi:audit-agent', label: `audit-author:${name}`, schema: AU_SCHEMA })
   if (((au && au.escalated) || []).length) {
     await agent(authorSynthPrompt(name, full, topic, okBooks, okPapers) + `\nreason: audit escalated`,
       { agentType: 'quasi:synthesis-agent', label: `regen-author:${name}` })
-    au = await agent(`path: vault/authors/${name}.md`,
+    au = await retryNull(`path: vault/authors/${name}.md`,
       { agentType: 'quasi:audit-agent', label: `audit2-author:${name}`, schema: AU_SCHEMA })
     if (((au && au.escalated) || []).length) return { name, status: 'audit_escalated', escalated: au.escalated }
   }
