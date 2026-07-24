@@ -259,4 +259,27 @@ def test_orchestrate_noop_permission_always_carries_an_observable_exists_check()
 
     assert text.count("no-op 返回 success") == 1, "idempotent no-op must be granted in one place only"
     assert "echo MISSING" in text, "that one place must print an observable existence signal"
-    assert text.count("noopIfExists(") >= 4, "every output-writing prompt routes through the helper"
+    assert text.count("noopIfExists(") >= 2, "every idempotent output-writing prompt routes through the helper"
+
+
+def test_orchestrate_reads_every_receipt_it_branches_on():
+    """A receipt without a schema comes back as prose, so its fields read as undefined and the
+    branch silently takes the wrong path (0.43.0 shipped that way for download/extract/audit).
+    Chapter completeness now branches on synth's chapters_analyzed and paper OCR fallback on
+    analyse's status/notes, so those two receipts need schemas too."""
+    text = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+
+    for schema in ("DL_SCHEMA", "EX_SCHEMA", "AU_SCHEMA", "SEARCH_SCHEMA", "PROBE_SCHEMA",
+                   "AN_SCHEMA", "SY_SCHEMA", "OCR_SCHEMA"):
+        assert f"const {schema} =" in text, f"{schema} must be defined"
+        assert f"schema: {schema}" in text, f"{schema} is defined but never attached to an agent() call"
+
+
+def test_orchestrate_book_reconciles_chapter_count_before_reporting_ok():
+    """Bowker 2005: 9 chapter agents all reported success, 2 files landed, synth honestly said
+    chapters_analyzed: 2, and the graph still returned book_failures: 0. Silent truncation."""
+    text = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+
+    assert "analysedCount(sy) < chapters.length" in text, "book must reconcile synth's count against extract's"
+    assert "chapters_incomplete" in text, "an unreconciled book must not report ok"
+    assert "overwrite: true" in text, "synth must always regenerate or its count is stale"

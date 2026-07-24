@@ -23,7 +23,7 @@ export const meta = {
 }
 
 // ── 回执 schema:不传 schema 时 agent() 返回散文字符串,脚本读不到字段。
-//    只给脚本真正读字段的三个回执(download/extract/audit)加 schema;analyse/synth 回执不读,不加。
+//    每个脚本真正读字段的回执都要加;只有纯 fire-and-forget 的重投可以不加。
 const DL_SCHEMA = { type: 'object', required: ['per_item'], properties: {
   per_item: { type: 'array', items: { type: 'object', required: ['status'], properties: {
     slug: { type: 'string' }, status: { type: 'string' }, path: { type: 'string' },
@@ -49,6 +49,21 @@ const PROBE_SCHEMA = { type: 'object', properties: {
   resolved: { type: 'array', items: { type: 'object', required: ['slug'], properties: {
     kind: { type: 'string' }, slug: { type: 'string' },
     vault_slug: { type: ['string', 'null'] }, match: { type: ['string', 'null'] } } } } } }
+// analyse / synth 回执:0.45.0 的 Bowker E2E 证明"agent 报 success 却没写文件"会静默传播
+// (9 章只落 2 章,synth 照 2 章写概览,图仍报 book_failures:0)。所以这两个回执也要读。
+// analyse 的 status/notes 承载扫描版 PDF 的 OCR 兜底信号(契约见 agents/analyse-agent.md Step 1);
+// synth 的 chapters_analyzed 是**另一个 agent 实际 Glob 过磁盘**得出的数 —— 拿它跟 extract 出的
+// 章数对账,比信 analyse 自报可靠得多(自报正是上面骗过图的那一环)。
+const AN_SCHEMA = { type: 'object', required: ['status'], properties: {
+  status: { type: 'string' }, notes: { type: 'string' }, output: { type: 'string' } } }
+const SY_SCHEMA = { type: 'object', properties: {
+  status: { type: 'string' }, inputs_analyzed: { type: 'number' }, chapters_analyzed: { type: 'number' } } }
+const OCR_SCHEMA = { type: 'object', required: ['status'], properties: {
+  status: { type: 'string' }, chars: { type: 'number' }, note: { type: 'string' } } }
+
+// synth 报的"实际读到的章数"。字段缺失一律按 0 处理 —— 对账要 fail closed,
+// 缺信号时宁可多跑一轮(缺的章才会真写,其余 no-op)也不能默认通过。
+const analysedCount = (sy) => Number(sy && sy.chapters_analyzed) || 0
 
 // ── processBook:承重节点。author = parallel(books→processBook);topic = pipeline(items→router)。 ──
 // opts.batchYear=true(author 批量):year_mismatch/ambiguous 不冒泡卡点,download-agent 直接
@@ -75,11 +90,23 @@ async function processBook(slug, m, opts = {}) {
   // fan-out analyse ── 每章一个 agent;正文在 processing/,分析写 vault/;幂等 agent 自跳过已完成章 = 续跑
   await parallel(chapters.map(ch => () =>
     agent(analyseChapterPrompt(slug, m, ch),
-      { agentType: 'quasi:analyse-agent', label: `analyse:${slug}:${ch.slot}` })))
+      { agentType: 'quasi:analyse-agent', label: `analyse:${slug}:${ch.slot}`, schema: AN_SCHEMA })))
 
-  // synth(book) ── 只递目录/slug;synthesis-agent 自己 Glob vault 的 ch*.md
-  await agent(bookSynthPrompt(slug, m),
-    { agentType: 'quasi:synthesis-agent', label: `synth:${slug}` })
+  // synth(book) + 完整性对账 ── synth 只递目录/slug,自己 Glob vault 的 ch*.md,所以回执的
+  // chapters_analyzed 是**磁盘上真实的章数**;少于 extract 出的章数 = 有 analyse 空跑没落盘。
+  // 补投一轮(幂等提示让已完成的章 no-op,只有缺的章真写)再 synth;仍然少就如实报残缺,不报 ok。
+  let sy = await agent(bookSynthPrompt(slug, m),
+    { agentType: 'quasi:synthesis-agent', label: `synth:${slug}`, schema: SY_SCHEMA })
+  if (analysedCount(sy) < chapters.length) {
+    log(`${slug}: 章节残缺 ${analysedCount(sy)}/${chapters.length},补投缺失章`)
+    await parallel(chapters.map(ch => () =>
+      agent(analyseChapterPrompt(slug, m, ch),
+        { agentType: 'quasi:analyse-agent', label: `refill:${slug}:${ch.slot}`, schema: AN_SCHEMA })))
+    sy = await agent(bookSynthPrompt(slug, m),
+      { agentType: 'quasi:synthesis-agent', label: `synth2:${slug}`, schema: SY_SCHEMA })
+    if (analysedCount(sy) < chapters.length)
+      return { slug, status: 'chapters_incomplete', analysed: analysedCount(sy), expected: chapters.length }
+  }
 
   // audit + 一次 escalation 回环 ── 章用 chapters(在 scope 内)重投,概览用 synth 重投
   let au = await agent(`path: vault/books/${slug}`,
@@ -89,7 +116,7 @@ async function processBook(slug, m, opts = {}) {
     await parallel(esc.map(e => () => {
       const p = e.path || ''
       if (p.endsWith('/00-overview.md'))
-        return agent(bookSynthPrompt(slug, m) + `\noverwrite: true\nreason: audit escalated ${e.kind}: ${e.reason}`,
+        return agent(bookSynthPrompt(slug, m) + `\nreason: audit escalated ${e.kind}: ${e.reason}`,
           { agentType: 'quasi:synthesis-agent', label: `regen-synth:${slug}` })
       const ch = chapters.find(c => p.endsWith(`ch${c.slot}-${c.slug}.md`))
       if (!ch) return Promise.resolve({ status: 'skip', note: `no chapter match for ${p}` })
@@ -114,13 +141,35 @@ async function processPaper(slug, m) {
   const item = (dl && dl.per_item && dl.per_item[0]) || {}
   if (item.status !== 'ok') return { slug, status: item.status || 'download_failed' }
 
-  await agent(paperAnalysePrompt(slug, m, item.path),
-    { agentType: 'quasi:analyse-agent', label: `analyse:${slug}` })
+  let src = item.path
+  let an = await agent(paperAnalysePrompt(slug, m, src),
+    { agentType: 'quasi:analyse-agent', label: `analyse:${slug}`, schema: AN_SCHEMA })
+  // 回执为 null = agent 死在终端 API 错误上(Bowker biodiversity 首跑就是 "Connection closed
+  // mid-response")。这跟"内容处理失败"不是一回事,重投一次。书那边不用管:章节残缺会被下面的
+  // synth 对账抓到并自动补投。
+  if (!an) an = await agent(paperAnalysePrompt(slug, m, src),
+    { agentType: 'quasi:analyse-agent', label: `analyse-retry:${slug}`, schema: AN_SCHEMA })
+
+  // 扫描版兜底 ── 无文本层的 PDF,analyse-agent 按契约返回 status:error + notes"需 OCR"
+  // (明令不许凭训练知识补完)。书路径早有 quasi-extract ocr,论文路径原来到此直接失败
+  // (Bowker biodiversity 2000)。补一段:OCR 出带文本层的 PDF,拿它重跑 analyse。
+  if (an && an.status !== 'success' && /OCR|扫描|图像|scan/i.test(an.notes || '')) {
+    const ocrPath = `.quasi/temp/${slug}.ocr.pdf`
+    const ocr = await agent(ocrPrompt(src, ocrPath),
+      { agentType: 'general-purpose', label: `ocr:${slug}`, schema: OCR_SCHEMA })
+    if (ocr && ocr.status === 'ok') {
+      src = ocrPath
+      an = await agent(paperAnalysePrompt(slug, m, src) + `\nreason: 原 PDF 无文本层,已 OCR 后重跑`,
+        { agentType: 'quasi:analyse-agent', label: `analyse-ocr:${slug}`, schema: AN_SCHEMA })
+    }
+  }
+  if (!an || an.status !== 'success')
+    return { slug, status: 'analyse_failed', notes: (an && an.notes) || null }
 
   let au = await agent(`path: vault/papers/${slug}.md`,
     { agentType: 'quasi:audit-agent', label: `audit:${slug}`, schema: AU_SCHEMA })
   if (((au && au.escalated) || []).length) {
-    await agent(paperAnalysePrompt(slug, m, item.path) + `\noverwrite: true\nreason: audit escalated`,
+    await agent(paperAnalysePrompt(slug, m, src) + `\noverwrite: true\nreason: audit escalated`,
       { agentType: 'quasi:analyse-agent', label: `regen:${slug}` })
     au = await agent(`path: vault/papers/${slug}.md`,
       { agentType: 'quasi:audit-agent', label: `audit2:${slug}`, schema: AU_SCHEMA })
@@ -172,15 +221,18 @@ async function processAuthor(name, m) {
   const yearWarnings = res.filter(r => r.kind === 'book' && r.year_warning).map(r => ({ slug: r.slug, ...r.year_warning }))
   if (!okBooks.length && !okPapers.length) return { name, status: 'all_failed', tried: res.length }
 
-  // 3. synth(author):读书概览 + 论文页
-  await agent(authorSynthPrompt(name, full, topic, okBooks, okPapers),
-    { agentType: 'quasi:synthesis-agent', label: `synth-author:${name}` })
+  // 3. synth(author):读书概览 + 论文页。回执只用来判死活——没写出 profile 就别接着 audit 一个不存在的文件。
+  const sa = await agent(authorSynthPrompt(name, full, topic, okBooks, okPapers),
+    { agentType: 'quasi:synthesis-agent', label: `synth-author:${name}`, schema: SY_SCHEMA })
+  if (!sa || sa.status === 'error')
+    return { name, status: 'synth_failed', books: okBooks.length, papers: okPapers.length,
+             notes: sa && sa.notes }
 
   // 4. audit 作者 profile + 一次 escalation
   let au = await agent(`path: vault/authors/${name}.md`,
     { agentType: 'quasi:audit-agent', label: `audit-author:${name}`, schema: AU_SCHEMA })
   if (((au && au.escalated) || []).length) {
-    await agent(authorSynthPrompt(name, full, topic, okBooks, okPapers) + `\noverwrite: true\nreason: audit escalated`,
+    await agent(authorSynthPrompt(name, full, topic, okBooks, okPapers) + `\nreason: audit escalated`,
       { agentType: 'quasi:synthesis-agent', label: `regen-author:${name}` })
     au = await agent(`path: vault/authors/${name}.md`,
       { agentType: 'quasi:audit-agent', label: `audit2-author:${name}`, schema: AU_SCHEMA })
@@ -212,7 +264,8 @@ function extractPrompt(sourceFile, slug) {
 (每项 slot/title/filename/slug/word_count),不得改写 slug —— slug 由 extract 脚本
 确定性生成,是章节输出文件名的稳定标识。`
 }
-// 幂等提示。存在性信号必须**可打印**:bare `test -e` 无 stdout,存在与否 harness 都显示
+// 幂等提示。只给 analyse 用(章节 / 论文)——synth 一律重跑,见 bookSynthPrompt。
+// 存在性信号必须**可打印**:bare `test -e` 无 stdout,存在与否 harness 都显示
 // "(no output), is_error:false" → agent 一律判"已存在"直接空跑。与 0.44.3 的探针同一个 bug,
 // 当时只修了探针;0.45.0 Bowker E2E 暴露剩下四处:9 章 analyse 全报 success,实际只落 2 章。
 const noopIfExists = (output) => `幂等:先跑 \`test -e ${output} && echo EXISTS || echo MISSING\`。
@@ -233,12 +286,15 @@ output: vault/books/${slug}/ch${ch.slot}-${ch.slug}.md
 topic: ${m.topic || ''}
 ${noopIfExists(`vault/books/${slug}/ch${ch.slot}-${ch.slug}.md`)}`
 }
+// synth 不幂等,总是重生成:它的回执 chapters_analyzed 是图唯一的"章节真落盘了吗"信号,
+// no-op 会让这个数失真;而且续跑时章节集合可能刚补齐,旧概览必须跟着刷新。
 function bookSynthPrompt(slug, m) {
   return `mode: book
 output_dir: vault/books/${slug}
 book_title: ${m.title || ''}
 topic: ${m.topic || ''}
-${noopIfExists(`vault/books/${slug}/00-overview.md`)}`
+overwrite: true   # 即使 00-overview.md 已存在也要重读章节、重新生成。
+SYNTHESIS_RESULT 的 chapters_analyzed 必须是你**实际 Glob 到并读了**的 ch*.md 数量,不要估算。`
 }
 function existsProbePrompt(books, papers) {
   // 判定全在 bin 里(slug 精确 + ISBN/DOI 两级匹配),agent 只跑命令 + 逐字转述——
@@ -303,7 +359,21 @@ topic: ${topic}
 output_path: vault/authors/${name}.md
 book_overview_paths: ${JSON.stringify(bops)}
 paper_paths: ${JSON.stringify(pps)}
-${noopIfExists(`vault/authors/${name}.md`)}`
+overwrite: true   # 作者页总是重生成:每跑一次代表作集合都可能扩张,no-op 会让 profile 停在旧版本。`
+}
+
+function ocrPrompt(input, output) {
+  // 只跑命令 + 转述可打印的结果。判定不能靠退出码:静默失败在 harness 里同样是
+  // "(no output), is_error:false" → agent 会一律判成功。所以命令自己打印 OCR_CHARS=N。
+  return `task: 给无文本层的扫描版 PDF 加文本层(只跑命令,不分析内容)。原样运行:
+\`\`\`bash
+mkdir -p .quasi/temp
+quasi-extract ocr "${input}" "${output}" 2>&1 | tail -5
+N=$([ -s "${output}" ] && pdftotext "${output}" - 2>/dev/null | wc -c | tr -d ' ' || echo 0)
+echo "OCR_CHARS=$N"
+\`\`\`
+按打印出的 OCR_CHARS 返回:≥ 500 → {status:"ok", chars:N};否则 {status:"failed", chars:N, note:最后几行报错}。
+不要改写 ${input},不要碰 vault/。`
 }
 
 // ── router / 入口 ──
