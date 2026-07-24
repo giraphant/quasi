@@ -50,8 +50,9 @@ description: Use when the user wants to acquire and analyse a book, paper, autho
 主进程(瘦入口:召回 + 编排 + 卡点 + 回填)
 ├─ 归一化 kind + args
 ├─ Step 0 本地召回/去重(图外,主进程)
-│    ├─ 该 kind 产物存在(book:{slug}/00-overview / paper:{slug}.md / author:{name}.md)→ return
-│    ├─ exact miss → rg 模糊召回近似 key → 命中则列候选,提示可能重复(勿盲目新建)
+│    ├─ book/paper:`quasi-helpers vault resolve`(slug 精确 + ISBN/DOI)命中 → return
+│    ├─ author:产物 vault/authors/{name}.md 存在 → return
+│    ├─ 均 miss → rg 模糊召回近似 key → 命中则列候选,提示可能重复(勿盲目新建)
 │    └─ 否则继续
 ├─ Workflow(orchestrate.mjs, {kind, ...args}) → 后台跑图(采集→分析),完成回 result
 ├─ 读 result.status:
@@ -78,9 +79,17 @@ elif args.kind == "paper": key, product = args.slug, f"vault/papers/{args.slug}.
 else:                      key, product = args.name, f"vault/authors/{args.name}.md"     # author
 
 # Step 0: 本地召回/去重(主进程,图外)——mirror process-{book,paper,author} Step 0
-if exists(product):
+# book/paper 走确定性两级匹配(slug 精确 + ISBN/DOI):同一作品换个 slug 也认得出,
+# 不靠 LLM 眼力。author 无标识符,仍用产物路径。
+if args.kind in ("book", "paper"):
+    ident = {"isbn": args.meta.get("isbn")} if args.kind == "book" else {"doi": args.meta.get("doi")}
+    hit = bash(f"quasi-helpers vault resolve --items-json "
+               f"'{json([{'kind': args.kind, 'slug': key, **ident}])}'")["resolved"][0]
+    if hit["vault_slug"]:
+        report(f"已有产物({hit['match']} 命中): {hit['path']}"); return
+elif exists(product):
     report(f"已有产物,无需重复处理: {product}"); return
-dup = rg_fuzzy_recall(key, args.meta)   # 相应 vault 子树 + sources/processing 近似命中
+dup = rg_fuzzy_recall(key, args.meta)   # 兜底:候选没带 ISBN/DOI 时的近似命中
 if dup.candidates:
     report_candidate_list(dup.candidates, note="rg fuzzy recall only; 可能重复,勿盲目新建")
 
@@ -125,7 +134,7 @@ Bash(f"/opt/homebrew/bin/marple-cli open '{product}' || marple-cli open '{produc
 
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
-| Step 0 召回 | `vault/books/{slug}/00-overview.md`;exact miss 后 rg 模糊召回 | overview 存在则**跳过整跑**;模糊命中只列候选 |
+| Step 0 召回 | `quasi-helpers vault resolve`(slug 精确 + ISBN/DOI);均 miss 后 rg 模糊召回 | `vault_slug` 非 null 则**跳过整跑**(slug 漂移也算已做);模糊命中只列候选 |
 | spine(图) | 文件即状态:`sources/{slug}.*` / `processing/chapters/{slug}/` / `vault/books/{slug}/` | 重跑 skill,图内 agent 见 output 存在即 no-op;做完的章/概览秒过 |
 | 卡点重投 | `year_decision` | 用户拍板后带决定重投,只补未定的一步 |
 | LOCALISE | `.quasi/localise/cndouban.json#by_isbn[isbn]` | 已有 entry(found/none)则 helper scan 跳过 |

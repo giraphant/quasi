@@ -24,6 +24,9 @@
 #   quasi-helpers talk compress-media [args...]
 #       compress one talk recording to the requested output path
 #
+#   quasi-helpers vault resolve [args...]
+#       candidate {kind,slug,isbn?,doi?} → already-in-vault slug (slug or ISBN/DOI match)
+#
 # Each nested subcommand has its own --help.
 
 set -e
@@ -47,12 +50,14 @@ Usage:
   quasi-helpers citation  {parse|biblio|resolve|review-cards|emit-bib} [args...]
   quasi-helpers localise  {scan|write} [args...]
   quasi-helpers talk      compress-media [args...]
+  quasi-helpers vault     resolve [args...]
 
 Each nested subcommand has its own --help, e.g.:
   quasi-helpers proofread prepare --help
   quasi-helpers citation parse --help
   quasi-helpers localise scan --help
   quasi-helpers talk compress-media --help
+  quasi-helpers vault resolve --help
 HELP
     exit 0
 fi
@@ -84,9 +89,23 @@ case "$DOMAIN" in
                 ;;
         esac
         ;;
+    vault)
+        SUBDOMAIN="${1:-}"
+        shift || true
+        case "$SUBDOMAIN" in
+            resolve)
+                exec "$PYTHON" "$PLUGIN_ROOT/scripts/vault/resolve.py" "$@"
+                ;;
+            *)
+                echo "quasi-helpers vault: unknown subcommand: $SUBDOMAIN" >&2
+                echo "valid: resolve" >&2
+                exit 2
+                ;;
+        esac
+        ;;
     *)
         echo "quasi-helpers: unknown domain: $DOMAIN" >&2
-        echo "valid: proofread | citation | localise | talk" >&2
+        echo "valid: proofread | citation | localise | talk | vault" >&2
         exit 2
         ;;
 esac

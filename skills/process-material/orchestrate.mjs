@@ -43,10 +43,12 @@ const SEARCH_SCHEMA = { type: 'object', properties: {
     year: {}, isbn: { type: 'string' }, doi: { type: 'string' },
     oa_url: { type: 'string' }, url: { type: 'string' }, journal: { type: 'string' } } } } } }
 // 存在性探针回执:图无 fs,批量前用一个 agent 一次性查哪些产物已在 vault(避免重跑已完成的书/论文,
-// 尤其避免对已入库的书做破坏性重 extract)。
+// 尤其避免对已入库的书做破坏性重 extract)。vault_slug 非 null = 已做过;它可能与候选 slug 不同
+// (搜索侧 slug 漂移),下游必须用 vault_slug 读产物,否则会当成新书重跑 → 重复条目。
 const PROBE_SCHEMA = { type: 'object', properties: {
-  books_done: { type: 'array', items: { type: 'string' } },
-  papers_done: { type: 'array', items: { type: 'string' } } } }
+  resolved: { type: 'array', items: { type: 'object', required: ['slug'], properties: {
+    kind: { type: 'string' }, slug: { type: 'string' },
+    vault_slug: { type: ['string', 'null'] }, match: { type: ['string', 'null'] } } } } } }
 
 // ── processBook:承重节点。author = parallel(books→processBook);topic = pipeline(items→router)。 ──
 // opts.batchYear=true(author 批量):year_mismatch/ambiguous 不冒泡卡点,download-agent 直接
@@ -147,11 +149,14 @@ async function processAuthor(name, m) {
   const papers = (((pp && pp.candidates) || []).filter(p => p && p.slug)).slice(0, nPapers)
   if (!books.length && !papers.length) return { name, status: 'no_works' }
 
-  // 2. 存在性探针:一次 agent 查哪些已在 vault → 跳过(不重跑、不破坏性重 extract),仍计入 synth
+  // 2. 存在性探针:一次 agent 查哪些已在 vault → 跳过(不重跑、不破坏性重 extract),仍计入 synth。
+  //    匹配是 slug 精确 + ISBN/DOI 标识符两级,所以搜索侧 slug 漂移(同一本书不同 slug)也认得出;
+  //    命中时 done.get(slug) 是 **vault 里真实的 slug**,下游读产物必须用它,否则 synth 读不到文件。
   const probe = await agent(existsProbePrompt(books, papers),
     { agentType: 'general-purpose', label: `probe-done:${name}`, schema: PROBE_SCHEMA })
-  const doneB = new Set((probe && probe.books_done) || [])
-  const doneP = new Set((probe && probe.papers_done) || [])
+  const resolved = ((probe && probe.resolved) || []).filter(r => r && r.slug && r.vault_slug)
+  const doneB = new Map(resolved.filter(r => r.kind !== 'paper').map(r => [r.slug, r.vault_slug]))
+  const doneP = new Map(resolved.filter(r => r.kind === 'paper').map(r => [r.slug, r.vault_slug]))
   const freshBooks = books.filter(b => !doneB.has(b.slug))
   const freshPapers = papers.filter(p => !doneP.has(p.slug))
 
@@ -160,9 +165,9 @@ async function processAuthor(name, m) {
     ...freshBooks.map(b => () => processBook(b.slug, { ...b, topic }, { batchYear: true }).then(r => ({ kind: 'book', ...r }))),
     ...freshPapers.map(p => () => processPaper(p.slug, { ...p, topic }).then(r => ({ kind: 'paper', ...r }))),
   ])).filter(Boolean)
-  const okBooks = [...books.filter(b => doneB.has(b.slug)).map(b => b.slug),
+  const okBooks = [...books.filter(b => doneB.has(b.slug)).map(b => doneB.get(b.slug)),
                    ...res.filter(r => r.kind === 'book' && r.status === 'ok').map(r => r.slug)]
-  const okPapers = [...papers.filter(p => doneP.has(p.slug)).map(p => p.slug),
+  const okPapers = [...papers.filter(p => doneP.has(p.slug)).map(p => doneP.get(p.slug)),
                     ...res.filter(r => r.kind === 'paper' && r.status === 'ok').map(r => r.slug)]
   const yearWarnings = res.filter(r => r.kind === 'book' && r.year_warning).map(r => ({ slug: r.slug, ...r.year_warning }))
   if (!okBooks.length && !okPapers.length) return { name, status: 'all_failed', tried: res.length }
@@ -229,24 +234,22 @@ topic: ${m.topic || ''}
 若 00-overview.md 已存在且未设 overwrite,直接 no-op 返回 success。`
 }
 function existsProbePrompt(books, papers) {
-  // slug 全是 [a-z0-9-],可安全塞进 python 字面量。命令自己算好 JSON,agent 只转述——
+  // 判定全在 bin 里(slug 精确 + ISBN/DOI 两级匹配),agent 只跑命令 + 逐字转述——
   // 不靠 `test -f` 的退出码(bare test 无 stdout,harness 也不暴露非零码 → agent 会全判"存在")。
-  const bl = books.map(b => `("${b.slug}","vault/books/${b.slug}/00-overview.md")`).join(', ')
-  const pl = papers.map(p => `("${p.slug}","vault/papers/${p.slug}.md")`).join(', ')
-  return `task: 判断下列产物文件是否已存在(只做存在性检查,不读内容、不改任何文件)。
-**原样运行**下面这条命令,它会打印一行 JSON;把该 JSON 逐字作为你的返回结果,不要自行猜测存在性。
+  const items = [
+    ...books.map(b => ({ kind: 'book', slug: b.slug, isbn: b.isbn || null })),
+    ...papers.map(p => ({ kind: 'paper', slug: p.slug, doi: p.doi || null })),
+  ]
+  return `task: 判断下列候选是否已在 vault(只读检查,不改任何文件)。
+**原样运行**下面这条命令,它会打印一个 JSON;把其中的 resolved 数组逐字作为你的返回结果,
+不要自行判断存在性、不要改写 vault_slug。
 \`\`\`bash
-python3 - <<'PY'
-import json, os
-books = [${bl}]
-papers = [${pl}]
-print(json.dumps({
-    "books_done": [s for s, p in books if os.path.isfile(p)],
-    "papers_done": [s for s, p in papers if os.path.isfile(p)],
-}))
-PY
+quasi-helpers vault resolve --items-file - <<'JSON'
+${JSON.stringify(items)}
+JSON
 \`\`\`
-返回该命令打印的 {books_done, papers_done}(只含实际存在文件的 slug)。`
+返回 {resolved:[{kind, slug, vault_slug, match}]}。vault_slug 为 null = 尚未处理;
+非 null 且与 slug 不同 = 同一作品已在 vault 但 slug 不同(标识符命中),照抄即可。`
 }
 function authorSearchPrompt(full, topic, kind, count) {
   return `task: find top ${count} representative ${kind}s by ${full}${topic ? ` on topic ${topic}` : ''}, sorted by citations
