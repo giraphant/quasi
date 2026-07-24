@@ -212,6 +212,13 @@ function extractPrompt(sourceFile, slug) {
 (每项 slot/title/filename/slug/word_count),不得改写 slug —— slug 由 extract 脚本
 确定性生成,是章节输出文件名的稳定标识。`
 }
+// 幂等提示。存在性信号必须**可打印**:bare `test -e` 无 stdout,存在与否 harness 都显示
+// "(no output), is_error:false" → agent 一律判"已存在"直接空跑。与 0.44.3 的探针同一个 bug,
+// 当时只修了探针;0.45.0 Bowker E2E 暴露剩下四处:9 章 analyse 全报 success,实际只落 2 章。
+const noopIfExists = (output) => `幂等:先跑 \`test -e ${output} && echo EXISTS || echo MISSING\`。
+打印 MISSING → 必须完整生成并写入 ${output};打印 EXISTS 且未设 overwrite → 才可 no-op 返回 success。
+没写文件却返回 success 是错误。`
+
 function analyseChapterPrompt(slug, m, ch) {
   return `type: A
 book_slug: ${slug}
@@ -224,14 +231,14 @@ chapter_authors: ${ch.authors || (m.authors || []).join(', ')}
 input: processing/chapters/${slug}/${ch.filename}
 output: vault/books/${slug}/ch${ch.slot}-${ch.slug}.md
 topic: ${m.topic || ''}
-若 output 已存在且未设 overwrite,直接 no-op 返回 success。`
+${noopIfExists(`vault/books/${slug}/ch${ch.slot}-${ch.slug}.md`)}`
 }
 function bookSynthPrompt(slug, m) {
   return `mode: book
 output_dir: vault/books/${slug}
 book_title: ${m.title || ''}
 topic: ${m.topic || ''}
-若 00-overview.md 已存在且未设 overwrite,直接 no-op 返回 success。`
+${noopIfExists(`vault/books/${slug}/00-overview.md`)}`
 }
 function existsProbePrompt(books, papers) {
   // 判定全在 bin 里(slug 精确 + ISBN/DOI 两级匹配),agent 只跑命令 + 逐字转述——
@@ -284,7 +291,7 @@ doi: ${m.doi || ''}
 input: ${sourceFile}
 output: vault/papers/${slug}.md
 topic: ${m.topic || ''}
-若 output 已存在且未设 overwrite,直接 no-op 返回 success。`
+${noopIfExists(`vault/papers/${slug}.md`)}`
 }
 function authorSynthPrompt(name, full, topic, okBooks, okPapers) {
   const bops = okBooks.map(s => `vault/books/${s}/00-overview.md`)
@@ -296,7 +303,7 @@ topic: ${topic}
 output_path: vault/authors/${name}.md
 book_overview_paths: ${JSON.stringify(bops)}
 paper_paths: ${JSON.stringify(pps)}
-若 vault/authors/${name}.md 已存在且未设 overwrite,直接 no-op 返回 success。`
+${noopIfExists(`vault/authors/${name}.md`)}`
 }
 
 // ── router / 入口 ──

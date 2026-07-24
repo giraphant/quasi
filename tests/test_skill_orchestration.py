@@ -249,3 +249,14 @@ def test_process_topic_dispatch_prompts_forbid_worktree_switching():
     ]
     missing = [token for token in required if token not in text]
     assert missing == []
+
+
+def test_orchestrate_noop_permission_always_carries_an_observable_exists_check():
+    """A prompt may allow "no-op if output exists" only if it also tells the agent how to
+    observe existence. Bare `test -e` prints nothing either way, so the agent defaults to
+    "exists" and silently skips the write (0.44.3 probe, then 0.45.0 chapter analyse)."""
+    text = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+
+    assert text.count("no-op 返回 success") == 1, "idempotent no-op must be granted in one place only"
+    assert "echo MISSING" in text, "that one place must print an observable existence signal"
+    assert text.count("noopIfExists(") >= 4, "every output-writing prompt routes through the helper"
