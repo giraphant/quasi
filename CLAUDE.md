@@ -144,6 +144,14 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.43.0** (2026-07-24): **experimental `process-material` unified-orchestration skill — new/old parallel, no old skill removed.** First step of collapsing the acquisition→analysis spine (paper/book/author/topic) into one deterministic orchestration graph, now that the harness lifts the old "subagents can't dispatch subagents" constraint (nesting + the Workflow tool for deterministic JS orchestration).
+  - New `skills/process-material/SKILL.md` (thin entry, **explicit-invoke only** so it does not compete with the per-kind skills' auto-routing) + `skills/process-material/orchestrate.mjs` (a Workflow script: `router(kind)` recursive graph; **v0 implements `processBook` only**; paper/author/topic throw "not implemented").
+  - Orchestration moves into the Workflow: the `while Glob sleep` polling disappears, fan-out/skip/escalation become code, `author` no longer inlines the book subflow (it calls `processBook`), and `topic`'s cross-session `superset agents create` dispatch can become in-process `pipeline(items)`. Substrate (bins/agents/hooks/schemas) is untouched; the graph starts existing agents via `agentType:'quasi:*'`.
+  - Handoff: the Workflow script has no filesystem access, so it holds only the small `agent()` receipts; product content stays in files and downstream agents read them by path; resume is agent idempotency (no-op if output exists), NOT Workflow's own resume; human gates (book year-triage / topic dead-end) bubble a `{status}` object up to the entry skill, which does the `AskUserQuestion`.
+  - Spike validated: `agentType:'quasi:audit-agent'` resolves to the tool-restricted agent (Read/Edit/Bash) inside a Workflow and reaches the `quasi-*` bins — the agentType approach holds, no inline-prompt fallback needed.
+  - **talk / draft stay out of the graph** (different primitives / interactive review). Retirement order once proven: book → retire process-book, then author, then topic. Full design in `docs/process-material-design.md`.
+  - No schema-contract change; purely additive. plugin/marketplace `0.42.4→0.43.0`.
+
 - **0.42.4** (2026-07-19): **restore the previous chapter frontmatter contract after 0.42.3.**
   - `ChapterSchema` again rejects `doi` as an unsupported extra field; the schema contract returns from `0.7.1` to `0.7.0`.
   - Removes the stale chapter DOI allowance from the SPEC and restores the rejection regression test. Chapter-specific DOI values should be handled in vault data rather than by expanding the global schema.
