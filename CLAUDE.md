@@ -144,6 +144,8 @@ When changing config, runtime state, or handoff contracts:
 
 ## Recent Changes
 
+- **0.44.1** (2026-07-24): **`processAuthor` gains `meta.maxBooks` / `meta.maxPapers` scope bounds.** A full author run (up to 5 books × full `processBook` + 10 papers) can take hours; the override lets a caller — or a bounded E2E test — cap the representative-work set (defaults stay 5/10, candidates sliced accordingly). No other behaviour change. plugin/marketplace `0.44.0→0.44.1`.
+
 - **0.44.0** (2026-07-24): **`process-material` grows the `paper` and `author` branches — the recursive graph pays off.** Adds `processPaper` (download → analyse type B → audit) and `processAuthor` (search books+papers → `parallel(books→processBook + papers→processPaper)` → synth(author) → audit) to `orchestrate.mjs`; the router now handles book/paper/author (topic still throws "not implemented").
   - `processAuthor` **reuses the E2E-validated `processBook`** instead of re-implementing the book subflow — eliminating the duplication the old `process-author` carried (it inlined extract→analyse→synth under a "keep naming in sync with process-book" prose contract). This is the recursive-graph thesis realised: one book node, called N times.
   - Book year-ambiguity in the author **batch** does NOT pause: `processBook(…, {batchYear:true})` tells download-agent to auto-accept + attach `year_evidence` as a warning (mirrors old process-author batch policy), vs the standalone single-book gate-return. New `SEARCH_SCHEMA` validates the author-discovery `candidates[]` (each needs a canonical slug); the script-read receipts (download/audit/search) carry schemas, analyse/synth don't (§5 rule).

@@ -129,13 +129,15 @@ async function processAuthor(name, m) {
   const topic = m.topic || ''
   const full = m.full_name || m.fullName || name
 
-  // 1. discover:两次 search(book count 5 / paper count 10),只读 candidates[]
-  const bk = await agent(authorSearchPrompt(full, topic, 'book', 5),
+  // 1. discover:两次 search(默认 book 5 / paper 10;meta.maxBooks/maxPapers 可下调,便于有界跑/测试),只读 candidates[]
+  const nBooks = Number(m.maxBooks) || 5
+  const nPapers = Number(m.maxPapers) || 10
+  const bk = await agent(authorSearchPrompt(full, topic, 'book', nBooks),
     { agentType: 'quasi:search-agent', label: `search-books:${name}`, schema: SEARCH_SCHEMA })
-  const pp = await agent(authorSearchPrompt(full, topic, 'paper', 10),
+  const pp = await agent(authorSearchPrompt(full, topic, 'paper', nPapers),
     { agentType: 'quasi:search-agent', label: `search-papers:${name}`, schema: SEARCH_SCHEMA })
-  const books = ((bk && bk.candidates) || []).filter(b => b && b.slug)
-  const papers = ((pp && pp.candidates) || []).filter(p => p && p.slug)
+  const books = (((bk && bk.candidates) || []).filter(b => b && b.slug)).slice(0, nBooks)
+  const papers = (((pp && pp.candidates) || []).filter(p => p && p.slug)).slice(0, nPapers)
   if (!books.length && !papers.length) return { name, status: 'no_works' }
 
   // 2. 代表作全并行:书走 processBook(batchYear:year 歧义不卡点、自动收),论文走 processPaper
