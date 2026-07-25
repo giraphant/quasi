@@ -100,8 +100,9 @@ wf_args = {"kind": args.kind, "meta": args.meta}
 wf_args["slug" if args.kind != "author" else "name"] = key
 result = Workflow(scriptPath="$CLAUDE_PLUGIN_ROOT/skills/process-material/orchestrate.mjs", args=wf_args)
 
-# 人工卡点:仅单本 book 会 year_ambiguous(author 批量自动收、不冒泡)
-if result.status == "year_ambiguous":
+# 人工卡点:仅单本 book 会 year_mismatch/year_ambiguous(author 批量自动收、不冒泡)。
+# 两者都是"文件下下来了但年份对不上、留在 tmp_path 等人拍板",处理方式相同。
+if result.status in ("year_mismatch", "year_ambiguous"):
     decision = AskUserQuestion(present=result.year_evidence)   # 含 tmp_path
     wf_args["slug"], wf_args["year_decision"] = decision.slug, decision.choice
     result = Workflow(scriptPath="...", args=wf_args)
@@ -112,7 +113,10 @@ if result.status == "audit_escalated":
 # 重跑本 skill 只会补缺的那几章(已完成的章 agent 见文件即 no-op),所以提示重跑而不是报死。
 if result.status == "chapters_incomplete":
     report(f"章节残缺 {result.analysed}/{result.expected};重跑本 skill 只补缺章"); return
-if result.status.endswith("_failed") or result.status in ("no_chapters", "no_works", "all_failed"):
+# 兜底:枚举**成功**态,不枚举失败态。图里 processBook 把 download-agent 的 status 原样上抛,
+# 那个枚举会长(year_mismatch 就这么漏过一次),枚举失败态迟早再漏一个,而漏掉的后果是
+# 静默报成功——最坏的一种。不是 ok 就是没跑成,一律报出来。
+if result.status != "ok":
     report(f"失败:{result.status}"); return
 
 # 成功报告(kind 各异)

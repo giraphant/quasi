@@ -285,6 +285,20 @@ def test_orchestrate_book_reconciles_chapter_count_before_reporting_ok():
     assert "overwrite: true" in text, "synth must always regenerate or its count is stale"
 
 
+def test_process_material_reports_any_status_that_is_not_ok():
+    """The entry skill must enumerate the SUCCESS status, not the failure ones. processBook
+    re-raises download-agent's status verbatim, so the failure set grows outside this file:
+    `year_mismatch` fell through an `endswith("_failed") or status in (...)` list straight into
+    the success report, exactly as `chapters_incomplete` did before 0.47.1. Missing a name there
+    means silently reporting a failed run as done."""
+    text = (PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert 'result.status != "ok"' in text, "unhandled statuses must fail closed"
+    assert 'endswith("_failed")' not in text, "do not enumerate failure statuses; enumerate ok"
+    # year_mismatch keeps the file at tmp_path awaiting a human call, same as year_ambiguous.
+    assert '("year_mismatch", "year_ambiguous")' in text
+
+
 def test_orchestrate_retries_every_receipt_reading_agent():
     """agent() returns null when the subagent dies on a terminal API error, and every call site
     used to read that null as a content answer: a dead probe re-processes the whole author batch
