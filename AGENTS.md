@@ -148,6 +148,7 @@ When changing config, runtime state, or handoff contracts:
 - `$CLAUDE_PROJECT_DIR` is fixed at session start; a `cd` inside a dispatched worker's *prompt* does not redirect where the orchestration graph writes. Dispatch E2E workers with the correct cwd; never rely on an in-prompt `cd`.
 - A dead Workflow subagent writes no `result` line in `journal.jsonl` — its key stays `started`-only forever, and a retry shows up as a *new* started+result pair. Count `started` vs `result` keys to find deaths; do not look for `result: null`.
 - `agent()` returns `null` when a subagent dies on a terminal API error after retries. `orchestrate.mjs::retryNull` pays exactly one retry per null, because a `null` cannot distinguish a deterministic failure from a transient one.
+- A run that looks hung is usually harness backoff, not deadlock. A dying subagent's transcript ends in a synthetic `API Error: …` assistant message, but the harness can sit in invisible retry backoff for 20–40 minutes before `agent()` finally sees `null` — no result line, no progress, nothing a script can observe or shorten. Before declaring a run dead, check each no-result agent's transcript mtime: still advancing = live agent (a `0 tok` display can just be a slow provider), stale with an API-error tail = a death still waiting to be reported. The only shortcut is killing the run and re-invoking with `resumeFromRunId`.
 
 ## Changelog
 
