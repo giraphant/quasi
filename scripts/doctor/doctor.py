@@ -311,6 +311,32 @@ def selected_profiles(profile: str) -> list[str]:
     return [profile]
 
 
+def check_plugin_version_drift(root: Path) -> dict[str, Any]:
+    """Warn when the session's loaded plugin copy is older than the installed one.
+
+    Agent/skill definitions load from the plugin cache at session start; syncing the
+    cache mid-session does NOT update a running session (a 0.48.0-contract agent ran
+    long after 0.48.2 was installed before this check existed). Non-fatal: restart
+    the session to pick up the installed version.
+    """
+    running = installed = None
+    try:
+        running = json.loads((root / ".claude-plugin" / "plugin.json").read_text())["version"]
+    except (OSError, ValueError, KeyError):
+        pass
+    reg = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
+    try:
+        plugins = json.loads(reg.read_text())["plugins"]
+        for key, entries in plugins.items():
+            if key.startswith("quasi@") and entries:
+                installed = entries[0].get("version")
+                break
+    except (OSError, ValueError, KeyError):
+        pass
+    drift = bool(running and installed and running != installed)
+    return {"running": running, "installed": installed, "drift": drift}
+
+
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     root = plugin_root()
     data = data_dir()
@@ -341,6 +367,12 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             if not item.get("required") and item.get("status") != "ok":
                 optional_missing.append(item["name"])
 
+    plugin_version = check_plugin_version_drift(root)
+    if plugin_version["drift"]:
+        optional_missing.append(
+            f"plugin-version-drift (session runs {plugin_version['running']}, "
+            f"installed {plugin_version['installed']}; restart the session)")
+
     core_ok = not core_missing
     strict_optional_fail = bool(args.strict and optional_missing)
     status = "ok" if core_ok and not strict_optional_fail else "error"
@@ -367,6 +399,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             "core": python_core,
         },
         "external": external,
+        "plugin_version": plugin_version,
         "summary": {
             "core_ok": core_ok,
             "core_missing": core_missing,
@@ -394,6 +427,10 @@ def print_text(report: dict[str, Any]) -> None:
         if sync.get("stderr"):
             for line in sync["stderr"].rstrip().splitlines():
                 print(f"  stderr: {line}")
+    pv = report.get("plugin_version", {})
+    if pv.get("running"):
+        drift = " (STALE — restart session)" if pv.get("drift") else ""
+        print(f"\nplugin: session {pv['running']} / installed {pv.get('installed') or '?'}{drift}")
     venv = report["venv"]
     print("\nvenv:")
     print(f"  data_dir: {report['data_dir']}")

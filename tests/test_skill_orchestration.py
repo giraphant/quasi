@@ -277,6 +277,15 @@ def test_process_material_carries_the_retired_skills_post_steps():
     assert "processing/translations/{slug}-zh.pdf" in skill or "processing/translations/{key}-zh.pdf" in skill
     assert "实验" not in skill, "the skill is no longer experimental; stale framing misroutes the model"
 
+    # 0.49.1: the same duplicate-vault_slug account settled in topic (0.48.3) applies to author —
+    # two candidate slugs can probe-resolve to one vault work; and topic-landed books need the
+    # LOCALISE list too. synth_failed gets one automatic re-submit: items are idempotent, so a
+    # transient double-kill of the synth agent (0.48.2 E2E) must not scrap a 90-minute run.
+    assert "okBooks = [...new Set([" in graph, "author book corpus must be duplicate-free"
+    assert "okPapers = [...new Set([" in graph, "author paper corpus must be duplicate-free"
+    assert "ok.filter(i => i.kind === 'book')" in graph, "topic receipt must carry landed book slugs"
+    assert 'result.status == "synth_failed"' in skill, "synth_failed must auto-resubmit once"
+
 
 def test_orchestrate_retries_every_receipt_reading_agent():
     """agent() returns null when the subagent dies on a terminal API error, and every call site

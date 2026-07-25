@@ -57,9 +57,10 @@ description: Use when the user wants to search, download, and analyse a book, a 
 │    ├─ ok               → 报告(kind 各异)→ LOCALISE
 │    ├─ year_ambiguous   → (仅单本 book)AskUserQuestion(year_evidence 原样)→ 带决定重投
 │    ├─ needs_seeds      → (仅 topic)AskUserQuestion 要检索词 → 补 seeds 或 final=true 重投
+│    ├─ synth_failed     → 原样自动重投一次(条目幂等,重跑秒过);再败才报人工
 │    ├─ audit_escalated  → 报告 escalated,交人工
 │    └─ 其余一律按失败报出(枚举 ok,不枚举失败态)
-├─ LOCALISE(book,及 author 的 book_slugs;ok 后,图外):localise scan → pending 则 search-agent → localise write
+├─ LOCALISE(book,及 author / topic 的 book_slugs;ok 后,图外):localise scan → pending 则 search-agent → localise write
 ├─ TRANSLATE(仅 paper 且 translate=true;ok 后,图外):translate-agent → processing/translations/{slug}-zh.pdf
 └─ marple open 最终产物(best-effort)
 ```
@@ -117,6 +118,14 @@ if result.status == "needs_seeds":
     wf_args["meta"] |= {"seeds": decision.seeds} if decision.seeds else {"final": True}
     result = Workflow(scriptPath="...", args=wf_args)
 
+# synth_failed 自动重投一次:语料都齐了,死的只是最后的 synth/audit——多半是瞬时 provider 错误
+# 连杀本体和 retry(0.48.2 E2E:90 分钟的跑一切都成,synth 双杀后整跑报废)。条目全幂等,
+# 重投时召回/探针秒过、直接冲到 synth,代价几分钟。两次都死才是真问题,报人工。
+if result.status == "synth_failed":
+    result = Workflow(scriptPath="$CLAUDE_PLUGIN_ROOT/skills/process-material/orchestrate.mjs", args=wf_args)
+    if result.status == "synth_failed":
+        report(f"synth 连续两次失败:{result.get('notes')};交人工"); return
+
 if result.status == "audit_escalated":
     report(f"audit 仍 escalated:{result.escalated};交人工"); return
 # chapters_incomplete = 章分析没跑齐(通常是瞬时 API 错误连着打死同一章)。产物本身没坏,
@@ -138,12 +147,13 @@ if args.kind == "author":
            + (f";{result.book_failures}+{result.paper_failures} 项获取失败" if result.book_failures or result.paper_failures else ""))
 if args.kind == "topic":
     report(f"主题完成:{result.items} 条语料 / {result.rounds} 轮滚雪球"
+           + (f";其中 {result.recalled} 条来自库内召回" if result.get("recalled") else "")
            + (f";{result.failures} 项获取失败" if result.failures else "")
            + ("" if result.dead_end else ";候选未枯竭,可再跑一次继续扩充"))
 
-# LOCALISE 中译本回填:单本 book 用 [key];author 用图回执的 book_slugs 名单(scan 按 ISBN 幂等,
-# 已回填过的书 pending=0 秒过,所以名单里混着历史入库的书也没有代价)。paper 无。
-localise_slugs = [key] if args.kind == "book" else (result.get("book_slugs") or [] if args.kind == "author" else [])
+# LOCALISE 中译本回填:单本 book 用 [key];author / topic 用图回执的 book_slugs 名单(scan 按
+# ISBN 幂等,已回填过的书 pending=0 秒过,所以名单里混着历史入库的书也没有代价)。paper 无。
+localise_slugs = [key] if args.kind == "book" else (result.get("book_slugs") or [])
 for slug in localise_slugs:
     scan = Bash(f"quasi-helpers localise scan --path vault/books/{slug} --json")
     if scan.pending > 0:

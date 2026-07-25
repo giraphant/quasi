@@ -113,6 +113,7 @@ async function processBook(slug, m, opts = {}) {
     return { slug, status: 'extract_failed', problems: ex && ex.problems }
   const chapters = ex.chapters || []
   if (!chapters.length) return { slug, status: 'no_chapters' }
+  log(`${slug}: 提取出 ${chapters.length} 章,开始并行分析`)
 
   // fan-out analyse ── 每章一个 agent;正文在 processing/,分析写 vault/;幂等 agent 自跳过已完成章 = 续跑
   await parallel(chapters.map(ch => () =>
@@ -181,6 +182,7 @@ async function processPaper(slug, m) {
   if (an && an.status !== 'success' &&
       (an.needs_ocr === true || /OCR|扫描|图像|scan/i.test(`${an.notes || ''} ${an.output || ''}`))) {
     const ocrPath = `.quasi/temp/${slug}.ocr.pdf`
+    log(`${slug}: PDF 无文本层,转 OCR 后重跑分析`)
     const ocr = await retryNull(ocrPrompt(src, ocrPath),
       { agentType: 'general-purpose', label: `ocr:${slug}`, schema: OCR_SCHEMA })
     if (ocr && ocr.status === 'ok') {
@@ -235,16 +237,19 @@ async function processAuthor(name, m) {
   const doneP = new Map(resolved.filter(r => r.kind === 'paper').map(r => [r.slug, r.vault_slug]))
   const freshBooks = books.filter(b => !doneB.has(b.slug))
   const freshPapers = papers.filter(p => !doneP.has(p.slug))
+  log(`${name}: 代表作 ${books.length} 书 / ${papers.length} 文,库内已有 ${doneB.size}+${doneP.size},新处理 ${freshBooks.length}+${freshPapers.length}`)
 
   // 3. 未完成的代表作全并行:书走 processBook(batchYear:year 歧义不卡点、自动收),论文走 processPaper
   const res = (await parallel([
     ...freshBooks.map(b => () => processBook(b.slug, { ...b, topic }, { batchYear: true }).then(r => ({ kind: 'book', ...r }))),
     ...freshPapers.map(p => () => processPaper(p.slug, { ...p, topic }).then(r => ({ kind: 'paper', ...r }))),
   ])).filter(Boolean)
-  const okBooks = [...books.filter(b => doneB.has(b.slug)).map(b => doneB.get(b.slug)),
-                   ...res.filter(r => r.kind === 'book' && r.status === 'ok').map(r => r.slug)]
-  const okPapers = [...papers.filter(p => doneP.has(p.slug)).map(p => doneP.get(p.slug)),
-                    ...res.filter(r => r.kind === 'paper' && r.status === 'ok').map(r => r.slug)]
+  // Set 去重:两个不同 slug 的候选可能被探针解析到**同一个** vault_slug(同一本书两种搜索命名),
+  // 不去重就是重复路径进 synth 合同 —— 0.48.3 在 topic 修过的同一类账,author 这边一并结清。
+  const okBooks = [...new Set([...books.filter(b => doneB.has(b.slug)).map(b => doneB.get(b.slug)),
+                   ...res.filter(r => r.kind === 'book' && r.status === 'ok').map(r => r.slug)])]
+  const okPapers = [...new Set([...papers.filter(p => doneP.has(p.slug)).map(p => doneP.get(p.slug)),
+                    ...res.filter(r => r.kind === 'paper' && r.status === 'ok').map(r => r.slug)])]
   const yearWarnings = res.filter(r => r.kind === 'book' && r.year_warning).map(r => ({ slug: r.slug, ...r.year_warning }))
   if (!okBooks.length && !okPapers.length) return { name, status: 'all_failed', tried: res.length }
 
@@ -384,6 +389,8 @@ async function processTopic(slug, m) {
   }
 
   return { slug, status: 'ok', items: ok.length, recalled: local.length, rounds: round,
+           // topic 落地的书同样要中译本回填;和 author 一致,LOCALISE 循环需要名单不是计数
+           book_slugs: [...new Set(ok.filter(i => i.kind === 'book').map(i => i.slug))],
            failures: failures.length, dead_end: !queue.length }
 }
 
