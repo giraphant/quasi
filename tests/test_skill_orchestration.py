@@ -294,6 +294,21 @@ def test_process_material_carries_the_retired_skills_post_steps():
     assert 'result.status == "synth_failed"' in skill, "synth_failed must auto-resubmit once"
 
 
+def test_orchestrate_agents_carry_explicit_phase_and_distinguishable_labels():
+    """A real Agre author run rendered 19 chapter agents as identical `analyse:agre-reinventing-tec…`
+    rows filed under the *Paper* phase — read as "60+ runaway papers" when every cap had held.
+    Two display defects, both real: `phase()` is global state and races under parallel recursion
+    (opts.phase is the documented fix), and the chapter slot sat past the label truncation point."""
+    text = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+    body = text[text.index("async function processBook("):text.index("// ── prompt builders")]
+
+    assert "{ agentType:" not in body, "every agent call must pin its node's phase explicitly"
+    assert body.count("phase: '") >= 30, "opts.phase belongs on every call site, not a sample"
+    assert "label: `analyse-ch${ch.slot}:${slug}`" in text, "the chapter slot must survive truncation"
+    assert "label: `refill-ch${ch.slot}:${slug}`" in text
+    assert "label: `regen-ch${ch.slot}:${slug}`" in text
+
+
 def test_orchestrate_retries_every_receipt_reading_agent():
     """agent() returns null when the subagent dies on a terminal API error, and every call site
     used to read that null as a content answer: a dead probe re-processes the whole author batch
