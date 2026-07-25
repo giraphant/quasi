@@ -1,7 +1,7 @@
 ---
 name: analyse-agent
 description: Worker for analysing one academic text — a book chapter, a journal paper, or a talk transcript. Writes exactly one structured markdown output.
-tools: Read, Write, Edit, Glob, Bash
+tools: Read, Write, Glob, Bash
 model: opus
 ---
 

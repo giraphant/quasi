@@ -294,6 +294,18 @@ def test_process_material_carries_the_retired_skills_post_steps():
     assert 'result.status == "synth_failed"' in skill, "synth_failed must auto-resubmit once"
 
 
+def test_extract_contract_promises_the_chapters_array_the_graph_fans_out_on():
+    """extract-agent's declared EXTRACT_RESULT never mentioned the chapters[] array EX_SCHEMA
+    requires — the chapter fan-out ran only because StructuredOutput coerced the field at
+    dispatch time. Schema begging is not a contract (the needs_ocr class): the agent's own
+    protocol must promise the field, with the manifest as its verbatim source."""
+    ex = (PLUGIN_ROOT / "agents" / "extract-agent.md").read_text(encoding="utf-8")
+
+    assert "- chapters:" in ex, "the receipt must carry the chapter table"
+    assert "slot:" in ex and "filename:" in ex, "fan-out needs slot + filename per chapter"
+    assert "manifest" in ex, "the receipt mirrors the manifest, not memory"
+
+
 def test_synthesis_agent_bounds_its_reading_budget():
     """Philip Agre author run: §A1 ordered a full Read of every chapter of every book (34+
     chapters) plus 10 full papers — the subagent's context overflowed and synth-author died

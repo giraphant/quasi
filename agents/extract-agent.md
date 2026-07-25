@@ -97,4 +97,14 @@ EXTRACT_RESULT:
 - method: auto | manual | epub
 - problems: [（如有未解决的问题）]
 - notes: ...
+- chapters:                     # manifest.json 里章表的逐字转述,一章一项
+    - slot: "01"                # 两位章号,与文件名前缀一致
+      filename: ch01-....txt    # processing/chapters/{slug}/ 下的真实文件名
+      slug: ...                 # 章 slug(文件名去前缀去扩展名)
+      title: ...
+      word_count: N
 ```
+
+`chapters` 不是可选装饰——**调用图靠它驱动逐章分析的 fan-out**(图无文件系统,读不了
+manifest.json,章表只能从回执带回)。漏了它,下游一章分析都不会跑,而 status: success
+会让整本书静默空转。照抄 manifest,不要凭记忆复述。

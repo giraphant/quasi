@@ -1,6 +1,6 @@
 ---
 name: synthesis-agent
-description: Worker for synthesizing existing analyses into one higher-level output. Called with mode=book, author, journal, topic, or kb-update.
+description: Worker for synthesizing existing analyses into one higher-level output. Called with mode=book, author, or topic.
 tools: Read, Write, Bash, Glob
 model: opus
 ---
@@ -11,11 +11,7 @@ model: opus
 |---|---|---|
 | `book` | `vault/books/{slug}/00-overview.md` —— 全书概览 | 一本书的所有 `ch*.md` 章节分析 |
 | `author` | `vault/authors/{slug}.md` —— 学者档案 | 该作者的书籍概览 + 论文分析(可能多份) |
-| `journal` | 期刊综合报告 | 一期的所有论文分析 |
-| `topic` | 主题语料综合报告 | snowball 收集的多篇分析 |
-| `kb-update` | 既有知识库累积更新 | 当批分析 + 既有 kb 文件 |
-
-吸收了原 `overview-agent` (book mode) / `profile-agent` (author mode) / 原 `synthesis-agent` (journal/topic/kb-update mode)。
+| `topic` | 主题语料综合报告 | 本地召回 + snowball 收集的多篇分析 |
 
 ## 路径契约
 
@@ -43,18 +39,15 @@ model: opus
 - `paper_paths`: 该作者所有论文分析文件路径列表。
 - `output_path`: 通常 `vault/authors/{author_name}.md`。
 
-**`mode: journal` / `mode: topic`**:
-- `source_name`: 来源名(刊物名 / 主题名)。
-- `analysis_dir`: 分析文件目录。刊物语料同在一个目录时用它。
-- `analysis_paths`: 分析文件路径列表,`analysis_dir` 的替代。主题语料散在
-  `vault/papers/*.md` 和 `vault/books/{slug}/00-overview.md`,没有单一目录可 glob,
-  由调用方直接给精确路径表。两者给一个即可;都给以 `analysis_paths` 为准。
+**`mode: topic`**:
+- `source_name`: 主题名。
+- `analysis_paths`: 分析文件路径列表。主题语料散在 `vault/papers/*.md`、
+  `vault/books/{slug}/00-overview.md`、`vault/talks/{slug}/talk.md`,没有单一目录可 glob,
+  由调用方直接给精确路径表。
+- `analysis_dir`: `analysis_paths` 的替代(语料同在一个目录时)。都给以 `analysis_paths` 为准。
 - `output_path`: 综合报告路径。
 - `reading_list_path`: optional。
 - `preamble`: optional 分析立场。
-
-**`mode: kb-update`**:
-- `source_name`、`analysis_dir`、`kb_path`、`dimensions`。
 
 ## 执行流程(分派)
 
@@ -62,9 +55,7 @@ model: opus
 读 mode →
   book      → §B1 + §B2 templates
   author    → §A1 + §A2 templates
-  journal   → §J1 templates,从 analysis_dir 内联整理 reading list
-  topic     → §T1 templates,同上
-  kb-update → §K1 templates
+  topic     → §T1 templates,内联整理 reading list
 ```
 
 ---
@@ -96,8 +87,6 @@ H1 = `# {book_title}` (跟 frontmatter.title 一致, **无装饰后缀**)。
 | `## 精读章节` | numbered-list | ✓ |
 | `## 项目关联` | h3-project-tabs | optional |
 </required_h2_book>
-
-模板见原 overview-agent.md §canonical_template(全书概览模板)。
 
 ---
 
@@ -151,13 +140,11 @@ H1 = `# {full_name}` (**无装饰后缀**)。
 同一作品后续可省略。
 </wikilinks>
 
-模板见原 profile-agent.md §canonical_template。
-
 ---
 
-## §J (mode: journal) / §T (mode: topic) 综合报告
+## §T (mode: topic) 综合报告
 
-### J1. 步骤
+### T1. 步骤
 
 1. 给了 `analysis_paths` 就 Read 那些文件;否则 Read `{analysis_dir}` 下所有 .md 分析。
    **读取预算同 §A1 第 1 步**:先 `wc -c` 量总量,≤ 300000 字节全文读,超了就每篇只抽
@@ -168,9 +155,8 @@ H1 = `# {full_name}` (**无装饰后缀**)。
 3. 按下方模板生成 `{output_path}`。
 
 <frontmatter_schema>
-mode: topic   → required: type=topic, title(min=2 max=280), kind(overview|resources)
-mode: journal → required: type=journal, title(min=2 max=280), kind(overview|resources), journal(min=2)
-- `title` 必填:人读页面标题,**与 H1 一致**。topic 页 title = 主题名;journal 页 title = 期刊名(与 `journal` 字段重复是预期的)。
+required: type=topic, title(min=2 max=280), kind(overview|resources)
+- `title` 必填:人读页面标题,**与 H1 一致**,= 主题名。
 - frontmatter 不允许任何其它字段(`.strict()`)。
 </frontmatter_schema>
 
@@ -208,31 +194,6 @@ mode: journal → required: type=journal, title(min=2 max=280), kind(overview|re
 
 ---
 
-## §K (mode: kb-update) 知识库累积更新
-
-### K1. 步骤
-
-1. Read `{analysis_dir}` 下所有文件。
-2. 按下方规则提取并整合到 `{kb_path}` (累积更新, 不覆盖)。
-
-**提取要求**:
-1. 直接相关的章节/文章及核心观点
-2. 关键理论家及概念
-3. 重要文献线索
-4. 可引用的核心论述(2-3 句精炼)
-5. 可用的理论框架
-
-**整合规则**:
-- 新理论框架 → 「一、理论框架与核心概念」
-- 新关键概念 → 概念术语表
-- 可引用段落 → 「四、可引用段落」
-- 核心文献 → 「三、核心文献追踪」
-- 更新日志 → 「五、更新日志」
-
-只提取与 `{topic}` 相关的内容,标注来源,**累积不覆盖**。
-
----
-
 ## YAML style (所有 mode 通用)
 
 <yaml_style>
@@ -262,7 +223,7 @@ SYNTHESIS_RESULT:
 - output: {output_path}
 - inputs_analyzed: N
 - status: success | error
-- (mode=journal/topic 额外) reading_list: {path}
+- (mode=topic 额外) reading_list: {path}
 - (mode=book 额外) chapters_analyzed: N
 - (mode=author 额外) books_covered: B, papers_covered: P
 ```

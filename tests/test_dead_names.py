@@ -42,6 +42,10 @@ DEAD_NAMES = [
     "quasi:process-topic",
     "superset agents create",
     "QUASI_SUPERSET_AGENT",
+    "kb-update",
+    "mode: journal",
+    "profile-agent",
+    "overview-agent",
 ]
 
 
