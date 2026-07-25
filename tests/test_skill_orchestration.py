@@ -349,6 +349,10 @@ def test_orchestrate_topic_recalls_the_vault_before_it_searches_online():
     assert "await parallel([" in body, "recall and discovery are independent; do not serialise them"
     assert "[...local, ...roundOk]" in body, "recalled works must seed round 1's snowball"
     assert "ok = [...local]" in body, "recalled works are already analysed — they are corpus"
+    # The probe hands back vault_slugs; `seen` only guards candidate slugs, so a recalled work
+    # rediscovered online re-enters `ok` and the synth contract carries duplicate paths
+    # (0.48.2 E2E: 2 of 16 analysis_paths were duplicates). Corpus conformance is the graph's job.
+    assert ".filter(i => !ok.some(o => o.slug === i.slug))" in body, "ok must stay duplicate-free"
 
 
 def test_process_material_gates_topic_dead_end_back_to_the_user():

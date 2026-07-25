@@ -152,4 +152,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.48.2.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.48.3.

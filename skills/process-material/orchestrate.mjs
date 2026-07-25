@@ -336,7 +336,10 @@ async function processTopic(slug, m) {
       ...batch.filter(c => done.has(c.slug))
         .map(c => ({ kind: isBook(c) ? 'book' : 'paper', slug: done.get(c.slug) })),
       ...res.filter(r => r.status === 'ok').map(r => ({ kind: r.kind, slug: r.slug })),
-    ]
+    ].filter(i => !ok.some(o => o.slug === i.slug))
+    // ↑ 探针收编返回的 vault_slug 可能正是召回过的那部(seen 只挡候选 slug,挡不住
+    //   vault_slug)——0.48.2 E2E 里两条重复路径进了 synth 合同。语料表是给下游的数据,
+    //   规范性在源头保证,不留给 synthesis-agent 自行去重。
     ok.push(...roundOk)
     failures.push(...res.filter(r => r.status !== 'ok').map(r => ({ slug: r.slug, status: r.status })))
     // 第 1 轮的滚雪球源并上本地召回:那些正文的「## 核心引用」同样是这个主题的引文网络,
