@@ -270,7 +270,7 @@ def test_orchestrate_reads_every_receipt_it_branches_on():
     text = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
 
     for schema in ("DL_SCHEMA", "EX_SCHEMA", "AU_SCHEMA", "SEARCH_SCHEMA", "PROBE_SCHEMA",
-                   "AN_SCHEMA", "SY_SCHEMA", "OCR_SCHEMA", "REFS_SCHEMA"):
+                   "AN_SCHEMA", "SY_SCHEMA", "OCR_SCHEMA", "REFS_SCHEMA", "RECALL_SCHEMA"):
         assert f"const {schema} =" in text, f"{schema} must be defined"
         assert f"schema: {schema}" in text, f"{schema} is defined but never attached to an agent() call"
 
@@ -331,6 +331,24 @@ def test_orchestrate_topic_recurses_through_router():
     assert "{ batchYear: true }" in body, "a batch must not stop on one book's year ambiguity"
     for inlined in ("processBook(", "processPaper(", "extractPrompt(", "analysePrompt("):
         assert inlined not in body, f"processTopic re-implements {inlined} instead of recursing"
+
+
+def test_orchestrate_topic_recalls_the_vault_before_it_searches_online():
+    """0.48.1 topic E2E (Bowker infrastructure): 6 strongly-relevant works were already analysed in
+    the vault, online discovery surfaced 1 of them, and the finished overview carried zero
+    [[wikilink]]s back into the vault. The probe can only skip works discovery *found* — anything
+    it misses is invisible, so a topic's main corpus (the library the user already built on that
+    topic) never enters the run. Recall must be its own step, and must feed round 1's snowball:
+    those in-vault works are usually the most cited ones in the topic's citation network."""
+    text = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+    body = topic_body(text)
+
+    assert "vaultRecallPrompt(" in body, "topic must recall in-vault works, not only search online"
+    assert "function vaultRecallPrompt(" in text, "the recall prompt builder must exist"
+    assert "rg -il" in text, "recall needs an observable signal; rg -il prints the hits"
+    assert "await parallel([" in body, "recall and discovery are independent; do not serialise them"
+    assert "[...local, ...roundOk]" in body, "recalled works must seed round 1's snowball"
+    assert "ok = [...local]" in body, "recalled works are already analysed — they are corpus"
 
 
 def test_process_material_gates_topic_dead_end_back_to_the_user():

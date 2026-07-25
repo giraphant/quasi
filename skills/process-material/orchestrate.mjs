@@ -67,6 +67,12 @@ const SY_SCHEMA = { type: 'object', properties: {
   status: { type: 'string' }, inputs_analyzed: { type: 'number' }, chapters_analyzed: { type: 'number' } } }
 const OCR_SCHEMA = { type: 'object', required: ['status'], properties: {
   status: { type: 'string' }, chars: { type: 'number' }, note: { type: 'string' } } }
+// 本地召回回执:主题跑的语料首先是**库里已有的东西**。探针只能跳过"在线搜索找得到的"作品,
+// 找不到就等于不存在 —— 0.48.1 的 topic E2E 里 6 部强相关的种子作品只有 1 部被搜索命中,
+// 综述最后一个 wikilink 都没指回库内。所以先扫一遍 vault,再去外面搜。
+const RECALL_SCHEMA = { type: 'object', properties: {
+  items: { type: 'array', items: { type: 'object', required: ['slug'], properties: {
+    kind: { type: 'string' }, slug: { type: 'string' } } } } } }
 
 // synth 报的"实际读到的章数"。字段缺失一律按 0 处理 —— 对账要 fail closed,
 // 缺信号时宁可多跑一轮(缺的章才会真写,其余 no-op)也不能默认通过。
@@ -278,13 +284,24 @@ async function processTopic(slug, m) {
   const maxRounds = Number(m.maxRounds) || 3
   const perRound = Number(m.maxPerRound) || 8
 
-  // 1. discover:种子候选。用户在死胡同卡点补的检索词由入口 skill 重投时放进 m.seeds。
-  const sr = await retryNull(topicSearchPrompt(desc, perRound, m.seeds),
-    { agentType: 'quasi:search-agent', label: `search-topic:${slug}`, schema: SEARCH_SCHEMA })
+  // 1. 本地召回 + 在线发现,并行。两件事互不依赖:库里已有什么,与外面还有什么,是两个问题。
+  //    本地召回不是可有可无的优化——它是主题综述的**主要语料来源**。一个读书库里之所以有
+  //    这些书,正因为它们属于用户关心的主题;探针只覆盖"搜索恰好也找到了"的交集,库里其余
+  //    强相关作品会整批漏掉(0.48.1 topic E2E:6 部种子只有 1 部进了综述)。
+  const [rc, sr] = await parallel([
+    () => retryNull(vaultRecallPrompt(desc, perRound * 2),
+      { agentType: 'general-purpose', label: `recall:${slug}`, schema: RECALL_SCHEMA }),
+    () => retryNull(topicSearchPrompt(desc, perRound, m.seeds),
+      { agentType: 'quasi:search-agent', label: `search-topic:${slug}`, schema: SEARCH_SCHEMA }),
+  ])
+  // 召回到的作品已经分析过,直接就是语料;它们的「## 核心引用」也参与第 1 轮滚雪球。
+  const local = ((rc && rc.items) || []).filter(i => i && i.slug)
+    .map(i => ({ kind: i.kind === 'book' ? 'book' : 'paper', slug: i.slug }))
   let queue = ((sr && sr.candidates) || []).filter(c => c && c.slug)
-  if (!queue.length) return { slug, status: 'no_works' }
+  if (!queue.length && !local.length) return { slug, status: 'no_works' }
 
-  const seen = new Set(), ok = [], failures = []
+  // 召回到的作品已分析过,直接进语料 —— 即便一轮都没跑起来也不会丢。
+  const seen = new Set(local.map(i => i.slug)), ok = [...local], failures = []
   let round = 0, suggested = null
   const isBook = c => (c.kind || 'paper') === 'book'
 
@@ -322,12 +339,15 @@ async function processTopic(slug, m) {
     ]
     ok.push(...roundOk)
     failures.push(...res.filter(r => r.status !== 'ok').map(r => ({ slug: r.slug, status: r.status })))
-    if (!roundOk.length) break   // 本轮一条都没落地,没有正文可摘引用,滚不动了
+    // 第 1 轮的滚雪球源并上本地召回:那些正文的「## 核心引用」同样是这个主题的引文网络,
+    // 而且它们往往是库里最相关的作品,漏掉等于把雪球起点砍掉一半。
+    const snowSrc = round === 1 ? [...local, ...roundOk] : roundOk
+    if (!snowSrc.length) break   // 没有正文可摘引用,滚不动了
 
     // 滚雪球:读本轮落地正文的「## 核心引用」→ 下一轮候选。
     // 交给 search-agent 而不是通用 agent:正文里的引用只有"作者-年-标题",要变成可处理的候选
     // 必须补上 doi/isbn(下游 download 靠它),那正是 search-agent 的活,而且它只读不写。
-    const refs = await retryNull(snowballPrompt(desc, roundOk, [...seen]),
+    const refs = await retryNull(snowballPrompt(desc, snowSrc, [...seen]),
       { agentType: 'quasi:search-agent', label: `snowball:${slug}:r${round}`, schema: REFS_SCHEMA })
     queue = ((refs && refs.candidates) || []).filter(c => c && c.slug && !seen.has(c.slug))
     suggested = (refs && refs.suggested_queries) || null
@@ -359,7 +379,7 @@ async function processTopic(slug, m) {
     if (((au && au.escalated) || []).length) return { slug, status: 'audit_escalated', escalated: au.escalated }
   }
 
-  return { slug, status: 'ok', items: ok.length, rounds: round,
+  return { slug, status: 'ok', items: ok.length, recalled: local.length, rounds: round,
            failures: failures.length, dead_end: !queue.length }
 }
 
@@ -486,6 +506,27 @@ overwrite: true   # 作者页总是重生成:每跑一次代表作集合都可�
 // 语料条目 → 产物路径。topic 的语料散在三处,没有单一目录可 glob,所以图直接给精确路径表。
 const itemPath = (it) => it.kind === 'book' ? `vault/books/${it.slug}/00-overview.md`
   : it.kind === 'author' ? `vault/authors/${it.slug}.md` : `vault/papers/${it.slug}.md`
+
+function vaultRecallPrompt(desc, max) {
+  // 主题的语料首先是库里已有的东西:一个读书库之所以存了这些书,正因为它们属于用户关心的主题。
+  // 在线搜索只覆盖"外面还有什么",探针只能跳过"搜索恰好也找到了的",库内其余强相关作品整批漏掉
+  // (0.48.1 topic E2E:6 部种子作品只有 1 部进了综述,末稿一个 wikilink 都没指回库内)。
+  // rg -il 会把命中的文件名打出来 —— 有可观测输出,不靠退出码。
+  return `task: 在本地 vault 里召回与主题 "${desc}" 相关的、**已经分析过**的作品(只读,不写任何文件)。
+1. 给主题拟 6-12 个检索词:中英各半(库是双语的),含同义词与该主题的代表人名/术语。
+2. 逐个跑(一次一个 -e 参数堆在同一条命令里即可):
+   \`\`\`bash
+   rg -il -e '关键词1' -e '关键词2' ... vault/books vault/papers | head -120
+   \`\`\`
+3. 命中路径 → slug:\`vault/books/{slug}/*.md\` 取目录名,\`vault/papers/{slug}.md\` 取文件名去掉 .md。
+   同一本书的多个章节命中算一条。
+4. 逐条 Read 该作品的产物首部(书 \`vault/books/{slug}/00-overview.md\`、论文 \`vault/papers/{slug}.md\`)
+   的 frontmatter 与开头几行,确认 title/themes 确实与主题相关;只是正文顺带提了一句的丢弃。
+5. 按相关度排序,最多返回 ${max} 条。
+
+输出 {items:[{kind:"book"|"paper", slug}]}。slug 必须是**磁盘上真实存在的**那个,不要改写、不要新造。
+一条都没有就返回 {items:[]}。`
+}
 
 function topicSearchPrompt(desc, count, seeds) {
   return `task: find the ${count} most important papers and books on the topic "${desc}", sorted by citations
