@@ -105,11 +105,20 @@ H1 = `# {book_title}` (跟 frontmatter.title 一致, **无装饰后缀**)。
 
 ### A1. 步骤
 
-1. 对每本书 (book_overview_paths):
-   a. Read `00-overview.md`。
-   b. Glob 同目录 `ch*.md` 逐一 Read。书籍概览压缩过,只读概览会让书在档案里被论文稀释。
-2. Read 每篇 `paper_paths`。
-3. 综合所有材料 → `{output_path}` (vault/authors/{slug}.md)。
+1. **先量语料定读法**——上下文窗口是硬预算,语料随库增长没有天花板:
+   ```bash
+   wc -c {全部 book_overview_paths 与 paper_paths} | tail -1
+   ```
+   总量 ≤ 300000 字节 → **全文模式**;超过 → **节选模式**。这不是优化是生存线:
+   Philip Agre 一跑(3 本书逐章全读 + 10 篇论文全文)把 synth 连本体带重试双双压死在
+   "Prompt is too long" 上,整个 author 分支因此报废。
+2. 对每本书 (book_overview_paths):只 Read `00-overview.md`。**不要 Glob 章文件逐一 Read**——
+   概览就是全书的压缩,由 synth(book) 从全部章分析生成;"书在档案里被论文稀释"是写作时的
+   配重问题,靠多写书的篇幅解决,不靠多读章。确有必要时(概览点名某章是该作者思想的枢纽),
+   每本书至多补读 2 章。
+3. Read 每篇 `paper_paths`:全文模式整篇 Read;节选模式每篇只取 frontmatter 与
+   `## 核心论点`、`## 关键概念`、`## 金句要点` 三节(逐节 `rg -A 30 '^## 核心论点' {path}` 抽取)。
+4. 综合所有材料 → `{output_path}` (vault/authors/{slug}.md)。
 
 ### A2. 输出契约
 
@@ -147,7 +156,11 @@ H1 = `# {full_name}` (**无装饰后缀**)。
 
 ### J1. 步骤
 
-1. 给了 `analysis_paths` 就逐个 Read 那些文件;否则 Read `{analysis_dir}` 下所有 .md 分析。
+1. 给了 `analysis_paths` 就 Read 那些文件;否则 Read `{analysis_dir}` 下所有 .md 分析。
+   **读取预算同 §A1 第 1 步**:先 `wc -c` 量总量,≤ 300000 字节全文读,超了就每篇只抽
+   frontmatter + `## 核心论点` + `## 关键概念` 三节(书概览与 talk 页全文读——它们本身是压缩)。
+   topic 语料随本地召回增长,规模没有上限,不设预算迟早在大主题上重演 author 的
+   "Prompt is too long" 双杀。
 2. 若提供 `reading_list_path`,从已读 frontmatter 和 H1 信息整理 reading list 并写入该路径。
 3. 按下方模板生成 `{output_path}`。
 

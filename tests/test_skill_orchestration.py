@@ -294,6 +294,21 @@ def test_process_material_carries_the_retired_skills_post_steps():
     assert 'result.status == "synth_failed"' in skill, "synth_failed must auto-resubmit once"
 
 
+def test_synthesis_agent_bounds_its_reading_budget():
+    """Philip Agre author run: §A1 ordered a full Read of every chapter of every book (34+
+    chapters) plus 10 full papers — the subagent's context overflowed and synth-author died
+    'Prompt is too long' twice, scrapping the branch. The corpus scales with the vault, the
+    window doesn't; the contract must gate reading on an observable measurement, not vibes."""
+    text = (PLUGIN_ROOT / "agents" / "synthesis-agent.md").read_text(encoding="utf-8")
+
+    # §B reading one book's own chapters is that mode's irreducible input and stays; the dead
+    # instruction is §A's cross-corpus sweep: every chapter of EVERY book.
+    assert "Glob 同目录 `ch*.md` 逐一 Read" not in text, "the exhaustive cross-book sweep is the overflow"
+    assert "wc -c" in text, "the budget gate needs an observable number"
+    assert "Prompt is too long" in text, "the contract must say why the budget exists"
+    assert text.count("300000") >= 2, "author AND topic/journal modes both need the gate"
+
+
 def test_orchestrate_agents_carry_explicit_phase_and_distinguishable_labels():
     """A real Agre author run rendered 19 chapter agents as identical `analyse:agre-reinventing-tec…`
     rows filed under the *Paper* phase — read as "60+ runaway papers" when every cap had held.
