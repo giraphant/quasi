@@ -304,6 +304,7 @@ def test_synthesis_agent_bounds_its_reading_budget():
     # §B reading one book's own chapters is that mode's irreducible input and stays; the dead
     # instruction is §A's cross-corpus sweep: every chapter of EVERY book.
     assert "Glob 同目录 `ch*.md` 逐一 Read" not in text, "the exhaustive cross-book sweep is the overflow"
+    assert "只取文件名" in text, "the chapter inventory is disclosed (cheap); reading stays budgeted"
     assert "wc -c" in text, "the budget gate needs an observable number"
     assert "Prompt is too long" in text, "the contract must say why the budget exists"
     assert text.count("300000") >= 2, "author AND topic/journal modes both need the gate"
