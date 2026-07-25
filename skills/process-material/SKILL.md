@@ -16,11 +16,11 @@ description: Use when the user wants to acquire and analyse a book, paper, autho
 - `kind`:`book` | `paper` | `author` | `topic`
 - 该 kind 的参数,统一塞进 `args`:
   - book:`slug`(可由 title+author 先经 search 定)、`meta{title,authors,isbn,year,topic}`
-  - paper:`doi` 或 `title+author`(v0 未实现)
-  - author:`author_name`(v0 未实现)
-  - topic:`topic_slug + topic_desc`(v0 未实现)
+  - paper:`slug` + `meta{doi,title,authors,journal}`
+  - author:`name` + `meta{full_name,topic,maxBooks,maxPapers}`
+  - topic:`slug` + `meta{desc,maxRounds,maxPerRound,minItems,allowAuthors}`
 
-**已实现 `kind=book|paper|author`(author = 图内 `parallel(books→processBook + papers→processPaper)`);`topic` 图内抛"未实现"(仍用 `/quasi:process-topic`)。** 见 `docs/process-material-design.md` §7。
+四个 kind 都由图承担;递归复用是重点——`author` 调 `processBook`/`processPaper`,`topic` 的每个条目走同一个 `router`。
 
 ## 硬约束
 
@@ -51,15 +51,16 @@ description: Use when the user wants to acquire and analyse a book, paper, autho
 ├─ 归一化 kind + args
 ├─ Step 0 本地召回/去重(图外,主进程)
 │    ├─ book/paper:`quasi-helpers vault resolve`(slug 精确 → ISBN/DOI → 标题+作者姓)命中 → return
-│    ├─ author:产物 vault/authors/{name}.md 存在 → return
+│    ├─ author/topic:产物存在 → 只提示"增量更新",继续跑(累积型材料,重跑就是为了吸收新条目)
 │    ├─ 均 miss → rg 模糊召回近似 key → 命中则列候选,提示可能重复(勿盲目新建)
 │    └─ 否则继续
 ├─ Workflow(orchestrate.mjs, {kind, ...args}) → 后台跑图(采集→分析),完成回 result
 ├─ 读 result.status:
 │    ├─ ok               → 报告(kind 各异)→ LOCALISE
 │    ├─ year_ambiguous   → (仅单本 book)AskUserQuestion(year_evidence 原样)→ 带决定重投
+│    ├─ needs_seeds      → (仅 topic)AskUserQuestion 要检索词 → 补 seeds 或 final=true 重投
 │    ├─ audit_escalated  → 报告 escalated,交人工
-│    └─ *_failed / no_works / all_failed → 报告失败
+│    └─ 其余一律按失败报出(枚举 ok,不枚举失败态)
 ├─ LOCALISE(仅 book,ok 后,图外):localise scan → pending 则 search-agent → localise write
 └─ marple open 最终产物(best-effort)
 ```
@@ -68,29 +69,32 @@ description: Use when the user wants to acquire and analyse a book, paper, autho
 
 ```python
 args = parse_request()   # kind + 该 kind 参数
-if args.kind == "topic":
-    report("process-material 未实现 topic;用 /quasi:process-topic"); return
-if args.kind not in ("book", "paper", "author"):
+if args.kind not in ("book", "paper", "author", "topic"):
     report(f"未知 kind: {args.kind}"); return
 
 # 该 kind 的主键 + 最终产物路径
 if args.kind == "book":    key, product = args.slug, f"vault/books/{args.slug}/00-overview.md"
 elif args.kind == "paper": key, product = args.slug, f"vault/papers/{args.slug}.md"
+elif args.kind == "topic": key, product = args.slug, f"vault/topics/{args.slug}/00-overview.md"
 else:                      key, product = args.name, f"vault/authors/{args.name}.md"     # author
 
 # Step 0: 本地召回/去重(主进程,图外)——mirror process-{book,paper,author} Step 0
 # book/paper 走确定性三级匹配(slug 精确 → ISBN/DOI → 标题+作者姓):同一作品换个 slug 也认得出,
 # 不靠 LLM 眼力。title/authors 一定要带上——vault 条目自己没 ISBN/DOI 时前两级必然 miss。
-# author 无标识符,仍用产物路径。
+# author/topic 无标识符,用产物路径。
 if args.kind in ("book", "paper"):
     ident = {"isbn": args.meta.get("isbn")} if args.kind == "book" else {"doi": args.meta.get("doi")}
     ident |= {"title": args.meta.get("title"), "authors": args.meta.get("authors")}
     hit = bash(f"quasi-helpers vault resolve --items-json "
                f"'{json([{'kind': args.kind, 'slug': key, **ident}])}'")["resolved"][0]
     if hit["vault_slug"]:
+        # book/paper 是一次性材料:做过就是做过,重跑只会造重复条目 → 直接返回。
         report(f"已有产物({hit['match']} 命中): {hit['path']}"); return
 elif exists(product):
-    report(f"已有产物,无需重复处理: {product}"); return
+    # author/topic 是**累积型**材料:重跑正是为了把新作品/新文献吸收进已有页面(所以图里这两个
+    # synth 是 overwrite 而非幂等)。存在不是终止条件,只提示一声继续跑;图内探针会跳过所有
+    # 已入库条目,重跑代价很小(Bowker 二次跑实测 8 个 agent、零 download/extract)。
+    report(f"已有产物,本次为增量更新: {product}")
 dup = rg_fuzzy_recall(key, args.meta)   # 兜底:候选没带 ISBN/DOI 时的近似命中
 if dup.candidates:
     report_candidate_list(dup.candidates, note="rg fuzzy recall only; 可能重复,勿盲目新建")
@@ -105,6 +109,13 @@ result = Workflow(scriptPath="$CLAUDE_PLUGIN_ROOT/skills/process-material/orches
 if result.status in ("year_mismatch", "year_ambiguous"):
     decision = AskUserQuestion(present=result.year_evidence)   # 含 tmp_path
     wf_args["slug"], wf_args["year_decision"] = decision.slug, decision.choice
+    result = Workflow(scriptPath="...", args=wf_args)
+
+# topic 死胡同:滚雪球滚不动了、语料还太薄。不硬写一篇没底子的综述,问用户要检索词。
+# 用户不补 → 带 final=True 原样重投,图直接跳到收口(条目全幂等,重跑几乎零成本)。
+if result.status == "needs_seeds":
+    decision = AskUserQuestion(present={"已收 ": result.collected, "建议检索词": result.suggested_queries})
+    wf_args["meta"] |= {"seeds": decision.seeds} if decision.seeds else {"final": True}
     result = Workflow(scriptPath="...", args=wf_args)
 
 if result.status == "audit_escalated":
@@ -126,6 +137,10 @@ if args.kind == "author":
     report(f"作者完成:{result.books} 本书 / {result.papers} 篇论文"
            + (f";{len(result.year_warnings)} 本年份存疑" if result.get("year_warnings") else "")
            + (f";{result.book_failures}+{result.paper_failures} 项获取失败" if result.book_failures or result.paper_failures else ""))
+if args.kind == "topic":
+    report(f"主题完成:{result.items} 条语料 / {result.rounds} 轮滚雪球"
+           + (f";{result.failures} 项获取失败" if result.failures else "")
+           + ("" if result.dead_end else ";候选未枯竭,可再跑一次继续扩充"))
 
 # LOCALISE 中译本回填:仅 book(author 的书可日后按 process-book 单独补,v0 从略;paper 无)
 if args.kind == "book":
@@ -144,9 +159,10 @@ Bash(f"/opt/homebrew/bin/marple-cli open '{product}' || marple-cli open '{produc
 
 | 阶段 | 检查 | 跳过条件 |
 |------|------|---------|
-| Step 0 召回 | `quasi-helpers vault resolve`(slug 精确 → ISBN/DOI → 标题+作者姓);均 miss 后 rg 模糊召回 | `vault_slug` 非 null 则**跳过整跑**(slug 漂移也算已做);模糊命中只列候选 |
+| Step 0 召回 | `quasi-helpers vault resolve`(slug 精确 → ISBN/DOI → 标题+作者姓);均 miss 后 rg 模糊召回 | book/paper:`vault_slug` 非 null 则**跳过整跑**(slug 漂移也算已做);author/topic 不跳,走增量;模糊命中只列候选 |
 | spine(图) | 文件即状态:`sources/{slug}.*` / `processing/chapters/{slug}/` / `vault/books/{slug}/` | 重跑 skill,图内 agent 见 output 存在即 no-op;做完的章/概览秒过 |
-| 卡点重投 | `year_decision` | 用户拍板后带决定重投,只补未定的一步 |
+| 批量条目(author/topic) | 图内一次存在性探针(同三级匹配) | 已入库条目不 download / 不 extract / 不重分析,直接计入 synth 语料 |
+| 卡点重投 | `year_decision` / `seeds` / `final` | 用户拍板后带决定重投,只补未定的一步 |
 | LOCALISE | `.quasi/localise/cndouban.json#by_isbn[isbn]` | 已有 entry(found/none)则 helper scan 跳过 |
 
 ## 输出
@@ -157,7 +173,14 @@ Bash(f"/opt/homebrew/bin/marple-cli open '{product}' || marple-cli open '{produc
 sources/{book-slug}.{epub,pdf}
 processing/chapters/{book-slug}/{manifest.json,*.txt}
 vault/books/{book-slug}/{00-overview.md,ch{slot}-*.md}
+vault/papers/{paper-slug}.md
+vault/authors/{author-name}.md
+vault/topics/{topic-slug}/{00-overview.md,01-resources.md}
 .quasi/localise/cndouban.json                          ← 中译本缓存(按原书 ISBN 幂等)
 ```
+
+topic 目录只放综述 + 阅读清单两页,不囤分析副本——分析在 `vault/papers/` 和 `vault/books/` 里,
+两页用 `[[wikilink]]` 指过去。老 `process-topic` 的 `manifest.json` 不再需要:编排状态活在图里,
+条目完成与否由 `router` 的回执直接给出,不靠轮询产物反推。
 
 新旧并行期:哪个 skill 生成的产物无差别——图内调的就是同一批 worker agent、写同一批路径。

@@ -12,14 +12,15 @@
 //   { agentType:'quasi:X' } 换成承载 agents/X.md 指令的 inline prompt。
 //   下面的图结构两种接法都不变。
 //
-// 已实现:processBook / processPaper / processAuthor
+// 四个分支都已实现:processBook / processPaper / processAuthor / processTopic。
 //   author = parallel(books→processBook + papers→processPaper) → synth(author) → audit。
-// topic 仍 stub(见 §7 退役顺序)。
+//   topic  = loop-until-dry(探针 → parallel(items→router) → 滚雪球) → synth(topic) → audit。
+// 递归复用是全部价值:author 不再内联抄 book,topic 的每个条目就是同一个 router。
 
 export const meta = {
   name: 'process-material',
-  description: 'Unified acquisition→analysis graph: router(kind) → book | paper | author | topic (stub)',
-  phases: [{ title: 'Book' }, { title: 'Paper' }, { title: 'Author' }],
+  description: 'Unified acquisition→analysis graph: router(kind) → book | paper | author | topic',
+  phases: [{ title: 'Book' }, { title: 'Paper' }, { title: 'Author' }, { title: 'Topic' }],
 }
 
 // ── 回执 schema:不传 schema 时 agent() 返回散文字符串,脚本读不到字段。
@@ -36,12 +37,17 @@ const EX_SCHEMA = { type: 'object', required: ['status'], properties: {
 const AU_SCHEMA = { type: 'object', properties: {
   escalated: { type: 'array', items: { type: 'object', properties: {
     path: { type: 'string' }, kind: { type: 'string' }, reason: { type: 'string' } } } } } }
-// search-agent 回执:author discovery 读 candidates[](每项必须带 canonical slug)。
+// search-agent 回执:author/topic discovery 读 candidates[](每项必须带 canonical slug)。
+// author 搜索按 kind 分两次调用、kind 自明;topic 一次调用里混着书和论文,靠每项的 kind 分流。
 const SEARCH_SCHEMA = { type: 'object', properties: {
   candidates: { type: 'array', items: { type: 'object', required: ['slug'], properties: {
+    kind: { type: 'string' },
     slug: { type: 'string' }, title: { type: 'string' }, authors: { type: 'array' },
     year: {}, isbn: { type: 'string' }, doi: { type: 'string' },
     oa_url: { type: 'string' }, url: { type: 'string' }, journal: { type: 'string' } } } } } }
+// 滚雪球回执 = 候选表 + 枯竭时的拓宽建议词(死胡同卡点要把建议原样递给用户)。
+const REFS_SCHEMA = { type: 'object', properties: {
+  ...SEARCH_SCHEMA.properties, suggested_queries: { type: 'array', items: { type: 'string' } } } }
 // 存在性探针回执:图无 fs,批量前用一个 agent 一次性查哪些产物已在 vault(避免重跑已完成的书/论文,
 // 尤其避免对已入库的书做破坏性重 extract)。vault_slug 非 null = 已做过;它可能与候选 slug 不同
 // (搜索侧 slug 漂移),下游必须用 vault_slug 读产物,否则会当成新书重跑 → 重复条目。
@@ -255,6 +261,103 @@ async function processAuthor(name, m) {
     year_warnings: yearWarnings.length ? yearWarnings : null }
 }
 
+// ── processTopic:discover → 滚雪球(探针 → parallel(items→router) → 摘核心引用)→ synth(topic) → audit。 ──
+// 老 process-topic 用 `superset agents create` 跨会话 fire-and-forget 派 process-{paper,book,author}:
+// 只回一个 sessionId,没有 transcript / status / result,完成与否只能靠 poll-agent 轮询 vault 产物
+// + agent 自写哨兵去**猜**。那正是这一整轮在修的 bug 类型(没有可观测信号就默认成功)。
+// 图内直接递归调 router,每个条目都有 schema 校验过的回执,于是 poll-agent / sentinel /
+// prompt-file / final_status 状态机整套机关一起消失。
+async function processTopic(slug, m) {
+  phase('Topic')
+  const desc = m.desc || m.topic_desc || slug
+  const maxRounds = Number(m.maxRounds) || 3
+  const perRound = Number(m.maxPerRound) || 8
+
+  // 1. discover:种子候选。用户在死胡同卡点补的检索词由入口 skill 重投时放进 m.seeds。
+  const sr = await retryNull(topicSearchPrompt(desc, perRound, m.seeds),
+    { agentType: 'quasi:search-agent', label: `search-topic:${slug}`, schema: SEARCH_SCHEMA })
+  let queue = ((sr && sr.candidates) || []).filter(c => c && c.slug)
+  if (!queue.length) return { slug, status: 'no_works' }
+
+  const seen = new Set(), ok = [], failures = []
+  let round = 0, suggested = null
+  const isBook = c => (c.kind || 'paper') === 'book'
+
+  // 2. 滚雪球 loop-until-dry:候选枯竭或轮数用尽即停。轮数与每轮条数都有上界——
+  //    一个主题的引文网络是发散的,不设界就是无限 fan-out。
+  while (queue.length && round < maxRounds) {
+    round++
+    const batch = queue.filter(c => !seen.has(c.slug)).slice(0, perRound)
+    batch.forEach(c => seen.add(c.slug))
+    if (!batch.length) break
+
+    // 探针:已入库的直接收编,不重跑(尤其不对已入库的书做破坏性重 extract)。
+    // 主题跑跨越已有语料的概率比作者跑更高——同一篇论文常同时属于多个主题。
+    const probe = await retryNull(existsProbePrompt(batch.filter(isBook), batch.filter(c => !isBook(c))),
+      { agentType: 'general-purpose', label: `probe-done:${slug}:r${round}`, schema: PROBE_SCHEMA })
+    const done = new Map(((probe && probe.resolved) || [])
+      .filter(r => r && r.slug && r.vault_slug).map(r => [r.slug, r.vault_slug]))
+
+    // 递归:同一个 router、同一批已验证的 processBook / processPaper。书走 batchYear——
+    // 批量跑里年份歧义不能卡住整轮,自动收下并记 warning(与 author 批量同策)。
+    // author 候选默认不派:一个作者会拖进 5 本书 + 10 篇论文,主题跑会当场爆量;
+    // 要连作者一起铺开得显式开 meta.allowAuthors。
+    const fresh = batch.filter(c => !done.has(c.slug))
+      .filter(c => m.allowAuthors || (c.kind || 'paper') !== 'author')
+    const res = (await parallel(fresh.map(c => () => {
+      const kind = isBook(c) ? 'book' : (c.kind === 'author' ? 'author' : 'paper')
+      return router(kind, { slug: c.slug, name: c.slug, meta: { ...c, topic: slug } }, { batchYear: true })
+        .then(r => ({ kind, slug: c.slug, ...r }))
+    }))).filter(Boolean)
+
+    const roundOk = [
+      ...batch.filter(c => done.has(c.slug))
+        .map(c => ({ kind: isBook(c) ? 'book' : 'paper', slug: done.get(c.slug) })),
+      ...res.filter(r => r.status === 'ok').map(r => ({ kind: r.kind, slug: r.slug })),
+    ]
+    ok.push(...roundOk)
+    failures.push(...res.filter(r => r.status !== 'ok').map(r => ({ slug: r.slug, status: r.status })))
+    if (!roundOk.length) break   // 本轮一条都没落地,没有正文可摘引用,滚不动了
+
+    // 滚雪球:读本轮落地正文的「## 核心引用」→ 下一轮候选。
+    // 交给 search-agent 而不是通用 agent:正文里的引用只有"作者-年-标题",要变成可处理的候选
+    // 必须补上 doi/isbn(下游 download 靠它),那正是 search-agent 的活,而且它只读不写。
+    const refs = await retryNull(snowballPrompt(desc, roundOk, [...seen]),
+      { agentType: 'quasi:search-agent', label: `snowball:${slug}:r${round}`, schema: REFS_SCHEMA })
+    queue = ((refs && refs.candidates) || []).filter(c => c && c.slug && !seen.has(c.slug))
+    suggested = (refs && refs.suggested_queries) || null
+    log(`${slug}: 第 ${round} 轮 +${roundOk.length} 条(累计 ${ok.length}),下轮候选 ${queue.length}`)
+  }
+
+  // 3. 死胡同卡点:候选枯竭且语料太薄 → 不硬写一篇没底子的综述,冒泡让入口 skill 问用户补种子词。
+  //    用户不想补时,入口带 meta.final=true 原样重投直接收口(条目全幂等,重跑几乎零成本)。
+  const minItems = Number(m.minItems) || 3
+  if (!m.final && !queue.length && ok.length < minItems)
+    return { slug, status: 'needs_seeds', collected: ok.length, rounds: round,
+             suggested_queries: suggested, failures: failures.length }
+  if (!ok.length) return { slug, status: 'all_failed', tried: failures.length }
+
+  // 4. synth(topic):综述 + 阅读清单两页。回执判死活,没写出来就别 audit 一个不存在的文件。
+  const sy = await retryNull(topicSynthPrompt(slug, desc, ok),
+    { agentType: 'quasi:synthesis-agent', label: `synth-topic:${slug}`, schema: SY_SCHEMA }, OVERWRITE)
+  if (!sy || sy.status === 'error')
+    return { slug, status: 'synth_failed', items: ok.length, notes: sy && sy.notes }
+
+  // 5. audit + 一次 escalation 回环
+  let au = await retryNull(`path: vault/topics/${slug}`,
+    { agentType: 'quasi:audit-agent', label: `audit-topic:${slug}`, schema: AU_SCHEMA })
+  if (((au && au.escalated) || []).length) {
+    await agent(topicSynthPrompt(slug, desc, ok) + `\nreason: audit escalated`,
+      { agentType: 'quasi:synthesis-agent', label: `regen-topic:${slug}` })
+    au = await retryNull(`path: vault/topics/${slug}`,
+      { agentType: 'quasi:audit-agent', label: `audit2-topic:${slug}`, schema: AU_SCHEMA })
+    if (((au && au.escalated) || []).length) return { slug, status: 'audit_escalated', escalated: au.escalated }
+  }
+
+  return { slug, status: 'ok', items: ok.length, rounds: round,
+           failures: failures.length, dead_end: !queue.length }
+}
+
 // ── prompt builders:薄,只承载各 agent 期望的契约字段 ──
 function bookDownloadPrompt(slug, m, batchYear) {
   return `kind: book
@@ -375,6 +478,46 @@ paper_paths: ${JSON.stringify(pps)}
 overwrite: true   # 作者页总是重生成:每跑一次代表作集合都可能扩张,no-op 会让 profile 停在旧版本。`
 }
 
+// 语料条目 → 产物路径。topic 的语料散在三处,没有单一目录可 glob,所以图直接给精确路径表。
+const itemPath = (it) => it.kind === 'book' ? `vault/books/${it.slug}/00-overview.md`
+  : it.kind === 'author' ? `vault/authors/${it.slug}.md` : `vault/papers/${it.slug}.md`
+
+function topicSearchPrompt(desc, count, seeds) {
+  return `task: find the ${count} most important papers and books on the topic "${desc}", sorted by citations
+context:
+  kind: paper
+  topic: ${desc}${seeds && seeds.length ? `
+  extra_queries: ${JSON.stringify(seeds)}   # 用户补的种子检索词,优先照这些搜` : ''}
+constraints:
+  count: ${count}
+  sort: citations
+输出 candidates[],每项带 kind(book|paper)、canonical slug ({author-surname}-{short-title}-{year})、
+title、authors、year;书带 isbn,论文带 doi、oa_url、journal。查不到标识符的不要输出——
+下游要靠标识符下载。`
+}
+function snowballPrompt(desc, roundOk, seenSlugs) {
+  return `task: 从下列已完成的分析里摘出被反复引用的关键文献,作为主题 "${desc}" 的下一轮候选。
+1. 逐个 Read 这些文件,**只看正文的 \`## 核心引用\` 一节**,其余不用读:
+   ${JSON.stringify(roundOk.map(itemPath))}
+2. 汇总引用条目,按被引次数排序,去掉与主题无关的。
+3. 排除已经处理过的 slug:${JSON.stringify(seenSlugs)}
+4. 对剩下的用 quasi-search 补标识符(书 isbn,论文 doi/oa_url/journal);补不到的丢弃。
+输出 candidates[],每项带 kind(book|paper)、canonical slug、title、authors、year 及标识符。
+一条新的都没有就返回空 candidates,并在 suggested_queries[] 给 2-3 个能拓宽该主题的检索词。
+只读不写,不要碰 vault/。`
+}
+function topicSynthPrompt(slug, desc, ok) {
+  return `mode: topic
+source_name: ${desc}
+topic: ${desc}
+analysis_paths: ${JSON.stringify(ok.map(itemPath))}
+output_path: vault/topics/${slug}/00-overview.md
+reading_list_path: vault/topics/${slug}/01-resources.md
+两页 frontmatter 都要 type: topic 与 title: ${desc};00-overview 用 kind: overview,
+01-resources 用 kind: resources。正文引用语料一律用 [[wikilink]] 指向上面 analysis_paths 里的路径。
+overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-op 会让综述停在旧版本。`
+}
+
 function ocrPrompt(input, output) {
   // 只跑命令 + 转述可打印的结果。判定不能靠退出码:静默失败在 harness 里同样是
   // "(no output), is_error:false" → agent 会一律判成功。所以命令自己打印 OCR_CHARS=N。
@@ -390,13 +533,14 @@ echo "OCR_CHARS=$N"
 }
 
 // ── router / 入口 ──
-async function router(kind, a) {
+// opts 只有 processBook 用(batchYear:批量跑里年份歧义不冒泡卡点)。author / topic 递归下来的书
+// 必须带上它,否则一本书的年份存疑就能把整批停住。
+async function router(kind, a, opts = {}) {
   switch (kind) {
-    case 'book': return processBook(a.slug, a.meta || a)
+    case 'book': return processBook(a.slug, a.meta || a, opts)
     case 'paper': return processPaper(a.slug, a.meta || a)
     case 'author': return processAuthor(a.name || a.author_name, a.meta || a)
-    case 'topic':
-      throw new Error(`process-material: kind "topic" 未实现(book/paper/author 已实现)。见 docs/process-material-design.md §7`)
+    case 'topic': return processTopic(a.slug || a.topic_slug, a.meta || a)
     default:
       throw new Error(`process-material: 未知 kind "${kind}"`)
   }

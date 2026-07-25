@@ -270,7 +270,7 @@ def test_orchestrate_reads_every_receipt_it_branches_on():
     text = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
 
     for schema in ("DL_SCHEMA", "EX_SCHEMA", "AU_SCHEMA", "SEARCH_SCHEMA", "PROBE_SCHEMA",
-                   "AN_SCHEMA", "SY_SCHEMA", "OCR_SCHEMA"):
+                   "AN_SCHEMA", "SY_SCHEMA", "OCR_SCHEMA", "REFS_SCHEMA"):
         assert f"const {schema} =" in text, f"{schema} must be defined"
         assert f"schema: {schema}" in text, f"{schema} is defined but never attached to an agent() call"
 
@@ -297,6 +297,35 @@ def test_process_material_reports_any_status_that_is_not_ok():
     assert 'endswith("_failed")' not in text, "do not enumerate failure statuses; enumerate ok"
     # year_mismatch keeps the file at tmp_path awaiting a human call, same as year_ambiguous.
     assert '("year_mismatch", "year_ambiguous")' in text
+
+
+def topic_body(text: str) -> str:
+    start = text.index("async function processTopic(")
+    return text[start:text.index("\n// ── prompt builders", start)]
+
+
+def test_orchestrate_topic_recurses_through_router():
+    """The whole point of the graph is that a topic item IS a book/paper node. Re-implementing
+    the book subflow inside processTopic is exactly the duplication old process-author carried
+    ("keep naming in sync with process-book" as a prose contract). And a batch-dispatched book
+    must carry batchYear, or one year-ambiguous book stalls the entire topic run at a gate."""
+    text = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+    body = topic_body(text)
+
+    assert "case 'topic': return processTopic(" in text, "router must dispatch topic"
+    assert "router(kind," in body, "topic items must go through router, not an inlined subflow"
+    assert "{ batchYear: true }" in body, "a batch must not stop on one book's year ambiguity"
+    for inlined in ("processBook(", "processPaper(", "extractPrompt(", "analysePrompt("):
+        assert inlined not in body, f"processTopic re-implements {inlined} instead of recursing"
+
+
+def test_process_material_gates_topic_dead_end_back_to_the_user():
+    """Snowball runs dry long before the corpus is useful; the graph can only report that, the
+    seeds decision is the user's. Dropping the gate turns a 2-item topic into a silent `ok`."""
+    text = (PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "needs_seeds" in text, "the dead-end status must reach a human gate"
+    assert "suggested_queries" in text, "the widening hints must be shown, not swallowed"
 
 
 def test_orchestrate_retries_every_receipt_reading_agent():

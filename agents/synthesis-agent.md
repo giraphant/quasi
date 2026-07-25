@@ -45,7 +45,10 @@ model: opus
 
 **`mode: journal` / `mode: topic`**:
 - `source_name`: 来源名(刊物名 / 主题名)。
-- `analysis_dir`: 分析文件目录。
+- `analysis_dir`: 分析文件目录。刊物语料同在一个目录时用它。
+- `analysis_paths`: 分析文件路径列表,`analysis_dir` 的替代。主题语料散在
+  `vault/papers/*.md` 和 `vault/books/{slug}/00-overview.md`,没有单一目录可 glob,
+  由调用方直接给精确路径表。两者给一个即可;都给以 `analysis_paths` 为准。
 - `output_path`: 综合报告路径。
 - `reading_list_path`: optional。
 - `preamble`: optional 分析立场。
@@ -144,7 +147,7 @@ H1 = `# {full_name}` (**无装饰后缀**)。
 
 ### J1. 步骤
 
-1. Read `{analysis_dir}` 下所有 .md 分析。
+1. 给了 `analysis_paths` 就逐个 Read 那些文件;否则 Read `{analysis_dir}` 下所有 .md 分析。
 2. 若提供 `reading_list_path`,从已读 frontmatter 和 H1 信息整理 reading list 并写入该路径。
 3. 按下方模板生成 `{output_path}`。
 
