@@ -247,6 +247,13 @@ def test_orchestrate_topic_recalls_the_vault_before_it_searches_online():
     assert "await parallel([" in body, "recall and discovery are independent; do not serialise them"
     assert "[...local, ...roundOk]" in body, "recalled works must seed round 1's snowball"
     assert "ok = [...local]" in body, "recalled works are already analysed — they are corpus"
+
+    # Talks can ONLY come from recall — online discovery can never surface a recording the user
+    # made, so a recall that skips vault/talks makes every talk permanently invisible to topics.
+    # Talk pages carry their citations under `## 文献人物`, not `## 核心引用`.
+    assert "vault/books vault/papers vault/talks" in text, "recall must sweep talks too"
+    assert "vault/talks/${it.slug}/talk.md" in text, "itemPath must resolve talk corpus entries"
+    assert "## 文献人物" in text, "snowball must read the talk page's citation section"
     # The probe hands back vault_slugs; `seen` only guards candidate slugs, so a recalled work
     # rediscovered online re-enters `ok` and the synth contract carries duplicate paths
     # (0.48.2 E2E: 2 of 16 analysis_paths were duplicates). Corpus conformance is the graph's job.

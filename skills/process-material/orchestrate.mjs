@@ -301,8 +301,9 @@ async function processTopic(slug, m) {
       { agentType: 'quasi:search-agent', label: `search-topic:${slug}`, schema: SEARCH_SCHEMA }),
   ])
   // 召回到的作品已经分析过,直接就是语料;它们的「## 核心引用」也参与第 1 轮滚雪球。
+  // talk 只可能来自召回(在线发现搜不到你录的讲座),不进 router;book/paper 之外的未知 kind 按 paper 兜底
   const local = ((rc && rc.items) || []).filter(i => i && i.slug)
-    .map(i => ({ kind: i.kind === 'book' ? 'book' : 'paper', slug: i.slug }))
+    .map(i => ({ kind: i.kind === 'book' || i.kind === 'talk' ? i.kind : 'paper', slug: i.slug }))
   let queue = ((sr && sr.candidates) || []).filter(c => c && c.slug)
   if (!queue.length && !local.length) return { slug, status: 'no_works' }
 
@@ -514,28 +515,31 @@ paper_paths: ${JSON.stringify(pps)}
 overwrite: true   # 作者页总是重生成:每跑一次代表作集合都可能扩张,no-op 会让 profile 停在旧版本。`
 }
 
-// 语料条目 → 产物路径。topic 的语料散在三处,没有单一目录可 glob,所以图直接给精确路径表。
+// 语料条目 → 产物路径。topic 的语料散在几处,没有单一目录可 glob,所以图直接给精确路径表。
 const itemPath = (it) => it.kind === 'book' ? `vault/books/${it.slug}/00-overview.md`
-  : it.kind === 'author' ? `vault/authors/${it.slug}.md` : `vault/papers/${it.slug}.md`
+  : it.kind === 'author' ? `vault/authors/${it.slug}.md`
+  : it.kind === 'talk' ? `vault/talks/${it.slug}/talk.md` : `vault/papers/${it.slug}.md`
 
 function vaultRecallPrompt(desc, max) {
   // 主题的语料首先是库里已有的东西:一个读书库之所以存了这些书,正因为它们属于用户关心的主题。
   // 在线搜索只覆盖"外面还有什么",探针只能跳过"搜索恰好也找到了的",库内其余强相关作品整批漏掉
   // (0.48.1 topic E2E:6 部种子作品只有 1 部进了综述,末稿一个 wikilink 都没指回库内)。
+  // talks 同理:讲座只能从本地来(在线发现永远搜不到你录的讲座),不扫它就是永久盲区。
   // rg -il 会把命中的文件名打出来 —— 有可观测输出,不靠退出码。
-  return `task: 在本地 vault 里召回与主题 "${desc}" 相关的、**已经分析过**的作品(只读,不写任何文件)。
+  return `task: 在本地 vault 里召回与主题 "${desc}" 相关的、**已经分析过**的作品(书/论文/讲座;只读,不写任何文件)。
 1. 给主题拟 6-12 个检索词:中英各半(库是双语的),含同义词与该主题的代表人名/术语。
 2. 逐个跑(一次一个 -e 参数堆在同一条命令里即可):
    \`\`\`bash
-   rg -il -e '关键词1' -e '关键词2' ... vault/books vault/papers | head -120
+   rg -il -e '关键词1' -e '关键词2' ... vault/books vault/papers vault/talks | head -120
    \`\`\`
-3. 命中路径 → slug:\`vault/books/{slug}/*.md\` 取目录名,\`vault/papers/{slug}.md\` 取文件名去掉 .md。
-   同一本书的多个章节命中算一条。
-4. 逐条 Read 该作品的产物首部(书 \`vault/books/{slug}/00-overview.md\`、论文 \`vault/papers/{slug}.md\`)
-   的 frontmatter 与开头几行,确认 title/themes 确实与主题相关;只是正文顺带提了一句的丢弃。
+3. 命中路径 → slug:\`vault/books/{slug}/*.md\` 与 \`vault/talks/{slug}/*.md\` 取目录名,
+   \`vault/papers/{slug}.md\` 取文件名去掉 .md。同一作品多个文件命中算一条。
+4. 逐条 Read 该作品的产物首部(书 \`vault/books/{slug}/00-overview.md\`、论文 \`vault/papers/{slug}.md\`、
+   讲座 \`vault/talks/{slug}/talk.md\`)的 frontmatter 与开头几行,确认 title/themes 确实与主题相关;
+   只是正文顺带提了一句的丢弃。
 5. 按相关度排序,最多返回 ${max} 条。
 
-输出 {items:[{kind:"book"|"paper", slug}]}。slug 必须是**磁盘上真实存在的**那个,不要改写、不要新造。
+输出 {items:[{kind:"book"|"paper"|"talk", slug}]}。slug 必须是**磁盘上真实存在的**那个,不要改写、不要新造。
 一条都没有就返回 {items:[]}。`
 }
 
@@ -554,7 +558,7 @@ title、authors、year;书带 isbn,论文带 doi、oa_url、journal。查不到�
 }
 function snowballPrompt(desc, roundOk, seenSlugs) {
   return `task: 从下列已完成的分析里摘出被反复引用的关键文献,作为主题 "${desc}" 的下一轮候选。
-1. 逐个 Read 这些文件,**只看正文的 \`## 核心引用\` 一节**,其余不用读:
+1. 逐个 Read 这些文件,**只看正文的 \`## 核心引用\`(书/论文)或 \`## 文献人物\`(讲座)一节**,其余不用读:
    ${JSON.stringify(roundOk.map(itemPath))}
 2. 汇总引用条目,按被引次数排序,去掉与主题无关的。
 3. 排除已经处理过的 slug:${JSON.stringify(seenSlugs)}

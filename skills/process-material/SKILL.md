@@ -195,6 +195,6 @@ processing/translations/{paper-slug}-zh.pdf            ← 可选(translate: tru
 .quasi/localise/cndouban.json                          ← 中译本缓存(按原书 ISBN 幂等)
 ```
 
-topic 目录只放综述 + 阅读清单两页,不囤分析副本——分析在 `vault/papers/` 和 `vault/books/` 里,
-两页用 `[[wikilink]]` 指过去。编排状态活在图里,条目完成与否由 `router` 的回执直接给出,
+topic 目录只放综述 + 阅读清单两页,不囤分析副本——分析在 `vault/papers/`、`vault/books/`、
+`vault/talks/` 里,两页用 `[[wikilink]]` 指过去(讲座只可能来自图内本地召回,在线发现搜不到它们)。编排状态活在图里,条目完成与否由 `router` 的回执直接给出,
 不靠轮询产物反推。
