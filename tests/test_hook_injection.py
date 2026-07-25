@@ -96,32 +96,18 @@ def test_hook_keeps_quasi_user_config_injection():
     assert "CLAUDE_PLUGIN_DATA=/plugin/data" in updated
 
 
-def test_hook_injects_superset_agent_for_superset_agent_creates():
-    out = run_hook(
-        "superset agents create --workspace \"$SUPERSET_WORKSPACE_ID\" --prompt 'Run /quasi:process-paper' --json --quiet",
-        {
-            "CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT": "copilot",
-            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
-            "CLAUDE_PLUGIN_DATA": "/plugin/data",
-        },
-    )
-
-    updated = out["hookSpecificOutput"]["updatedInput"]["command"]
-    assert "QUASI_SUPERSET_AGENT=copilot" in updated
-    assert "superset agents create --workspace" in updated
-
-
-def test_hook_does_not_inject_for_removed_superset_agents_run():
-    # `superset agents run` no longer exists in the CLI; the hook must not treat
-    # it as a dispatch, so it produces no env-injecting output.
-    payload = {"tool_input": {"command": "superset agents run --workspace \"$SUPERSET_WORKSPACE_ID\" --prompt 'Run /quasi:process-paper' --json --quiet"}}
+def test_hook_ignores_superset_agents_create():
+    # `superset agents create` was the old process-topic dispatch channel; the
+    # userConfig option and its injection branch died with that skill (0.49.0).
+    # A superset command must now pass through with no env injection at all.
+    payload = {"tool_input": {"command": "superset agents create --workspace \"$SUPERSET_WORKSPACE_ID\" --prompt 'Run /quasi:process-material' --json --quiet"}}
     result = subprocess.run(
         [sys.executable, str(HOOK)],
         input=json.dumps(payload),
         capture_output=True,
         text=True,
         env={
-            "CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT": "copilot",
+            "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
             "CLAUDE_PLUGIN_ROOT": "/plugin/root",
             "CLAUDE_PLUGIN_DATA": "/plugin/data",
         },
@@ -129,54 +115,6 @@ def test_hook_does_not_inject_for_removed_superset_agents_run():
     )
 
     assert result.stdout == ""
-
-
-def test_hook_limits_superset_agent_creates_to_superset_agent_config():
-    out = run_hook(
-        "superset agents create --workspace \"$SUPERSET_WORKSPACE_ID\" --prompt 'Run /quasi:process-paper' --json --quiet",
-        {
-            "CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT": "copilot",
-            "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
-            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
-            "CLAUDE_PLUGIN_DATA": "/plugin/data",
-        },
-    )
-
-    updated = out["hookSpecificOutput"]["updatedInput"]["command"]
-    assert "QUASI_SUPERSET_AGENT=copilot" in updated
-    assert "QUASI_KAGI_SESSION_TOKEN" not in updated
-
-
-def test_hook_limits_superset_agent_creates_even_when_prompt_contains_quasi_command_text():
-    out = run_hook(
-        "superset agents create --workspace \"$SUPERSET_WORKSPACE_ID\" --prompt 'Run quasi-search and /quasi:process-paper' --json --quiet",
-        {
-            "CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT": "copilot",
-            "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
-            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
-            "CLAUDE_PLUGIN_DATA": "/plugin/data",
-        },
-    )
-
-    updated = out["hookSpecificOutput"]["updatedInput"]["command"]
-    assert "QUASI_SUPERSET_AGENT=copilot" in updated
-    assert "QUASI_KAGI_SESSION_TOKEN" not in updated
-
-
-def test_hook_injects_all_config_for_compound_superset_then_quasi_command():
-    out = run_hook(
-        "superset agents create --workspace \"$SUPERSET_WORKSPACE_ID\" --json --quiet && quasi-search book --title X",
-        {
-            "CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT": "copilot",
-            "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
-            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
-            "CLAUDE_PLUGIN_DATA": "/plugin/data",
-        },
-    )
-
-    updated = out["hookSpecificOutput"]["updatedInput"]["command"]
-    assert "QUASI_SUPERSET_AGENT=copilot" in updated
-    assert "QUASI_KAGI_SESSION_TOKEN=session-token" in updated
 
 
 def test_hook_ignores_quoted_quasi_command_text_without_target_command():
@@ -187,7 +125,6 @@ def test_hook_ignores_quoted_quasi_command_text_without_target_command():
         capture_output=True,
         text=True,
         env={
-            "CLAUDE_PLUGIN_OPTION_SUPERSET_AGENT": "copilot",
             "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
         },
         check=True,

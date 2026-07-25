@@ -1,9 +1,9 @@
 ---
 name: quasi:process-material
-description: Use when the user wants to acquire and analyse a book, paper, author, or topic through the unified orchestration graph (experimental, runs alongside the per-kind process-* skills).
+description: Use when the user wants to search, download, and analyse a book, a paper, an author's representative works, or a topic review into structured vault outputs.
 ---
 
-# Process Material — 统一材料处理(实验,新旧并行)
+# Process Material — 统一材料处理
 
 ## 任务
 
@@ -11,12 +11,12 @@ description: Use when the user wants to acquire and analyse a book, paper, autho
 
 ## 输入
 
-显式调用(不抢旧 skill 的自动路由)。从用户请求归一化出:
+从用户请求归一化出:
 
 - `kind`:`book` | `paper` | `author` | `topic`
 - 该 kind 的参数,统一塞进 `args`:
   - book:`slug`(可由 title+author 先经 search 定)、`meta{title,authors,isbn,year,topic}`
-  - paper:`slug` + `meta{doi,title,authors,journal}`
+  - paper:`slug` + `meta{doi,title,authors,journal}`;`translate` 可选布尔(产出中译 PDF)
   - author:`name` + `meta{full_name,topic,maxBooks,maxPapers}`
   - topic:`slug` + `meta{desc,maxRounds,maxPerRound,minItems,allowAuthors}`
 
@@ -24,25 +24,23 @@ description: Use when the user wants to acquire and analyse a book, paper, autho
 
 ## 硬约束
 
-- **实验性,与 `process-{book,paper,author,topic}` 并行存在,不删任何旧 skill。**
 - **talk / draft 不走本 skill**——它们不是采集→分析主干(talk 用 transcribe 原语、draft 是交互审定)。
-- **新旧不要对同一个 slug 并发跑**(会抢同一批文件);拿没处理过的材料测,跟旧 skill 输出对眼。
-- 编排在 Workflow 里跑,主进程只做:Step 0 本地召回/去重 + 归一化输入 + 处理图冒泡上来的人工卡点 + LOCALISE 回填 + 报告(采集→分析 spine 全在图里)。
+- 编排在 Workflow 里跑,主进程只做:Step 0 本地召回/去重 + 归一化输入 + 处理图冒泡上来的人工卡点 + LOCALISE / TRANSLATE 回填 + 报告(采集→分析 spine 全在图里)。
 
 ## 状态
 
-- 图产物照常落 `vault/` `processing/` `sources/`——与旧 skill 同命名空间、同幂等续跑。
+- 图产物照常落 `vault/` `processing/` `sources/`——全库统一命名空间、文件幂等续跑。
 - **编排状态活在 Workflow 内,不落 skill manifest。** 续跑靠文件幂等(agent 见 output 存在即 no-op),不靠 Workflow 自身 resume。
-- LOCALISE 中译本缓存写入 `.quasi/localise/cndouban.json`,按原书 ISBN 幂等(与 `process-book` Step 6 一致)。
+- LOCALISE 中译本缓存写入 `.quasi/localise/cndouban.json`,按原书 ISBN 幂等。
 
 ## Agent / Helper 合同
 
 - 通过 **Workflow 工具**调 `$CLAUDE_PLUGIN_ROOT/skills/process-material/orchestrate.mjs`,把 `{kind, ...}` 作为 `args` 传入。
-- 图内用 `agent(prompt, {agentType:'quasi:<name>'})` 起既有 worker agent(download/extract/analyse/synthesis/audit),契约与旧 skill 一致。
-  - ⚠ 若 spike(设计文档 §8)证明 `agentType:'quasi:*'` 在 Workflow 内不解析,则改为 inline prompt 承载 agent 指令;图结构不变。
+- 图内用 `agent(prompt, {agentType:'quasi:<name>'})` 起 worker agent(download/extract/analyse/synthesis/audit)。
 - 图不写 skill 状态文件;人工卡点由本 skill 主进程用 `AskUserQuestion` 处理。
-- **Step 0 召回与 LOCALISE 是主进程(图外)的活**:图无 fs、不能调 bin,所以本地召回/去重、`quasi-helpers localise scan|write` 都由本 skill 主进程执行。
-- LOCALISE 时按需 dispatch `search-agent`(kind=book,读 overview 搜 `localisations.zh.candidates`),主进程再用 `quasi-helpers localise write` 落盘;幂等于原书 ISBN。
+- **Step 0 召回与 LOCALISE / TRANSLATE 是主进程(图外)的活**:图无 fs、不能调 bin,所以本地召回/去重、`quasi-helpers localise scan|write`、translate-agent 调度都由本 skill 主进程执行。
+- LOCALISE 时按需 dispatch `search-agent`(kind=book,读 overview 搜 `localisations.zh.candidates`),主进程再用 `quasi-helpers localise write` 落盘;幂等于原书 ISBN。适用面:单本 book 的产物,和 author 跑落地的每本书(图回执带 `book_slugs` 名单)。
+- TRANSLATE(仅 paper,`translate: true` 时):dispatch `quasi:translate-agent`,prompt 只给 `slug`;产出 `processing/translations/{slug}-zh.pdf`。
 
 ## 工作流
 
@@ -61,7 +59,8 @@ description: Use when the user wants to acquire and analyse a book, paper, autho
 │    ├─ needs_seeds      → (仅 topic)AskUserQuestion 要检索词 → 补 seeds 或 final=true 重投
 │    ├─ audit_escalated  → 报告 escalated,交人工
 │    └─ 其余一律按失败报出(枚举 ok,不枚举失败态)
-├─ LOCALISE(仅 book,ok 后,图外):localise scan → pending 则 search-agent → localise write
+├─ LOCALISE(book,及 author 的 book_slugs;ok 后,图外):localise scan → pending 则 search-agent → localise write
+├─ TRANSLATE(仅 paper 且 translate=true;ok 后,图外):translate-agent → processing/translations/{slug}-zh.pdf
 └─ marple open 最终产物(best-effort)
 ```
 
@@ -142,14 +141,21 @@ if args.kind == "topic":
            + (f";{result.failures} 项获取失败" if result.failures else "")
            + ("" if result.dead_end else ";候选未枯竭,可再跑一次继续扩充"))
 
-# LOCALISE 中译本回填:仅 book(author 的书可日后按 process-book 单独补,v0 从略;paper 无)
-if args.kind == "book":
-    scan = Bash(f"quasi-helpers localise scan --path vault/books/{key} --json")
+# LOCALISE 中译本回填:单本 book 用 [key];author 用图回执的 book_slugs 名单(scan 按 ISBN 幂等,
+# 已回填过的书 pending=0 秒过,所以名单里混着历史入库的书也没有代价)。paper 无。
+localise_slugs = [key] if args.kind == "book" else (result.get("book_slugs") or [] if args.kind == "author" else [])
+for slug in localise_slugs:
+    scan = Bash(f"quasi-helpers localise scan --path vault/books/{slug} --json")
     if scan.pending > 0:
+        overview = f"vault/books/{slug}/00-overview.md"
         search = Agent("quasi:search-agent", foreground=True,
-                       prompt=f"kind: book\ncontext: read {product} and search metadata/localisations")
+                       prompt=f"kind: book\ncontext: read {overview} and search metadata/localisations")
         candidates_file = write_temp_json(search.localisations.zh.candidates)   # .quasi/temp/
-        Bash(f"quasi-helpers localise write --book-path {product} --candidates-file {candidates_file}")
+        Bash(f"quasi-helpers localise write --book-path {overview} --candidates-file {candidates_file}")
+
+# TRANSLATE 中译 PDF:仅 paper 显式要了 translate 才跑;translate-agent 按 slug 自定位 sources/{slug}.pdf。
+if args.kind == "paper" and args.get("translate") and not exists(f"processing/translations/{key}-zh.pdf"):
+    Agent("quasi:translate-agent", foreground=True, prompt=f"slug: {key}")
 
 # marple open 最终产物(best-effort UX;失败不影响流程)
 Bash(f"/opt/homebrew/bin/marple-cli open '{product}' || marple-cli open '{product}' || echo skip")
@@ -164,10 +170,9 @@ Bash(f"/opt/homebrew/bin/marple-cli open '{product}' || marple-cli open '{produc
 | 批量条目(author/topic) | 图内一次存在性探针(同三级匹配) | 已入库条目不 download / 不 extract / 不重分析,直接计入 synth 语料 |
 | 卡点重投 | `year_decision` / `seeds` / `final` | 用户拍板后带决定重投,只补未定的一步 |
 | LOCALISE | `.quasi/localise/cndouban.json#by_isbn[isbn]` | 已有 entry(found/none)则 helper scan 跳过 |
+| TRANSLATE | `processing/translations/{slug}-zh.pdf` | 文件已存在则跳过 |
 
 ## 输出
-
-与 `process-book` 等旧 skill **完全相同**的产物(同命名空间):
 
 ```
 sources/{book-slug}.{epub,pdf}
@@ -176,11 +181,10 @@ vault/books/{book-slug}/{00-overview.md,ch{slot}-*.md}
 vault/papers/{paper-slug}.md
 vault/authors/{author-name}.md
 vault/topics/{topic-slug}/{00-overview.md,01-resources.md}
+processing/translations/{paper-slug}-zh.pdf            ← 可选(translate: true)
 .quasi/localise/cndouban.json                          ← 中译本缓存(按原书 ISBN 幂等)
 ```
 
 topic 目录只放综述 + 阅读清单两页,不囤分析副本——分析在 `vault/papers/` 和 `vault/books/` 里,
-两页用 `[[wikilink]]` 指过去。老 `process-topic` 的 `manifest.json` 不再需要:编排状态活在图里,
-条目完成与否由 `router` 的回执直接给出,不靠轮询产物反推。
-
-新旧并行期:哪个 skill 生成的产物无差别——图内调的就是同一批 worker agent、写同一批路径。
+两页用 `[[wikilink]]` 指过去。编排状态活在图里,条目完成与否由 `router` 的回执直接给出,
+不靠轮询产物反推。

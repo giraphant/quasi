@@ -149,108 +149,6 @@ def test_audit_agent_documents_search_metadata_qa_contract():
     assert present == []
 
 
-def test_process_book_step0_runs_local_recall_before_search_agent():
-    text = (PLUGIN_ROOT / "skills" / "process-book" / "SKILL.md").read_text(encoding="utf-8")
-
-    local_pos = text.index("LOCAL RECALL + METADATA")
-    rg_pos = text.index("rg fuzzy recall")
-    search_pos = text.index('Agent("quasi:search-agent"')
-    download_pos = text.index('Agent("quasi:download-agent"')
-    assert local_pos < search_pos
-    assert rg_pos < search_pos
-    assert rg_pos < download_pos
-
-    required = [
-        "overview/source/chapter manifest/chapter outputs",
-        "vault/books",
-        "processing",
-        "sources",
-        "high-confidence",
-        "do not blindly skip",
-        "不要盲目跳过",
-    ]
-    missing = [token for token in required if token not in text]
-    assert missing == []
-
-
-def test_process_paper_accepts_pdf_preferred_text_source_contract():
-    text = (PLUGIN_ROOT / "skills" / "process-paper" / "SKILL.md").read_text(encoding="utf-8")
-
-    assert "sources/{slug}.pdf" in text
-    assert "sources/{slug}.txt" in text
-    assert "source_file" in text
-    assert "source_pdf" not in text
-
-
-def test_process_paper_step0_runs_local_recall_before_search_agent():
-    text = (PLUGIN_ROOT / "skills" / "process-paper" / "SKILL.md").read_text(encoding="utf-8")
-
-    local_pos = text.index("LOCAL RECALL + METADATA/SOURCE")
-    rg_pos = text.index("rg fuzzy recall")
-    search_pos = text.index('Agent("quasi:search-agent"')
-    download_pos = text.index('Agent("quasi:download-agent"')
-    assert local_pos < search_pos
-    assert rg_pos < search_pos
-    assert rg_pos < download_pos
-
-    required = [
-        "vault/papers/{slug}.md",
-        "sources/{slug}.pdf|txt",
-        ".quasi/papers/{slug}.search.json",
-        "PDF 优先",
-        "high-confidence",
-        "do not blindly skip",
-        "不要盲目跳过",
-    ]
-    missing = [token for token in required if token not in text]
-    assert missing == []
-
-
-def test_process_author_reconciles_local_artifacts_before_search_and_download():
-    text = (PLUGIN_ROOT / "skills" / "process-author" / "SKILL.md").read_text(encoding="utf-8")
-
-    local_pos = text.index("LOCAL AUTHOR/WORK RECALL")
-    search_pos = text.index('Agent("quasi:search-agent"')
-    reconcile_pos = text.index("reconcile_representative_works_with_local_artifacts")
-    download_pos = text.index('Agent("quasi:download-agent"')
-    assert local_pos < search_pos
-    assert reconcile_pos < download_pos
-
-    required = [
-        "vault/authors/{author_name}.md",
-        ".quasi/authors/{author_name}/manifest.json",
-        ".quasi/authors/{author_name}/books.json",
-        ".quasi/authors/{author_name}/papers.json",
-        "final/source/partial artifacts",
-        "completed/partial is inferred",
-        "不新增 manifest status",
-        "do not blindly skip",
-    ]
-    missing = [token for token in required if token not in text]
-    assert missing == []
-
-
-def test_process_topic_superset_agent_uses_shell_default_contract():
-    text = (PLUGIN_ROOT / "skills" / "process-topic" / "SKILL.md").read_text(encoding="utf-8")
-
-    assert '--agent "${QUASI_SUPERSET_AGENT:-copilot}"' in text
-    assert "superset_agent = env" not in text
-    assert "--agent claude" not in text
-
-
-def test_process_topic_dispatch_prompts_forbid_worktree_switching():
-    text = (PLUGIN_ROOT / "skills" / "process-topic" / "SKILL.md").read_text(encoding="utf-8")
-
-    required = [
-        "This is a vault/content processing task, not a software development task.",
-        "Do not create, enter, or switch git worktrees or branches.",
-        "Do not run git worktree, git switch, or git checkout.",
-        "If you believe a separate branch/worktree is needed, stop and report cwd + branch instead.",
-    ]
-    missing = [token for token in required if token not in text]
-    assert missing == []
-
-
 def test_orchestrate_noop_permission_always_carries_an_observable_exists_check():
     """A prompt may allow "no-op if output exists" only if it also tells the agent how to
     observe existence. Bare `test -e` prints nothing either way, so the agent defaults to
@@ -362,6 +260,22 @@ def test_process_material_gates_topic_dead_end_back_to_the_user():
 
     assert "needs_seeds" in text, "the dead-end status must reach a human gate"
     assert "suggested_queries" in text, "the widening hints must be shown, not swallowed"
+
+
+def test_process_material_carries_the_retired_skills_post_steps():
+    """0.49.0 retired the per-kind process-* skills; the two post-processing contracts they owned
+    must survive in process-material or they silently vanish: process-paper's opt-in translation
+    (translate-agent → processing/translations/{slug}-zh.pdf) and process-author's LOCALISE loop
+    over the books it landed (which needs the graph to report WHICH books — counts can't drive
+    a loop)."""
+    skill = (PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md").read_text(encoding="utf-8")
+    graph = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+
+    assert "book_slugs: okBooks" in graph, "author receipt must name the landed books, not just count them"
+    assert 'result.get("book_slugs")' in skill, "the LOCALISE loop must read the graph's book list"
+    assert "quasi:translate-agent" in skill, "paper translation must remain reachable"
+    assert "processing/translations/{slug}-zh.pdf" in skill or "processing/translations/{key}-zh.pdf" in skill
+    assert "实验" not in skill, "the skill is no longer experimental; stale framing misroutes the model"
 
 
 def test_orchestrate_retries_every_receipt_reading_agent():

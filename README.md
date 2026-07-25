@@ -30,10 +30,7 @@ active skill 正文只保留运行时需要的信息。
 
 | Skill | 功能 |
 |---|---|
-| `process-book` | 自动获取图书,提取章节,逐章分析并生成全书综述 |
-| `process-paper` | 搜索/下载/分析单篇论文 |
-| `process-author` | 获取代表作品并生成学者档案 |
-| `process-topic` | 主题语料处理 |
+| `process-material` | 统一采集→分析编排图:book(章节分析+全书综述)/ paper(单篇分析,可选中译)/ author(学者档案)/ topic(主题综述+阅读清单) |
 | `process-talk` | 录制转写(多引擎集成)+ 结构化摘要入库 `vault/talks/` |
 | `wrap-up` | draft 校对 + 引文审查 + references.bib |
 

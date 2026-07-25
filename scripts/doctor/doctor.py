@@ -108,14 +108,7 @@ EXTERNAL_PROFILES = {
         },
     ],
     "translate": [],
-    "orchestration": [
-        {
-            "name": "superset",
-            "kind": "command",
-            "required": False,
-            "reason": "process-topic delegated agent dispatch",
-        },
-    ],
+    "orchestration": [],
 }
 
 PROFILE_CHOICES = ["all", "core", *EXTERNAL_PROFILES.keys()]

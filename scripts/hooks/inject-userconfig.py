@@ -9,8 +9,7 @@ processes. Bash tool subprocesses do NOT get those env vars.
 This hook bridges that gap. It runs in the hook subprocess (which does get
 the env), inspects the Bash command Claude is about to run, and — for
 `quasi-*` commands — prepends a `QUASI_<KEY>='<value>' ...` env prefix to
-the command. `superset agents create` dispatches get only the Superset-specific
-option. Other commands pass through untouched.
+the command. Other commands pass through untouched.
 
 Net effect: quasi scripts can `os.environ['QUASI_X']` and get the values
 the user set at plugin install time, including sensitive ones stored in
@@ -38,18 +37,12 @@ _KEYS = [
     "IMMERSIVE_AUTH_KEY",
     "KAGI_SESSION_TOKEN",
     "SONIOX_API_KEY",
-    "SUPERSET_AGENT",
 ]
-_SUPERSET_KEYS = ["SUPERSET_AGENT"]
 
 # Match command words at start of line/string or after shell separators.
 # Detection runs against text with quoted spans blanked out, so prompt text like
 # `--prompt 'Run quasi-search'` does not trigger broad config injection.
 _QUASI_CMD = re.compile(r"(?:^|[\s;&|`(])quasi-")
-# Current Superset CLI exposes `agents create` (and `agents list`); there is no
-# `agents run`. Dispatches go through `agents create`, so that is what we inject
-# QUASI_SUPERSET_AGENT for.
-_SUPERSET_AGENTS_CREATE = re.compile(r"(?:^|[\s;&|`(])superset\s+agents\s+create(?:$|[\s;&|`)])")
 
 
 def _blank_quoted_spans(cmd: str) -> str:
@@ -86,12 +79,10 @@ def main() -> None:
 
     cmd = payload.get("tool_input", {}).get("command", "")
     unquoted_cmd = _blank_quoted_spans(cmd)
-    is_quasi = bool(_QUASI_CMD.search(unquoted_cmd))
-    is_superset_agents_create = bool(_SUPERSET_AGENTS_CREATE.search(unquoted_cmd))
-    if not cmd or not (is_quasi or is_superset_agents_create):
+    if not cmd or not _QUASI_CMD.search(unquoted_cmd):
         return
 
-    keys = _KEYS if is_quasi else _SUPERSET_KEYS
+    keys = _KEYS
     exports: list[str] = []
 
     # Propagate the plugin path vars too: Bash-tool subprocesses don't inherit

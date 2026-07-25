@@ -36,6 +36,12 @@ DEAD_NAMES = [
     "write_policy",
     "output_schema",
     ".quasi/audit/translations.json",
+    "quasi:process-book",
+    "quasi:process-paper",
+    "quasi:process-author",
+    "quasi:process-topic",
+    "superset agents create",
+    "QUASI_SUPERSET_AGENT",
 ]
 
 

@@ -267,6 +267,7 @@ async function processAuthor(name, m) {
   }
 
   return { name, status: 'ok', books: okBooks.length, papers: okPapers.length,
+    book_slugs: okBooks,   // 入口 skill 的 LOCALISE 循环按这份名单回填中译本;localise scan 按 ISBN 幂等,重复跑零成本
     book_failures: res.filter(r => r.kind === 'book' && r.status !== 'ok').length,
     paper_failures: res.filter(r => r.kind === 'paper' && r.status !== 'ok').length,
     year_warnings: yearWarnings.length ? yearWarnings : null }

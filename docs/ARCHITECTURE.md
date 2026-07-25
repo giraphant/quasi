@@ -79,10 +79,7 @@ active skills.
 
 ## Active Skills
 
-- `process-book`
-- `process-paper`
-- `process-author`
-- `process-topic`
+- `process-material`
 - `wrap-up`
 
 `process-journal` is archived under `deprecated/skills/` until journal
