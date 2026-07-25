@@ -61,7 +61,8 @@ const PROBE_SCHEMA = { type: 'object', properties: {
 // synth 的 chapters_analyzed 是**另一个 agent 实际 Glob 过磁盘**得出的数 —— 拿它跟 extract 出的
 // 章数对账,比信 analyse 自报可靠得多(自报正是上面骗过图的那一环)。
 const AN_SCHEMA = { type: 'object', required: ['status'], properties: {
-  status: { type: 'string' }, notes: { type: 'string' }, output: { type: 'string' } } }
+  status: { type: 'string' }, notes: { type: 'string' }, output: { type: 'string' },
+  needs_ocr: { type: 'boolean' } } }
 const SY_SCHEMA = { type: 'object', properties: {
   status: { type: 'string' }, inputs_analyzed: { type: 'number' }, chapters_analyzed: { type: 'number' } } }
 const OCR_SCHEMA = { type: 'object', required: ['status'], properties: {
@@ -165,10 +166,14 @@ async function processPaper(slug, m) {
   let an = await retryNull(paperAnalysePrompt(slug, m, src),
     { agentType: 'quasi:analyse-agent', label: `analyse:${slug}`, schema: AN_SCHEMA }, OVERWRITE)
 
-  // 扫描版兜底 ── 无文本层的 PDF,analyse-agent 按契约返回 status:error + notes"需 OCR"
+  // 扫描版兜底 ── 无文本层的 PDF,analyse-agent 按契约返回 status:error + needs_ocr:true
   // (明令不许凭训练知识补完)。书路径早有 quasi-extract ocr,论文路径原来到此直接失败
   // (Bowker biodiversity 2000)。补一段:OCR 出带文本层的 PDF,拿它重跑 analyse。
-  if (an && an.status !== 'success' && /OCR|扫描|图像|scan/i.test(an.notes || '')) {
+  // 判据只认结构化的 needs_ocr;自由文本正则是过渡期兜底 ── 0.48.0 topic E2E 里两篇 Star
+  // 论文正是"需 OCR"写进了 output、notes 换了措辞,只测 notes 的正则零命中,两篇静默丢失。
+  // 故意 fail-open:多跑一次 OCR 只浪费几分钟,漏跑一次是整篇论文无声消失。
+  if (an && an.status !== 'success' &&
+      (an.needs_ocr === true || /OCR|扫描|图像|scan/i.test(`${an.notes || ''} ${an.output || ''}`))) {
     const ocrPath = `.quasi/temp/${slug}.ocr.pdf`
     const ocr = await retryNull(ocrPrompt(src, ocrPath),
       { agentType: 'general-purpose', label: `ocr:${slug}`, schema: OCR_SCHEMA })

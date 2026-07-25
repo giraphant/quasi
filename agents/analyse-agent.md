@@ -61,7 +61,9 @@ model: opus
   - 内容长度 ≥ 500 字符
   - 含可读正文(不是单纯的 PDF 元数据 / 乱码 / 仅页眉页脚)
 
-  失败时直接走"输出协议"返回 `status: error`,notes 写"PDF 文本提取失败(疑似图像/扫描版),需 OCR 或人工处理:{input}"。**不得继续 Step 2,不得凭训练数据知识补完。**
+  失败时直接走"输出协议"返回 `status: error` **且 `needs_ocr: true`**,notes 写"PDF 文本提取失败(疑似图像/扫描版),需 OCR 或人工处理:{input}"。**不得继续 Step 2,不得凭训练数据知识补完。**
+
+  `needs_ocr` 是调用方据以决定要不要走 OCR 重跑的**唯一结构化信号**:notes 是自由文本,措辞变了调用方就接不住。只要是"PDF 没有可读文本层"这一类失败就填 `true`;其它失败(文件不存在、路径错、写盘失败)填 `false` 或省略。
 
 - **T 类(讲座转写)**:不走 pdftotext。Read `transcript_path`(主转写)与 `per_engine` 数组里的**每一个** SRT,按下方 `<talk_mode>` 交叉比对后分析。
 
@@ -384,6 +386,7 @@ ANALYZE_RESULT:
 - output: {output 路径}
 - type: A | B | T
 - status: success | error
+- needs_ocr: true | false   (仅 status: error 时有意义;PDF 无可读文本层 → true)
 - notes: {错误原因,仅在 status: error 时填写}
 ```
 </output_protocol>

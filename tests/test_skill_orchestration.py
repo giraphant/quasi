@@ -299,6 +299,20 @@ def test_process_material_reports_any_status_that_is_not_ok():
     assert '("year_mismatch", "year_ambiguous")' in text
 
 
+def test_orchestrate_paper_ocr_fallback_reads_a_structured_flag():
+    """0.48.0 topic E2E: both Star papers were scans; analyse-agent put "需 OCR" in the receipt's
+    `output` and paraphrased `notes`, so a regex over `notes` alone matched nothing, no ocr agent
+    ever spawned, and both papers were silently dropped. Free text is not a control signal."""
+    text = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+
+    assert "needs_ocr: { type: 'boolean' }" in text, "AN_SCHEMA must carry the structured flag"
+    assert "an.needs_ocr === true" in text, "the OCR gate must branch on the flag, not on prose"
+    assert "/OCR|扫描|图像|scan/i.test(an.notes || '')" not in text, "the notes-only regex is the bug"
+
+    contract = (PLUGIN_ROOT / "agents" / "analyse-agent.md").read_text(encoding="utf-8")
+    assert "needs_ocr" in contract, "the agent must be told to emit the flag the graph reads"
+
+
 def topic_body(text: str) -> str:
     start = text.index("async function processTopic(")
     return text[start:text.index("\n// ── prompt builders", start)]
