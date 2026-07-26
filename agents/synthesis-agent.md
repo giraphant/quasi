@@ -40,14 +40,7 @@ model: opus
 - `output_path`: 通常 `vault/authors/{author_name}.md`。
 
 **`mode: topic`**:
-- `source_name`: 主题名。
-- `analysis_paths`: 分析文件路径列表。主题语料散在 `vault/papers/*.md`、
-  `vault/books/{slug}/00-overview.md`、`vault/talks/{slug}/talk.md`,没有单一目录可 glob,
-  由调用方直接给精确路径表。
-- `analysis_dir`: `analysis_paths` 的替代(语料同在一个目录时)。都给以 `analysis_paths` 为准。
-- `output_path`: 综合报告路径。
-- `reading_list_path`: optional。
-- `preamble`: optional 分析立场。
+- mode: topic 现在按 `page: spine | dossier` 分派,逐页字段见 §T(不再使用 analysis_dir/preamble 的旧平铺形态)。
 
 ## 执行流程(分派)
 
@@ -150,7 +143,7 @@ subquestions,id、标题、顺序照抄,不许重排、合并或自创聚类。
 
 ### T1. page: dossier(毕业子问题的专章)
 
-输入:`subq_id, subq_question, analysis_paths, output_path, topic`。
+输入:`subq_id, subq_question, analysis_paths, output_path, topic`(`topic` 为上级主题名,仅作定位语境,不进 frontmatter)。
 
 1. Read `analysis_paths`(只有本聚类的语料;读取预算同 §A1 第 1 步:先 `wc -c`,
    ≤300000 字节全文读,超了每篇抽 frontmatter + `## 核心论点` + `## 关键概念`)。
@@ -202,6 +195,10 @@ output_path, reading_list_path`。
 
 3. 生成 `{reading_list_path}`(01-resources):按子问题分节的阅读清单,每节列该聚类
    语料(链接 + 一句定位),末节「推荐追踪的专著」(10-15 本,按优先级)。
+   「毕业子问题的成员从 outline 的 `subquestions[].items` 取(spine 本就 Read `outline_path`):按
+   slug 在 `corpus_paths` 里对应其产物路径(book → `vault/books/{slug}/00-overview.md`,paper →
+   `vault/papers/{slug}.md`,talk → `vault/talks/{slug}/talk.md`),逐条列入该子问题小节——毕业不等于
+   从阅读清单消失。」
 
 <frontmatter_schema>
 required: type=topic, title(min=2 max=280), kind(overview|resources|dossier)
