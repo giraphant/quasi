@@ -9,11 +9,20 @@ dossier 页(NN-{subq}.md)是毕业子问题的专章。设计见 docs/topic-stee
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .primitives import Title
+
+
+class SubqItem(BaseModel):
+    """子问题的一个语料成员(持久在 outline frontmatter,跨轮跨重跑累计)。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    kind: Literal["book", "paper", "talk"]
+    slug: str = Field(min_length=2, max_length=160)
 
 
 class Subquestion(BaseModel):
@@ -28,6 +37,7 @@ class Subquestion(BaseModel):
     dossier: bool = False
     page: Optional[str] = None
     theory_used: int = 0
+    items: Optional[List[SubqItem]] = None
 
 
 class TopicSchema(BaseModel):
