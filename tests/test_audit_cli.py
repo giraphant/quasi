@@ -251,6 +251,74 @@ themes:
     )
 
 
+def write_chapters(book_dir: Path, titles: list[str]) -> None:
+    book_dir.mkdir(parents=True, exist_ok=True)
+    for index, title in enumerate(titles, start=1):
+        (book_dir / f"ch{index:02d}-x.md").write_text(
+            f"---\ntype: chapter\ntitle: {title}\n---\n\n\u6b63\u6587\u3002\n",
+            encoding="utf-8",
+        )
+
+
+def test_audit_toc_report_lays_out_each_book_in_slot_order(tmp_path: Path):
+    project = tmp_path / "project"
+    books = project / "vault" / "books"
+    write_chapters(books / "mixed-1994", [f"\u7b2c{n}\u7ae0 x" for n in range(1, 12)])
+    write_chapters(books / "plain-1991", ["\u7cfb\u5217\u524d\u8a00", "\u7ed3\u8bba"])
+    paper = project / "vault" / "papers" / "not-a-chapter.md"
+    write_paper(paper, """type: paper
+title: Not A Chapter
+authors: [Aryn Martin]
+year: 2020
+journal: Endeavour""")
+    original = paper.read_text(encoding="utf-8")
+
+    result = run_audit(project, "--path", "vault", "--report", "toc")
+
+    assert result.returncode == 0, result.stderr
+    assert "## vault/books/mixed-1994 (11 chapters)" in result.stdout
+    assert "## vault/books/plain-1991 (2 chapters)" in result.stdout
+    # ch2 before ch10: the report reads like a table of contents, not like `ls`.
+    assert result.stdout.index("`ch02-x.md`") < result.stdout.index("`ch10-x.md`")
+    assert "Not A Chapter" not in result.stdout
+    assert "2 books, 13 chapters." in result.stdout
+    # The report tells its reader this is work, and which field to fix.
+    assert "\u4e0d\u8981\u6539\u6587\u4ef6\u540d" in result.stdout
+    # Read-only, same as --report fields.
+    assert paper.read_text(encoding="utf-8") == original
+    assert not (project / ".quasi" / "audit" / "typecheck-results.json").exists()
+
+
+def test_audit_toc_report_json_carries_titles_verbatim(tmp_path: Path):
+    project = tmp_path / "project"
+    book = project / "vault" / "books" / "bilingual-1987"
+    write_chapters(book, ["Introduction \u5bfc\u8a00", "The Objective Self", "4 \u751f\u4ea7\u4e2d\u7684\u77e5\u8bc6"])
+
+    result = run_audit(project, "--path", "vault", "--report", "toc", "--format", "json")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["version"] == "quasi-audit.chapter-toc.v1"
+    assert payload["summary"] == {"books": 1, "chapters": 3}
+    assert "`title`" in payload["guidance"]
+    entry = payload["books"][0]
+    assert entry["path"] == "vault/books/bilingual-1987"
+    # No verdict, no normalisation \u2014 whether this mix is a defect is the reader's call.
+    assert [c["title"] for c in entry["chapters"]] == [
+        "Introduction \u5bfc\u8a00", "The Objective Self", "4 \u751f\u4ea7\u4e2d\u7684\u77e5\u8bc6",
+    ]
+
+
+def test_audit_toc_report_missing_path_returns_two(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = run_audit(project, "--path", "vault", "--report", "toc")
+
+    assert result.returncode == 2
+    assert "path does not exist" in result.stdout
+
+
 def test_audit_rejects_removed_subcommands(tmp_path: Path):
     project = tmp_path / "project"
     project.mkdir()

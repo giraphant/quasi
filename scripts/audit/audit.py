@@ -612,18 +612,103 @@ def _build_payload(
     }
 
 
+# ─── chapter table of contents (--report toc) ─────────────────
+# Whether a book's chapter list is internally consistent — every title labelled or
+# none, every title translated or none, one numbering style throughout — is a
+# judgement, not a pattern. Every rule for it needs an exception (第X部分·第N章
+# numbers the part, `C.` is an initial not a roman 100, `MUD` is an acronym not a
+# 原文), and the exceptions outnumber the rule. So this reports no verdict: it lays
+# the list out in slot order and leaves the reading to a human or a model.
+TITLE_RE = re.compile(r"^title:[ \t]*(.+?)[ \t]*$", re.M)
+TYPE_RE = re.compile(r"^type:[ \t]*(.+?)[ \t]*$", re.M)
+# A report nobody is told to act on gets read as trivia. The reading task and the
+# one real trap (fix frontmatter `title`, never the ch__ filename) ride along in
+# the output, so any model or human that opens it knows this is work, not a listing.
+TOC_GUIDANCE = (
+    "逐本读这份目录,检查同一本书内部是否一致:章号标签、译名、中英渲染。"
+    "全都有或全都没有都算对,有的有有的没有、或格式不统一才是缺陷。"
+    "发现不一致请改章节文件 frontmatter 的 `title`;"
+    "文件名里的 `chNN-` 是来源顺序槽位,不是书的章号,不要改文件名。"
+)
+
+
+def _unquote(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
+def _frontmatter_field(text: str, pattern: re.Pattern[str]) -> str | None:
+    frontmatter, _, _ = _split_frontmatter_text(text)
+    match = pattern.search(frontmatter or "")
+    return _unquote(match.group(1)) if match else None
+
+
+def _slot_key(chapter: dict[str, str]) -> tuple[int, str]:
+    match = re.match(r"ch(\d+)", chapter["file"])
+    return (int(match.group(1)) if match else 1 << 30, chapter["file"])
+
+
+def _collect_chapter_tocs(target: Path, root: Path) -> list[dict[str, Any]]:
+    by_book: dict[Path, list[dict[str, str]]] = defaultdict(list)
+    paths = sorted(target.rglob("*.md")) if target.is_dir() else [target]
+    for path in paths:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if _frontmatter_field(text, TYPE_RE) != "chapter":
+            continue
+        by_book[path.parent].append({
+            "file": path.name,
+            "title": _frontmatter_field(text, TITLE_RE) or "",
+        })
+    return [
+        # Slot order, not lexicographic: ch2 before ch10, so the list reads like a ToC.
+        {"path": _rel_path(book_dir, root), "chapters": sorted(chapters, key=_slot_key)}
+        for book_dir, chapters in sorted(by_book.items())
+    ]
+
+
+def _run_toc_report(requested_path: str, target: Path, root: Path, output_format: str) -> int:
+    exists = target.exists()
+    books = _collect_chapter_tocs(target, root) if exists else []
+    if output_format == "json":
+        payload: dict[str, Any] = {
+            "version": "quasi-audit.chapter-toc.v1",
+            "guidance": TOC_GUIDANCE,
+            "target": {"requested": requested_path, "resolved": str(target), "exists": exists},
+            "summary": {"books": len(books), "chapters": sum(len(b["chapters"]) for b in books)},
+            "books": books,
+        }
+        if not exists:
+            payload["error"] = f"path does not exist: {target}"
+        print_json(payload)
+        return 0 if exists else 2
+
+    print("# Chapter tables of contents\n")
+    if not exists:
+        print(f"path does not exist: {target}")
+        return 2
+    print(f"{TOC_GUIDANCE}\n")
+    for book in books:
+        print(f"## {book['path']} ({len(book['chapters'])} chapters)\n")
+        for chapter in book["chapters"]:
+            print(f"- `{chapter['file']}` — {chapter['title']}")
+        print()
+    print(f"{len(books)} books, {sum(len(b['chapters']) for b in books)} chapters.")
+    return 0
+
+
 def _run_audit(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         prog="quasi-audit",
         description="Run diagnostic-first vault audit for agents.",
     )
     ap.add_argument("--path", default="vault", help="File or directory to audit")
-    ap.add_argument("--report", choices=["fields"], help="Run an explicit read-only report instead of the default diagnostic audit")
-    ap.add_argument("--format", choices=["markdown", "json"], help="Output format for --report fields")
+    ap.add_argument("--report", choices=["fields", "toc"], help="Run an explicit read-only report instead of the default diagnostic audit")
+    ap.add_argument("--format", choices=["markdown", "json"], help="Output format for --report")
     args = ap.parse_args(argv)
 
     if args.format is not None and args.report is None:
-        ap.error("--format requires --report fields")
+        ap.error("--format requires --report")
 
     root = _project_root()
     target = _resolve_target(args.path, root)
@@ -642,6 +727,9 @@ def _run_audit(argv: list[str]) -> int:
             root=root,
             output_format=args.format or "markdown",
         )
+
+    if args.report == "toc":
+        return _run_toc_report(args.path, target, root, args.format or "markdown")
 
     if not target.exists():
         print_json({
