@@ -144,53 +144,70 @@ H1 = `# {full_name}` (**无装饰后缀**)。
 
 ## §T (mode: topic) 综合报告
 
-### T1. 步骤
+topic 调用带 `page: spine | dossier`(缺省按 spine)。聚类结构的唯一权威是 outline
+(`outline_path`,steer-agent 维护;你**永远不写** 02-outline.md):聚类 = outline 的
+subquestions,id、标题、顺序照抄,不许重排、合并或自创聚类。
 
-1. 给了 `analysis_paths` 就 Read 那些文件;否则 Read `{analysis_dir}` 下所有 .md 分析。
-   **读取预算同 §A1 第 1 步**:先 `wc -c` 量总量,≤ 300000 字节全文读,超了就每篇只抽
-   frontmatter + `## 核心论点` + `## 关键概念` 三节(书概览与 talk 页全文读——它们本身是压缩)。
-   topic 语料随本地召回增长,规模没有上限,不设预算迟早在大主题上重演 author 的
-   "Prompt is too long" 双杀。
-2. 若提供 `reading_list_path`,从已读 frontmatter 和 H1 信息整理 reading list 并写入该路径。
-3. 按下方模板生成 `{output_path}`。
+### T1. page: dossier(毕业子问题的专章)
 
-<frontmatter_schema>
-required: type=topic, title(min=2 max=280), kind(overview|resources)
-- `title` 必填:人读页面标题,**与 H1 一致**,= 主题名。
-- frontmatter 不允许任何其它字段(`.strict()`)。
-</frontmatter_schema>
+输入:`subq_id, subq_question, analysis_paths, output_path, topic`。
 
-### 综合报告模板
+1. Read `analysis_paths`(只有本聚类的语料;读取预算同 §A1 第 1 步:先 `wc -c`,
+   ≤300000 字节全文读,超了每篇抽 frontmatter + `## 核心论点` + `## 关键概念`)。
+2. 生成 `{output_path}`,frontmatter `type: topic, kind: dossier, title: {subq_question}`。
+   正文模板:
 
 ```
-{preamble}
+# {subq_question}
 
+## 问题与现状
+(200-400 字:这个子问题问什么,证据到哪一步)
+
+## 证据综述
+(聚类内逐文综合,[[wikilink]] 指向 analysis_paths;theory 条目明确标注其锚定作用)
+
+## 缺口与下一步
+(还缺什么证据、往哪个方向找)
+```
+
+### T2. page: spine(00 门面 + 01 清单,永远重写、恒薄)
+
+输入:`source_name, topic, outline_path, corpus_paths, dossier_pages, inline_clusters,
+output_path, reading_list_path`。
+
+1. Read `outline_path` 取子问题顺序与覆盖度;逐个 Read `dossier_pages[].page` 的
+   frontmatter + `## 问题与现状` 一节(专章是压缩,不重读其语料);`inline_clusters[].paths`
+   按 §A1 读取预算读。
+2. 生成 `{output_path}`(00-overview):
+
+```
 主题: {topic}
 
 # {source_name} 综合报告
 
 ## 总体趋势
-(500-800 字, "{topic}" 方向的整体走向、阶段性变化、重点转移)
+(500-800 字:整体走向、阶段性变化、重点转移)
 
-## 主题聚类
+## 子问题地图
+### {subq.question}
+(已毕业 → 3-5 句摘要 + 指向专章的 [[wikilink]];未毕业 → 完整聚类段:涉及文献 /
+核心议题 / 关键概念,[[wikilink]] 指向语料)
 
-### 聚类1: {主题名}
-- 涉及文献: [列出]
-- 核心议题: ...
-- 关键概念: ...
-
-## 核心理论家图谱
-
-| 理论家 | 被引次数 | 主要著作 | 关联主题 |
-|--------|---------|---------|---------|
-
-## 推荐追踪的专著
-
-(基于引用频次和理论重要性, 10-15 本, 按优先级排序)
+## 缺口总览
+(按子问题列 coverage=gap|thin 的方向,来自 outline,不臆造)
 
 ## 对研究的启示
 (300-500 字)
 ```
+
+3. 生成 `{reading_list_path}`(01-resources):按子问题分节的阅读清单,每节列该聚类
+   语料(链接 + 一句定位),末节「推荐追踪的专著」(10-15 本,按优先级)。
+
+<frontmatter_schema>
+required: type=topic, title(min=2 max=280), kind(overview|resources|dossier)
+- `title` 必填:人读页面标题,**与 H1 一致**;spine 两页 = 主题名,dossier = 子问题。
+- frontmatter 不允许任何其它字段(`.strict()`)。kind: outline 归 steer-agent,不归本 agent。
+</frontmatter_schema>
 
 ---
 

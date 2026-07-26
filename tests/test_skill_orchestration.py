@@ -375,3 +375,17 @@ def test_steer_agent_contract_carries_fence_quota_and_outline_ownership():
     assert "kind: outline" in steer
     assert "STEER_RESULT" in steer and "web_tasks" in steer and "dirty" in steer
     assert "saturated" in steer and "dossier" in steer
+
+
+def test_synthesis_topic_mode_is_outline_pinned_and_paged():
+    """54 条平铺语料整篇重织是 0.49.x 综述'越滚越乱'的一半病根(另一半在采集)。§T 拆页:
+    dossier 每页只读本聚类语料(读预算结构性受控),spine 恒薄且聚类结构照抄 outline,
+    不再每次即兴。outline 页本身由 steer-agent 写,synth 不碰。"""
+    synth = (PLUGIN_ROOT / "agents" / "synthesis-agent.md").read_text(encoding="utf-8")
+
+    assert "page: spine" in synth and "page: dossier" in synth
+    assert "kind: dossier" in synth
+    assert "kind(overview|resources|dossier)" in synth, "outline 不在 synth 的可写 kind 里"
+    assert "inline_clusters" in synth and "dossier_pages" in synth
+    assert "照抄" in synth, "聚类 id/标题/顺序来自 outline,不许重排"
+    assert "子问题地图" in synth, "00 新模板围绕子问题"
