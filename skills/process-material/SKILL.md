@@ -146,10 +146,12 @@ if args.kind == "author":
            + (f";{len(result.year_warnings)} 本年份存疑" if result.get("year_warnings") else "")
            + (f";{result.book_failures}+{result.paper_failures} 项获取失败" if result.book_failures or result.paper_failures else ""))
 if args.kind == "topic":
-    report(f"主题完成:{result.items} 条语料 / {result.rounds} 轮滚雪球"
+    report(f"主题完成:{result.items} 条语料 / {result.rounds} 轮滚雪球;大纲 {result.outline}"
            + (f";其中 {result.recalled} 条来自库内召回" if result.get("recalled") else "")
            + (f";{result.failures} 项获取失败" if result.failures else "")
-           + ("" if result.dead_end else ";候选未枯竭,可再跑一次继续扩充"))
+           + (f";专章生成失败:{', '.join(result.dossiers_failed)},重跑一次即补" if result.get("dossiers_failed") else "")
+           + (";掌舵判饱和,已收口" if result.get("saturated") else
+              ("" if result.dead_end else ";候选未枯竭,可再跑一次继续扩充")))
 
 # LOCALISE 中译本回填:单本 book 用 [key];author / topic 用图回执的 book_slugs 名单(scan 按
 # ISBN 幂等,已回填过的书 pending=0 秒过,所以名单里混着历史入库的书也没有代价)。paper 无。
@@ -190,11 +192,13 @@ processing/chapters/{book-slug}/{manifest.json,*.txt}
 vault/books/{book-slug}/{00-overview.md,ch{slot}-*.md}
 vault/papers/{paper-slug}.md
 vault/authors/{author-name}.md
-vault/topics/{topic-slug}/{00-overview.md,01-resources.md}
+vault/topics/{topic-slug}/{00-overview.md,01-resources.md,02-outline.md,NN-*.md}
 processing/translations/{paper-slug}-zh.pdf            ← 可选(translate: true)
 .quasi/localise/cndouban.json                          ← 中译本缓存(按原书 ISBN 幂等)
 ```
 
-topic 目录只放综述 + 阅读清单两页,不囤分析副本——分析在 `vault/papers/`、`vault/books/`、
-`vault/talks/` 里,两页用 `[[wikilink]]` 指过去(讲座只可能来自图内本地召回,在线发现搜不到它们)。编排状态活在图里,条目完成与否由 `router` 的回执直接给出,
-不靠轮询产物反推。
+topic 目录 = 三页脊柱(00 门面 / 01 清单 / 02 研究大纲)+ 毕业子问题的专章 NN-*.md,
+不囤分析副本——分析在 `vault/papers/`、`vault/books/`、`vault/talks/` 里,各页用
+`[[wikilink]]` 指过去(讲座只可能来自图内本地召回,在线发现搜不到它们)。02-outline 是
+steer-agent 维护的掌舵状态,**用户可手改**,手改就是下次增量重跑的指令。编排状态活在图里,
+条目完成与否由 `router` 的回执直接给出,不靠轮询产物反推。

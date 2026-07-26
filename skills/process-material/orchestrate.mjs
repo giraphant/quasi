@@ -45,9 +45,25 @@ const SEARCH_SCHEMA = { type: 'object', properties: {
     slug: { type: 'string' }, title: { type: 'string' }, authors: { type: 'array' },
     year: {}, isbn: { type: 'string' }, doi: { type: 'string' },
     oa_url: { type: 'string' }, url: { type: 'string' }, journal: { type: 'string' } } } } } }
-// 滚雪球回执 = 候选表 + 枯竭时的拓宽建议词(死胡同卡点要把建议原样递给用户)。
-const REFS_SCHEMA = { type: 'object', properties: {
-  ...SEARCH_SCHEMA.properties, suggested_queries: { type: 'array', items: { type: 'string' } } } }
+// 掌舵回执 = 大纲状态 + 定向候选(带 subq/role 标签)+ 脏子问题名单 + 枯竭时的拓宽建议词
+// (死胡同卡点要把建议原样递给用户)。subquestions[].items 是全量成员表:图无 fs,
+// 专章 synth 的读单全靠它。web_tasks 本版只收不派,0.50.1 接 webcard。
+const STEER_SCHEMA = { type: 'object', required: ['subquestions'], properties: {
+  outline_written: { type: 'boolean' }, saturated: { type: 'boolean' },
+  subquestions: { type: 'array', items: { type: 'object', required: ['id', 'coverage'], properties: {
+    id: { type: 'string' }, question: { type: 'string' }, coverage: { type: 'string' },
+    dossier: { type: 'boolean' }, page: { type: 'string' },
+    items: { type: 'array', items: { type: 'object', required: ['slug'], properties: {
+      kind: { type: 'string' }, slug: { type: 'string' } } } } } } },
+  dirty: { type: 'array', items: { type: 'string' } },
+  candidates: { type: 'array', items: { type: 'object', required: ['slug'], properties: {
+    kind: { type: 'string' }, slug: { type: 'string' }, title: { type: 'string' },
+    authors: { type: 'array' }, year: {}, isbn: { type: 'string' }, doi: { type: 'string' },
+    oa_url: { type: 'string' }, journal: { type: 'string' },
+    subq: { type: 'string' }, role: { type: 'string' } } } },
+  web_tasks: { type: 'array', items: { type: 'object', properties: {
+    subq: { type: 'string' }, query: { type: 'string' }, note: { type: 'string' } } } },
+  suggested_queries: { type: 'array', items: { type: 'string' } } } }
 // 存在性探针回执:图无 fs,批量前用一个 agent 一次性查哪些产物已在 vault(避免重跑已完成的书/论文,
 // 尤其避免对已入库的书做破坏性重 extract)。vault_slug 非 null = 已做过;它可能与候选 slug 不同
 // (搜索侧 slug 漂移),下游必须用 vault_slug 读产物,否则会当成新书重跑 → 重复条目。
@@ -303,43 +319,39 @@ async function processAuthor(name, m) {
     year_warnings: yearWarnings.length ? yearWarnings : null }
 }
 
-// ── processTopic:discover → 滚雪球(探针 → parallel(items→router) → 摘核心引用)→ synth(topic) → audit。 ──
-// 老 process-topic 用 `superset agents create` 跨会话 fire-and-forget 派 process-{paper,book,author}:
-// 只回一个 sessionId,没有 transcript / status / result,完成与否只能靠 poll-agent 轮询 vault 产物
-// + agent 自写哨兵去**猜**。那正是这一整轮在修的 bug 类型(没有可观测信号就默认成功)。
-// 图内直接递归调 router,每个条目都有 schema 校验过的回执,于是 poll-agent / sentinel /
-// prompt-file / final_status 状态机整套机关一起消失。
+// ── processTopic:闭环掌舵(recall ∥ steer#seed → [探针 → parallel(items→router) → steer]* )
+//    → synth(dossier 脏页 + spine)→ audit。设计:docs/topic-steering-design.md。
+//    steer-agent 吞掉了旧的 topic 首搜与平面滚雪球:平面"与主题相关"爬行在书为主
+//    的库里向社科经典回退(0.49.x 三个手机 topic 病例),掌舵用子问题栅栏 + theory 配额治它。
 async function processTopic(slug, m) {
   phase('Topic')
   const desc = m.desc || m.topic_desc || slug
   const maxRounds = Number(m.maxRounds) || 3
   const perRound = Number(m.maxPerRound) || 8
 
-  // 1. 本地召回 + 在线发现,并行。两件事互不依赖:库里已有什么,与外面还有什么,是两个问题。
-  //    本地召回不是可有可无的优化——它是主题综述的**主要语料来源**。一个读书库里之所以有
-  //    这些书,正因为它们属于用户关心的主题;探针只覆盖"搜索恰好也找到了"的交集,库里其余
-  //    强相关作品会整批漏掉(0.48.1 topic E2E:6 部种子只有 1 部进了综述)。
-  const [rc, sr] = await parallel([
+  // 1. 本地召回 + 掌舵种子轮,并行。种子轮建/对账 02-outline.md(用户手改过就照改法走),
+  //    并给出首批定向候选——吞掉旧的 topic 首搜。召回结果第 1 轮末才进掌舵视野。
+  const [rc, st0] = await parallel([
     () => retryNull(vaultRecallPrompt(desc, perRound * 2),
       { phase: 'Topic', agentType: 'general-purpose', label: `recall:${slug}`, schema: RECALL_SCHEMA }),
-    () => retryNull(topicSearchPrompt(desc, perRound, m.seeds),
-      { phase: 'Topic', agentType: 'quasi:search-agent', label: `search-topic:${slug}`, schema: SEARCH_SCHEMA }),
+    () => retryNull(steerPrompt(slug, desc, 0, [], [], perRound, m.seeds),
+      { phase: 'Topic', agentType: 'quasi:steer-agent', label: `steer:${slug}:r0`, schema: STEER_SCHEMA }),
   ])
-  // 召回到的作品已经分析过,直接就是语料;它们的「## 核心引用」也参与第 1 轮滚雪球。
-  // talk 只可能来自召回(在线发现搜不到你录的讲座),不进 router;book/paper 之外的未知 kind 按 paper 兜底
+  let steer = st0 || { subquestions: [] }
   const local = ((rc && rc.items) || []).filter(i => i && i.slug)
     .map(i => ({ kind: i.kind === 'book' || i.kind === 'talk' ? i.kind : 'paper', slug: i.slug }))
-  let queue = ((sr && sr.candidates) || []).filter(c => c && c.slug)
+  let queue = ((steer.candidates) || []).filter(c => c && c.slug)
   if (!queue.length && !local.length) return { slug, status: 'no_works' }
 
   // 召回到的作品已分析过,直接进语料 —— 即便一轮都没跑起来也不会丢。
   const seen = new Set(local.map(i => i.slug)), ok = [...local], failures = []
-  let round = 0, suggested = null
+  const dirty = new Set()
+  let round = 0, suggested = null, saturated = false
   const isBook = c => (c.kind || 'paper') === 'book'
 
-  // 2. 滚雪球 loop-until-dry:候选枯竭或轮数用尽即停。轮数与每轮条数都有上界——
-  //    一个主题的引文网络是发散的,不设界就是无限 fan-out。
-  while (queue.length && round < maxRounds) {
+  // 2. 闭环滚动:采集 → 落地 → 掌舵(更新大纲、定向下一轮)。饱和或轮数用尽即停——
+  //    轮数与每轮条数仍有上界,引文网络是发散的,掌舵不取代硬上限。
+  while (queue.length && round < maxRounds && !saturated) {
     round++
     const batch = queue.filter(c => !seen.has(c.slug)).slice(0, perRound)
     batch.forEach(c => seen.add(c.slug))
@@ -374,40 +386,50 @@ async function processTopic(slug, m) {
     //   规范性在源头保证,不留给 synthesis-agent 自行去重。
     ok.push(...roundOk)
     failures.push(...res.filter(r => r.status !== 'ok').map(r => ({ slug: r.slug, status: r.status })))
-    // 第 1 轮的滚雪球源并上本地召回:那些正文的「## 核心引用」同样是这个主题的引文网络,
-    // 而且它们往往是库里最相关的作品,漏掉等于把雪球起点砍掉一半。
-    const snowSrc = round === 1 ? [...local, ...roundOk] : roundOk
-    if (!snowSrc.length) break   // 没有正文可摘引用,滚不动了
 
-    // 滚雪球:读本轮落地正文的「## 核心引用」→ 下一轮候选。
-    // 交给 search-agent 而不是通用 agent:正文里的引用只有"作者-年-标题",要变成可处理的候选
-    // 必须补上 doi/isbn(下游 download 靠它),那正是 search-agent 的活,而且它只读不写。
-    const refs = await retryNull(snowballPrompt(desc, snowSrc, [...seen], perRound),
-      { phase: 'Topic', agentType: 'quasi:search-agent', label: `snowball:${slug}:r${round}`, schema: REFS_SCHEMA })
-    queue = ((refs && refs.candidates) || []).filter(c => c && c.slug && !seen.has(c.slug))
-    suggested = (refs && refs.suggested_queries) || null
-    log(`${slug}: 第 ${round} 轮 +${roundOk.length} 条(累计 ${ok.length}),下轮候选 ${queue.length}`)
+    // 第 1 轮并上本地召回:那些正文的引用节同样是这个主题的引文网络,而且往往是库里
+    // 最相关的作品,漏掉等于把雪球起点砍掉一半。
+    const snowSrc = round === 1 ? [...local, ...roundOk] : roundOk
+    steer = await retryNull(steerPrompt(slug, desc, round, snowSrc, [...seen], perRound, null),
+      { phase: 'Topic', agentType: 'quasi:steer-agent', label: `steer:${slug}:r${round}`, schema: STEER_SCHEMA })
+      || steer   // 掌舵两连死:保留上一轮回执,循环自然收口,不让 null 毁掉成员表
+    ;(steer.dirty || []).forEach(d => dirty.add(d))
+    queue = ((steer.candidates) || []).filter(c => c && c.slug && !seen.has(c.slug))
+    saturated = !!steer.saturated
+    suggested = steer.suggested_queries || null
+    log(`${slug}: 第 ${round} 轮 +${roundOk.length} 条(累计 ${ok.length}),下轮候选 ${queue.length}`
+      + (saturated ? ';掌舵判饱和,收口' : ''))
   }
 
-  // 3. 死胡同卡点:候选枯竭且语料太薄 → 不硬写一篇没底子的综述,冒泡让入口 skill 问用户补种子词。
-  //    用户不想补时,入口带 meta.final=true 原样重投直接收口(条目全幂等,重跑几乎零成本)。
+  // 3. 死胡同卡点:候选枯竭且语料太薄 → 不硬写一篇没底子的综述,冒泡问用户补种子词。
   const minItems = Number(m.minItems) || 3
   if (!m.final && !queue.length && ok.length < minItems)
     return { slug, status: 'needs_seeds', collected: ok.length, rounds: round,
              suggested_queries: suggested, failures: failures.length }
   if (!ok.length) return { slug, status: 'all_failed', tried: failures.length }
 
-  // 4. synth(topic):综述 + 阅读清单两页。回执判死活,没写出来就别 audit 一个不存在的文件。
-  const sy = await retryNull(topicSynthPrompt(slug, desc, ok),
+  // 4a. 专章 synth:只重写脏的已毕业子问题;steer 全程没报过脏(受限回执)→ 全部重写兜底。
+  const subqs = (steer.subquestions || []).filter(s => s && s.id)
+  const dossiers = subqs.filter(s => s.dossier && s.page)
+  const dirtyDossiers = dossiers.filter(s => !dirty.size || dirty.has(s.id))
+  const dres = await parallel(dirtyDossiers.map(s => () =>
+    retryNull(topicDossierSynthPrompt(slug, desc, s),
+      { phase: 'Topic', agentType: 'quasi:synthesis-agent',
+        label: `synth-dossier:${s.id}:${slug}`, schema: SY_SCHEMA }, OVERWRITE)))
+  const dossiersFailed = dirtyDossiers.filter((s, i) => !dres[i] || dres[i].status === 'error')
+    .map(s => s.id)
+
+  // 4b. 脊柱 synth:00+01 永远重写。回执判死活,没写出来就别 audit 一个不存在的文件。
+  const sy = await retryNull(topicSpineSynthPrompt(slug, desc, ok, subqs),
     { phase: 'Topic', agentType: 'quasi:synthesis-agent', label: `synth-topic:${slug}`, schema: SY_SCHEMA }, OVERWRITE)
   if (!sy || sy.status === 'error')
     return { slug, status: 'synth_failed', items: ok.length, notes: sy && sy.notes }
 
-  // 5. audit + 一次 escalation 回环
+  // 5. audit + 一次 escalation 回环(escalation 只重打脊柱;专章有回执兜底,再烂有下轮重跑)
   let au = await retryNull(`path: vault/topics/${slug}`,
     { phase: 'Topic', agentType: 'quasi:audit-agent', label: `audit-topic:${slug}`, schema: AU_SCHEMA })
   if (((au && au.escalated) || []).length) {
-    await guard(topicSynthPrompt(slug, desc, ok) + `\nreason: audit escalated`,
+    await guard(topicSpineSynthPrompt(slug, desc, ok, subqs) + `\nreason: audit escalated`,
       { phase: 'Topic', agentType: 'quasi:synthesis-agent', label: `regen-topic:${slug}` })
     au = await retryNull(`path: vault/topics/${slug}`,
       { phase: 'Topic', agentType: 'quasi:audit-agent', label: `audit2-topic:${slug}`, schema: AU_SCHEMA })
@@ -415,9 +437,12 @@ async function processTopic(slug, m) {
   }
 
   return { slug, status: 'ok', items: ok.length, recalled: local.length, rounds: round,
+           outline: `vault/topics/${slug}/02-outline.md`, saturated,
+           subquestions: subqs.map(s => ({ id: s.id, coverage: s.coverage, dossier: !!s.dossier })),
+           dossiers_failed: dossiersFailed,
            // topic 落地的书同样要中译本回填;和 author 一致,LOCALISE 循环需要名单不是计数
            book_slugs: [...new Set(ok.filter(i => i.kind === 'book').map(i => i.slug))],
-           failures: failures.length, dead_end: !queue.length }
+           failures: failures.length, dead_end: !queue.length || saturated }
 }
 
 // ── prompt builders:薄,只承载各 agent 期望的契约字段 ──
@@ -568,49 +593,47 @@ function vaultRecallPrompt(desc, max) {
 一条都没有就返回 {items:[]}。`
 }
 
-function topicSearchPrompt(desc, count, seeds) {
-  return `task: find the ${count} most important papers and books on the topic "${desc}", sorted by citations
-context:
-  kind: paper
-  topic: ${desc}${seeds && seeds.length ? `
-  extra_queries: ${JSON.stringify(seeds)}   # 用户补的种子检索词,优先照这些搜` : ''}
-constraints:
-  count: ${count}
-  sort: citations
-输出 candidates[],每项带 kind(book|paper)、canonical slug ({author-surname}-{short-title}-{year})、
-title、authors、year;书带 isbn,论文带 doi、oa_url、journal。查不到标识符的不要输出——
-下游要靠标识符下载。`
+// 掌舵 prompt:薄,只带变量;栅栏/配额/毕业规则全在 agents/steer-agent.md 合同里。
+function steerPrompt(slug, desc, round, snowSrc, seenSlugs, want, seeds) {
+  const books = snowSrc.filter(i => i.kind === 'book').map(i => i.slug)
+  const rest = snowSrc.filter(i => i.kind !== 'book').map(itemPath)
+  return `topic_slug: ${slug}
+topic: ${desc}
+outline_path: vault/topics/${slug}/02-outline.md
+round: ${round}
+want: ${want}
+seen_slugs: ${JSON.stringify(seenSlugs)}
+snowball_book_slugs: ${JSON.stringify(books)}
+snowball_paths: ${JSON.stringify(rest)}${seeds && seeds.length ? `
+extra_queries: ${JSON.stringify(seeds)}   # 用户补的种子检索词,优先照这些搜` : ''}`
 }
-function snowballPrompt(desc, roundOk, seenSlugs, want) {
-  // 书的「## 核心引用」在各章节分析 ch*.md 里 —— 00-overview 的 §B2 契约根本没有这一节,
-  // 指过去只会空手而归:0.49.6 前书在雪球里是哑的,书为主的库等于只靠论文在滚。
-  const books = roundOk.filter(i => i.kind === 'book').map(i => i.slug)
-  const rest = roundOk.filter(i => i.kind !== 'book').map(itemPath)
-  return `task: 从下列已完成的分析里摘出关键引用文献,作为主题 "${desc}" 的下一轮候选,目标 ${want} 条。
-1. 收集引用条目,只读引用节,其余不用读:${books.length ? `
-   - 书(核心引用在各章节分析里,不在 00-overview):对每个 slug 跑
-     \`rg -A 30 '^## 核心引用' vault/books/{slug}/ch*.md\`;slug:${JSON.stringify(books)}` : ''}${rest.length ? `
-   - 论文/讲座:逐个 Read,只看 \`## 核心引用\`(论文)或 \`## 文献人物\`(讲座)一节:
-     ${JSON.stringify(rest)}` : ''}
-2. 汇总:跨文被多次引用的优先;只被引一次、但明显是该主题奠基/经典文献的也收。与主题无关的丢弃。
-3. 排除已经处理过的 slug:${JSON.stringify(seenSlugs)}
-4. forward 一步:对第 2 步里被引最多的 2-3 部作品,各跑一次 quasi-search paper
-   (查询词 = 该作品短标题 + 主题关键词),把回应/发展它们的较新文献并入候选。
-5. 过滤后仍不足 ${want} 条 → 自拟 2-3 个拓宽检索词就地 quasi-search 补足;补完还不够就少给,不硬凑。
-6. 对候选用 quasi-search 补标识符(书 isbn,论文 doi/oa_url/journal);补不到的丢弃。
-输出 candidates[],每项带 kind(book|paper)、canonical slug、title、authors、year 及标识符。
-一条新的都没有就返回空 candidates,并在 suggested_queries[] 给 2-3 个能拓宽该主题的检索词。
-只读不写,不要碰 vault/。`
-}
-function topicSynthPrompt(slug, desc, ok) {
+// 专章:每页只读本聚类语料 —— 读预算结构性受控(0.49.4 的爆 context 类)。
+function topicDossierSynthPrompt(slug, desc, s) {
   return `mode: topic
+page: dossier
+topic: ${desc}
+subq_id: ${s.id}
+subq_question: ${s.question || s.id}
+analysis_paths: ${JSON.stringify((s.items || []).map(itemPath))}
+output_path: vault/topics/${slug}/${s.page}
+overwrite: true`
+}
+// 脊柱:00 门面 + 01 清单,永远重写、恒薄;聚类结构照抄 outline,不许 synth 即兴。
+function topicSpineSynthPrompt(slug, desc, ok, subqs) {
+  const graduated = subqs.filter(s => s.dossier && s.page)
+    .map(s => ({ id: s.id, page: `vault/topics/${slug}/${s.page}` }))
+  const inline = subqs.filter(s => !(s.dossier && s.page))
+    .map(s => ({ id: s.id, question: s.question || s.id, paths: (s.items || []).map(itemPath) }))
+  return `mode: topic
+page: spine
 source_name: ${desc}
 topic: ${desc}
-analysis_paths: ${JSON.stringify(ok.map(itemPath))}
+outline_path: vault/topics/${slug}/02-outline.md
+corpus_paths: ${JSON.stringify(ok.map(itemPath))}
+dossier_pages: ${JSON.stringify(graduated)}
+inline_clusters: ${JSON.stringify(inline)}
 output_path: vault/topics/${slug}/00-overview.md
 reading_list_path: vault/topics/${slug}/01-resources.md
-两页 frontmatter 都要 type: topic 与 title: ${desc};00-overview 用 kind: overview,
-01-resources 用 kind: resources。正文引用语料一律用 [[wikilink]] 指向上面 analysis_paths 里的路径。
 overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-op 会让综述停在旧版本。`
 }
 

@@ -168,7 +168,7 @@ def test_orchestrate_reads_every_receipt_it_branches_on():
     text = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
 
     for schema in ("DL_SCHEMA", "EX_SCHEMA", "AU_SCHEMA", "SEARCH_SCHEMA", "PROBE_SCHEMA",
-                   "AN_SCHEMA", "SY_SCHEMA", "OCR_SCHEMA", "REFS_SCHEMA", "RECALL_SCHEMA"):
+                   "AN_SCHEMA", "SY_SCHEMA", "OCR_SCHEMA", "STEER_SCHEMA", "RECALL_SCHEMA"):
         assert f"const {schema} =" in text, f"{schema} must be defined"
         assert f"schema: {schema}" in text, f"{schema} is defined but never attached to an agent() call"
 
@@ -253,11 +253,31 @@ def test_orchestrate_topic_recalls_the_vault_before_it_searches_online():
     # Talk pages carry their citations under `## 文献人物`, not `## 核心引用`.
     assert "vault/books vault/papers vault/talks" in text, "recall must sweep talks too"
     assert "vault/talks/${it.slug}/talk.md" in text, "itemPath must resolve talk corpus entries"
-    assert "## 文献人物" in text, "snowball must read the talk page's citation section"
+    steer_contract = (PLUGIN_ROOT / "agents" / "steer-agent.md").read_text(encoding="utf-8")
+    assert "## 文献人物" in steer_contract, "steer must read the talk page's citation section"
     # The probe hands back vault_slugs; `seen` only guards candidate slugs, so a recalled work
     # rediscovered online re-enters `ok` and the synth contract carries duplicate paths
     # (0.48.2 E2E: 2 of 16 analysis_paths were duplicates). Corpus conformance is the graph's job.
     assert ".filter(i => !ok.some(o => o.slug === i.slug))" in body, "ok must stay duplicate-free"
+
+
+def test_orchestrate_topic_steers_by_outline():
+    """0.49.x 的平面滚雪球在书为主的库里向社科经典回退(Kopytoff/Thompson/Gereffi 进了
+    手机形态主题),且综述每轮重织结构。闭环:steer-agent 掌舵、outline 持久、synth 分页。"""
+    graph = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+    body = topic_body(graph)
+
+    assert "quasi:steer-agent" in body, "掌舵 agent 必须在图里"
+    assert "02-outline.md" in graph, "outline 路径由图指定"
+    assert "topicSearchPrompt" not in graph, "topic 首搜已被 steer 种子轮吞掉"
+    assert "snowballPrompt" not in graph, "平面滚雪球已被 steer 吞掉"
+    assert "steer:${slug}:r0" in graph and "steer:${slug}:r${round}" in graph, "种子轮与滚动轮 label 可区分"
+    assert "STEER_SCHEMA" in graph, "掌舵回执必须有 schema,散文读不到字段"
+    assert "page: dossier" in graph and "page: spine" in graph, "synth 分页派发"
+    assert "synth-dossier" in body and "synth-topic:${slug}" in body
+    assert "dirty" in body, "只重写脏专章"
+    assert "saturated" in body, "掌舵可在轮数用尽前收口"
+    assert "subq" in graph and "role" in graph, "候选带子问题与角色标签"
 
 
 def test_process_material_gates_topic_dead_end_back_to_the_user():
