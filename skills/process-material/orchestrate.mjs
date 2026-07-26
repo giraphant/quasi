@@ -88,8 +88,33 @@ const analysedCount = (sy) => Number(sy && sy.chapters_analyzed) || 0
 // analyse-ocr 报 success + notes"目标文件已存在,按幂等协议 no-op",紧接着的 audit 却
 // target.exists=false)。只读/命令型 agent(download/extract/audit/probe/search)不加。
 const OVERWRITE = '\noverwrite: true'
+
+// agent() 没有上界。subagent 死在 provider 错误上时,harness 会进入不可观测的重试退避,
+// 有时**永远**退不出来:0.49.x 的 topic E2E 里三个 extract-agent 在 13:35/13:37/13:51
+// 就把 "API Error: 524 / TLS handshake timeout" 写进了各自 transcript,而 agent() 直到
+// 一小时后被人手杀都没返回 —— retryNull 的 ?? 永远等不到那个 null,parallel() 的栅栏
+// 就卡在那里,整张图停摆几个小时。所以计时归主进程管,不能指望 harness 报死。
+// 45 分钟:202 次真实运行里跑完的最长 32 分钟(extract-agent 拆大部头),其余 p90 都在
+// 11 分钟内 —— 高得不会腰斩活着的 agent,低得不会让一次挂死吃掉一整夜。
+// ponytail: 单一常量,不做 per-agentType 表;真有 agent 常态超 45 分钟再拆。
+// 超时的 agent 杀不掉(沙箱没有 AbortSignal),它会继续占着并发槽直到自己结束;
+// 这里只保证**图**不被它拖住。
+const AGENT_TIMEOUT_MS = 45 * 60 * 1000
+const guard = (prompt, opts) => {
+  let timer
+  return Promise.race([
+    Promise.resolve(agent(prompt, opts)).finally(() => clearTimeout(timer)),
+    new Promise(resolve => {
+      timer = setTimeout(() => {
+        log(`⏱ ${opts.label} 超过 ${AGENT_TIMEOUT_MS / 60000} 分钟未返回,按死亡处理`)
+        resolve(null)
+      }, AGENT_TIMEOUT_MS)
+    }),
+  ])
+}
+
 const retryNull = async (prompt, opts, retrySuffix = '') =>
-  (await agent(prompt, opts)) ?? agent(prompt + retrySuffix,
+  (await guard(prompt, opts)) ?? guard(prompt + retrySuffix,
     { ...opts, label: `${opts.label}:retry` })
 
 // ── processBook:承重节点。author = parallel(books→processBook);topic = pipeline(items→router)。 ──
@@ -144,11 +169,11 @@ async function processBook(slug, m, opts = {}) {
     await parallel(esc.map(e => () => {
       const p = e.path || ''
       if (p.endsWith('/00-overview.md'))
-        return agent(bookSynthPrompt(slug, m) + `\nreason: audit escalated ${e.kind}: ${e.reason}`,
+        return guard(bookSynthPrompt(slug, m) + `\nreason: audit escalated ${e.kind}: ${e.reason}`,
           { phase: 'Book', agentType: 'quasi:synthesis-agent', label: `regen-synth:${slug}` })
       const ch = chapters.find(c => p.endsWith(`ch${c.slot}-${c.slug}.md`))
       if (!ch) return Promise.resolve({ status: 'skip', note: `no chapter match for ${p}` })
-      return agent(analyseChapterPrompt(slug, m, ch) + `\noverwrite: true\nreason: audit escalated ${e.kind}: ${e.reason}`,
+      return guard(analyseChapterPrompt(slug, m, ch) + `\noverwrite: true\nreason: audit escalated ${e.kind}: ${e.reason}`,
         { phase: 'Book', agentType: 'quasi:analyse-agent', label: `regen-ch${ch.slot}:${slug}` })
     }))
     au = await retryNull(`path: vault/books/${slug}`,
@@ -197,7 +222,7 @@ async function processPaper(slug, m) {
   let au = await retryNull(`path: vault/papers/${slug}.md`,
     { phase: 'Paper', agentType: 'quasi:audit-agent', label: `audit:${slug}`, schema: AU_SCHEMA })
   if (((au && au.escalated) || []).length) {
-    await agent(paperAnalysePrompt(slug, m, src) + `\noverwrite: true\nreason: audit escalated`,
+    await guard(paperAnalysePrompt(slug, m, src) + `\noverwrite: true\nreason: audit escalated`,
       { phase: 'Paper', agentType: 'quasi:analyse-agent', label: `regen:${slug}` })
     au = await retryNull(`path: vault/papers/${slug}.md`,
       { phase: 'Paper', agentType: 'quasi:audit-agent', label: `audit2:${slug}`, schema: AU_SCHEMA })
@@ -264,7 +289,7 @@ async function processAuthor(name, m) {
   let au = await retryNull(`path: vault/authors/${name}.md`,
     { phase: 'Author', agentType: 'quasi:audit-agent', label: `audit-author:${name}`, schema: AU_SCHEMA })
   if (((au && au.escalated) || []).length) {
-    await agent(authorSynthPrompt(name, full, topic, okBooks, okPapers) + `\nreason: audit escalated`,
+    await guard(authorSynthPrompt(name, full, topic, okBooks, okPapers) + `\nreason: audit escalated`,
       { phase: 'Author', agentType: 'quasi:synthesis-agent', label: `regen-author:${name}` })
     au = await retryNull(`path: vault/authors/${name}.md`,
       { phase: 'Author', agentType: 'quasi:audit-agent', label: `audit2-author:${name}`, schema: AU_SCHEMA })
@@ -382,7 +407,7 @@ async function processTopic(slug, m) {
   let au = await retryNull(`path: vault/topics/${slug}`,
     { phase: 'Topic', agentType: 'quasi:audit-agent', label: `audit-topic:${slug}`, schema: AU_SCHEMA })
   if (((au && au.escalated) || []).length) {
-    await agent(topicSynthPrompt(slug, desc, ok) + `\nreason: audit escalated`,
+    await guard(topicSynthPrompt(slug, desc, ok) + `\nreason: audit escalated`,
       { phase: 'Topic', agentType: 'quasi:synthesis-agent', label: `regen-topic:${slug}` })
     au = await retryNull(`path: vault/topics/${slug}`,
       { phase: 'Topic', agentType: 'quasi:audit-agent', label: `audit2-topic:${slug}`, schema: AU_SCHEMA })

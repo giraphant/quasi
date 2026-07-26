@@ -344,7 +344,8 @@ def test_orchestrate_retries_every_receipt_reading_agent():
     (Bowker 2005 — ch04 and ch07 both died, one refill round could only save one)."""
     text = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
 
-    assert "?? agent(" in text, "retryNull must re-dispatch on a null receipt"
+    # 0.49.9: agent() is wrapped in guard() (timeout → null), so retryNull re-dispatches on guard's null.
+    assert "?? guard(" in text, "retryNull must re-dispatch on a null receipt"
     # A receipt with a schema is one the script branches on, so it must go through retryNull.
     lines = text.splitlines()
     bare = []
