@@ -65,6 +65,7 @@ Removed legacy bins:
 | agent | depends on |
 |---|---|
 | `search-agent` | `quasi-search` |
+| `steer-agent` | topic outline page + `quasi-search` |
 | `download-agent` | `quasi-download`, direct AA search import |
 | `extract-agent` | `quasi-extract` |
 | `analyse-agent` | vault/source files |

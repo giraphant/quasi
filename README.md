@@ -41,6 +41,7 @@ active skill 正文只保留运行时需要的信息。
 | Agent | 职责 |
 |---|---|
 | `search-agent` | 将研究意图转成 `quasi-search book|paper` 查询 |
+| `steer-agent` | topic 掌舵:维护 02-outline 研究大纲,返回子问题定向候选 |
 | `download-agent` | 文件获取、候选判断、接受入库 |
 | `extract-agent` | EPUB/PDF/OCR/章节切分编排 |
 | `analyse-agent` | 论文/章节/讲座转写分析 |

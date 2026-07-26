@@ -65,6 +65,7 @@ Current userConfig mapping:
 - `download-agent` accepts or rejects candidates through `quasi-download`; it returns `DOWNLOAD_RESULT.per_item` and does not own caller manifests.
 - `extract-agent` writes chapter extraction output and `processing/chapters/{slug}/manifest.json`.
 - `analyse-agent`, `synthesis-agent`, `proofread-agent`, and `citecheck-agent` write only the exact product path assigned by the caller.
+- `steer-agent` owns `vault/topics/{slug}/02-outline.md` (the topic research outline; users may hand-edit it between runs) and returns sub-question-targeted candidates; it writes nothing else.
 - `audit-agent` runs `quasi-audit --path`; it may apply local mechanical fixes but does not own workflow state.
 - A deterministic CLI may write an artifact only when its command contract names that output path.
 - Pseudocode helpers in skill files (`parse_args`, `read_json`, `write_json`, `write_temp_json`, `format_yaml_list`, `exists`, `Agent(...).result`) are maintainer shorthand for main-process Claude Code actions, not a hidden runtime library.
@@ -151,4 +152,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.49.9.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.50.0.

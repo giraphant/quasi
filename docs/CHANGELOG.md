@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.50.0** (2026-07-27): **topic 从平面滚雪球改为闭环掌舵 —— 三个真实手机 topic(顺风/漂移/工具不对口)证明"与主题相关"的平面爬行在书为主的库里必然向社科经典回退。** 设计:`docs/topic-steering-design.md`。
+  - **`02-outline.md` 成为持久研究状态**(schema `kind: outline`,subquestions 带 coverage/channel/theory_used):steer-agent 是唯一 writer,用户可手改,手改就是下次增量重跑的指令——把用户在 overview 里人肉写"本轮方针"的工作流正式化。
+  - **新 agent `steer-agent` 吞掉 topicSearchPrompt + snowballPrompt**:每轮对账大纲、更新覆盖度、返回带 subq/role 标签的定向候选。两道栅栏:对象栅栏(候选自身的研究对象须落在子问题内,而非仅被主题文献引用)与 theory 配额(全 topic ≤3,账在 outline 跨轮累计)。成员表 subquestions[].items 持久在 outline frontmatter,跨轮跨重跑累计(评审修正)。可宣告 saturated 提前收口;web_tasks 本版只收不派(0.50.1 接 webcard)。
+  - **子问题毕业成专章**:语料 ≥6 条 → `NN-{subq}.md`(编号只追加不重排),synth 拆 dossier(每页只读本聚类语料,0.49.4 爆 context 类结构性受控)与 spine(00 门面 + 01 清单,永远重写、恒薄,聚类结构照抄 outline 不许即兴)。只重写 steer 报脏的专章。
+  - 探针/去重/batchYear/needs_seeds 卡点/LOCALISE/guard 全不动。守卫:steer 合同栅栏测试、synth 分页测试、图闭环测试、TopicSchema outline/dossier 测试。plugin/marketplace `0.49.9→0.50.0`。
+
 - **0.49.9** (2026-07-26): **`agent()` had no upper bound, so a dead subagent could stall the whole graph for hours.** Reported symptom: topic (and other) runs sit for hours with no progress and nothing in the main process reacting.
   - **Evidence, not inference.** In the `wf_2c154789-9f7` topic run, four agents were `started` in `journal.jsonl` with no `result` — all four `quasi:extract-agent`. Three of them had already written `API Error: 524 (Cloudflare timeout)` / `TLS handshake timeout` into their own transcripts at 13:35, 13:37 and 13:51; the run then sat until it was killed by hand at ~14:51. The agents were dead for over an hour while `agent()` never returned. `retryNull`'s `??` only fires on `null`, so the retry layer built in 0.45.0 was never reached, and the enclosing `parallel()` barrier held the graph frozen behind it.
   - **The fix is one race, not a supervisor.** `guard(prompt, opts)` wraps every `agent()` call in `Promise.race` against a 45-minute timer and normalises a timeout to `null` — which is precisely the value `retryNull` already knows how to handle, so a hung node costs one re-dispatch instead of a night. All five previously-bare `agent()` calls (the audit-escalation regens) route through it too; the only raw call left in the file is inside `guard` itself, and a test enforces that.
