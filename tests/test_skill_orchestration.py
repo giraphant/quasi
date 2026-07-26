@@ -360,3 +360,18 @@ def test_orchestrate_retries_every_receipt_reading_agent():
         if any("schema:" in c for c in call):
             bare.append(i + 1)
     assert bare == [], f"receipt-reading agent() calls must use retryNull; bare at lines {bare}"
+
+
+def test_steer_agent_contract_carries_fence_quota_and_outline_ownership():
+    """0.49.x topic 跑漂移的三个病根,栅栏各有一条合同文字守着:平面相关性(对象栅栏)、
+    经典回退(theory 配额)、书哑巴(ch*.md 核心引用)。steer-agent 是 02-outline.md 唯一 writer。"""
+    steer = (PLUGIN_ROOT / "agents" / "steer-agent.md").read_text(encoding="utf-8")
+
+    assert "自身的研究对象" in steer, "对象栅栏:关于主题对象 vs 仅被主题文献引用"
+    assert "theory_used" in steer and "≤3" in steer, "theory 配额账本"
+    assert "ch*.md" in steer and "## 核心引用" in steer, "书的引用在章节分析里"
+    assert "## 文献人物" in steer, "讲座引用节"
+    assert "02-outline.md" in steer, "outline 是它唯一可写路径"
+    assert "kind: outline" in steer
+    assert "STEER_RESULT" in steer and "web_tasks" in steer and "dirty" in steer
+    assert "saturated" in steer and "dossier" in steer
