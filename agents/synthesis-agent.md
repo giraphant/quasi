@@ -143,7 +143,7 @@ subquestions,id、标题、顺序照抄,不许重排、合并或自创聚类。
 
 ### T1. page: dossier(毕业子问题的专章)
 
-输入:`subq_id, subq_question, analysis_paths, output_path, topic`(`topic` 为上级主题名,仅作定位语境,不进 frontmatter)。
+输入:`subq_id, subq_question, analysis_paths, items, output_path, topic`(`items` 是与 analysis_paths 同序的 {kind, slug, role} 表;`topic` 为上级主题名,仅作定位语境,不进 frontmatter)。
 
 1. Read `analysis_paths`(只有本聚类的语料;读取预算同 §A1 第 1 步:先 `wc -c`,
    ≤300000 字节全文读,超了每篇抽 frontmatter + `## 核心论点` + `## 关键概念`)。
@@ -157,7 +157,7 @@ subquestions,id、标题、顺序照抄,不许重排、合并或自创聚类。
 (200-400 字:这个子问题问什么,证据到哪一步)
 
 ## 证据综述
-(聚类内逐文综合,[[wikilink]] 指向 analysis_paths;theory 条目明确标注其锚定作用)
+(聚类内逐文综合,[[wikilink]] 指向 analysis_paths;theory 条目明确标注其锚定作用(theory 与否看 `items[].role`))
 
 ## 缺口与下一步
 (还缺什么证据、往哪个方向找)
@@ -198,7 +198,7 @@ output_path, reading_list_path`。
    「毕业子问题的成员从 outline 的 `subquestions[].items` 取(spine 本就 Read `outline_path`):按
    slug 在 `corpus_paths` 里对应其产物路径(book → `vault/books/{slug}/00-overview.md`,paper →
    `vault/papers/{slug}.md`,talk → `vault/talks/{slug}/talk.md`),逐条列入该子问题小节——毕业不等于
-   从阅读清单消失。」
+   从阅读清单消失。`corpus_paths` 里不属于任何子问题的条目列入 01 末尾的「未归类」小节,不得静默丢弃。」
 
 <frontmatter_schema>
 required: type=topic, title(min=2 max=280), kind(overview|resources|dossier)

@@ -6,6 +6,7 @@ Newest first. Entries record what changed and why at the time each release shipp
   - **`02-outline.md` 成为持久研究状态**(schema `kind: outline`,subquestions 带 coverage/channel/theory_used):steer-agent 是唯一 writer,用户可手改,手改就是下次增量重跑的指令——把用户在 overview 里人肉写"本轮方针"的工作流正式化。
   - **新 agent `steer-agent` 吞掉 topicSearchPrompt + snowballPrompt**:每轮对账大纲、更新覆盖度、返回带 subq/role 标签的定向候选。两道栅栏:对象栅栏(候选自身的研究对象须落在子问题内,而非仅被主题文献引用)与 theory 配额(全 topic ≤3,账在 outline 跨轮累计)。成员表 subquestions[].items 持久在 outline frontmatter,跨轮跨重跑累计(评审修正)。可宣告 saturated 提前收口;web_tasks 本版只收不派(0.50.1 接 webcard)。
   - **子问题毕业成专章**:语料 ≥6 条 → `NN-{subq}.md`(编号只追加不重排),synth 拆 dossier(每页只读本聚类语料,0.49.4 爆 context 类结构性受控)与 spine(00 门面 + 01 清单,永远重写、恒薄,聚类结构照抄 outline 不许即兴)。只重写 steer 报脏的专章。
+  - **终审修正四处**:种子轮回执的 dirty/saturated/建议词入账(丢弃它正好打断 legacy 迁移的毕业链);收到过活回执时空 dirty 意为"真没变",不再全量重写手写老专章;recall-only 主题补一次收口掌舵,库内语料必进成员表;role 随成员表持久并递入专章 synth。spine 不链接本轮写失败的专章,steer 对账自愈缺页。
   - 探针/去重/batchYear/needs_seeds 卡点/LOCALISE/guard 全不动。守卫:steer 合同栅栏测试、synth 分页测试、图闭环测试、TopicSchema outline/dossier 测试。plugin/marketplace `0.49.9→0.50.0`。
 
 - **0.49.9** (2026-07-26): **`agent()` had no upper bound, so a dead subagent could stall the whole graph for hours.** Reported symptom: topic (and other) runs sit for hours with no progress and nothing in the main process reacting.

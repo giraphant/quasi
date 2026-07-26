@@ -19,7 +19,7 @@ SQ = {
     "dossier": False,
     "page": None,
     "theory_used": 0,
-    "items": [{"kind": "paper", "slug": "gomes-morephone-2013"}],
+    "items": [{"kind": "paper", "slug": "gomes-morephone-2013", "role": "evidence"}],
 }
 
 
@@ -31,6 +31,7 @@ def test_outline_kind_carries_subquestions() -> None:
     assert doc.subquestions[0].coverage == "gap"
     assert doc.subquestions[0].page is None
     assert doc.subquestions[0].items[0].slug == "gomes-morephone-2013"
+    assert doc.subquestions[0].items[0].role == "evidence"
 
 
 def test_outline_requires_subquestions() -> None:

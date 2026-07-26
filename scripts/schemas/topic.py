@@ -23,6 +23,7 @@ class SubqItem(BaseModel):
 
     kind: Literal["book", "paper", "talk"]
     slug: str = Field(min_length=2, max_length=160)
+    role: Optional[Literal["evidence", "theory", "method", "context"]] = None
 
 
 class Subquestion(BaseModel):

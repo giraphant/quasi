@@ -278,6 +278,9 @@ def test_orchestrate_topic_steers_by_outline():
     assert "dirty" in body, "只重写脏专章"
     assert "saturated" in body, "掌舵可在轮数用尽前收口"
     assert "subq" in graph and "role" in graph, "候选带子问题与角色标签"
+    assert "new Set((st0 && st0.dirty) || [])" in body, "种子轮回执的 dirty/建议词必须入账"
+    assert "steerReceipts" in body, "收到过活回执才不全量重写手写老专章"
+    assert "r1-close" in body, "recall-only 主题补一次收口掌舵"
 
 
 def test_process_material_gates_topic_dead_end_back_to_the_user():
@@ -395,6 +398,8 @@ def test_steer_agent_contract_carries_fence_quota_and_outline_ownership():
     assert "kind: outline" in steer
     assert "STEER_RESULT" in steer and "web_tasks" in steer and "dirty" in steer
     assert "saturated" in steer and "dossier" in steer
+    assert "全量成员表" in steer, "成员表全量累计的合同文字"
+    assert "缺失" in steer, "缺页自愈:dossier=true 但 page 文件缺失 → 列入 dirty"
 
 
 def test_synthesis_topic_mode_is_outline_pinned_and_paged():

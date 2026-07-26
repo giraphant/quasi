@@ -54,7 +54,7 @@ const STEER_SCHEMA = { type: 'object', required: ['subquestions'], properties: {
     id: { type: 'string' }, question: { type: 'string' }, coverage: { type: 'string' },
     dossier: { type: 'boolean' }, page: { type: 'string' },
     items: { type: 'array', items: { type: 'object', required: ['slug'], properties: {
-      kind: { type: 'string' }, slug: { type: 'string' } } } } } } },
+      kind: { type: 'string' }, slug: { type: 'string' }, role: { type: 'string' } } } } } } },
   dirty: { type: 'array', items: { type: 'string' } },
   candidates: { type: 'array', items: { type: 'object', required: ['slug'], properties: {
     kind: { type: 'string' }, slug: { type: 'string' }, title: { type: 'string' },
@@ -345,8 +345,10 @@ async function processTopic(slug, m) {
 
   // 召回到的作品已分析过,直接进语料 —— 即便一轮都没跑起来也不会丢。
   const seen = new Set(local.map(i => i.slug)), ok = [...local], failures = []
-  const dirty = new Set()
-  let round = 0, suggested = null, saturated = false
+  // 种子轮回执同样入账:r0 的毕业/枯竭建议丢掉,就是终审抓到的 legacy 迁移断链。
+  const dirty = new Set((st0 && st0.dirty) || [])
+  let round = 0, suggested = (st0 && st0.suggested_queries) || null, saturated = !!(st0 && st0.saturated)
+  let steerReceipts = st0 ? 1 : 0
   const isBook = c => (c.kind || 'paper') === 'book'
 
   // 2. 闭环滚动:采集 → 落地 → 掌舵(更新大纲、定向下一轮)。饱和或轮数用尽即停——
@@ -390,15 +392,25 @@ async function processTopic(slug, m) {
     // 第 1 轮并上本地召回:那些正文的引用节同样是这个主题的引文网络,而且往往是库里
     // 最相关的作品,漏掉等于把雪球起点砍掉一半。
     const snowSrc = round === 1 ? [...local, ...roundOk] : roundOk
-    steer = await retryNull(steerPrompt(slug, desc, round, snowSrc, [...seen], perRound, null),
+    const sr = await retryNull(steerPrompt(slug, desc, round, snowSrc, [...seen], perRound, null),
       { phase: 'Topic', agentType: 'quasi:steer-agent', label: `steer:${slug}:r${round}`, schema: STEER_SCHEMA })
-      || steer   // 掌舵两连死:保留上一轮回执,循环自然收口,不让 null 毁掉成员表
+    if (sr) { steer = sr; steerReceipts++ }   // 掌舵两连死:保留上一轮回执(不 ++),循环自然收口,不让 null 毁掉成员表
     ;(steer.dirty || []).forEach(d => dirty.add(d))
     queue = ((steer.candidates) || []).filter(c => c && c.slug && !seen.has(c.slug))
     saturated = !!steer.saturated
     suggested = steer.suggested_queries || null
     log(`${slug}: 第 ${round} 轮 +${roundOk.length} 条(累计 ${ok.length}),下轮候选 ${queue.length}`
       + (saturated ? ';掌舵判饱和,收口' : ''))
+  }
+
+  // recall-only 收口:一轮都没滚(种子轮无候选)但本地召回有货 —— 语料必须入大纲成员表,
+  // 否则 spine 一条都列不出来(sky-mobi 类"传感器盲、语料全在库内"的主场景)。
+  if (round === 0 && local.length) {
+    const sr0 = await retryNull(steerPrompt(slug, desc, 1, local, [...seen], perRound, null),
+      { phase: 'Topic', agentType: 'quasi:steer-agent', label: `steer:${slug}:r1-close`, schema: STEER_SCHEMA })
+    if (sr0) { steer = sr0; steerReceipts++; round = 1
+      ;(sr0.dirty || []).forEach(d => dirty.add(d))
+      suggested = sr0.suggested_queries || suggested; saturated = !!sr0.saturated }
   }
 
   // 3. 死胡同卡点:候选枯竭且语料太薄 → 不硬写一篇没底子的综述,冒泡问用户补种子词。
@@ -411,16 +423,19 @@ async function processTopic(slug, m) {
   // 4a. 专章 synth:只重写脏的已毕业子问题;steer 全程没报过脏(受限回执)→ 全部重写兜底。
   const subqs = (steer.subquestions || []).filter(s => s && s.id)
   const dossiers = subqs.filter(s => s.dossier && s.page)
-  const dirtyDossiers = dossiers.filter(s => !dirty.size || dirty.has(s.id))
+  // 收到过活回执 → 只信 dirty(空=真没变,legacy 手写专章不得重写);一份回执都没有才全量兜底。
+  const dirtyDossiers = dossiers.filter(s => steerReceipts ? dirty.has(s.id) : true)
   const dres = await parallel(dirtyDossiers.map(s => () =>
     retryNull(topicDossierSynthPrompt(slug, desc, s),
       { phase: 'Topic', agentType: 'quasi:synthesis-agent',
         label: `synth-dossier:${s.id}:${slug}`, schema: SY_SCHEMA }, OVERWRITE)))
   const dossiersFailed = dirtyDossiers.filter((s, i) => !dres[i] || dres[i].status === 'error')
     .map(s => s.id)
+  // 本轮专章写失败的子问题降级为 inline 聚类,spine 不得链接一个不存在的页
+  const spineSubqs = subqs.map(s => dossiersFailed.includes(s.id) ? { ...s, dossier: false, page: null } : s)
 
   // 4b. 脊柱 synth:00+01 永远重写。回执判死活,没写出来就别 audit 一个不存在的文件。
-  const sy = await retryNull(topicSpineSynthPrompt(slug, desc, ok, subqs),
+  const sy = await retryNull(topicSpineSynthPrompt(slug, desc, ok, spineSubqs),
     { phase: 'Topic', agentType: 'quasi:synthesis-agent', label: `synth-topic:${slug}`, schema: SY_SCHEMA }, OVERWRITE)
   if (!sy || sy.status === 'error')
     return { slug, status: 'synth_failed', items: ok.length, notes: sy && sy.notes }
@@ -429,7 +444,7 @@ async function processTopic(slug, m) {
   let au = await retryNull(`path: vault/topics/${slug}`,
     { phase: 'Topic', agentType: 'quasi:audit-agent', label: `audit-topic:${slug}`, schema: AU_SCHEMA })
   if (((au && au.escalated) || []).length) {
-    await guard(topicSpineSynthPrompt(slug, desc, ok, subqs) + `\nreason: audit escalated`,
+    await guard(topicSpineSynthPrompt(slug, desc, ok, spineSubqs) + `\nreason: audit escalated`,
       { phase: 'Topic', agentType: 'quasi:synthesis-agent', label: `regen-topic:${slug}` })
     au = await retryNull(`path: vault/topics/${slug}`,
       { phase: 'Topic', agentType: 'quasi:audit-agent', label: `audit2-topic:${slug}`, schema: AU_SCHEMA })
@@ -615,6 +630,7 @@ topic: ${desc}
 subq_id: ${s.id}
 subq_question: ${s.question || s.id}
 analysis_paths: ${JSON.stringify((s.items || []).map(itemPath))}
+items: ${JSON.stringify(s.items || [])}
 output_path: vault/topics/${slug}/${s.page}
 overwrite: true`
 }
