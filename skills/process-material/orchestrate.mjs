@@ -357,7 +357,7 @@ async function processTopic(slug, m) {
     // 滚雪球:读本轮落地正文的「## 核心引用」→ 下一轮候选。
     // 交给 search-agent 而不是通用 agent:正文里的引用只有"作者-年-标题",要变成可处理的候选
     // 必须补上 doi/isbn(下游 download 靠它),那正是 search-agent 的活,而且它只读不写。
-    const refs = await retryNull(snowballPrompt(desc, snowSrc, [...seen]),
+    const refs = await retryNull(snowballPrompt(desc, snowSrc, [...seen], perRound),
       { phase: 'Topic', agentType: 'quasi:search-agent', label: `snowball:${slug}:r${round}`, schema: REFS_SCHEMA })
     queue = ((refs && refs.candidates) || []).filter(c => c && c.slug && !seen.has(c.slug))
     suggested = (refs && refs.suggested_queries) || null
@@ -556,13 +556,23 @@ constraints:
 title、authors、year;书带 isbn,论文带 doi、oa_url、journal。查不到标识符的不要输出——
 下游要靠标识符下载。`
 }
-function snowballPrompt(desc, roundOk, seenSlugs) {
-  return `task: 从下列已完成的分析里摘出被反复引用的关键文献,作为主题 "${desc}" 的下一轮候选。
-1. 逐个 Read 这些文件,**只看正文的 \`## 核心引用\`(书/论文)或 \`## 文献人物\`(讲座)一节**,其余不用读:
-   ${JSON.stringify(roundOk.map(itemPath))}
-2. 汇总引用条目,按被引次数排序,去掉与主题无关的。
+function snowballPrompt(desc, roundOk, seenSlugs, want) {
+  // 书的「## 核心引用」在各章节分析 ch*.md 里 —— 00-overview 的 §B2 契约根本没有这一节,
+  // 指过去只会空手而归:0.49.6 前书在雪球里是哑的,书为主的库等于只靠论文在滚。
+  const books = roundOk.filter(i => i.kind === 'book').map(i => i.slug)
+  const rest = roundOk.filter(i => i.kind !== 'book').map(itemPath)
+  return `task: 从下列已完成的分析里摘出关键引用文献,作为主题 "${desc}" 的下一轮候选,目标 ${want} 条。
+1. 收集引用条目,只读引用节,其余不用读:${books.length ? `
+   - 书(核心引用在各章节分析里,不在 00-overview):对每个 slug 跑
+     \`rg -A 30 '^## 核心引用' vault/books/{slug}/ch*.md\`;slug:${JSON.stringify(books)}` : ''}${rest.length ? `
+   - 论文/讲座:逐个 Read,只看 \`## 核心引用\`(论文)或 \`## 文献人物\`(讲座)一节:
+     ${JSON.stringify(rest)}` : ''}
+2. 汇总:跨文被多次引用的优先;只被引一次、但明显是该主题奠基/经典文献的也收。与主题无关的丢弃。
 3. 排除已经处理过的 slug:${JSON.stringify(seenSlugs)}
-4. 对剩下的用 quasi-search 补标识符(书 isbn,论文 doi/oa_url/journal);补不到的丢弃。
+4. forward 一步:对第 2 步里被引最多的 2-3 部作品,各跑一次 quasi-search paper
+   (查询词 = 该作品短标题 + 主题关键词),把回应/发展它们的较新文献并入候选。
+5. 过滤后仍不足 ${want} 条 → 自拟 2-3 个拓宽检索词就地 quasi-search 补足;补完还不够就少给,不硬凑。
+6. 对候选用 quasi-search 补标识符(书 isbn,论文 doi/oa_url/journal);补不到的丢弃。
 输出 candidates[],每项带 kind(book|paper)、canonical slug、title、authors、year 及标识符。
 一条新的都没有就返回空 candidates,并在 suggested_queries[] 给 2-3 个能拓宽该主题的检索词。
 只读不写,不要碰 vault/。`
