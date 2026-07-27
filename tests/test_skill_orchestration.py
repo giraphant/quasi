@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import shutil
+import subprocess
+
+import pytest
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -283,6 +287,31 @@ def test_orchestrate_topic_steers_by_outline():
     assert "r1-close" in body, "recall-only 主题补一次收口掌舵"
 
 
+def test_orchestrate_topic_runs_the_webcard_channel_on_its_own_track():
+    """sky-mobi 类主题的证据在 SEC 文件/工信部规章/SDK 遗存/口述里,学术传感器全程失明:
+    `queue` 恒空,只看它循环一轮都滚不起来。圈外通道必须能独立驱动循环,且证据卡**不进**
+    ok 语料表 —— 卡不是 vault 分析件,itemPath() 会把它解析成一条读不到的 vault/papers 路径。"""
+    graph = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+    body = topic_body(graph)
+
+    assert "quasi:webcard-agent" in body, "证据卡 agent 必须在图里"
+    assert "CARD_SCHEMA" in graph, "卡回执要 schema,散文读不到 status"
+    assert "while ((queue.length || webTasks.length)" in body, "web_tasks 单独也要能驱动循环"
+    assert "!queue.length && !local.length && !webTasks.length" in body, "只有三条通道全空才是 no_works"
+    # 卡与语料两条账:cards[] 独立累计,ok 里永远只有 book/paper/talk。
+    assert "const cards = [], cardSlugs = new Set()" in body, "卡独立累计,不混进 ok"
+    assert "ok.push(...roundOk)" in body and "cards.push(c)" in body
+    assert "ok.length + cards.length" in body, "死胡同卡点按证据总量判,纯圈外主题不能被误判成没找到东西"
+    # index 对齐:parallel() 用 null 占位死掉的 agent,filter 掉就会把标题安到别的 slug 上。
+    assert "const cres = await parallel(" in body, "卡回执不得 filter(Boolean),会错位 index"
+    assert "roundCards.forEach(c => c.subq && dirty.add(c.subq))" in body, "新卡要把其子问题报脏,否则专章不重写"
+    # 卡路径是独立解析器,不并进 itemPath —— 共用会让任何手滑静默变成死链。
+    assert "const cardPath = (topicSlug, cardSlug) =>" in graph
+    assert "cards/${cardSlug}.md" in graph
+    assert "card_paths:" in graph, "两种 synth 页都要收到卡通道"
+    assert "new_cards:" in graph, "掌舵要收到本轮新卡,登记进 outline 的 cards"
+
+
 def test_process_material_gates_topic_dead_end_back_to_the_user():
     """Snowball runs dry long before the corpus is useful; the graph can only report that, the
     seeds decision is the user's. Dropping the gate turns a 2-item topic into a silent `ok`."""
@@ -400,6 +429,9 @@ def test_steer_agent_contract_carries_fence_quota_and_outline_ownership():
     assert "saturated" in steer and "dossier" in steer
     assert "全量成员表" in steer, "成员表全量累计的合同文字"
     assert "缺失" in steer, "缺页自愈:dossier=true 但 page 文件缺失 → 列入 dirty"
+    # 卡走独立通道:混进 items 就是给 synth 一条 vault/papers/{card}.md 的死链。
+    assert "new_cards" in steer and "不进 `items`" in steer
+    assert "card_slug" in steer, "卡文件名由掌舵定,才能选刷新旧卡还是开新卡"
 
 
 def test_synthesis_topic_mode_is_outline_pinned_and_paged():
@@ -414,3 +446,63 @@ def test_synthesis_topic_mode_is_outline_pinned_and_paged():
     assert "inline_clusters" in synth and "dossier_pages" in synth
     assert "照抄" in synth, "聚类 id/标题/顺序来自 outline,不许重排"
     assert "子问题地图" in synth, "00 新模板围绕子问题"
+    # 卡是一手证据不是同行评议结论;两页都收 card_paths,但 synth 永远不写 cards/。
+    assert synth.count("card_paths") >= 2, "dossier 与 spine 两页都要收卡通道"
+    assert "kind: card 归 webcard-agent" in synth
+    assert "永远不写" in synth
+
+
+def test_pending_cards_never_hands_two_agents_the_same_filename():
+    """`card_slug` 直接就是文件名,所以它必须确定性且唯一 —— 重名的两张卡意味着两个并行
+    agent 写同一个路径,后写的赢,前一张的抓取工作静默蒸发。这条是真跑 node,不是读源码:
+    派生链(steer 给的 → query → subq → 'card')与补序号循环都是分支逻辑,静态断言看不出错。"""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+
+    src = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+    helpers = "const cardPath =" + src.split("const cardPath =")[1].split("// 掌舵 prompt")[0]
+    script = helpers + """
+const eq = (a, b, msg) => { if (JSON.stringify(a) !== JSON.stringify(b))
+  throw new Error(`${msg}: got ${JSON.stringify(a)} want ${JSON.stringify(b)}`) }
+
+// steer 给了 slug 就照用;中文 query 派生后为空,退到 subq;两条同 subq 的任务补序号。
+const st = { web_tasks: [
+  { subq: 'sq-a', query: 'Sky-mobi SEC F-1 filing', note: 'n', card_slug: 'sky-mobi-sec-f1' },
+  { subq: 'sq-b', query: '工信部入网许可' , note: 'n' },
+  { subq: 'sq-b', query: '摩豆平台遗存', note: 'n' },
+  { subq: 'sq-c', note: 'no query' },
+] }
+const out = pendingCards(st, [])
+eq(out.map(t => t.card_slug), ['sky-mobi-sec-f1', 'sq-b', 'sq-b-2'], 'slug 派生与补序号')
+eq(out.length, 3, '没有 query 的任务不派')
+eq(new Set(out.map(t => t.card_slug)).size, out.length, '批内 slug 必须唯一')
+
+// 本轮已写过的卡不重抓;派生出的 slug 也不许撞上已写过的。
+eq(pendingCards(st, ['sky-mobi-sec-f1']).map(t => t.card_slug), ['sq-b', 'sq-b-2'], '已写过的跳过')
+eq(pendingCards(st, ['sq-b']).map(t => t.card_slug), ['sky-mobi-sec-f1', 'sq-b-2', 'sq-b-3'],
+   '派生 slug 撞上已写过的要让路,不能覆盖')
+
+eq(cardPath('sky-mobi', 'sq-b'), 'vault/topics/sky-mobi/cards/sq-b.md', 'card 路径')
+console.log('OK')
+"""
+    proc = subprocess.run([node, "--input-type=module", "-e", script],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+def test_webcard_agent_contract_forbids_invention_and_owns_one_card():
+    """圈外通道的失败模式是幻觉:一张编造的机型卡会被 synth 当证据引用,比没有卡更坏。
+    合同必须挡住三件事 —— 用训练知识补完、写 cards/ 以外的文件、抓不到也硬写一张空卡。"""
+    card = (PLUGIN_ROOT / "agents" / "webcard-agent.md").read_text(encoding="utf-8")
+
+    assert "name: webcard-agent" in card
+    assert "kind: card" in card and "cards/{card-slug}.md" in card, "产物路径与 schema kind"
+    assert "不许" in card and "训练知识" in card, "抓不到不许凭训练知识补完"
+    assert "WebFetch" in card and "quasi-search kagi" in card, "检索 + 一手来源抓取两件工具"
+    assert "confirmed" in card and "single-source" in card and "disputed" in card, "证据等级三档"
+    assert "缺口/存疑" in card, "卡必须自陈缺口,无缺口的圈外卡多半没核验"
+    assert "不进语料表" in card, "卡不是 vault 分析件"
+    assert '"empty"' in card, "抓不到就不写文件,不留空卡"
+    assert "品类合集" in card and "拆成多个文件" in card, "按品类汇总的卡仍是一张卡,不拆成单机文件"

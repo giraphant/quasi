@@ -143,12 +143,14 @@ subquestions,id、标题、顺序照抄,不许重排、合并或自创聚类。
 
 ### T1. page: dossier(毕业子问题的专章)
 
-输入:`subq_id, subq_question, analysis_paths, items, output_path, topic`(`items` 是与 analysis_paths 同序的 {kind, slug, role} 表;`topic` 为上级主题名,仅作定位语境,不进 frontmatter)。
+输入:`subq_id, subq_question, analysis_paths, items, card_paths, output_path, topic`(`items` 是与 analysis_paths 同序的 {kind, slug, role} 表;`card_paths` 是本子问题的证据卡路径,**与 analysis_paths 平行的另一条通道**,不是分析件;`topic` 为上级主题名,仅作定位语境,不进 frontmatter)。
 
 1. Read `analysis_paths`(只有本聚类的语料;读取预算同 §A1 第 1 步:先 `wc -c`,
    ≤300000 字节全文读,超了每篇抽 frontmatter + `## 核心论点` + `## 关键概念`)。
-2. 生成 `{output_path}`,frontmatter `type: topic, kind: dossier, title: {subq_question}`。
-   正文模板:
+2. Read `card_paths`(圈外证据卡,webcard-agent 写;卡自带来源与「缺口/存疑」)。**卡是一手证据不是学术论证**:
+   引用它时保留其证据等级与存疑标注,不要把 `single-source` / `disputed` 的事实当定论转述。卡不进 `inputs_analyzed` 计数。
+3. 生成 `{output_path}`,frontmatter `type: topic, kind: dossier, title: {subq_question}`。
+   正文模板(`card_paths` 为空则整节省略「证据档案」):
 
 ```
 # {subq_question}
@@ -159,18 +161,22 @@ subquestions,id、标题、顺序照抄,不许重排、合并或自创聚类。
 ## 证据综述
 (聚类内逐文综合,[[wikilink]] 指向 analysis_paths;theory 条目明确标注其锚定作用(theory 与否看 `items[].role`))
 
+## 证据档案
+(逐张卡一段:卡覆盖什么对象、给出什么事实、证据等级如何,[[cards/{card-slug}|卡名]] 指过去)
+
 ## 缺口与下一步
 (还缺什么证据、往哪个方向找)
 ```
 
 ### T2. page: spine(00 门面 + 01 清单,永远重写、恒薄)
 
-输入:`source_name, topic, outline_path, corpus_paths, dossier_pages, inline_clusters,
+输入:`source_name, topic, outline_path, corpus_paths, card_paths, dossier_pages, inline_clusters,
 output_path, reading_list_path`。
 
 1. Read `outline_path` 取子问题顺序与覆盖度;逐个 Read `dossier_pages[].page` 的
    frontmatter + `## 问题与现状` 一节(专章是压缩,不重读其语料);`inline_clusters[].paths`
-   按 §A1 读取预算读。
+   按 §A1 读取预算读,同簇的 `inline_clusters[].cards` 也读(卡短,全文读)。
+   `card_paths` 是全主题的证据卡全量表,只用于 01 分节与查漏,已毕业子问题的卡由其专章承载,00 不重述。
 2. 生成 `{output_path}`(00-overview):
 
 ```
@@ -199,11 +205,15 @@ output_path, reading_list_path`。
    slug 在 `corpus_paths` 里对应其产物路径(book → `vault/books/{slug}/00-overview.md`,paper →
    `vault/papers/{slug}.md`,talk → `vault/talks/{slug}/talk.md`),逐条列入该子问题小节——毕业不等于
    从阅读清单消失。`corpus_paths` 里不属于任何子问题的条目列入 01 末尾的「未归类」小节,不得静默丢弃。」
+   证据卡同办:子问题的卡从 outline 的 `subquestions[].cards` 取(路径 `cards/{card-slug}.md`),
+   在该子问题小节里**另起一个「证据卡」子列表**,与学术语料分开列——卡不是分析件,混列会让读者
+   把圈外事实当同行评议结论。`card_paths` 里没被任何子问题登记的卡同样进末尾「未归类」,不得静默丢弃。
 
 <frontmatter_schema>
 required: type=topic, title(min=2 max=280), kind(overview|resources|dossier)
 - `title` 必填:人读页面标题,**与 H1 一致**;spine 两页 = 主题名,dossier = 子问题。
-- frontmatter 不允许任何其它字段(`.strict()`)。kind: outline 归 steer-agent,不归本 agent。
+- frontmatter 不允许任何其它字段(`.strict()`)。kind: outline 归 steer-agent、kind: card 归 webcard-agent,
+  两者都不归本 agent —— 你读卡、引卡,但**永远不写** `cards/` 下任何文件。
 </frontmatter_schema>
 
 ---

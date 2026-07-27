@@ -66,6 +66,7 @@ Removed legacy bins:
 |---|---|
 | `search-agent` | `quasi-search` |
 | `steer-agent` | topic outline page + `quasi-search` |
+| `webcard-agent` | `quasi-search kagi` + WebFetch → topic `cards/` page |
 | `download-agent` | `quasi-download`, direct AA search import |
 | `extract-agent` | `quasi-extract` |
 | `analyse-agent` | vault/source files |

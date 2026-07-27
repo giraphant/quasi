@@ -147,6 +147,7 @@ if args.kind == "author":
            + (f";{result.book_failures}+{result.paper_failures} 项获取失败" if result.book_failures or result.paper_failures else ""))
 if args.kind == "topic":
     report(f"主题完成:{result.items} 条语料 / {result.rounds} 轮滚雪球;大纲 {result.outline}"
+           + (f";另有 {result.cards} 张圈外证据卡" if result.get("cards") else "")
            + (f";其中 {result.recalled} 条来自库内召回" if result.get("recalled") else "")
            + (f";{result.failures} 项获取失败" if result.failures else "")
            + (f";专章生成失败:{', '.join(result.dossiers_failed)},重跑一次即补" if result.get("dossiers_failed") else "")
@@ -192,13 +193,15 @@ processing/chapters/{book-slug}/{manifest.json,*.txt}
 vault/books/{book-slug}/{00-overview.md,ch{slot}-*.md}
 vault/papers/{paper-slug}.md
 vault/authors/{author-name}.md
-vault/topics/{topic-slug}/{00-overview.md,01-resources.md,02-outline.md,NN-*.md}
+vault/topics/{topic-slug}/{00-overview.md,01-resources.md,02-outline.md,NN-*.md,cards/*.md}
 processing/translations/{paper-slug}-zh.pdf            ← 可选(translate: true)
 .quasi/localise/cndouban.json                          ← 中译本缓存(按原书 ISBN 幂等)
 ```
 
-topic 目录 = 三页脊柱(00 门面 / 01 清单 / 02 研究大纲)+ 毕业子问题的专章 NN-*.md,
-不囤分析副本——分析在 `vault/papers/`、`vault/books/`、`vault/talks/` 里,各页用
-`[[wikilink]]` 指过去(讲座只可能来自图内本地召回,在线发现搜不到它们)。02-outline 是
+topic 目录 = 三页脊柱(00 门面 / 01 清单 / 02 研究大纲)+ 毕业子问题的专章 NN-*.md
++ `cards/` 圈外证据卡,不囤分析副本——分析在 `vault/papers/`、`vault/books/`、`vault/talks/` 里,各页用
+`[[wikilink]]` 指过去(讲座只可能来自图内本地召回,在线发现搜不到它们)。证据卡是例外:它是
+webcard-agent 就地写的一手材料(机型、SEC 文件、规章、口述),学术管线拿不到,所以住在主题目录里;
+它**不是**分析件,不进语料表,走 outline 的 `cards` 通道。02-outline 是
 steer-agent 维护的掌舵状态,**用户可手改**,手改就是下次增量重跑的指令。编排状态活在图里,
 条目完成与否由 `router` 的回执直接给出,不靠轮询产物反推。

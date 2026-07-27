@@ -2,6 +2,16 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.50.1** (2026-07-27): **topic 的圈外证据通道接上 —— `web_tasks` 从 0.50.0 的"只收不派"变成真的落地成材料卡。** 设计:`docs/topic-steering-design.md` §5。
+  - **病例还是 sky-mobi**:证据在 SEC 文件、工信部规章、SDK 遗存、社交媒体回忆里,学术搜索传感器全程失明,6 条语料的主题页实际由圈外调研写成,雪球旁观。0.50.0 让 steer 报出了 `web_tasks`,但图不消费,那一条信息每轮原地蒸发。
+  - **新 agent `webcard-agent`**:一条 web_task → 一张 `vault/topics/{slug}/cards/{card-slug}.md`(`quasi-search kagi` 检索 + WebFetch 抓一手来源 + 跨源核验)。三条硬约束都是针对同一个失败模式——**一张编造的机型卡会被 synth 当证据引用,比没有卡更坏**:抓不到不许用训练知识补完;每条关键事实两源一致才记 `confirmed`,单源记 `single-source`,冲突就两个数都写并标 `disputed`;拿不到可核验材料时返回 `status: "empty"` 且**不写文件**,图照实少收一张。「缺口/存疑」节不许留空。
+  - **一卡的粒度是一条 web_task,不是"一个对象"**(设计原稿的修正)。用户在 unconventional 跑里手工产出的四份卡全是按品类汇总的合集(一张卡 6 款机型),已确认继续各自保留为一份合集、不拆成单机文件。所以任务的对象范围可以是一个具体对象,也可以是一个品类合集。
+  - **卡是一条独立通道,不是语料**。`TopicSchema` 加 `kind: card`(frontmatter 仍只有 type/kind/title,与 dossier 同薄,`quasi-audit` 的 rglob 自动同审);outline 加 `subquestions[].cards`(slug 表),与 `items` 平行。`items.kind` 仍是 `book|paper|talk` —— 把卡塞进去不会报错,只会让 synth 按 `vault/papers/{card}.md` 生成一条**读不到的死链**,分通道是唯一能让这个错误变响的做法。图里 `cards[]` 与 `ok[]` 分开累计,`cardPath()` 与 `itemPath()` 故意不共用解析器。
+  - **`web_tasks` 单独也能驱动循环**(第二处设计修正)。原骨架把 webcard 挂在学术批次之后,但 `while (queue.length …)` 意味着学术候选为空时一轮都不跑 —— 正好是 sky-mobi 的形态,循环条件本身会把这条通道存在的理由否掉。改为 `while ((queue.length || webTasks.length) …)`;`no_works` / `needs_seeds` / `all_failed` 三个卡点改按"语料 + 卡"的证据总量判,否则一个 0 语料 + 5 卡的纯圈外主题会被当成"什么都没找到"。
+  - 其余账:`card_slug` 由 steer 给(它握着 outline 卡表,能选刷新旧卡还是开新卡),缺了图按 query 确定性派生、批内重名补序号——随机或时间戳会让每次增量重跑在 `cards/` 里堆近似重复;卡回执**不 `filter(Boolean)`**,死掉的 agent 是 null 占位,滤掉就会把一张卡的标题安到另一张卡的 slug 上;新卡把其子问题加进 `dirty`(掌舵死了也记这笔账,否则专章不重写、卡白抓);每轮 ≤3 张,超出部分 `log()` 报出来不静默截断。
+  - synth §T 两页都收 `card_paths`:dossier 多一节「证据档案」,01-resources 里卡在子问题小节内**另起子列表**与学术语料分开列(混列会让读者把圈外事实当同行评议结论),没被登记的卡进「未归类」。synth 读卡、引卡,但永远不写 `cards/`。
+  - 探针/去重/batchYear/theory 配额/毕业机制/LOCALISE/guard 全不动。守卫:webcard 合同测试(禁幻觉/单卡所有权/证据三档/empty 不写文件)、图的圈外通道测试(循环条件/两条账不混/index 对齐)、steer 与 synth 的卡通道断言、TopicSchema card 与 items 拒卡测试。plugin/marketplace `0.50.0→0.50.1`。
+
 - **0.50.0** (2026-07-27): **topic 从平面滚雪球改为闭环掌舵 —— 三个真实手机 topic(顺风/漂移/工具不对口)证明"与主题相关"的平面爬行在书为主的库里必然向社科经典回退。** 设计:`docs/topic-steering-design.md`。
   - **`02-outline.md` 成为持久研究状态**(schema `kind: outline`,subquestions 带 coverage/channel/theory_used):steer-agent 是唯一 writer,用户可手改,手改就是下次增量重跑的指令——把用户在 overview 里人肉写"本轮方针"的工作流正式化。
   - **新 agent `steer-agent` 吞掉 topicSearchPrompt + snowballPrompt**:每轮对账大纲、更新覆盖度、返回带 subq/role 标签的定向候选。两道栅栏:对象栅栏(候选自身的研究对象须落在子问题内,而非仅被主题文献引用)与 theory 配额(全 topic ≤3,账在 outline 跨轮累计)。成员表 subquestions[].items 持久在 outline frontmatter,跨轮跨重跑累计(评审修正)。可宣告 saturated 提前收口;web_tasks 本版只收不派(0.50.1 接 webcard)。

@@ -94,9 +94,18 @@ STEER_SCHEMA(回执):
   suggested_queries: [..] }   // needs_seeds 卡点沿用
 ```
 
-## 5. Kagi 非学术通道:webcard-agent(0.50.1)
+## 5. Kagi 非学术通道:webcard-agent(0.50.1,已实现)
 
-接 steer 的 `web_tasks`,kagi CLI + WebFetch 检索核验,写 `vault/topics/{slug}/cards/{card-slug}.md`。每卡一个对象(一款机型/一份 SEC 文件/一段口述),带来源与证据等级——unconventional 跑里手工发明的"材料卡"模式正式化。每轮 ≤3 张防爆量。卡不进 `ok` 语料表(不是 vault 分析件),独立 `cards[]` 递给 synth。工具:Read, Write, Bash。
+接 steer 的 `web_tasks`,kagi CLI + WebFetch 检索核验,写 `vault/topics/{slug}/cards/{card-slug}.md`,带来源与证据等级(confirmed / single-source / disputed)——unconventional 跑里手工发明的"材料卡"模式正式化。每轮 ≤3 张防爆量。卡不进 `ok` 语料表(不是 vault 分析件),独立 `cards[]` 递给 synth。工具:Read, Write, Bash, WebFetch。
+
+实现时相对本节原稿的四处定案:
+
+1. **一卡的粒度是一条 `web_task`,不是"一个对象"。** 原稿写"每卡一个对象",但用户在 unconventional 跑里手工产出的四份卡(`gaming-phone-cards-2003-2019` 等)全是**按品类汇总的合集**,一张卡里 6 款机型。用户已确认这四份继续各自保留为一份合集,不拆成单机文件。所以合同写成:一条 web_task 一张卡,任务的对象范围可以是一个具体对象,也可以是一个品类合集。
+2. **正式材料卡 = `type: topic` + `kind: card`**(frontmatter 只有 type/kind/title,与 dossier 同样薄)。卡住在主题目录的 `cards/` 下,`quasi-audit` 的 `rglob("*.md")` 自动把它纳入主题目录同审。
+3. **卡在 outline 里走 `subquestions[].cards`(slug 表),不进 `items`。** `items` 的 `kind` 枚举仍是 `book|paper|talk`——它是"vault 分析件"的成员表,synth 按 `itemPath()` 把 slug 解析成 `vault/{books,papers,talks}/…`。把卡塞进去不会报错,只会生成一条读不到的死链;两条通道分开是唯一能让这个错误变响的做法(schema 与图各有一条断言守着)。
+4. **`web_tasks` 单独也能驱动循环。** 原稿的图骨架把 webcard 挂在学术批次之后,但 `while (queue.length …)` 意味着学术候选为空时循环一轮都不跑——正好是 sky-mobi 那类"传感器失明"主题的形态,这条通道存在的理由会被循环条件本身否掉。改为 `while ((queue.length || webTasks.length) …)`,`no_works` / `needs_seeds` / `all_failed` 三个卡点也一并按"语料 + 卡"的证据总量判。
+
+卡文件名(`card_slug`)由 steer 在 `web_tasks[]` 里给出——它握着 outline 的卡表,能自己决定复用旧 slug(刷新那张卡)还是开新 slug。steer 没给时图按 query 确定性派生(中文 query slugify 为空则退到 subq),批内重名补序号:随机或时间戳会让每次增量重跑在 `cards/` 里堆近似重复。
 
 ## 6. synth §T 重构:按 outline 分页生成
 
@@ -124,7 +133,7 @@ STEER_SCHEMA(回执):
 
 - 老 topic(两页式)增量重跑:steer 首轮对账,超重聚类提名毕业;`res-*` 手工旧页保留原名,outline 登记 `page: res-….md` 指过去,不强迫改名。
 - `manifest.json` 等老 process-topic 遗留状态由 outline 取代,不读不删。
-- schema 侧新增 `kind: outline | dossier | card`(quasi-audit 注册,YAML 风格沿 topic 现契约)。
+- schema 侧新增 `kind: outline | dossier | card`(quasi-audit 注册,YAML 风格沿 topic 现契约)。老库里手工写在 `vault/notes/` 的材料卡迁移为 `type: topic, kind: card` 并移入对应主题的 `cards/`;`themes`/`created` 等 note 字段随迁移去掉(TopicSchema strict,三页脊柱与专章同样只有 type/kind/title)。
 - CLAUDE.md/AGENTS.md:topic 目录契约从"两页"改为"三页脊柱 + 毕业专章 + cards/"。
 
 ## 9. 测试与文档清单
