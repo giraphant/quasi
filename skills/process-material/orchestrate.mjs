@@ -354,7 +354,11 @@ async function processTopic(slug, m) {
   // 圈外通道:学术候选枯竭不等于证据枯竭。sky-mobi 类主题(证据在 SEC 文件、工信部规章、
   // SDK 遗存、口述里)学术传感器全程失明,queue 恒空 —— 只看 queue 就永远滚不起来。
   let webTasks = pendingCards(steer, [])
-  if (!queue.length && !local.length && !webTasks.length) return { slug, status: 'no_works' }
+  // 02-outline 已登记的卡是前几次跑落地在磁盘上的证据:本轮没新活,不代表这主题空手。
+  // 不这样算,一个纯圈外主题第二次跑(卡都写好了、学术候选恒空)会当场 no_works,
+  // 连拿既有卡重出脊柱都做不到。
+  if (!queue.length && !local.length && !webTasks.length && !registered(steer).length)
+    return { slug, status: 'no_works' }
 
   // 召回到的作品已分析过,直接进语料 —— 即便一轮都没跑起来也不会丢。
   const seen = new Set(local.map(i => i.slug)), ok = [...local], failures = []
@@ -453,9 +457,11 @@ async function processTopic(slug, m) {
   //    证据卡与学术语料同权计数:一个纯圈外主题(sky-mobi 类)可能 0 条学术语料 + 5 张卡,
   //    只数 ok 会把它误判成"没找到东西",正好把这条通道存在的理由否掉。
   const minItems = Number(m.minItems) || 3
-  const evidence = ok.length + cards.length
+  // 卡按 slug 取并集再计数:本轮刷新的旧卡两边都在,数两次会把证据量吹起来。
+  const cardCount = new Set([...registered(steer), ...cardSlugs]).size
+  const evidence = ok.length + cardCount
   if (!m.final && !queue.length && !webTasks.length && evidence < minItems)
-    return { slug, status: 'needs_seeds', collected: ok.length, cards: cards.length, rounds: round,
+    return { slug, status: 'needs_seeds', collected: ok.length, cards: cardCount, rounds: round,
              suggested_queries: suggested, failures: failures.length }
   if (!evidence) return { slug, status: 'all_failed', tried: failures.length }
 
@@ -491,7 +497,7 @@ async function processTopic(slug, m) {
     if (((au && au.escalated) || []).length) return { slug, status: 'audit_escalated', escalated: au.escalated }
   }
 
-  return { slug, status: 'ok', items: ok.length, cards: cards.length, recalled: local.length, rounds: round,
+  return { slug, status: 'ok', items: ok.length, cards: cardCount, recalled: local.length, rounds: round,
            outline: `vault/topics/${slug}/02-outline.md`, saturated,
            subquestions: subqs.map(s => ({ id: s.id, coverage: s.coverage, dossier: !!s.dossier })),
            dossiers_failed: dossiersFailed,
@@ -654,6 +660,13 @@ const cardPath = (topicSlug, cardSlug) => `vault/topics/${topicSlug}/cards/${car
 
 const slugify = (s) => String(s || '').toLowerCase()
   .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60)
+
+// outline 已登记的卡 slug(= 前几次跑落地在磁盘上的证据)。只喂给早退判断与证据计数:
+//   - 不进 ok/items:卡不是 vault 分析件,进了就是给 synth 一条 itemPath 解不出的死链;
+//   - 不进 cardSlugs:那是本轮去重键,把既有 slug 塞进去,steer 用同 card_slug 刷新旧卡
+//     的任务会被 pendingCards 当"本轮已写过"丢掉 —— 旧卡从此永远刷不动。
+const registered = (st) => ((st && st.subquestions) || [])
+  .flatMap(s => (s && s.cards) || []).filter(Boolean)
 
 // steer 的 web_tasks → 本轮可派的卡任务。card_slug 是文件名,必须确定性且唯一:
 //   - steer 给了就用它(它握着 outline 的卡表,能自己决定"刷新旧卡"还是"开新卡");

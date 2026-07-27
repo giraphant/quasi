@@ -301,7 +301,7 @@ def test_orchestrate_topic_runs_the_webcard_channel_on_its_own_track():
     # 卡与语料两条账:cards[] 独立累计,ok 里永远只有 book/paper/talk。
     assert "const cards = [], cardSlugs = new Set()" in body, "卡独立累计,不混进 ok"
     assert "ok.push(...roundOk)" in body and "cards.push(c)" in body
-    assert "ok.length + cards.length" in body, "死胡同卡点按证据总量判,纯圈外主题不能被误判成没找到东西"
+    assert "ok.length + cardCount" in body, "死胡同卡点按证据总量判,纯圈外主题不能被误判成没找到东西"
     # index 对齐:parallel() 用 null 占位死掉的 agent,filter 掉就会把标题安到别的 slug 上。
     assert "const cres = await parallel(" in body, "卡回执不得 filter(Boolean),会错位 index"
     assert "roundCards.forEach(c => c.subq && dirty.add(c.subq))" in body, "新卡要把其子问题报脏,否则专章不重写"
@@ -484,6 +484,65 @@ eq(pendingCards(st, ['sq-b']).map(t => t.card_slug), ['sky-mobi-sec-f1', 'sq-b-2
    '派生 slug 撞上已写过的要让路,不能覆盖')
 
 eq(cardPath('sky-mobi', 'sq-b'), 'vault/topics/sky-mobi/cards/sq-b.md', 'card 路径')
+console.log('OK')
+"""
+    proc = subprocess.run([node, "--input-type=module", "-e", script],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+def test_existing_outline_cards_count_as_evidence_without_becoming_corpus():
+    """一个纯圈外主题第二次跑:卡都在磁盘上、02-outline 也登记了,但 local/queue/web_tasks
+    全空 —— 只数本轮新卡就会当场 no_works,连拿既有卡重出脊柱都做不到,末尾 evidence 也漏算。
+    既有卡必须进证据计数,但**不许**进 ok(卡不是分析件),也**不许**进 pendingCards 的
+    已写过集合(那会把 steer 用同 card_slug 刷新旧卡的路堵死)。"""
+    src = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+    body = topic_body(src)
+
+    assert "!registered(steer).length" in body, "早退判断必须看 outline 已登记的卡"
+    assert "const cardCount = new Set([...registered(steer), ...cardSlugs]).size" in body, \
+        "本轮刷新的旧卡两边都在,按 slug 取并集才不会把证据量数两遍"
+    assert "const evidence = ok.length + cardCount" in body, "证据 = 学术语料 + 全部卡"
+    assert "cards: cardCount" in body, "回执报的卡数也要含既有卡"
+    assert "registered" not in body.split("pendingCards(steer")[1].split(")")[0], \
+        "既有 slug 不能喂给 pendingCards,否则旧卡永远刷不动"
+    assert "...local" in body and "ok = [...local]" in body and "registered" not in body.split("ok = [")[1][:40], \
+        "既有卡不进学术语料表"
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+    helpers = "const cardPath =" + src.split("const cardPath =")[1].split("// 掌舵 prompt")[0]
+    script = helpers + """
+const eq = (a, b, msg) => { if (JSON.stringify(a) !== JSON.stringify(b))
+  throw new Error(`${msg}: got ${JSON.stringify(a)} want ${JSON.stringify(b)}`) }
+
+// 第二次跑的掌舵回执:大纲登记着 3 张既有卡,没有学术候选,只想刷新其中一张。
+const steer = {
+  candidates: [],
+  subquestions: [
+    { id: 'sq-a', cards: ['sky-mobi-sec-f1', 'moduo-sdk'] },
+    { id: 'sq-b', cards: ['miit-license'] },
+    { id: 'sq-c' },
+  ],
+  web_tasks: [{ subq: 'sq-a', query: 'Sky-mobi F-1 amendment', card_slug: 'sky-mobi-sec-f1' }],
+}
+eq(registered(steer).sort(), ['miit-license', 'moduo-sdk', 'sky-mobi-sec-f1'], '既有卡表')
+eq(registered({}), [], '空回执不炸')
+eq(registered({ subquestions: [{ id: 'x' }] }), [], '没有 cards 的子问题不贡献')
+
+// 早退:三条通道全空但大纲有卡 → 不是 no_works。
+eq(registered(steer).length > 0, true, '有既有卡就不该判 no_works')
+
+// 刷新不被堵:cardSlugs(本轮已写)为空时,同 slug 的任务照样派得出去。
+eq(pendingCards(steer, []).map(t => t.card_slug), ['sky-mobi-sec-f1'], '既有卡可被显式刷新')
+// 写完之后同一轮内不重抓。
+eq(pendingCards(steer, ['sky-mobi-sec-f1']).length, 0, '本轮已写过的不重抓')
+
+// 计数:刷新过的那张两边都在,并集才是 3 不是 4。
+const cardSlugs = new Set(['sky-mobi-sec-f1'])
+eq(new Set([...registered(steer), ...cardSlugs]).size, 3, '刷新的旧卡不许数两遍')
 console.log('OK')
 """
     proc = subprocess.run([node, "--input-type=module", "-e", script],
