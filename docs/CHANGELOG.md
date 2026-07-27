@@ -2,6 +2,9 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.50.3** (2026-07-27): **发布元数据递增。**
+  - runtime contract 与 0.50.2 相同；同步 plugin/marketplace 与 maintainer guide 的当前版本。
+
 - **0.50.2** (2026-07-27): **证据卡通道补齐身份、落盘与失败账,Annual Reviews 下载补齐出版商路由。**
   - `steer-agent` 现在必须给每条 `web_task` 一个 2-80 字符的单段 kebab-case `card_slug`;持久 schema、Workflow structured-output 与运行时边界同时拒绝缺失值、过短/过长值、`../`、斜杠、`.md` 和大小写路径。图不再按 query 猜文件名或给碰撞项补序号,因此一次任务只有一个稳定身份,不会覆盖别卡或生成 `.md.md`。
   - agent 的 `status: ok|unchanged` 只是声明,图会另起只读探针对 expected exact path 跑 `test -s`;回执的 `card_path`/`subq` 不匹配、agent 死亡、empty/error、或文件缺失都进入统一 failure 账,只有实存卡才算证据、阻止 `no_works` 并进入 synth。steer 每次运行还会删掉大纲中的失踪卡,并从磁盘收回已写但未登记的 orphan 卡。
