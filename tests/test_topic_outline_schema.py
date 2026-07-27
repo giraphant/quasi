@@ -69,6 +69,28 @@ def test_dossier_kind_is_valid_and_lean() -> None:
 
 
 def test_card_kind_is_valid_and_lean() -> None:
-    """按品类汇总的机型卡(一张卡多个对象)与单对象卡是同一个 kind,frontmatter 同样只有三字段。"""
+    """按品类汇总的机型卡(一张卡多个对象)与单对象卡是同一个 kind,三字段即可成立。"""
     doc = TopicSchema(type="topic", title="游戏手机量产史——6 款机型材料卡", kind="card")
     assert doc.kind == "card"
+    assert doc.created is None and doc.themes is None
+
+
+def test_card_keeps_the_note_metadata_it_was_migrated_with() -> None:
+    """手写卡是从 vault/notes/ 迁进来的,带着 created/themes;strict schema 不该逼迁移丢元数据。"""
+    doc = TopicSchema(
+        type="topic",
+        title="游戏手机量产史——6 款机型材料卡",
+        kind="card",
+        created="2026-07-26",
+        themes=["手机形态史", "游戏手机"],
+    )
+    assert str(doc.created) == "2026-07-26"
+    assert doc.themes == ["手机形态史", "游戏手机"]
+
+
+@pytest.mark.parametrize("kind", ["overview", "resources", "dossier"])
+def test_note_metadata_stays_off_the_spine_and_dossier_pages(kind: str) -> None:
+    """created/themes 是卡专用的反向约束:脊柱页和专章没有"建卡日期"这回事,写了要报错。"""
+    for field, value in (("created", "2026-07-26"), ("themes", ["手机形态史"])):
+        with pytest.raises(ValidationError):
+            TopicSchema(type="topic", title="主题", kind=kind, **{field: value})

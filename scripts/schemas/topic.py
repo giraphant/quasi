@@ -11,6 +11,7 @@ card 页(cards/{card-slug}.md)是 webcard-agent 写的圈外证据卡。
 
 from __future__ import annotations
 
+from datetime import date
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -64,12 +65,20 @@ class TopicSchema(BaseModel):
     )
     subquestions: Optional[list[Subquestion]] = None
     history: Optional[list[str]] = None
+    # 卡是从 note 迁过来的:手写卡带着 created/themes,迁移时不该为了迁移丢掉它们。
+    # 只对 kind: card 开口,别的 kind 写了照样报错 —— 脊柱页没有"创建日期"这回事。
+    created: Optional[date] = Field(default=None, strict=False)
+    themes: Optional[list[str]] = Field(
+        default=None, description="主题标签数组(复用全库 themes 词表);仅 kind: card"
+    )
 
     @model_validator(mode="after")
-    def _outline_fields_only_on_outline(self) -> "TopicSchema":
+    def _fields_stay_on_their_own_kind(self) -> "TopicSchema":
         if self.kind == "outline":
             if not self.subquestions:
                 raise ValueError("outline 页必须携带非空 subquestions")
         elif self.subquestions is not None or self.history is not None:
             raise ValueError("subquestions/history 只允许出现在 kind: outline 页")
+        if self.kind != "card" and (self.created is not None or self.themes is not None):
+            raise ValueError("created/themes 只允许出现在 kind: card 页")
         return self

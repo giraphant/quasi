@@ -133,7 +133,7 @@ STEER_SCHEMA(回执):
 
 - 老 topic(两页式)增量重跑:steer 首轮对账,超重聚类提名毕业;`res-*` 手工旧页保留原名,outline 登记 `page: res-….md` 指过去,不强迫改名。
 - `manifest.json` 等老 process-topic 遗留状态由 outline 取代,不读不删。
-- schema 侧新增 `kind: outline | dossier | card`(quasi-audit 注册,YAML 风格沿 topic 现契约)。老库里手工写在 `vault/notes/` 的材料卡迁移为 `type: topic, kind: card` 并移入对应主题的 `cards/`;`themes`/`created` 等 note 字段随迁移去掉(TopicSchema strict,三页脊柱与专章同样只有 type/kind/title)。
+- schema 侧新增 `kind: outline | dossier | card`(quasi-audit 注册,YAML 风格沿 topic 现契约)。老库里手工写在 `vault/notes/` 的材料卡迁移为 `type: topic, kind: card` 并移入对应主题的 `cards/`。TopicSchema 是 strict 的,但 `created`/`themes` 作为**仅 `kind: card` 可用**的可选字段保留下来(反向校验:别的 kind 写了报错)—— 那是人手写卡时留下的元数据,迁移不该顺手洗掉;脊柱页与专章仍然只有 type/kind/title。新卡由 webcard-agent 写,它不编这两个字段,但刷新已有卡时原样抄回。
 - CLAUDE.md/AGENTS.md:topic 目录契约从"两页"改为"三页脊柱 + 毕业专章 + cards/"。
 
 ## 9. 测试与文档清单

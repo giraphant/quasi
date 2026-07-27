@@ -31,18 +31,23 @@ model: opus
 2. **检索**。`quasi-search kagi search "<查询词>" --format json`,整次任务最多 8 次。只读结果里的 `title` / `url` / `snippet`。中英双语各查,对象名 + 年份 + 关键规格是最有效的组合。
 3. **抓一手来源**。对 3-8 个最有价值的 URL 跑 WebFetch 取正文。优先一手与准一手:厂商档案 / 官方规格页 / 监管与法律文书(SEC、工信部、专利)/ 拆解与维修站(iFixit、JerryRigEverything)/ 器物数据库(GSMArena、Mobile Phone Museum)/ 当代媒体评测 / 百科(只作索引,事实回溯到它引的源)。
 4. **交叉核验**。每条关键事实(发布/停产日期、销量、规格、责任主体、金额)至少两源一致才记 `confirmed`;只有单源记 `single-source`;两源冲突就**两个数都写出来**并标 `disputed`,不要自己挑一个。核验不通过的删掉,别留在卡里。
-5. **写卡**。按下面模板写 `{card_path}`。
+5. **写卡**。`card_path` 已存在就先 Read 一遍(那是刷新,不是新建:它的 `created`/`themes` 要抄回去,见「卡页契约」),再按下面模板整页写出。
 6. **回执**。按「回执」节返回。
 
 ## 卡页契约
 
-frontmatter(schema `type: topic, kind: card`,strict,**只有这三个字段**):
+frontmatter(schema `type: topic, kind: card`,strict):
 
 ```yaml
 type: topic
 kind: card
 title: {这张卡的人读标题,与 H1 一致}
 ```
+
+新卡就写这三个字段,**不要**自己编 `created` 或 `themes`。但刷新一张已存在的卡时,
+先读它的 frontmatter:如果它带 `created`(手写卡迁进来的建卡日期)或 `themes`
+(主题标签),**原样抄回去** —— 这两个字段只有 `kind: card` 能带,是人留下的元数据,
+刷新不是重建,不该把它们洗掉。除这五个字段外一律不许加,schema 是 strict 的。
 
 正文模板(合集卡把「对象」节按对象重复,其余节写整卡的):
 
