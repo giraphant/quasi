@@ -2,6 +2,14 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.50.2** (2026-07-27): **证据卡通道补齐身份、落盘与失败账,Annual Reviews 下载补齐出版商路由。**
+  - `steer-agent` 现在必须给每条 `web_task` 一个 2-80 字符的单段 kebab-case `card_slug`;持久 schema、Workflow structured-output 与运行时边界同时拒绝缺失值、过短/过长值、`../`、斜杠、`.md` 和大小写路径。图不再按 query 猜文件名或给碰撞项补序号,因此一次任务只有一个稳定身份,不会覆盖别卡或生成 `.md.md`。
+  - agent 的 `status: ok|unchanged` 只是声明,图会另起只读探针对 expected exact path 跑 `test -s`;回执的 `card_path`/`subq` 不匹配、agent 死亡、empty/error、或文件缺失都进入统一 failure 账,只有实存卡才算证据、阻止 `no_works` 并进入 synth。steer 每次运行还会删掉大纲中的失踪卡,并从磁盘收回已写但未登记的 orphan 卡。
+  - 本轮成功卡和学术语料在下一次 steer 失败时仍会按既定 `subq`/`role` 合回本地子问题状态并记脏;`snowball_members` 把这次定向决定穿过采集阶段交还 steer,不让它从正文重新猜归属。失败/空卡任务记入 attempt 集,同一次图运行不再无限重派。已有卡无实质变化返回 `unchanged` 且不脏写专章;有变化只用 `Edit` 更新标题与正文,机械保留人写的 `created`/`themes`。
+  - webcard fan-out 与独立的学术 probe/router 并发;每轮 card cap 在遍历中提前生效;增量 audit 只审本轮实际写过的 spine、专章和新卡,不再递归重扫整个 topic 历史目录。escalation 按 exact path 回到 outline/专章/card/spine 各自的 owner,不再拿 spine 重写敷衍所有坏页。正整数解析同时挡住 0、负数和小于 1 的小数配额造成的反向 slice/零轮运行。
+  - Annual Reviews 增加 EZProxy host 的 `/doi/pdf/{doi}` 构造和 DOI `10.1146/` 的 direct PDF 路由;CookieCloud/EZProxy 已能落到文章页时不再因缺少出版商模式而误报 `no PDF found`。
+  - 守卫覆盖 Annual Reviews 两条路由、card slug/path schema、磁盘证明、失败账、并发顺序、changed-file audit、metadata-preserving refresh 与用户卡点计数。plugin/marketplace `0.50.1→0.50.2`。
+
 - **0.50.1** (2026-07-27): **topic 的圈外证据通道接上 —— `web_tasks` 从 0.50.0 的"只收不派"变成真的落地成材料卡。** 设计:`docs/topic-steering-design.md` §5。
   - **病例还是 sky-mobi**:证据在 SEC 文件、工信部规章、SDK 遗存、社交媒体回忆里,学术搜索传感器全程失明,6 条语料的主题页实际由圈外调研写成,雪球旁观。0.50.0 让 steer 报出了 `web_tasks`,但图不消费,那一条信息每轮原地蒸发。
   - **新 agent `webcard-agent`**:一条 web_task → 一张 `vault/topics/{slug}/cards/{card-slug}.md`(`quasi-search kagi` 检索 + WebFetch 抓一手来源 + 跨源核验)。三条硬约束都是针对同一个失败模式——**一张编造的机型卡会被 synth 当证据引用,比没有卡更坏**:抓不到不许用训练知识补完;每条关键事实两源一致才记 `confirmed`,单源记 `single-source`,冲突就两个数都写并标 `disputed`;拿不到可核验材料时返回 `status: "empty"` 且**不写文件**,图照实少收一张。「缺口/存疑」节不许留空。

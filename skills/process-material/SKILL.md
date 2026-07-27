@@ -114,7 +114,8 @@ if result.status in ("year_mismatch", "year_ambiguous"):
 # topic 死胡同:滚雪球滚不动了、语料还太薄。不硬写一篇没底子的综述,问用户要检索词。
 # 用户不补 → 带 final=True 原样重投,图直接跳到收口(条目全幂等,重跑几乎零成本)。
 if result.status == "needs_seeds":
-    decision = AskUserQuestion(present={"已收 ": result.collected, "建议检索词": result.suggested_queries})
+    decision = AskUserQuestion(present={"已收语料": result.collected, "已收证据卡": result.cards,
+                                        "建议检索词": result.suggested_queries})
     wf_args["meta"] |= {"seeds": decision.seeds} if decision.seeds else {"final": True}
     result = Workflow(scriptPath="...", args=wf_args)
 

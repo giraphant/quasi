@@ -27,6 +27,12 @@ ShortString = Annotated[
     StringConstraints(min_length=2, max_length=200, strip_whitespace=True),
 ]
 
+# 文件名 slug:单一路径段,禁止 `/`,`.md`,`..` 等路径逃逸或双扩展。
+CardSlug = Annotated[
+    str,
+    StringConstraints(min_length=2, max_length=80, pattern=r"^[a-z0-9][a-z0-9-]*$"),
+]
+
 # ─── 数值原语 ─────────────────────────────────────────────
 
 # 年份: 1500..2030 整数(允许 None 在 schema 字段处声明)

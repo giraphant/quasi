@@ -35,6 +35,7 @@ const EX_SCHEMA = { type: 'object', required: ['status'], properties: {
     slot: {}, title: { type: 'string' }, filename: { type: 'string' },
     slug: { type: 'string' }, word_count: { type: 'number' } } } } } }
 const AU_SCHEMA = { type: 'object', properties: {
+  status: { type: 'string' },
   escalated: { type: 'array', items: { type: 'object', properties: {
     path: { type: 'string' }, kind: { type: 'string' }, reason: { type: 'string' } } } } } }
 // search-agent 回执:author/topic discovery 读 candidates[](每项必须带 canonical slug)。
@@ -49,30 +50,35 @@ const SEARCH_SCHEMA = { type: 'object', properties: {
 // (死胡同卡点要把建议原样递给用户)。subquestions[].items 是全量成员表:图无 fs,
 // 专章 synth 的读单全靠它;subquestions[].cards 是与它平行的圈外证据卡全量表 —— 两条通道
 // 不合并,卡不是 vault 分析件,混进 items 会让 synth 按 vault/papers/{slug}.md 去读不存在的产物。
+const CARD_SLUG_PATTERN = '^[a-z0-9][a-z0-9-]*$'
+const CARD_SLUG_SCHEMA = { type: 'string', minLength: 2, maxLength: 80, pattern: CARD_SLUG_PATTERN }
 const STEER_SCHEMA = { type: 'object', required: ['subquestions'], properties: {
   outline_written: { type: 'boolean' }, saturated: { type: 'boolean' },
-  subquestions: { type: 'array', items: { type: 'object', required: ['id', 'coverage'], properties: {
+  subquestions: { type: 'array', items: { type: 'object', required: ['id', 'coverage', 'items', 'cards'], properties: {
     id: { type: 'string' }, question: { type: 'string' }, coverage: { type: 'string' },
     dossier: { type: 'boolean' }, page: { type: 'string' },
     items: { type: 'array', items: { type: 'object', required: ['slug'], properties: {
       kind: { type: 'string' }, slug: { type: 'string' }, role: { type: 'string' } } } },
-    cards: { type: 'array', items: { type: 'string' } } } } },
+    cards: { type: 'array', items: CARD_SLUG_SCHEMA } } } },
   dirty: { type: 'array', items: { type: 'string' } },
-  candidates: { type: 'array', items: { type: 'object', required: ['slug'], properties: {
+  candidates: { type: 'array', items: { type: 'object', required: ['slug', 'subq', 'role'], properties: {
     kind: { type: 'string' }, slug: { type: 'string' }, title: { type: 'string' },
     authors: { type: 'array' }, year: {}, isbn: { type: 'string' }, doi: { type: 'string' },
     oa_url: { type: 'string' }, journal: { type: 'string' },
     subq: { type: 'string' }, role: { type: 'string' } } } },
-  web_tasks: { type: 'array', items: { type: 'object', properties: {
+  web_tasks: { type: 'array', items: { type: 'object', required: ['subq', 'query', 'card_slug'], properties: {
     subq: { type: 'string' }, query: { type: 'string' }, note: { type: 'string' },
-    card_slug: { type: 'string' } } } },
+    card_slug: CARD_SLUG_SCHEMA } } },
   suggested_queries: { type: 'array', items: { type: 'string' } } } }
 // 证据卡回执:圈外通道的产物是一张卡页,不是 vault 分析件。status:"empty" = 没抓到可核验的
 // 一手材料,agent 按合同不写文件 —— 图必须照实少收一张,不能把空卡计进证据。
-const CARD_SCHEMA = { type: 'object', required: ['status'], properties: {
-  status: { type: 'string' }, card_path: { type: 'string' }, subq: { type: 'string' },
+const CARD_SCHEMA = { type: 'object', required: ['status', 'card_path', 'subq'], properties: {
+  status: { type: 'string', enum: ['ok', 'unchanged', 'empty', 'error'] },
+  card_path: { type: 'string' }, subq: { type: 'string' },
   title: { type: 'string' }, objects: { type: 'number' }, sources: { type: 'number' },
   evidence: { type: 'string' }, note: { type: 'string' } } }
+const CARD_PROBE_SCHEMA = { type: 'object', required: ['existing'], properties: {
+  existing: { type: 'array', items: CARD_SLUG_SCHEMA } } }
 // 存在性探针回执:图无 fs,批量前用一个 agent 一次性查哪些产物已在 vault(避免重跑已完成的书/论文,
 // 尤其避免对已入库的书做破坏性重 extract)。vault_slug 非 null = 已做过;它可能与候选 slug 不同
 // (搜索侧 slug 漂移),下游必须用 vault_slug 读产物,否则会当成新书重跑 → 重复条目。
@@ -102,6 +108,10 @@ const RECALL_SCHEMA = { type: 'object', properties: {
 // synth 报的"实际读到的章数"。字段缺失一律按 0 处理 —— 对账要 fail closed,
 // 缺信号时宁可多跑一轮(缺的章才会真写,其余 no-op)也不能默认通过。
 const analysedCount = (sy) => Number(sy && sy.chapters_analyzed) || 0
+const positiveInt = (value, fallback) => {
+  const parsed = Math.floor(Number(value))
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
 
 // agent() 返回 null = agent 死在终端 API 错误上("Server error mid-response" /
 // "stream error: INTERNAL_ERROR"),跟"内容处理失败"不是一回事 —— 原地重投一次。
@@ -335,9 +345,9 @@ async function processAuthor(name, m) {
 async function processTopic(slug, m) {
   phase('Topic')
   const desc = m.desc || m.topic_desc || slug
-  const maxRounds = Number(m.maxRounds) || 3
-  const perRound = Number(m.maxPerRound) || 8
-  const perCards = Number(m.maxCardsPerRound) || 3
+  const maxRounds = positiveInt(m.maxRounds, 3)
+  const perRound = positiveInt(m.maxPerRound, 8)
+  const perCards = positiveInt(m.maxCardsPerRound, 3)
 
   // 1. 本地召回 + 掌舵种子轮,并行。种子轮建/对账 02-outline.md(用户手改过就照改法走),
   //    并给出首批定向候选——吞掉旧的 topic 首搜。召回结果第 1 轮末才进掌舵视野。
@@ -351,20 +361,28 @@ async function processTopic(slug, m) {
   const local = ((rc && rc.items) || []).filter(i => i && i.slug)
     .map(i => ({ kind: i.kind === 'book' || i.kind === 'talk' ? i.kind : 'paper', slug: i.slug }))
   let queue = ((steer.candidates) || []).filter(c => c && c.slug)
+  // 证据卡与 ok 语料表**分开累计**:卡不是 vault 分析件,itemPath() 对它无意义。
+  // cardAttempts 挡住同一轮反复抓 empty/error;availableCards 只收另一 agent 真正在磁盘验过的卡。
+  const cards = [], cardSlugs = new Set(), cardAttempts = new Set(), availableCards = new Set()
+  const scheduleCards = (state) => {
+    const pending = pendingCards(state, [...cardAttempts], perCards)
+    if (pending.dropped) log(`${slug}: 卡任务按每轮上限 ${perCards} 截去 ${pending.dropped} 条`)
+    return pending.tasks
+  }
   // 圈外通道:学术候选枯竭不等于证据枯竭。sky-mobi 类主题(证据在 SEC 文件、工信部规章、
   // SDK 遗存、口述里)学术传感器全程失明,queue 恒空 —— 只看 queue 就永远滚不起来。
-  let webTasks = pendingCards(steer, [])
-  // 02-outline 已登记的卡是前几次跑落地在磁盘上的证据:本轮没新活,不代表这主题空手。
-  // 不这样算,一个纯圈外主题第二次跑(卡都写好了、学术候选恒空)会当场 no_works,
-  // 连拿既有卡重出脊柱都做不到。
-  if (!queue.length && !local.length && !webTasks.length && !registered(steer).length)
+  let webTasks = scheduleCards(steer)
+  // 旧 outline 的 slug 不能直接当证据:用户可能删过卡,也可能手改出坏路径。另一个 agent 批量
+  // test -s 后才入账;steer 下一轮负责从 outline 删除缺失卡、收编 cards/ 下的孤儿卡。
+  const priorCards = registered(steer)
+  const priorProbe = priorCards.length ? await retryNull(cardExistencePrompt(slug, priorCards),
+    { phase: 'Topic', agentType: 'general-purpose', label: `probe-cards:${slug}:r0`, schema: CARD_PROBE_SCHEMA }) : null
+  ;((priorProbe && priorProbe.existing) || []).filter(c => priorCards.includes(c)).forEach(c => availableCards.add(c))
+  if (!queue.length && !local.length && !webTasks.length && !availableCards.size)
     return { slug, status: 'no_works' }
 
   // 召回到的作品已分析过,直接进语料 —— 即便一轮都没跑起来也不会丢。
   const seen = new Set(local.map(i => i.slug)), ok = [...local], failures = []
-  // 证据卡与 ok 语料表**分开累计**:卡不是 vault 分析件,itemPath() 对它无意义,
-  // 进了 ok 就等于给 synth 一条读不到的路径。cardSlugs 兼作跨轮去重键(同 slug = 刷新同一张卡)。
-  const cards = [], cardSlugs = new Set()
   // 种子轮回执同样入账:r0 的毕业/枯竭建议丢掉,就是终审抓到的 legacy 迁移断链。
   const dirty = new Set((st0 && st0.dirty) || [])
   let round = 0, suggested = (st0 && st0.suggested_queries) || null, saturated = !!(st0 && st0.saturated)
@@ -377,8 +395,13 @@ async function processTopic(slug, m) {
     round++
     const batch = queue.filter(c => !seen.has(c.slug)).slice(0, perRound)
     batch.forEach(c => seen.add(c.slug))
-    const roundTasks = webTasks.slice(0, perCards)   // ≤3/轮:圈外抓取比学术管线贵,不设上界就爆量
+    const roundTasks = webTasks   // scheduleCards 已限流;不要先规范化整张任务表再丢掉尾部
     if (!batch.length && !roundTasks.length) break
+    roundTasks.forEach(t => cardAttempts.add(t.card_slug))
+    // webcard 与学术探针/router 没有数据依赖,先发出去;轮末只在掌舵前汇合。
+    const cardWork = parallel(roundTasks.map(t => () =>
+      retryNull(webcardPrompt(slug, desc, t, steer), { phase: 'Topic', agentType: 'quasi:webcard-agent',
+        label: `webcard:${t.card_slug}:${slug}`, schema: CARD_SCHEMA })))
 
     // 探针:已入库的直接收编,不重跑(尤其不对已入库的书做破坏性重 extract)。
     // 主题跑跨越已有语料的概率比作者跑更高——同一篇论文常同时属于多个主题。
@@ -401,30 +424,47 @@ async function processTopic(slug, m) {
 
     const roundOk = [
       ...batch.filter(c => done.has(c.slug))
-        .map(c => ({ kind: isBook(c) ? 'book' : 'paper', slug: done.get(c.slug) })),
-      ...res.filter(r => r.status === 'ok').map(r => ({ kind: r.kind, slug: r.slug })),
+        .map(c => ({ kind: isBook(c) ? 'book' : 'paper', slug: done.get(c.slug),
+          subq: c.subq, role: c.role })),
+      ...res.filter(r => r.status === 'ok').map(r => {
+        const c = batch.find(candidate => candidate.slug === r.slug) || {}
+        return { kind: r.kind, slug: r.slug, subq: c.subq, role: c.role }
+      }),
     ].filter(i => !ok.some(o => o.slug === i.slug))
     // ↑ 探针收编返回的 vault_slug 可能正是召回过的那部(seen 只挡候选 slug,挡不住
     //   vault_slug)——0.48.2 E2E 里两条重复路径进了 synth 合同。语料表是给下游的数据,
     //   规范性在源头保证,不留给 synthesis-agent 自行去重。
     ok.push(...roundOk)
+    roundOk.forEach(i => i.subq && dirty.add(i.subq))
     failures.push(...res.filter(r => r.status !== 'ok').map(r => ({ slug: r.slug, status: r.status })))
 
-    // 圈外证据卡:与学术批次同轮但独立通道。status:"empty" 的任务按合同没写文件,不入账;
-    // 死掉的 agent 是 null,同样不入账 —— 所以这里**不能** .filter(Boolean),那会错位 index,
-    // 把一张卡的标题安到另一张卡的 slug 上。宁可留 null 让下面按位判。
-    const cres = await parallel(roundTasks.map(t => () =>
-      retryNull(webcardPrompt(slug, desc, t, steer), { phase: 'Topic', agentType: 'quasi:webcard-agent',
-        label: `webcard:${t.card_slug}:${slug}`, schema: CARD_SCHEMA })))
-    const roundCards = roundTasks
-      .map((t, i) => ({ subq: t.subq, card_slug: t.card_slug,
-                        title: (cres[i] && cres[i].title) || t.card_slug, status: cres[i] && cres[i].status }))
-      .filter(c => c.status === 'ok')
-    roundCards.forEach(c => { cards.push(c); cardSlugs.add(c.card_slug) })
-    // 新卡 = 该子问题内容有变。掌舵死了也要把这笔账记上,否则专章永远不重写,卡白抓。
-    roundCards.forEach(c => c.subq && dirty.add(c.subq))
-    if (webTasks.length > roundTasks.length)
-      log(`${slug}: 第 ${round} 轮卡任务 ${webTasks.length} 条,按上限只派前 ${roundTasks.length} 条`)
+    // 圈外证据卡:回执必须指回 caller 指定的 path/subq,且另一 agent 用 test -s 验过文件;
+    // agent 自报 ok 不足以入账。null 保留原 index,不能 filter(Boolean) 后错配任务。
+    const cres = await cardWork
+    const claims = roundTasks.map((t, i) => {
+      const receipt = cres[i], expected = cardPath(slug, t.card_slug)
+      const identityOk = receipt && receipt.card_path === expected && receipt.subq === t.subq
+      return { ...t, expected, receipt,
+        status: identityOk ? receipt.status : (receipt ? 'invalid_receipt' : 'agent_failed') }
+    })
+    const claimedFiles = claims.filter(c => c.status === 'ok' || c.status === 'unchanged')
+    const cardProbe = claimedFiles.length ? await retryNull(
+      cardExistencePrompt(slug, claimedFiles.map(c => c.card_slug)),
+      { phase: 'Topic', agentType: 'general-purpose', label: `probe-cards:${slug}:r${round}`, schema: CARD_PROBE_SCHEMA }) : null
+    const present = new Set(((cardProbe && cardProbe.existing) || [])
+      .filter(c => claimedFiles.some(x => x.card_slug === c)))
+    const roundCards = claimedFiles.filter(c => present.has(c.card_slug)).map(c => ({
+      subq: c.subq, card_slug: c.card_slug, query: c.query, note: c.note,
+      title: (c.receipt && c.receipt.title) || c.card_slug, status: c.status,
+    }))
+    roundCards.forEach(c => { cards.push(c); cardSlugs.add(c.card_slug); availableCards.add(c.card_slug) })
+    // 只有内容真的变化才重写专章;unchanged 仍是可用证据,但不制造无效 synth。
+    roundCards.filter(c => c.status === 'ok').forEach(c => c.subq && dirty.add(c.subq))
+    const accepted = new Set(roundCards.map(c => c.card_slug))
+    claims.filter(c => !accepted.has(c.card_slug)).forEach(c => failures.push({
+      kind: 'card', slug: c.card_slug,
+      status: (c.status === 'ok' || c.status === 'unchanged') ? 'missing' : c.status,
+    }))
 
     // 第 1 轮并上本地召回:那些正文的引用节同样是这个主题的引文网络,而且往往是库里
     // 最相关的作品,漏掉等于把雪球起点砍掉一半。
@@ -435,7 +475,8 @@ async function processTopic(slug, m) {
     ;(steer.dirty || []).forEach(d => dirty.add(d))
     queue = ((steer.candidates) || []).filter(c => c && c.slug && !seen.has(c.slug))
     // 掌舵死了就保留上轮 web_tasks 会把同一批卡再抓一遍;活回执才换任务表,死回执直接清空收口。
-    webTasks = sr ? pendingCards(steer, [...cardSlugs]) : []
+    // empty/error 也已进 cardAttempts,同一 run 不重抓;下一次增量跑仍可由 steer 重新提名。
+    webTasks = sr ? scheduleCards(steer) : []
     saturated = !!steer.saturated
     suggested = steer.suggested_queries || null
     log(`${slug}: 第 ${round} 轮 +${roundOk.length} 条 +${roundCards.length} 卡`
@@ -456,17 +497,21 @@ async function processTopic(slug, m) {
   // 3. 死胡同卡点:候选枯竭且证据太薄 → 不硬写一篇没底子的综述,冒泡问用户补种子词。
   //    证据卡与学术语料同权计数:一个纯圈外主题(sky-mobi 类)可能 0 条学术语料 + 5 张卡,
   //    只数 ok 会把它误判成"没找到东西",正好把这条通道存在的理由否掉。
-  const minItems = Number(m.minItems) || 3
-  // 卡按 slug 取并集再计数:本轮刷新的旧卡两边都在,数两次会把证据量吹起来。
-  const cardCount = new Set([...registered(steer), ...cardSlugs]).size
+  const minItems = positiveInt(m.minItems, 3)
+  // 旧卡须仍在磁盘;本轮卡已逐张 probe。刷新卡两边都在,按 slug 取并集只数一次。
+  const liveRegistered = registered(steer).filter(c => availableCards.has(c))
+  const cardCount = new Set([...liveRegistered, ...cardSlugs]).size
   const evidence = ok.length + cardCount
   if (!m.final && !queue.length && !webTasks.length && evidence < minItems)
     return { slug, status: 'needs_seeds', collected: ok.length, cards: cardCount, rounds: round,
              suggested_queries: suggested, failures: failures.length }
   if (!evidence) return { slug, status: 'all_failed', tried: failures.length }
 
-  // 4a. 专章 synth:只重写脏的已毕业子问题;steer 全程没报过脏(受限回执)→ 全部重写兜底。
-  const subqs = (steer.subquestions || []).filter(s => s && s.id)
+  // 4a. 专章 synth:先剔除 outline 中已丢失的卡,再把本轮成功卡合回对应子问题。
+  // 即使紧随其后的 steer 两连死,当前 synth 也不会把刚写好的卡丢成“未归类”。
+  const persistedSubqs = (steer.subquestions || []).filter(s => s && s.id)
+    .map(s => ({ ...s, cards: (s.cards || []).filter(c => availableCards.has(c)) }))
+  const subqs = mergeCards(mergeItems(persistedSubqs, ok), cards)
   const dossiers = subqs.filter(s => s.dossier && s.page)
   // 收到过活回执 → 只信 dirty(空=真没变,legacy 手写专章不得重写);一份回执都没有才全量兜底。
   const dirtyDossiers = dossiers.filter(s => steerReceipts ? dirty.has(s.id) : true)
@@ -485,16 +530,47 @@ async function processTopic(slug, m) {
   if (!sy || sy.status === 'error')
     return { slug, status: 'synth_failed', items: ok.length, notes: sy && sy.notes }
 
-  // 5. audit + 一次 escalation 回环。audit-agent 递归扫 vault/topics/{slug},卡页自动进检。
-  //    escalation 只重打脊柱;专章和卡都有回执兜底,修不动就报 audit_escalated 交给下轮重跑。
-  let au = await retryNull(`path: vault/topics/${slug}`,
-    { phase: 'Topic', agentType: 'quasi:audit-agent', label: `audit-topic:${slug}`, schema: AU_SCHEMA })
-  if (((au && au.escalated) || []).length) {
+  // 5. audit + 一次 escalation 回环。只审本轮写过的文件,不递归重扫数百张历史卡/专章。
+  const auditPaths = [...new Set([
+    `vault/topics/${slug}/00-overview.md`, `vault/topics/${slug}/01-resources.md`,
+    `vault/topics/${slug}/02-outline.md`,
+    ...dirtyDossiers.filter(s => !dossiersFailed.includes(s.id)).map(s => `vault/topics/${slug}/${s.page}`),
+    ...cards.filter(c => c.status === 'ok').map(c => cardPath(slug, c.card_slug)),
+  ])]
+  const audit = async (suffix) => {
+    const results = await parallel(auditPaths.map(path => () => retryNull(`path: ${path}`,
+      { phase: 'Topic', agentType: 'quasi:audit-agent', label: `audit${suffix}:${path}`, schema: AU_SCHEMA })))
+    return auditPaths.flatMap((path, i) => {
+      const result = results[i]
+      if (!result || result.status === 'error')
+        return [{ path, kind: 'audit_error', reason: 'audit agent failed', suggested_action: 'rerun topic' }]
+      return (result.escalated || []).map(e => ({ path, ...e }))
+    })
+  }
+  let escalated = await audit('')
+  if (escalated.length) {
+    const repairPaths = [...new Set(escalated.map(e => e.path).filter(Boolean))]
+    await parallel(repairPaths.map(path => () => {
+      const reasons = escalated.filter(e => e.path === path).map(e => `${e.kind}: ${e.reason}`).join('; ')
+      const reason = `\nreason: audit escalated ${reasons}`
+      if (path.endsWith('/02-outline.md'))
+        return guard(steerPrompt(slug, desc, round, [], [...seen], 0, null, []) + reason,
+          { phase: 'Topic', agentType: 'quasi:steer-agent', label: `regen-outline:${slug}` })
+      const dossier = subqs.find(s => s.page && path.endsWith(`/${s.page}`))
+      if (dossier)
+        return guard(topicDossierSynthPrompt(slug, desc, dossier, cards) + reason,
+          { phase: 'Topic', agentType: 'quasi:synthesis-agent', label: `regen-dossier:${dossier.id}:${slug}` })
+      const card = cards.find(c => path === cardPath(slug, c.card_slug))
+      if (card)
+        return guard(webcardPrompt(slug, desc, card, steer) + reason,
+          { phase: 'Topic', agentType: 'quasi:webcard-agent', label: `regen-card:${card.card_slug}:${slug}` })
+      return Promise.resolve({ status: 'spine' })
+    }))
+    // 00/01 归 synthesis-agent;其它页修复后也重织一次 spine,让卡/outline 的修正进入门面。
     await guard(topicSpineSynthPrompt(slug, desc, ok, spineSubqs, cards) + `\nreason: audit escalated`,
       { phase: 'Topic', agentType: 'quasi:synthesis-agent', label: `regen-topic:${slug}` })
-    au = await retryNull(`path: vault/topics/${slug}`,
-      { phase: 'Topic', agentType: 'quasi:audit-agent', label: `audit2-topic:${slug}`, schema: AU_SCHEMA })
-    if (((au && au.escalated) || []).length) return { slug, status: 'audit_escalated', escalated: au.escalated }
+    escalated = await audit('2')
+    if (escalated.length) return { slug, status: 'audit_escalated', escalated }
   }
 
   return { slug, status: 'ok', items: ok.length, cards: cardCount, recalled: local.length, rounds: round,
@@ -658,40 +734,48 @@ function vaultRecallPrompt(desc, max) {
 // 卡不是分析件,一旦共用一个解析器,任何把卡塞进 ok/items 的手滑都会静默变成一条读不到的路径。
 const cardPath = (topicSlug, cardSlug) => `vault/topics/${topicSlug}/cards/${cardSlug}.md`
 
-const slugify = (s) => String(s || '').toLowerCase()
-  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60)
+const CARD_SLUG_RE = /^[a-z0-9][a-z0-9-]*$/
+const validCardSlug = c => typeof c === 'string' && c.length >= 2 && c.length <= 80 && CARD_SLUG_RE.test(c)
 
-// outline 已登记的卡 slug(= 前几次跑落地在磁盘上的证据)。只喂给早退判断与证据计数:
-//   - 不进 ok/items:卡不是 vault 分析件,进了就是给 synth 一条 itemPath 解不出的死链;
-//   - 不进 cardSlugs:那是本轮去重键,把既有 slug 塞进去,steer 用同 card_slug 刷新旧卡
-//     的任务会被 pendingCards 当"本轮已写过"丢掉 —— 旧卡从此永远刷不动。
+// outline 已登记的卡 slug(= 前几次跑落地在磁盘上的证据)。坏路径在边界丢弃,
+// 不能让 `../` 或 `.md` 被 cardPath 拼进 synthesis 的读单。
 const registered = (st) => ((st && st.subquestions) || [])
-  .flatMap(s => (s && s.cards) || []).filter(Boolean)
+  .flatMap(s => (s && s.cards) || []).filter(validCardSlug)
 
-// steer 的 web_tasks → 本轮可派的卡任务。card_slug 是文件名,必须确定性且唯一:
-//   - steer 给了就用它(它握着 outline 的卡表,能自己决定"刷新旧卡"还是"开新卡");
-//   - 没给就从 query 派生,中文 query slugify 后为空 → 退到 subq。派生而不随机,增量重跑才会
-//     覆盖同一张卡而不是在 cards/ 里堆近似重复。
-//   - 本轮已写过的 slug 直接丢弃(重复劳动);批内重名补序号(否则两个 agent 写同一个文件,后写的赢)。
-const pendingCards = (st, doneSlugs) => {
-  const done = new Set(doneSlugs), used = new Set(doneSlugs), out = []
+// steer 持有稳定身份,所以 card_slug 是必填合同。缺失/重名不再由图偷偷发明另一个文件名:
+// structured-output 会让 steer 修正;这里的 guard 只防手写测试数据。limit 在循环内生效,
+// 不为最终不会 dispatch 的尾部做全量碰撞扫描。
+const pendingCards = (st, doneSlugs, limit) => {
+  const used = new Set(doneSlugs), tasks = []
+  let dropped = 0
   for (const t of ((st && st.web_tasks) || [])) {
-    if (!t || !t.query) continue
-    const given = slugify(t.card_slug)
-    if (given && done.has(given)) continue
-    const base = given || slugify(t.query) || slugify(t.subq) || 'card'
-    let s = base
-    for (let n = 2; used.has(s); n++) s = `${base}-${n}`
-    used.add(s)
-    out.push({ subq: t.subq || '', query: t.query, note: t.note || '', card_slug: s })
+    if (!t || !t.query || !t.subq || !validCardSlug(t.card_slug)) continue
+    if (used.has(t.card_slug)) continue
+    if (tasks.length >= limit) { dropped++; continue }
+    used.add(t.card_slug)
+    tasks.push({ subq: t.subq, query: t.query, note: t.note || '', card_slug: t.card_slug })
   }
-  return out
+  return { tasks, dropped }
 }
+
+const mergeItems = (subqs, items) => subqs.map(s => {
+  const merged = new Map((s.items || []).map(i => [`${i.kind}:${i.slug}`, i]))
+  ;(items || []).filter(i => i.subq === s.id && i.kind !== 'author').forEach(i =>
+    merged.set(`${i.kind}:${i.slug}`, { kind: i.kind, slug: i.slug, role: i.role }))
+  return { ...s, items: [...merged.values()] }
+})
+
+const mergeCards = (subqs, cards) => subqs.map(s => ({ ...s, cards: [...new Set([
+  ...(s.cards || []), ...(cards || []).filter(c => c.subq === s.id).map(c => c.card_slug),
+])] }))
 
 // 掌舵 prompt:薄,只带变量;栅栏/配额/毕业规则全在 agents/steer-agent.md 合同里。
 function steerPrompt(slug, desc, round, snowSrc, seenSlugs, want, seeds, newCards) {
   const books = snowSrc.filter(i => i.kind === 'book').map(i => i.slug)
   const rest = snowSrc.filter(i => i.kind !== 'book').map(itemPath)
+  const members = snowSrc.filter(i => i.subq).map(i => ({
+    kind: i.kind, slug: i.slug, subq: i.subq, role: i.role,
+  }))
   const cards = (newCards || []).map(c => ({ subq: c.subq, card_slug: c.card_slug,
     title: c.title, path: cardPath(slug, c.card_slug) }))
   return `topic_slug: ${slug}
@@ -701,7 +785,8 @@ round: ${round}
 want: ${want}
 seen_slugs: ${JSON.stringify(seenSlugs)}
 snowball_book_slugs: ${JSON.stringify(books)}
-snowball_paths: ${JSON.stringify(rest)}${cards.length ? `
+snowball_paths: ${JSON.stringify(rest)}
+snowball_members: ${JSON.stringify(members)}   # 已定向候选的 subq/role 原样并入成员表${cards.length ? `
 new_cards: ${JSON.stringify(cards)}   # 本轮落地的证据卡,并入对应子问题的 cards(不是 items)` : ''}${seeds && seeds.length ? `
 extra_queries: ${JSON.stringify(seeds)}   # 用户补的种子检索词,优先照这些搜` : ''}`
 }
@@ -718,6 +803,14 @@ query: ${t.query}
 note: ${t.note}
 card_path: ${cardPath(topicSlug, t.card_slug)}
 existing_cards: ${JSON.stringify(known)}`
+}
+function cardExistencePrompt(topicSlug, slugs) {
+  const items = slugs.filter(c => validCardSlug(c))
+    .map(card_slug => ({ card_slug, path: cardPath(topicSlug, card_slug) }))
+  return `task: 只读检查这些证据卡是否真实存在且非空,不写任何文件。
+items: ${JSON.stringify(items)}
+逐项用 Bash 的 test -s 检查 exact path;不要模糊匹配、不要把目录算作文件。
+输出 {"existing":["card-slug", "..."]},只列 test -s 成功的 card_slug。`
 }
 // 专章:每页只读本聚类语料 —— 读预算结构性受控(0.49.4 的爆 context 类)。
 // 卡按 subq 归属过滤后单独递:它们是一手证据,与分析件同页但不同性质,合同里分节承载。

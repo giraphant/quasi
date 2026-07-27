@@ -14,7 +14,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 ### Layer ownership
 
 - `skills/` own user-facing workflow state machines: input normalisation, manifests, skip rules, human gates, and dispatch order.
-- `agents/` are specialist workers. They call only the public `quasi-*` CLI or read/write the exact local artifact named in their contract.
+- `agents/` are specialist workers. They call only the public `quasi-*` CLI or read/write the exact local artifact named in their contract. The sole remote-tool exception is `webcard-agent`, which may `WebFetch` the exact URLs returned by `quasi-search kagi` for its one assigned evidence card.
 - `bin/quasi-*` is the stable shell surface exposed to agents and skills.
 - `scripts/` contains deterministic capability entrypoints.
 - `scripts/schemas/` is for deterministic validation/migration code, not an agent-facing API.
@@ -153,4 +153,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.50.1.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.50.2.

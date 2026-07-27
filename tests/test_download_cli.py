@@ -298,6 +298,30 @@ def test_informs_doi_matches_publisher_direct_pdf_pattern():
     assert "https://pubsonline.informs.org/doi/pdf/10.1287/ijoc.2024.0736" in urls
 
 
+def test_annualreviews_doi_has_ezproxy_and_direct_pdf_routes():
+    mod = _load_module(DOWNLOAD, "download_annualreviews_routes_under_test")
+    doi = "10.1146/annurev-soc-031021-041439"
+    final_url = "https://www-annualreviews-org.eux.idm.oclc.org/content/journals/10.1146/annurev-soc-031021-041439"
+
+    proxied = [
+        f"https://www-annualreviews-org.eux.idm.oclc.org{pattern.format(doi=doi)}"
+        for hint, pattern in mod.PUBLISHER_PDF_PATTERNS
+        if hint in final_url
+    ]
+    direct = [
+        pattern.format(doi=doi, suffix=doi.split("/", 1)[-1])
+        for prefix, pattern in mod._PUBLISHER_DIRECT_URLS
+        if doi.startswith(prefix)
+    ]
+
+    assert proxied == [
+        "https://www-annualreviews-org.eux.idm.oclc.org/doi/pdf/10.1146/annurev-soc-031021-041439"
+    ]
+    assert direct == [
+        "https://www.annualreviews.org/doi/pdf/10.1146/annurev-soc-031021-041439"
+    ]
+
+
 def test_sciencedirect_article_url_detection_accepts_native_and_ezproxy_urls():
     mod = _load_module(DOWNLOAD, "download_sciencedirect_url_under_test")
 

@@ -36,6 +36,26 @@ def test_outline_kind_carries_subquestions() -> None:
     assert doc.subquestions[0].cards == ["gaming-phone-cards-2003-2019"]
 
 
+def test_outline_defaults_cards_to_an_empty_list() -> None:
+    doc = TopicSchema(
+        type="topic", title="非常规手机形态", kind="outline",
+        subquestions=[{key: value for key, value in SQ.items() if key != "cards"}],
+    )
+    assert doc.subquestions[0].cards == []
+
+
+@pytest.mark.parametrize(
+    "card_slug",
+    ["a", "a" * 81, "../01-resources", "foo.md", "nested/card", "UPPER"],
+)
+def test_card_slugs_are_single_kebab_path_segments(card_slug: str) -> None:
+    with pytest.raises(ValidationError):
+        TopicSchema(
+            type="topic", title="非常规手机形态", kind="outline",
+            subquestions=[{**SQ, "cards": [card_slug]}],
+        )
+
+
 def test_cards_are_a_channel_of_their_own_not_corpus_items() -> None:
     """卡不是 vault 分析件。混进 items 会让 synth 按 vault/papers/{slug}.md 去读一个
     不存在的产物 —— 静默死链,而不是报错。所以 items 的 kind 枚举必须挡住它。"""

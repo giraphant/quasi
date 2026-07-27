@@ -16,7 +16,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .primitives import ShortString, Title
+from .primitives import CardSlug, Title
 
 
 class SubqItem(BaseModel):
@@ -46,8 +46,8 @@ class Subquestion(BaseModel):
     page: Optional[str] = None
     theory_used: int = 0
     items: Optional[List[SubqItem]] = None
-    cards: Optional[List[ShortString]] = Field(
-        default=None,
+    cards: List[CardSlug] = Field(
+        default_factory=list,
         description="证据卡 slug 表(cards/{slug}.md),与 items 平行的圈外证据通道",
     )
 
