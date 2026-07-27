@@ -345,6 +345,7 @@ PUBLISHER_PDF_PATTERNS = [
     ("mitpress",     "/doi/pdf/{doi}"),
     ("pubsonline.informs", "/doi/pdf/{doi}"),
     ("pubsonline-informs", "/doi/pdf/{doi}"),
+    ("annualreviews", "/doi/pdf/{doi}"),
 ]
 
 _EPDF_PUBLISHER_PATTERNS = [
@@ -1661,6 +1662,7 @@ _PUBLISHER_DIRECT_URLS = [
     ("10.1038/",  "https://www.nature.com/articles/{suffix}.pdf"),
     ("10.1162/",  "https://direct.mit.edu/doi/pdf/{doi}"),
     ("10.1145/",  "https://dl.acm.org/doi/pdf/{doi}"),
+    ("10.1146/",  "https://www.annualreviews.org/doi/pdf/{doi}"),
     ("10.1353/",  "https://muse.jhu.edu/article/{suffix}"),
     ("10.1017/",  "https://www.cambridge.org/core/services/aop-cambridge-core/content/view/{doi}"),
     ("10.1287/", "https://pubsonline.informs.org/doi/pdf/{doi}"),

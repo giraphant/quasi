@@ -29,6 +29,26 @@ def frontmatter_description(path: Path) -> str:
     return match.group("body").strip() if match else ""
 
 
+def run_card_helpers(js_body: str) -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+
+    src = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+    helpers = (
+        "const positiveInt =" + src.split("const positiveInt =")[1].split("// agent() 返回 null")[0]
+        + "\nconst cardPath =" + src.split("const cardPath =")[1].split("// 掌舵 prompt")[0]
+    )
+    script = helpers + """
+const eq = (a, b, msg) => { if (JSON.stringify(a) !== JSON.stringify(b))
+  throw new Error(`${msg}: got ${JSON.stringify(a)} want ${JSON.stringify(b)}`) }
+""" + js_body + "\nconsole.log('OK')\n"
+    proc = subprocess.run([node, "--input-type=module", "-e", script],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
 def test_skill_orchestration_contract_doc_exists():
     doc = PLUGIN_ROOT / "docs" / "SKILL_ORCHESTRATION.md"
 
@@ -277,6 +297,9 @@ def test_orchestrate_topic_steers_by_outline():
     assert "snowballPrompt" not in graph, "平面滚雪球已被 steer 吞掉"
     assert "steer:${slug}:r0" in graph and "steer:${slug}:r${round}" in graph, "种子轮与滚动轮 label 可区分"
     assert "STEER_SCHEMA" in graph, "掌舵回执必须有 schema,散文读不到字段"
+    assert "required: ['subq', 'query', 'card_slug']" in graph, "图不能替 steer 发明卡文件名"
+    assert "required: ['slug', 'subq', 'role']" in graph, "候选的定向决定必须是结构化必填字段"
+    assert "required: ['id', 'coverage', 'items', 'cards']" in graph, "子问题回执必须带全量两张表"
     assert "page: dossier" in graph and "page: spine" in graph, "synth 分页派发"
     assert "synth-dossier" in body and "synth-topic:${slug}" in body
     assert "dirty" in body, "只重写脏专章"
@@ -285,6 +308,9 @@ def test_orchestrate_topic_steers_by_outline():
     assert "new Set((st0 && st0.dirty) || [])" in body, "种子轮回执的 dirty/建议词必须入账"
     assert "steerReceipts" in body, "收到过活回执才不全量重写手写老专章"
     assert "r1-close" in body, "recall-only 主题补一次收口掌舵"
+    assert "snowball_members:" in graph, "已定向候选的 subq/role 必须跨采集保留"
+    assert "roundOk.forEach(i => i.subq && dirty.add(i.subq))" in body, \
+        "掌舵失败也不能丢掉本轮语料的脏页账"
 
 
 def test_orchestrate_topic_runs_the_webcard_channel_on_its_own_track():
@@ -299,17 +325,40 @@ def test_orchestrate_topic_runs_the_webcard_channel_on_its_own_track():
     assert "while ((queue.length || webTasks.length)" in body, "web_tasks 单独也要能驱动循环"
     assert "!queue.length && !local.length && !webTasks.length" in body, "只有三条通道全空才是 no_works"
     # 卡与语料两条账:cards[] 独立累计,ok 里永远只有 book/paper/talk。
-    assert "const cards = [], cardSlugs = new Set()" in body, "卡独立累计,不混进 ok"
+    assert "const cards = [], cardSlugs = new Set(), cardAttempts = new Set(), availableCards = new Set()" in body
     assert "ok.push(...roundOk)" in body and "cards.push(c)" in body
     assert "ok.length + cardCount" in body, "死胡同卡点按证据总量判,纯圈外主题不能被误判成没找到东西"
-    # index 对齐:parallel() 用 null 占位死掉的 agent,filter 掉就会把标题安到别的 slug 上。
-    assert "const cres = await parallel(" in body, "卡回执不得 filter(Boolean),会错位 index"
-    assert "roundCards.forEach(c => c.subq && dirty.add(c.subq))" in body, "新卡要把其子问题报脏,否则专章不重写"
+    # webcard 先启动,与学术探针/router 并行;结果仍保留 null index,并经另一 agent 验文件。
+    assert body.index("const cardWork = parallel(") < body.index("const probe ="), "两个独立通道不得串行"
+    assert "const cres = await cardWork" in body, "卡回执不得 filter(Boolean),会错位 index"
+    assert "cardExistencePrompt(slug, claimedFiles.map" in body, "agent 自报 ok 不足以入账"
+    assert "roundCards.filter(c => c.status === 'ok')" in body, "unchanged 卡不重写专章"
+    assert "kind: 'card'" in body and "failures.push" in body, "empty/error/missing 要进入失败账"
     # 卡路径是独立解析器,不并进 itemPath —— 共用会让任何手滑静默变成死链。
     assert "const cardPath = (topicSlug, cardSlug) =>" in graph
     assert "cards/${cardSlug}.md" in graph
     assert "card_paths:" in graph, "两种 synth 页都要收到卡通道"
     assert "new_cards:" in graph, "掌舵要收到本轮新卡,登记进 outline 的 cards"
+
+
+def test_topic_caps_are_positive_and_audit_only_touches_current_outputs():
+    graph = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
+    body = topic_body(graph)
+
+    assert "const positiveInt =" in graph
+    assert "Number(m.maxCardsPerRound) || 3" not in body, "负数不能让 slice 放开几乎整队任务"
+    assert "positiveInt(m.maxCardsPerRound, 3)" in body
+    assert "minLength: 2, maxLength: 80" in graph, "Workflow slug schema 必须与持久 schema 同界"
+    assert "const auditPaths =" in body and "path: vault/topics/${slug}`" not in body, \
+        "增量跑只审本轮写过的 spine/outline/dossier/card"
+    for owner in ("regen-outline:", "regen-dossier:", "regen-card:", "regen-topic:"):
+        assert owner in body, f"audit escalation 必须回到对应 writer: {owner}"
+
+    run_card_helpers("""
+eq(positiveInt(0.5, 3), 3, '正小数 floor 后为 0,必须回退')
+eq(positiveInt(1.9, 3), 1, '正配额向下取整')
+eq(positiveInt(-2, 3), 3, '负配额回退')
+""")
 
 
 def test_process_material_gates_topic_dead_end_back_to_the_user():
@@ -319,6 +368,7 @@ def test_process_material_gates_topic_dead_end_back_to_the_user():
 
     assert "needs_seeds" in text, "the dead-end status must reach a human gate"
     assert "suggested_queries" in text, "the widening hints must be shown, not swallowed"
+    assert '"已收证据卡": result.cards' in text, "human gate must not report 0 when web evidence exists"
 
 
 def test_process_material_carries_the_retired_skills_post_steps():
@@ -432,6 +482,8 @@ def test_steer_agent_contract_carries_fence_quota_and_outline_ownership():
     # 卡走独立通道:混进 items 就是给 synth 一条 vault/papers/{card}.md 的死链。
     assert "new_cards" in steer and "不进 `items`" in steer
     assert "card_slug" in steer, "卡文件名由掌舵定,才能选刷新旧卡还是开新卡"
+    assert "孤儿卡" in steer and "文件缺失" in steer, "卡写成后掌舵失败与手工删除都要在下轮对账"
+    assert "即使为空也必须显式返回 `[]`" in steer, "图依赖全量 items/cards 表"
 
 
 def test_synthesis_topic_mode_is_outline_pinned_and_paged():
@@ -452,103 +504,69 @@ def test_synthesis_topic_mode_is_outline_pinned_and_paged():
     assert "永远不写" in synth
 
 
-def test_pending_cards_never_hands_two_agents_the_same_filename():
-    """`card_slug` 直接就是文件名,所以它必须确定性且唯一 —— 重名的两张卡意味着两个并行
-    agent 写同一个路径,后写的赢,前一张的抓取工作静默蒸发。这条是真跑 node,不是读源码:
-    派生链(steer 给的 → query → subq → 'card')与补序号循环都是分支逻辑,静态断言看不出错。"""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node not on PATH")
-
-    src = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
-    helpers = "const cardPath =" + src.split("const cardPath =")[1].split("// 掌舵 prompt")[0]
-    script = helpers + """
-const eq = (a, b, msg) => { if (JSON.stringify(a) !== JSON.stringify(b))
-  throw new Error(`${msg}: got ${JSON.stringify(a)} want ${JSON.stringify(b)}`) }
-
-// steer 给了 slug 就照用;中文 query 派生后为空,退到 subq;两条同 subq 的任务补序号。
+def test_pending_cards_requires_stable_slugs_and_applies_the_cap_early():
+    """card_slug 是 steer 的稳定身份合同:缺失/坏值/重名直接不派,图不另造文件名。
+    cap 在遍历中生效,避免先处理整张任务表再把尾部丢掉。"""
+    run_card_helpers("""
 const st = { web_tasks: [
   { subq: 'sq-a', query: 'Sky-mobi SEC F-1 filing', note: 'n', card_slug: 'sky-mobi-sec-f1' },
-  { subq: 'sq-b', query: '工信部入网许可' , note: 'n' },
-  { subq: 'sq-b', query: '摩豆平台遗存', note: 'n' },
-  { subq: 'sq-c', note: 'no query' },
+  { subq: 'sq-b', query: '工信部入网许可', note: 'n', card_slug: 'miit-license' },
+  { subq: 'sq-b', query: '摩豆平台遗存', note: 'n', card_slug: 'moduo-sdk' },
+  { subq: 'sq-a', query: 'duplicate', note: 'n', card_slug: 'sky-mobi-sec-f1' },
+  { subq: 'sq-c', query: 'missing slug' },
+  { subq: 'sq-c', query: 'bad slug', card_slug: '../escape' },
+  { subq: 'sq-c', query: 'short slug', card_slug: 'a' },
+  { subq: 'sq-c', query: 'long slug', card_slug: 'a'.repeat(81) },
 ] }
-const out = pendingCards(st, [])
-eq(out.map(t => t.card_slug), ['sky-mobi-sec-f1', 'sq-b', 'sq-b-2'], 'slug 派生与补序号')
-eq(out.length, 3, '没有 query 的任务不派')
-eq(new Set(out.map(t => t.card_slug)).size, out.length, '批内 slug 必须唯一')
-
-// 本轮已写过的卡不重抓;派生出的 slug 也不许撞上已写过的。
-eq(pendingCards(st, ['sky-mobi-sec-f1']).map(t => t.card_slug), ['sq-b', 'sq-b-2'], '已写过的跳过')
-eq(pendingCards(st, ['sq-b']).map(t => t.card_slug), ['sky-mobi-sec-f1', 'sq-b-2', 'sq-b-3'],
-   '派生 slug 撞上已写过的要让路,不能覆盖')
-
+const out = pendingCards(st, [], 2)
+eq(out.tasks.map(t => t.card_slug), ['sky-mobi-sec-f1', 'miit-license'], '只派前两条有效任务')
+eq(out.dropped, 1, '只报告被 cap 截掉的有效任务')
+eq(pendingCards(st, ['sky-mobi-sec-f1'], 3).tasks.map(t => t.card_slug),
+   ['miit-license', 'moduo-sdk'], '本轮尝试过的 slug 不重抓')
 eq(cardPath('sky-mobi', 'sq-b'), 'vault/topics/sky-mobi/cards/sq-b.md', 'card 路径')
-console.log('OK')
-"""
-    proc = subprocess.run([node, "--input-type=module", "-e", script],
-                          capture_output=True, text=True)
-    assert proc.returncode == 0, proc.stderr
-    assert "OK" in proc.stdout
+""")
 
 
-def test_existing_outline_cards_count_as_evidence_without_becoming_corpus():
-    """一个纯圈外主题第二次跑:卡都在磁盘上、02-outline 也登记了,但 local/queue/web_tasks
-    全空 —— 只数本轮新卡就会当场 no_works,连拿既有卡重出脊柱都做不到,末尾 evidence 也漏算。
-    既有卡必须进证据计数,但**不许**进 ok(卡不是分析件),也**不许**进 pendingCards 的
-    已写过集合(那会把 steer 用同 card_slug 刷新旧卡的路堵死)。"""
+def test_existing_outline_cards_need_disk_proof_and_never_become_corpus():
+    """既有卡只有 test -s 成功才算证据;坏 slug 不进路径。本轮新卡同时合进子问题,
+    即使掌舵随后失败也不会在当前 synth 里变成未归类。"""
     src = (PLUGIN_ROOT / "skills" / "process-material" / "orchestrate.mjs").read_text(encoding="utf-8")
     body = topic_body(src)
 
-    assert "!registered(steer).length" in body, "早退判断必须看 outline 已登记的卡"
-    assert "const cardCount = new Set([...registered(steer), ...cardSlugs]).size" in body, \
-        "本轮刷新的旧卡两边都在,按 slug 取并集才不会把证据量数两遍"
-    assert "const evidence = ok.length + cardCount" in body, "证据 = 学术语料 + 全部卡"
+    assert "cardExistencePrompt(slug, priorCards)" in body, "outline 卡必须经独立磁盘探针"
+    assert "!availableCards.size" in body, "只有真实存在的卡才能阻止 no_works"
+    assert "const liveRegistered = registered(steer).filter(c => availableCards.has(c))" in body
+    assert "const cardCount = new Set([...liveRegistered, ...cardSlugs]).size" in body
+    assert "const evidence = ok.length + cardCount" in body, "证据 = 学术语料 + 已验证卡"
     assert "cards: cardCount" in body, "回执报的卡数也要含既有卡"
-    assert "registered" not in body.split("pendingCards(steer")[1].split(")")[0], \
-        "既有 slug 不能喂给 pendingCards,否则旧卡永远刷不动"
-    assert "...local" in body and "ok = [...local]" in body and "registered" not in body.split("ok = [")[1][:40], \
-        "既有卡不进学术语料表"
+    assert "ok = [...local]" in body, "既有卡不进学术语料表"
+    assert "const subqs = mergeCards(mergeItems(persistedSubqs, ok), cards)" in body, \
+        "掌舵失败时本轮语料与卡都要立即归入子问题"
 
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node not on PATH")
-    helpers = "const cardPath =" + src.split("const cardPath =")[1].split("// 掌舵 prompt")[0]
-    script = helpers + """
-const eq = (a, b, msg) => { if (JSON.stringify(a) !== JSON.stringify(b))
-  throw new Error(`${msg}: got ${JSON.stringify(a)} want ${JSON.stringify(b)}`) }
-
-// 第二次跑的掌舵回执:大纲登记着 3 张既有卡,没有学术候选,只想刷新其中一张。
+    run_card_helpers("""
 const steer = {
-  candidates: [],
   subquestions: [
-    { id: 'sq-a', cards: ['sky-mobi-sec-f1', 'moduo-sdk'] },
+    { id: 'sq-a', cards: ['sky-mobi-sec-f1', 'moduo-sdk', '../escape'] },
     { id: 'sq-b', cards: ['miit-license'] },
-    { id: 'sq-c' },
+    { id: 'sq-c', cards: [] },
   ],
   web_tasks: [{ subq: 'sq-a', query: 'Sky-mobi F-1 amendment', card_slug: 'sky-mobi-sec-f1' }],
 }
-eq(registered(steer).sort(), ['miit-license', 'moduo-sdk', 'sky-mobi-sec-f1'], '既有卡表')
-eq(registered({}), [], '空回执不炸')
-eq(registered({ subquestions: [{ id: 'x' }] }), [], '没有 cards 的子问题不贡献')
-
-// 早退:三条通道全空但大纲有卡 → 不是 no_works。
-eq(registered(steer).length > 0, true, '有既有卡就不该判 no_works')
-
-// 刷新不被堵:cardSlugs(本轮已写)为空时,同 slug 的任务照样派得出去。
-eq(pendingCards(steer, []).map(t => t.card_slug), ['sky-mobi-sec-f1'], '既有卡可被显式刷新')
-// 写完之后同一轮内不重抓。
-eq(pendingCards(steer, ['sky-mobi-sec-f1']).length, 0, '本轮已写过的不重抓')
-
-// 计数:刷新过的那张两边都在,并集才是 3 不是 4。
-const cardSlugs = new Set(['sky-mobi-sec-f1'])
-eq(new Set([...registered(steer), ...cardSlugs]).size, 3, '刷新的旧卡不许数两遍')
-console.log('OK')
-"""
-    proc = subprocess.run([node, "--input-type=module", "-e", script],
-                          capture_output=True, text=True)
-    assert proc.returncode == 0, proc.stderr
-    assert "OK" in proc.stdout
+eq(registered(steer).sort(), ['miit-license', 'moduo-sdk', 'sky-mobi-sec-f1'], '坏 slug 被边界挡住')
+eq(pendingCards(steer, [], 3).tasks.map(t => t.card_slug), ['sky-mobi-sec-f1'], '既有卡可显式刷新')
+eq(pendingCards(steer, ['sky-mobi-sec-f1'], 3).tasks, [], '本轮尝试过的不重抓')
+const mergedItems = mergeItems(steer.subquestions, [
+  { kind: 'paper', slug: 'new-paper', subq: 'sq-b', role: 'evidence' },
+  { kind: 'author', slug: 'not-an-outline-item', subq: 'sq-b', role: 'context' },
+])
+eq(mergedItems.find(s => s.id === 'sq-b').items,
+   [{ kind: 'paper', slug: 'new-paper', role: 'evidence' }],
+   '掌舵失败时仍按原 subq/role 收编学术成员,author 不混入 outline items')
+const merged = mergeCards(mergedItems, [
+  { subq: 'sq-b', card_slug: 'new-card' }, { subq: 'sq-b', card_slug: 'miit-license' },
+])
+eq(merged.find(s => s.id === 'sq-b').cards, ['miit-license', 'new-card'], '新卡归入子问题且去重')
+""")
 
 
 def test_webcard_agent_contract_forbids_invention_and_owns_one_card():
@@ -564,4 +582,7 @@ def test_webcard_agent_contract_forbids_invention_and_owns_one_card():
     assert "缺口/存疑" in card, "卡必须自陈缺口,无缺口的圈外卡多半没核验"
     assert "不进语料表" in card, "卡不是 vault 分析件"
     assert '"empty"' in card, "抓不到就不写文件,不留空卡"
+    assert '"unchanged"' in card and "只用 Edit" in card, "刷新无变化不重写,旧元数据不靠 LLM 重抄"
     assert "品类合集" in card and "拆成多个文件" in card, "按品类汇总的卡仍是一张卡,不拆成单机文件"
+    guide = (PLUGIN_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "sole remote-tool exception is `webcard-agent`" in guide, "WebFetch 例外必须写进层级合同"
