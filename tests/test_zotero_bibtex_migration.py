@@ -904,3 +904,31 @@ def test_inventory_is_idempotent_and_rejects_source_replacement(tmp_path: Path) 
     )
     assert rejected.returncode == 2
     assert "source.bib hash mismatch" in rejected.stderr
+
+
+def test_failed_first_run_does_not_block_corrected_retry(tmp_path: Path) -> None:
+    (tmp_path / "vault" / "papers").mkdir(parents=True)
+    source = tmp_path / "library.bib"
+    source.write_text(
+        "@article{dup, title={One}, author={Doe, Jane}, year={2024}, journal={J}}\n"
+        "@article{dup, title={Two}, author={Doe, Jane}, year={2024}, journal={J}}\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "processing" / "imports" / "zotero-test"
+    args = (
+        "inventory", "--source", str(source), "--project-root", str(tmp_path),
+        "--output-dir", str(output),
+    )
+    failed = run_cli(*args, cwd=tmp_path)
+    assert failed.returncode == 2, failed.stderr
+    assert "duplicate BibTeX entry key: dup" in failed.stderr
+    assert not (output / "source.bib").exists()
+
+    source.write_text(
+        "@article{x, title={Fixed}, author={Doe, Jane}, year={2024}, "
+        "journal={Journal}, abstract={Material infrastructure.}}\n",
+        encoding="utf-8",
+    )
+    fixed = run_cli(*args, cwd=tmp_path)
+    assert fixed.returncode == 0, fixed.stderr
+    assert (output / "source.bib").read_bytes() == source.read_bytes()

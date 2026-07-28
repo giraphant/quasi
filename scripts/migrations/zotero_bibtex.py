@@ -985,10 +985,11 @@ def run_inventory(
     source_hash = sha256_file(source)
     if copied_source.exists() and sha256_file(copied_source) != source_hash:
         raise ValueError("source.bib hash mismatch")
-    if not copied_source.exists():
-        shutil.copy2(source, copied_source)
-
-    parsed = parse_bibtex(copied_source)
+    # ponytail: on first run parse the original and materialize source.bib only
+    # after every fallible step succeeds, so a failed first run never leaves a
+    # copy whose hash blocks a corrected retry; reruns parse the immutable copy.
+    parse_source = copied_source if copied_source.exists() else source
+    parsed = parse_bibtex(parse_source)
     catalog = collect_theme_catalog(project_root)
     decisions = load_theme_decisions(theme_decisions_path)
     pilot_keys = load_key_set(pilot_keys_path)
@@ -1000,6 +1001,8 @@ def run_inventory(
         ]),
         pilot_keys,
     )
+    if not copied_source.exists():
+        shutil.copy2(source, copied_source)
 
     temp_dir = project_root / ".quasi" / "temp" / "zotero-2026-07-27"
     assessed_by_key = {row["entry_key"]: row for row in assessed}
