@@ -1347,8 +1347,10 @@ def test_progress_and_report_accept_completion_at_or_above_target(tmp_path: Path
         "entry_key": "extra", "status": "exact-existing",
         "route": "exact-existing", "bibtex_type": "book",
     }])
-    assert migration.progress_summary(inventory, changes_dir)["completed"] == 526
+    with pytest.raises(ValueError, match="inventory hash mismatch"):
+        migration.progress_summary(inventory, changes_dir)
 
+    migration.write_jsonl(inventory, rows)
     tampered = json.loads(changes.read_text())
     tampered["entries"][0]["target_path"] = "vault/papers/wrong.md"
     migration.write_json(changes, tampered)
@@ -1677,3 +1679,335 @@ def test_milestone_report_invalidates_stale_reached_artifact(tmp_path: Path) -> 
     )
     assert proc.returncode == 2
     assert json.loads(out.read_text(encoding="utf-8"))["milestone_reached"] is False
+
+
+def test_self_consistent_restamp_without_apply_receipt_is_rejected(tmp_path: Path) -> None:
+    # C1 round 2: the apply-generated receipt is the trust root. A changes file
+    # whose entries are stamped per the public algorithm is still rejected when
+    # the sibling receipt is missing or tampered.
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "metadata-only", "batch": 1, "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": None,
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    changes = output / "batch-001-changes.json"
+    receipt = output / "batch-001-approved.json"
+    assert receipt.is_file()
+
+    # missing trust root -> reject even though the changes entries are stamped
+    receipt.unlink()
+    with pytest.raises(ValueError, match="missing apply receipt"):
+        migration.verify_changes(tmp_path, changes)
+    with pytest.raises(ValueError, match="missing apply receipt"):
+        migration.progress_summary(inventory, output)
+
+    # tampered trust root -> receipt hash no longer binds the changes file
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    tampered = json.loads(receipt.read_text(encoding="utf-8"))
+    tampered["rows"]["x"]["row"]["target_path"] = "vault/papers/evil.md"
+    migration.write_json(receipt, tampered)
+    with pytest.raises(ValueError, match="receipt hash mismatch"):
+        migration.progress_summary(inventory, output)
+
+
+def test_live_counting_ignores_cached_verified_when_target_missing(tmp_path: Path) -> None:
+    # C1 round 2: a cached verified=true cannot keep an item counted once its
+    # target is gone; progress/report re-verify the disk live.
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "metadata-only", "batch": 1, "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": None,
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    changes = output / "batch-001-changes.json"
+    migration.verify_changes(tmp_path, changes)
+    payload = json.loads(changes.read_text(encoding="utf-8"))
+    assert payload["entries"][0]["verified"] is True
+
+    # cached verified stays true, but the target disappears
+    (tmp_path / "vault" / "papers" / "doe-paper-2024.md").unlink()
+    assert migration.progress_summary(inventory, output)["completed"] == 0
+    with pytest.raises(ValueError, match="milestone incomplete"):
+        migration.milestone_report(inventory, output, tmp_path / "m.json")
+    on_disk = json.loads((tmp_path / "m.json").read_text(encoding="utf-8"))
+    assert on_disk["completed"] == 0
+    assert on_disk["metadata_only_verified"] == 0
+
+
+@pytest.mark.parametrize("scenario", ["frontmatter-tamper", "title-conflict"])
+def test_finalize_rejects_drift_and_conflict_before_normalization(
+    tmp_path: Path, scenario: str,
+) -> None:
+    # C2 round 2: a processed re-finalize compares RAW disk state (no
+    # normalization swallows missing fields); a first-finalize rejects conflicts.
+    migration = load_module()
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    inventory = tmp_path / "entries.jsonl"
+    canonical = {
+        "type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+        "year": 2024, "journal": "Journal", "doi": "10.1000/x", "rating": 5,
+        "themes": ["materiality", "infrastructure-studies"],
+    }
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "process-local-pdf", "batch": 1, "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": canonical, "preferred_pdf": str(pdf),
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    target = tmp_path / "vault" / "papers" / "doe-paper-2024.md"
+    body = migration.render_stub("paper", "Paper")
+    changes = output / "batch-001-changes.json"
+    produced = {key: value for key, value in canonical.items() if key not in {"rating", "themes"}}
+    produced["themes"] = ["agent-invented-theme"]
+
+    if scenario == "frontmatter-tamper":
+        # legitimate first finalize, then delete rating from disk and re-finalize
+        migration.write_frontmatter(target, produced, body)
+        migration.finalize_entry(tmp_path, inventory, changes, "x")
+        drifted = migration.read_frontmatter(target)
+        del drifted.frontmatter["rating"]
+        migration.write_frontmatter(target, drifted.frontmatter, drifted.body)
+        with pytest.raises(ValueError, match="finalize drift"):
+            migration.finalize_entry(tmp_path, inventory, changes, "x")
+        entry = json.loads(changes.read_text(encoding="utf-8"))["entries"][0]
+        assert entry["verified"] is False
+        assert entry["finalize"]["after"].get("rating") == 5  # baseline not rewritten
+    else:  # title-conflict: first finalize where the product title disagrees
+        produced["title"] = "Different Title"
+        migration.write_frontmatter(target, produced, body)
+        with pytest.raises(ValueError, match="finalize conflict"):
+            migration.finalize_entry(tmp_path, inventory, changes, "x")
+
+
+def test_record_failure_rejects_malformed_and_wrong_batch_review_without_half_write(
+    tmp_path: Path,
+) -> None:
+    # I1 round 2: a valid-JSON but semantically corrupt review (malformed row /
+    # wrong batch) is rejected before any write; recovery is possible.
+    migration = load_module()
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "bad", "bibtex_type": "article", "status": "safe-create",
+        "route": "process-local-pdf", "batch": 1, "target_path": "vault/papers/missing.md",
+        "canonical": {"type": "paper", "title": "Partial", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": str(pdf),
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["bad"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    migration.write_frontmatter(
+        tmp_path / "vault" / "papers" / "missing.md",
+        {"type": "paper", "title": "Partial", "authors": ["Jane Doe"], "year": 2024,
+         "journal": "Journal", "themes": ["materiality", "infrastructure-studies"]},
+        migration.render_stub("paper", "Partial"),
+    )
+    changes = output / "batch-001-changes.json"
+    review = output / "batch-001-review.json"
+    snapshot = changes.read_text(encoding="utf-8")
+
+    migration.write_json(review, {"version": 1, "batch": 1, "entries": ["malformed-row"]})
+    with pytest.raises(ValueError, match="invalid review entry"):
+        migration.record_failure(tmp_path, inventory, changes, review, "bad", "failed")
+    assert changes.read_text(encoding="utf-8") == snapshot
+
+    migration.write_json(review, {"version": 1, "batch": 99, "entries": []})
+    with pytest.raises(ValueError, match="invalid review file: batch"):
+        migration.record_failure(tmp_path, inventory, changes, review, "bad", "failed")
+    assert changes.read_text(encoding="utf-8") == snapshot
+
+    migration.write_json(review, {"version": 1, "batch": 1, "entries": []})
+    result = migration.record_failure(tmp_path, inventory, changes, review, "bad", "failed")
+    assert result["failed"] is True
+    assert json.loads(changes.read_text(encoding="utf-8"))["entries"][0]["failed"] is True
+
+
+def test_milestone_report_fail_closes_on_malformed_changes(tmp_path: Path) -> None:
+    # I2 round 2: a stale reached=true artifact cannot survive a run whose
+    # changes are unparseable; the fail-closed placeholder is written first.
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [
+        {"entry_key": f"exact-{index:03d}", "status": "exact-existing",
+         "route": "exact-existing", "bibtex_type": "book"}
+        for index in range(525)
+    ])
+    out = tmp_path / "milestone.json"
+    report = migration.milestone_report(inventory, tmp_path, out)
+    assert report["milestone_reached"] is True
+    assert json.loads(out.read_text(encoding="utf-8"))["milestone_reached"] is True
+
+    (tmp_path / "batch-001-changes.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises((ValueError, json.JSONDecodeError)):
+        migration.milestone_report(inventory, tmp_path, out)
+    on_disk = json.loads(out.read_text(encoding="utf-8"))
+    assert on_disk["milestone_reached"] is False
+    assert on_disk["completed"] == 0
+    assert on_disk["status"] == "validation-pending"
+
+
+def test_interrupted_pdf_copy_never_leaves_final_staged_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration = load_module()
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "process-local-pdf", "batch": 1,
+        "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]},
+        "preferred_pdf": str(pdf),
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    real_copy = migration.shutil.copy2
+
+    def interrupted_copy(source: Path, target: Path) -> None:
+        Path(target).write_bytes(b"partial")
+        raise OSError("copy interrupted")
+
+    monkeypatch.setattr(migration.shutil, "copy2", interrupted_copy)
+    with pytest.raises(OSError, match="copy interrupted"):
+        migration.apply_batch(tmp_path, inventory, 1, approved, tmp_path / "out")
+    staged = tmp_path / "sources" / "doe-paper-2024.pdf"
+    assert not staged.exists()
+
+    monkeypatch.setattr(migration.shutil, "copy2", real_copy)
+    migration.apply_batch(tmp_path, inventory, 1, approved, tmp_path / "out")
+    assert staged.read_bytes() == pdf.read_bytes()
+
+
+def test_reapply_rejects_replaced_source_and_staged_even_when_they_match(
+    tmp_path: Path,
+) -> None:
+    migration = load_module()
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "process-local-pdf", "batch": 1,
+        "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]},
+        "preferred_pdf": str(pdf),
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+
+    replacement = b"%PDF-1.7\n" + b"x" * 2048
+    pdf.write_bytes(replacement)
+    (tmp_path / "sources" / "doe-paper-2024.pdf").write_bytes(replacement)
+    changes = output / "batch-001-changes.json"
+    payload = json.loads(changes.read_text(encoding="utf-8"))
+    entry = payload["entries"][0]
+    entry["source_sha256"] = migration.hashlib.sha256(replacement).hexdigest()
+    entry["provenance"] = migration._entry_provenance_stamp(
+        entry, payload["receipt_sha256"],
+    )
+    migration.write_json(changes, payload)
+    with pytest.raises(ValueError, match="invalid changes shape"):
+        migration.progress_summary(inventory, output)
+    with pytest.raises(ValueError, match="apply receipt differs from approved inputs"):
+        migration.apply_batch(tmp_path, inventory, 1, approved, output)
+
+
+def test_verify_rejects_inventory_changed_after_apply(tmp_path: Path) -> None:
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    row = {
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "metadata-only", "batch": 1,
+        "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]},
+        "preferred_pdf": None,
+    }
+    migration.write_jsonl(inventory, [row])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+
+    migration.write_jsonl(inventory, [{**row, "canonical": {**row["canonical"], "rating": 5}}])
+    with pytest.raises(ValueError, match="inventory hash mismatch"):
+        migration.verify_changes(tmp_path, output / "batch-001-changes.json")
+
+
+def test_processed_refinalize_missing_target_clears_verified(tmp_path: Path) -> None:
+    migration = load_module()
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    inventory = tmp_path / "entries.jsonl"
+    canonical = {
+        "type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+        "year": 2024, "journal": "Journal", "rating": 5,
+        "themes": ["materiality", "infrastructure-studies"],
+    }
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "process-local-pdf", "batch": 1,
+        "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": canonical, "preferred_pdf": str(pdf),
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    target = tmp_path / "vault" / "papers" / "doe-paper-2024.md"
+    migration.write_frontmatter(target, canonical, migration.render_stub("paper", "Paper"))
+    changes = output / "batch-001-changes.json"
+    migration.finalize_entry(tmp_path, inventory, changes, "x")
+    migration.verify_changes(tmp_path, changes)
+    target.unlink()
+
+    with pytest.raises(ValueError, match="finalize drift"):
+        migration.finalize_entry(tmp_path, inventory, changes, "x")
+    entry = json.loads(changes.read_text(encoding="utf-8"))["entries"][0]
+    assert entry["verified"] is False
+    assert entry["verification"]["error"] == "finalize-drift"
+
+
+def test_report_output_alias_does_not_overwrite_inventory(tmp_path: Path) -> None:
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [
+        {"entry_key": f"exact-{index:03d}", "status": "exact-existing",
+         "route": "exact-existing", "bibtex_type": "book"}
+        for index in range(525)
+    ])
+    before = inventory.read_bytes()
+    with pytest.raises(ValueError, match="report output aliases migration input"):
+        migration.milestone_report(inventory, tmp_path, inventory)
+    assert inventory.read_bytes() == before
