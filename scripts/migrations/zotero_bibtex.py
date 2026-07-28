@@ -1059,6 +1059,25 @@ def merge_theme_decisions(catalog_path: Path, input_dir: Path, output: Path) -> 
     return len(merged)
 
 
+def _resolve_vault_target(project_root: Path, target_path: str) -> Path:
+    # Critical 2: single chokepoint for every inventory/changes target path.
+    # Reject absolute, parent-traversal, symlink escape; enforce canonical shape.
+    rel = Path(target_path)
+    if not target_path or rel.is_absolute() or ".." in rel.parts:
+        raise ValueError(f"unsafe target path: {target_path}")
+    parts = rel.parts
+    if not (
+        (len(parts) == 3 and parts[0] == "vault" and parts[1] == "papers"
+         and parts[2].endswith(".md") and parts[2] != ".md")
+        or (len(parts) == 4 and parts[0] == "vault" and parts[1] == "books"
+            and parts[2] and parts[3] == "00-overview.md")
+    ):
+        raise ValueError(f"unsupported target path: {target_path}")
+    if not (project_root / rel).resolve(strict=False).is_relative_to(project_root):
+        raise ValueError(f"target escapes project root: {target_path}")
+    return project_root / rel
+
+
 def slug_from_target(target_path: str) -> str:
     path = Path(target_path)
     if path.name == "00-overview.md":
@@ -1068,22 +1087,159 @@ def slug_from_target(target_path: str) -> str:
     raise ValueError(f"unsupported target path: {target_path}")
 
 
+def _resolve_staged_pdf(project_root: Path, slug: str) -> Path:
+    if not slug or "/" in slug or "\\" in slug or slug in {".", ".."} or slug.startswith("."):
+        raise ValueError(f"unsafe staged slug: {slug}")
+    staged = project_root / "sources" / f"{slug}.pdf"
+    if not staged.resolve(strict=False).is_relative_to(project_root):
+        raise ValueError(f"staged PDF escapes project root: {slug}")
+    return staged
+
+
 def collect_process_artifacts(project_root: Path, row: dict[str, Any]) -> list[str]:
-    target = Path(row["target_path"])
+    target = _resolve_vault_target(project_root, row["target_path"])
     slug = slug_from_target(row["target_path"])
-    candidates = [project_root / target]
+    candidates = [target]
     if target.name == "00-overview.md":
         candidates.extend((project_root / "vault" / "books" / slug).glob("**/*"))
         candidates.extend((project_root / "processing" / "chapters" / slug).glob("**/*"))
-    return sorted({
-        str(path.relative_to(project_root))
-        for path in candidates
-        if path.is_file() and path.suffix.lower() in {".md", ".json", ".txt"}
-    })
+    artifacts: list[str] = []
+    for path in candidates:
+        if not path.is_file() or path.suffix.lower() not in {".md", ".json", ".txt"}:
+            continue
+        if not path.resolve(strict=False).is_relative_to(project_root):
+            continue
+        artifacts.append(str(path.relative_to(project_root)))
+    return sorted(set(artifacts))
 
 
 def _body_sha256(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def _canonical_sha256(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
+def _approved_stamp(batch: int, approved: set[str]) -> str:
+    return _canonical_sha256({"batch": batch, "keys": sorted(approved)})
+
+
+def _entry_stamp(
+    *, entry_key: str, status: str, route: str, target_path: str,
+    action: str, batch: int, approved_sha256: str,
+) -> str:
+    # Critical 1: deterministic fingerprint binding each changes entry to the
+    # inventory row identity + approved-set/batch + apply result action.
+    return _canonical_sha256({
+        "approved_sha256": approved_sha256, "batch": batch, "entry_key": entry_key,
+        "status": status, "route": route, "target_path": target_path, "action": action,
+    })
+
+
+def _build_review_rows(rows_by_key: dict[str, dict[str, Any]], batch: int) -> list[dict[str, Any]]:
+    return [
+        row for row in rows_by_key.values()
+        if row.get("batch") == batch
+        and (row.get("status") in {"review", "invalid-source"} or row.get("attachment_review"))
+    ]
+
+
+_METADATA_ACTIONS = {"created", "no-op", "enriched"}
+_PROCESS_ACTIONS = {"staged-local-pdf", "no-op", "processed-local-pdf"}
+
+
+def _require_apply_shape(row: dict[str, Any], entry: dict[str, Any]) -> None:
+    # Critical 1: every accepted entry must carry the full apply-result payload.
+    key = row["entry_key"]
+    route = row["route"]
+    if route == "metadata-only":
+        before = entry.get("before")
+        if not (before is None or isinstance(before, dict)):
+            raise ValueError(f"invalid changes shape: {key}")
+        if not isinstance(entry.get("after"), dict) or not isinstance(entry.get("body_sha256"), str):
+            raise ValueError(f"invalid changes shape: {key}")
+        if not isinstance(entry.get("artifact_paths"), list):
+            raise ValueError(f"invalid changes shape: {key}")
+    elif route == "process-local-pdf":
+        for field in ("source_path", "staged_path", "source_sha256"):
+            if not isinstance(entry.get(field), str):
+                raise ValueError(f"invalid changes shape: {key}")
+        if not isinstance(entry.get("artifact_paths"), list):
+            raise ValueError(f"invalid changes shape: {key}")
+        if entry.get("action") == "processed-local-pdf":
+            finalize = entry.get("finalize")
+            if not isinstance(finalize, dict) or not isinstance(finalize.get("after"), dict) \
+                    or not isinstance(finalize.get("body_sha256"), str) \
+                    or not isinstance(finalize.get("before"), dict):
+                raise ValueError(f"invalid changes shape: {key}")
+    else:
+        raise ValueError(f"unsupported route: {route}")
+
+
+def _validate_changes_entry(
+    row: dict[str, Any] | None, entry: dict[str, Any], batch: int, approved_sha256: str,
+) -> None:
+    # Critical 1: shared strict validator used by finalize/verify/record-failure/progress/report.
+    key = entry["entry_key"]
+    status = row["status"] if row else entry.get("status")
+    route = row["route"] if row else entry.get("route")
+    target_path = row["target_path"] if row else entry.get("target_path")
+    if row is not None and (
+        row.get("status") != entry.get("status")
+        or row.get("route") != entry.get("route")
+        or row.get("target_path") != entry.get("target_path")
+        or row.get("batch") != batch
+    ):
+        raise ValueError(f"changes entry does not match inventory: {key}")
+    allowed = _METADATA_ACTIONS if route == "metadata-only" else _PROCESS_ACTIONS
+    if entry.get("action") not in allowed:
+        raise ValueError(f"invalid changes action: {key}")
+    if entry.get("provenance") != _entry_stamp(
+        entry_key=key, status=status, route=route, target_path=target_path,
+        action=entry["action"], batch=batch, approved_sha256=approved_sha256,
+    ):
+        raise ValueError(f"unprovenanced changes entry: {key}")
+    _require_apply_shape(row or {"entry_key": key, "route": route, "status": status}, entry)
+    if entry.get("verified"):
+        if entry.get("failed"):
+            raise ValueError(f"verified-but-failed changes entry: {key}")
+        if route == "process-local-pdf" and entry.get("action") != "processed-local-pdf":
+            raise ValueError(f"verified-but-unfinalized changes entry: {key}")
+        verification = entry.get("verification")
+        if not isinstance(verification, dict) \
+                or verification.get("frontmatter_errors") != [] \
+                or verification.get("body_violations") != []:
+            raise ValueError(f"verified entry lacks passing verification: {key}")
+
+
+def _load_validated_payload(
+    payload: dict[str, Any], rows_by_key: dict[str, dict[str, Any]], *, bind_inventory: bool,
+) -> tuple[int, dict[str, dict[str, Any]]]:
+    if payload.get("version") != 1:
+        raise ValueError("unsupported changes version")
+    batch = payload.get("batch")
+    if not isinstance(batch, int):
+        raise ValueError("changes file missing batch")
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("changes file missing entries")
+    by_key: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        key = entry.get("entry_key")
+        if not isinstance(key, str) or key in by_key:
+            raise ValueError(f"invalid changes entry_key: {key}")
+        by_key[key] = entry
+    if payload.get("approved_sha256") != _approved_stamp(batch, set(by_key)):
+        raise ValueError("changes file approved_sha256 mismatch")
+    for key, entry in by_key.items():
+        row = rows_by_key.get(key) if bind_inventory else None
+        if bind_inventory and row is None:
+            raise ValueError(f"changes entry not in inventory: {key}")
+        _validate_changes_entry(row, entry, batch, payload["approved_sha256"])
+    return batch, by_key
 
 
 def apply_batch(
@@ -1104,27 +1260,26 @@ def apply_batch(
             raise ValueError(f"approved key not in batch {batch}: {key}")
         if row.get("status") not in {"safe-create", "safe-enrich"}:
             raise ValueError(f"approved key is not safe: {key}")
+        _resolve_vault_target(project_root, row["target_path"])
         selected.append(row)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     changes_path = output_dir / f"batch-{batch:03d}-changes.json"
     review_path = output_dir / f"batch-{batch:03d}-review.json"
+    approved_sha256 = _approved_stamp(batch, approved)
     if changes_path.exists():
         prior_payload = json.loads(changes_path.read_text(encoding="utf-8"))
-        if prior_payload.get("batch") != batch:
-            raise ValueError(f"changes file batch mismatch: {changes_path}")
-        prior_by_key = {entry["entry_key"]: entry for entry in prior_payload["entries"]}
+        _, prior_by_key = _load_validated_payload(prior_payload, rows, bind_inventory=True)
         if set(prior_by_key) != approved:
             raise ValueError("approved key set differs from existing changes file")
 
         for row in selected:
             key = row["entry_key"]
-            target = project_root / row["target_path"]
+            target = _resolve_vault_target(project_root, row["target_path"])
+            prior = prior_by_key[key]
             if row["route"] == "process-local-pdf":
                 source = Path(row["preferred_pdf"])
-                slug = slug_from_target(row["target_path"])
-                staged = project_root / "sources" / f"{slug}.pdf"
-                prior = prior_by_key[key]
+                staged = _resolve_staged_pdf(project_root, slug_from_target(row["target_path"]))
                 if (
                     not is_readable_pdf(source)
                     or not staged.is_file()
@@ -1147,7 +1302,6 @@ def apply_batch(
                 if not target.is_file():
                     raise ValueError(f"reapply is not a no-op: {key}")
                 doc = read_frontmatter(target)
-                prior = prior_by_key[key]
                 if (
                     doc.frontmatter != prior.get("after")
                     or _body_sha256(doc.body) != prior["body_sha256"]
@@ -1162,6 +1316,17 @@ def apply_batch(
                 if current.frontmatter != canonical or current.body != body:
                     raise ValueError(f"reapply is not a no-op: {key}")
 
+        # Important 2: a present changes file must imply a usable review; restore if missing.
+        try:
+            review_raw = json.loads(review_path.read_text(encoding="utf-8"))
+            regenerate = not (isinstance(review_raw, dict)
+                              and isinstance(review_raw.get("entries"), list)
+                              and review_raw.get("batch") == batch)
+        except (OSError, json.JSONDecodeError):
+            regenerate = True
+        if regenerate:
+            write_json(review_path, {"version": 1, "batch": batch, "entries": _build_review_rows(rows, batch)})
+
         for key in sorted(approved):
             prior_by_key[key]["reapply_action"] = "no-op"
         prior_payload["entries"] = [prior_by_key[key] for key in sorted(approved)]
@@ -1170,11 +1335,10 @@ def apply_batch(
 
     # Preflight every approved row before the first physical write.
     for row in selected:
-        target = project_root / row["target_path"]
+        target = _resolve_vault_target(project_root, row["target_path"])
         if row["route"] == "process-local-pdf":
             source = Path(row["preferred_pdf"])
-            slug = slug_from_target(row["target_path"])
-            staged = project_root / "sources" / f"{slug}.pdf"
+            staged = _resolve_staged_pdf(project_root, slug_from_target(row["target_path"]))
             if not is_readable_pdf(source):
                 raise ValueError(f"preferred PDF is no longer readable: {source}")
             if collect_process_artifacts(project_root, row):
@@ -1206,17 +1370,9 @@ def apply_batch(
                     raise ValueError(f"safe-create target conflict: {target}")
 
     changes: list[dict[str, Any]] = []
-    reviews = [
-        row for row in rows.values()
-        if row.get("batch") == batch
-        and (
-            row.get("status") in {"review", "invalid-source"}
-            or row.get("attachment_review")
-        )
-    ]
     for row in selected:
         key = row["entry_key"]
-        target = project_root / row["target_path"]
+        target = _resolve_vault_target(project_root, row["target_path"])
         route = row["route"]
         if route == "process-local-pdf":
             source = Path(row["preferred_pdf"])
@@ -1224,8 +1380,7 @@ def apply_batch(
                 raise ValueError(f"preferred PDF is no longer readable: {source}")
             if collect_process_artifacts(project_root, row):
                 raise ValueError(f"pre-existing process artifacts: {row['target_path']}")
-            slug = slug_from_target(row["target_path"])
-            staged = project_root / "sources" / f"{slug}.pdf"
+            staged = _resolve_staged_pdf(project_root, slug_from_target(row["target_path"]))
             if staged.exists() and sha256_file(staged) != sha256_file(source):
                 raise ValueError(f"staged PDF conflict: {staged}")
             if not staged.exists():
@@ -1234,7 +1389,7 @@ def apply_batch(
                 action = "staged-local-pdf"
             else:
                 action = "no-op"
-            changes.append({
+            entry = {
                 "entry_key": key, "status": row["status"],
                 "route": route, "action": action,
                 "target_path": row["target_path"],
@@ -1242,7 +1397,12 @@ def apply_batch(
                 "staged_path": str(staged.relative_to(project_root)),
                 "source_sha256": sha256_file(source),
                 "artifact_paths": [], "verified": False,
-            })
+            }
+            entry["provenance"] = _entry_stamp(
+                entry_key=key, status=row["status"], route=route, target_path=row["target_path"],
+                action=action, batch=batch, approved_sha256=approved_sha256,
+            )
+            changes.append(entry)
             continue
 
         if route != "metadata-only":
@@ -1265,77 +1425,57 @@ def apply_batch(
             else:
                 write_frontmatter(target, after, doc.body)
                 action = "enriched"
-            changes.append({
+            entry = {
                 "entry_key": key, "status": row["status"],
                 "route": route, "action": action,
                 "target_path": row["target_path"], "before": before, "after": after,
                 "body_sha256": body_sha256,
                 "artifact_paths": [row["target_path"]], "verified": False,
-            })
-            continue
-
-        canonical = dict(row["canonical"])
-        if canonical["type"] == "paper":
-            PaperSchema.model_validate(canonical)
+            }
         else:
-            BookSchema.model_validate(canonical)
-        body = render_stub(canonical["type"], canonical["title"])
-        if target.exists():
-            current = read_frontmatter(target)
-            if current.frontmatter != canonical or current.body != body:
-                raise ValueError(f"safe-create target conflict: {target}")
-            action = "no-op"
-        else:
-            write_frontmatter(target, canonical, body)
-            action = "created"
-        changes.append({
-            "entry_key": key, "status": row["status"],
-            "route": route, "action": action,
-            "target_path": row["target_path"], "before": None, "after": canonical,
-            "body_sha256": _body_sha256(body),
-            "artifact_paths": [row["target_path"]], "verified": False,
-        })
+            canonical = dict(row["canonical"])
+            if canonical["type"] == "paper":
+                PaperSchema.model_validate(canonical)
+            else:
+                BookSchema.model_validate(canonical)
+            body = render_stub(canonical["type"], canonical["title"])
+            if target.exists():
+                current = read_frontmatter(target)
+                if current.frontmatter != canonical or current.body != body:
+                    raise ValueError(f"safe-create target conflict: {target}")
+                action = "no-op"
+            else:
+                write_frontmatter(target, canonical, body)
+                action = "created"
+            entry = {
+                "entry_key": key, "status": row["status"],
+                "route": route, "action": action,
+                "target_path": row["target_path"], "before": None, "after": canonical,
+                "body_sha256": _body_sha256(body),
+                "artifact_paths": [row["target_path"]], "verified": False,
+            }
+        entry["provenance"] = _entry_stamp(
+            entry_key=key, status=row["status"], route=route, target_path=row["target_path"],
+            action=entry["action"], batch=batch, approved_sha256=approved_sha256,
+        )
+        changes.append(entry)
 
-    payload = {"version": 1, "batch": batch, "entries": changes}
+    payload = {
+        "version": 1, "batch": batch, "approved_sha256": approved_sha256, "entries": changes,
+    }
+    # Important 2: review first, changes last so a present changes file is a complete commit marker.
+    write_json(review_path, {"version": 1, "batch": batch, "entries": _build_review_rows(rows, batch)})
     write_json(changes_path, payload)
-    write_json(review_path, {"version": 1, "batch": batch, "entries": reviews})
     return payload
 
 
-def finalize_entry(
-    project_root: Path,
-    inventory_path: Path,
-    changes_path: Path,
-    entry_key: str,
-) -> dict[str, Any]:
-    rows = {row["entry_key"]: row for row in read_jsonl(inventory_path)}
-    row = rows[entry_key]
-    if row.get("route") != "process-local-pdf":
-        raise ValueError(f"entry is not process-local-pdf: {entry_key}")
-    payload = json.loads(changes_path.read_text(encoding="utf-8"))
-    change = next(item for item in payload["entries"] if item["entry_key"] == entry_key)
-    if (
-        change.get("route") != "process-local-pdf"
-        or change.get("target_path") != row.get("target_path")
-        or change.get("failed")
-    ):
-        raise ValueError(f"invalid process change record: {entry_key}")
-
-    target = project_root / row["target_path"]
-    if not target.is_file():
-        raise ValueError(f"process product missing or invalid: {target}")
-    doc = read_frontmatter(target)
-    if doc.frontmatter is None:
-        raise ValueError(f"process product missing or invalid: {target}")
-    before = dict(doc.frontmatter)
-    body_sha256 = _body_sha256(doc.body)
-    canonical = row["canonical"]
+def _process_after(doc: Any, canonical: dict[str, Any], entry_key: str) -> tuple[dict[str, Any], str]:
     exact_fields = (
         ("title", "authors", "year", "journal", "doi", "rating")
         if canonical["type"] == "paper"
         else ("title", "authors", "year", "publisher", "isbn", "doi", "rating")
     )
-    after = dict(before)
+    after = dict(doc.frontmatter)
     for field in exact_fields:
         value = canonical.get(field)
         if value in (None, "", []):
@@ -1348,19 +1488,70 @@ def finalize_entry(
         after["themes"] = canonical["themes"]
     else:
         after["category"] = canonical["category"]
+    return after, _body_sha256(doc.body)
 
+
+def finalize_entry(
+    project_root: Path,
+    inventory_path: Path,
+    changes_path: Path,
+    entry_key: str,
+) -> dict[str, Any]:
+    project_root = project_root.resolve()
+    rows_by_key = {row["entry_key"]: row for row in read_jsonl(inventory_path)}
+    payload = json.loads(changes_path.read_text(encoding="utf-8"))
+    batch, by_key = _load_validated_payload(payload, rows_by_key, bind_inventory=True)
+    row = rows_by_key[entry_key]
+    if row.get("route") != "process-local-pdf":
+        raise ValueError(f"entry is not process-local-pdf: {entry_key}")
+    change = by_key[entry_key]
+    if change.get("failed"):
+        raise ValueError(f"cannot finalize failed entry: {entry_key}")
+    target = _resolve_vault_target(project_root, row["target_path"])
+    if not target.is_file():
+        raise ValueError(f"process product missing or invalid: {target}")
+    doc = read_frontmatter(target)
+    if doc.frontmatter is None:
+        raise ValueError(f"process product missing or invalid: {target}")
+    canonical = row["canonical"]
+    after, body_sha256 = _process_after(doc, canonical, entry_key)
     artifacts = collect_process_artifacts(project_root, row)
     if row["target_path"] not in artifacts:
         raise ValueError(f"process target missing from artifacts: {target}")
+
+    # Critical 3: explicit state machine. Idempotent re-finalize only no-ops when
+    # nothing drifted; first finalize only from a staged state. Drift is rejected
+    # and the stale verified flag is cleared so the item cannot stay "completed".
+    if change.get("action") == "processed-local-pdf":
+        prior = change.get("finalize") or {}
+        if (prior.get("after") != after
+                or prior.get("body_sha256") != body_sha256
+                or change.get("artifact_paths") != artifacts):
+            change["verified"] = False
+            change["verification"] = {"path": str(target), "error": "finalize-drift"}
+            write_json(changes_path, payload)
+            raise ValueError(f"finalize drift, reapply is not a no-op: {entry_key}")
+        return {
+            "entry_key": entry_key, "target_path": row["target_path"],
+            "artifact_paths": artifacts, "before": prior.get("before"),
+            "after": after, "body_sha256": body_sha256,
+        }
+
+    if change.get("action") not in {"staged-local-pdf", "no-op"}:
+        raise ValueError(f"cannot finalize from action {change.get('action')}: {entry_key}")
+    before = dict(doc.frontmatter)
     if after != before:
         write_frontmatter(target, after, doc.body)
     change["action"] = "processed-local-pdf"
     change["artifact_paths"] = artifacts
-    change["finalize"] = {
-        "before": before,
-        "after": after,
-        "body_sha256": body_sha256,
-    }
+    change["finalize"] = {"before": before, "after": after, "body_sha256": body_sha256}
+    change["verified"] = False
+    change.pop("verification", None)
+    change["provenance"] = _entry_stamp(
+        entry_key=row["entry_key"], status=row["status"], route=row["route"],
+        target_path=row["target_path"], action=change["action"],
+        batch=batch, approved_sha256=payload["approved_sha256"],
+    )
     write_json(changes_path, payload)
     return {
         "entry_key": entry_key, "target_path": row["target_path"],
@@ -1370,9 +1561,11 @@ def finalize_entry(
 
 
 def verify_changes(project_root: Path, changes_path: Path) -> dict[str, Any]:
+    project_root = project_root.resolve()
     payload = json.loads(changes_path.read_text(encoding="utf-8"))
+    _load_validated_payload(payload, {}, bind_inventory=False)
     for entry in payload["entries"]:
-        target = project_root / entry["target_path"]
+        target = _resolve_vault_target(project_root, entry["target_path"])
         if entry.get("failed") or not target.is_file():
             entry["verification"] = {"path": str(target), "error": "missing-or-failed"}
             entry["verified"] = False
@@ -1411,32 +1604,35 @@ def record_failure(
     entry_key: str,
     reason: str,
 ) -> dict[str, Any]:
-    rows = {row["entry_key"]: row for row in read_jsonl(inventory_path)}
-    row = rows[entry_key]
+    project_root = project_root.resolve()
+    rows_by_key = {row["entry_key"]: row for row in read_jsonl(inventory_path)}
+    # Important 1: parse + validate both files before any write, so a corrupt review
+    # never leaves changes half-written; same-reason retry then converges idempotently.
     payload = json.loads(changes_path.read_text(encoding="utf-8"))
-    change = next(item for item in payload["entries"] if item["entry_key"] == entry_key)
-    if (
-        row.get("route") != change.get("route")
-        or change.get("target_path") != row.get("target_path")
-        or change.get("action") == "processed-local-pdf"
-        or change.get("failed")
-    ):
+    _, by_key = _load_validated_payload(payload, rows_by_key, bind_inventory=True)
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    if not isinstance(review, dict) or not isinstance(review.get("entries"), list):
+        raise ValueError(f"invalid review file: {review_path}")
+    row = rows_by_key[entry_key]
+    change = by_key[entry_key]
+    if (row.get("route") != change.get("route")
+            or change.get("target_path") != row.get("target_path")
+            or change.get("action") == "processed-local-pdf"):
         raise ValueError(f"invalid failure change record: {entry_key}")
     partial_artifact_paths = collect_process_artifacts(project_root, row)
     change["failed"] = True
     change["failure_reason"] = reason
     change["partial_artifact_paths"] = partial_artifact_paths
     change["verified"] = False
+    change.pop("verification", None)
     write_json(changes_path, payload)
-
-    review = json.loads(review_path.read_text(encoding="utf-8"))
-    review["entries"] = [item for item in review["entries"] if item["entry_key"] != entry_key]
+    review["entries"] = [item for item in review["entries"] if item.get("entry_key") != entry_key]
     review["entries"].append({
         **row,
         "execution_failure": reason,
         "partial_artifact_paths": partial_artifact_paths,
     })
-    review["entries"].sort(key=lambda item: item["entry_key"])
+    review["entries"].sort(key=lambda item: item.get("entry_key", ""))
     write_json(review_path, review)
     return {
         "entry_key": entry_key,
@@ -1455,39 +1651,11 @@ def _validated_change_entries(
     seen: set[str] = set()
     for path in sorted(changes_dir.glob("batch-*-changes.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
-        batch = int(payload["batch"])
+        batch, by_key = _load_validated_payload(payload, rows_by_key, bind_inventory=True)
         batches.append(batch)
-        for entry in payload["entries"]:
-            key = entry["entry_key"]
-            row = rows_by_key.get(key)
+        for key, entry in by_key.items():
             if key in seen:
                 raise ValueError(f"duplicate entry across changes files: {key}")
-            if (
-                row is None
-                or row.get("status") not in {"safe-create", "safe-enrich"}
-                or row.get("status") != entry.get("status")
-                or row.get("route") != entry.get("route")
-                or row.get("target_path") != entry.get("target_path")
-                or row.get("batch") != batch
-            ):
-                raise ValueError(f"changes entry does not match inventory: {key}")
-            allowed_actions = (
-                {"enriched", "no-op"}
-                if row["status"] == "safe-enrich"
-                else {"created", "no-op"}
-                if row["route"] == "metadata-only"
-                else {"staged-local-pdf", "no-op", "processed-local-pdf"}
-            )
-            if (
-                entry.get("action") not in allowed_actions
-                or (entry.get("verified") and entry.get("failed"))
-                or (
-                    entry.get("verified")
-                    and row["route"] == "process-local-pdf"
-                    and entry.get("action") != "processed-local-pdf"
-                )
-            ):
-                raise ValueError(f"invalid changes state: {key}")
             seen.add(key)
             entries.append(entry)
     return entries, sorted(set(batches))
@@ -1553,9 +1721,11 @@ def milestone_report(
         "batches_completed": batches,
         "milestone_reached": len(completed_keys) >= 525,
     }
+    # Important 3: always reflect the current state on disk before raising, so a
+    # stale reached=true artifact can never survive a later below-target run.
+    write_json(output_path, report)
     if not report["milestone_reached"]:
         raise ValueError(f"milestone incomplete: {len(completed_keys)}/525")
-    write_json(output_path, report)
     return report
 
 

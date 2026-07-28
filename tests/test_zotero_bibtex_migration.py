@@ -1219,51 +1219,45 @@ def test_finalize_book_enforces_conservative_canonical_category(tmp_path: Path) 
 
 def test_verify_and_record_failure_keep_failed_items_unverified(tmp_path: Path) -> None:
     migration = load_module()
-    target = tmp_path / "vault" / "papers" / "ok.md"
-    migration.write_frontmatter(target, {
-        "type": "paper", "title": "OK", "authors": ["Jane Doe"],
-        "year": 2024, "journal": "Journal",
-        "themes": ["materiality", "infrastructure-studies"],
-    }, migration.render_stub("paper", "OK"))
-    audit_target = tmp_path / "vault" / "papers" / "audit.md"
-    migration.write_frontmatter(audit_target, {
-        "type": "paper", "title": "Audit", "authors": ["Jane Doe"],
-        "year": 2024, "journal": "Journal",
-        "themes": ["materiality", "infrastructure-studies"],
-    }, migration.render_stub("paper", "Audit"))
-    partial = tmp_path / "vault" / "papers" / "missing.md"
-    migration.write_frontmatter(partial, {
-        "type": "paper", "title": "Partial", "authors": ["Jane Doe"],
-        "year": 2024, "journal": "Journal",
-        "themes": ["materiality", "infrastructure-studies"],
-    }, migration.render_stub("paper", "Partial"))
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
     inventory = tmp_path / "entries.jsonl"
     migration.write_jsonl(inventory, [
-        {"entry_key": "ok", "status": "safe-create", "route": "metadata-only",
-         "target_path": "vault/papers/ok.md"},
-        {"entry_key": "audit", "status": "safe-create", "route": "metadata-only",
-         "target_path": "vault/papers/audit.md"},
-        {"entry_key": "bad", "status": "safe-create", "route": "process-local-pdf",
-         "target_path": "vault/papers/missing.md"},
+        {"entry_key": "ok", "bibtex_type": "article", "status": "safe-create",
+         "route": "metadata-only", "batch": 1, "target_path": "vault/papers/ok.md",
+         "canonical": {"type": "paper", "title": "OK", "authors": ["Jane Doe"],
+                       "year": 2024, "journal": "Journal",
+                       "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": None},
+        {"entry_key": "audit", "bibtex_type": "article", "status": "safe-create",
+         "route": "metadata-only", "batch": 1, "target_path": "vault/papers/audit.md",
+         "canonical": {"type": "paper", "title": "Audit", "authors": ["Jane Doe"],
+                       "year": 2024, "journal": "Journal",
+                       "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": None},
+        {"entry_key": "bad", "bibtex_type": "article", "status": "safe-create",
+         "route": "process-local-pdf", "batch": 1, "target_path": "vault/papers/missing.md",
+         "canonical": {"type": "paper", "title": "Partial", "authors": ["Jane Doe"],
+                       "year": 2024, "journal": "Journal",
+                       "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": str(pdf)},
     ])
-    changes = tmp_path / "batch-001-changes.json"
-    migration.write_json(changes, {"version": 1, "batch": 1, "entries": [
-        {"entry_key": "ok", "route": "metadata-only", "action": "created",
-         "target_path": "vault/papers/ok.md", "verified": False},
-        {"entry_key": "audit", "route": "metadata-only", "action": "created",
-         "target_path": "vault/papers/audit.md", "verified": False},
-        {"entry_key": "bad", "route": "process-local-pdf", "action": "staged-local-pdf",
-         "target_path": "vault/papers/missing.md", "verified": False},
-    ]})
-    review = tmp_path / "batch-001-review.json"
-    migration.write_json(review, {"version": 1, "batch": 1, "entries": []})
+    approved = tmp_path / "approved.json"
+    approved.write_text('["ok", "audit", "bad"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    # simulate a partial process product so record_failure captures it as a partial artifact
+    migration.write_frontmatter(
+        tmp_path / "vault" / "papers" / "missing.md",
+        {"type": "paper", "title": "Partial", "authors": ["Jane Doe"],
+         "year": 2024, "journal": "Journal",
+         "themes": ["materiality", "infrastructure-studies"]},
+        migration.render_stub("paper", "Partial"),
+    )
+    changes = output / "batch-001-changes.json"
+    review = output / "batch-001-review.json"
     failed = migration.record_failure(
-        tmp_path, inventory, changes, review,
-        "bad", "workflow returned audit_escalated",
+        tmp_path, inventory, changes, review, "bad", "workflow returned audit_escalated",
     )
     audit_failed = migration.record_failure(
-        tmp_path, inventory, changes, review,
-        "audit", "targeted audit returned partial",
+        tmp_path, inventory, changes, review, "audit", "targeted audit returned partial",
     )
     verified = migration.verify_changes(tmp_path, changes)
     by_key = {entry["entry_key"]: entry for entry in verified["entries"]}
@@ -1283,6 +1277,10 @@ def test_verify_and_record_failure_keep_failed_items_unverified(tmp_path: Path) 
 
 def test_progress_and_report_accept_completion_at_or_above_target(tmp_path: Path) -> None:
     migration = load_module()
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    book_pdf = tmp_path / "book.pdf"
+    book_pdf.write_bytes(b"%PDF-1.7\n" + b"b" * 2048)
     inventory = tmp_path / "entries.jsonl"
     rows = [
         {"entry_key": f"exact-{index:03d}", "status": "exact-existing",
@@ -1290,40 +1288,52 @@ def test_progress_and_report_accept_completion_at_or_above_target(tmp_path: Path
         for index in range(523)
     ]
     rows += [
-        {"entry_key": "metadata", "status": "safe-create", "route": "metadata-only",
-         "bibtex_type": "article", "batch": 1,
-         "target_path": "vault/papers/metadata.md"},
-        {"entry_key": "pdf", "status": "safe-create", "route": "process-local-pdf",
-         "bibtex_type": "article", "batch": 1,
-         "target_path": "vault/papers/pdf.md"},
-        {"entry_key": "review", "status": "review", "route": "manual-review",
-         "bibtex_type": "article"},
-        {"entry_key": "failed", "status": "safe-create", "route": "process-local-pdf",
-         "bibtex_type": "book", "batch": 1,
-         "target_path": "vault/books/failed/00-overview.md"},
+        {"entry_key": "metadata", "bibtex_type": "article", "status": "safe-create",
+         "route": "metadata-only", "batch": 1, "target_path": "vault/papers/metadata.md",
+         "canonical": {"type": "paper", "title": "Metadata", "authors": ["Jane Doe"],
+                       "year": 2024, "journal": "Journal",
+                       "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": None},
+        {"entry_key": "pdf", "bibtex_type": "article", "status": "safe-create",
+         "route": "process-local-pdf", "batch": 1, "target_path": "vault/papers/pdf.md",
+         "canonical": {"type": "paper", "title": "PDF", "authors": ["Jane Doe"],
+                       "year": 2024, "journal": "Journal", "rating": 5,
+                       "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": str(pdf)},
+        {"entry_key": "review", "bibtex_type": "article", "status": "review",
+         "route": "manual-review"},
+        {"entry_key": "failed", "bibtex_type": "book", "status": "safe-create",
+         "route": "process-local-pdf", "batch": 1,
+         "target_path": "vault/books/failed/00-overview.md",
+         "canonical": {"type": "book", "title": "Failed", "authors": ["Jane Doe"],
+                       "year": 2024, "publisher": "Press", "category": "monograph"},
+         "preferred_pdf": str(book_pdf)},
     ]
     migration.write_jsonl(inventory, rows)
-    migration.write_json(tmp_path / "batch-001-changes.json", {
-        "version": 1, "batch": 1, "entries": [
-            {"entry_key": "metadata", "status": "safe-create",
-             "route": "metadata-only", "action": "created",
-             "target_path": "vault/papers/metadata.md", "verified": True},
-            {"entry_key": "pdf", "status": "safe-create",
-             "route": "process-local-pdf", "action": "processed-local-pdf",
-             "target_path": "vault/papers/pdf.md", "verified": True},
-            {"entry_key": "failed", "status": "safe-create",
-             "route": "process-local-pdf", "action": "staged-local-pdf",
-             "target_path": "vault/books/failed/00-overview.md", "failed": True,
-             "verified": False},
-        ],
-    })
-    progress = migration.progress_summary(inventory, tmp_path)
+    approved = tmp_path / "approved.json"
+    approved.write_text('["metadata", "pdf", "failed"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    # simulate quasi:process-material producing the pdf paper, then finalize + record the failure
+    migration.write_frontmatter(
+        tmp_path / "vault" / "papers" / "pdf.md",
+        {"type": "paper", "title": "PDF", "authors": ["Jane Doe"], "year": 2024,
+         "journal": "Journal", "themes": ["agent-invented-theme"]},
+        migration.render_stub("paper", "PDF"),
+    )
+    changes = output / "batch-001-changes.json"
+    migration.finalize_entry(tmp_path, inventory, changes, "pdf")
+    migration.record_failure(
+        tmp_path, inventory, changes, output / "batch-001-review.json",
+        "failed", "process returned partial",
+    )
+    migration.verify_changes(tmp_path, changes)
+    changes_dir = output
+    progress = migration.progress_summary(inventory, changes_dir)
     assert progress == {
         "denominator": 2100, "target": 525, "completed": 525,
         "remaining_to_target": 0, "milestone_reached": True,
     }
-    output = tmp_path / "milestone.json"
-    report = migration.milestone_report(inventory, tmp_path, output)
+    report_output = tmp_path / "milestone.json"
+    report = migration.milestone_report(inventory, changes_dir, report_output)
     assert report["completed"] == 525
     assert report["exact_existing"] == 523
     assert report["metadata_only_verified"] == 1
@@ -1331,19 +1341,19 @@ def test_progress_and_report_accept_completion_at_or_above_target(tmp_path: Path
     assert report["attachment_review_fragments"] == 0
     assert report["failed_not_counted"] == 1
     assert report["milestone_reached"] is True
-    assert json.loads(output.read_text(encoding="utf-8")) == report
+    assert json.loads(report_output.read_text(encoding="utf-8")) == report
 
     migration.write_jsonl(inventory, rows + [{
         "entry_key": "extra", "status": "exact-existing",
         "route": "exact-existing", "bibtex_type": "book",
     }])
-    assert migration.progress_summary(inventory, tmp_path)["completed"] == 526
+    assert migration.progress_summary(inventory, changes_dir)["completed"] == 526
 
-    tampered = json.loads((tmp_path / "batch-001-changes.json").read_text())
+    tampered = json.loads(changes.read_text())
     tampered["entries"][0]["target_path"] = "vault/papers/wrong.md"
-    migration.write_json(tmp_path / "batch-001-changes.json", tampered)
+    migration.write_json(changes, tampered)
     with pytest.raises(ValueError, match="changes entry does not match inventory"):
-        migration.progress_summary(inventory, tmp_path)
+        migration.progress_summary(inventory, changes_dir)
 
 
 def test_report_cli_writes_output(tmp_path: Path) -> None:
@@ -1362,3 +1372,308 @@ def test_report_cli_writes_output(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(output.read_text(encoding="utf-8"))["completed"] == 525
+
+
+def test_hand_stripped_apply_result_is_rejected_by_verify_and_progress(tmp_path: Path) -> None:
+    # Critical 1a: a hand-edited changes entry missing the apply-result payload
+    # (after/body_sha256) is rejected by every downstream consumer.
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "metadata-only", "batch": 1, "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": None,
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    changes = output / "batch-001-changes.json"
+
+    payload = json.loads(changes.read_text(encoding="utf-8"))
+    payload["entries"][0].pop("after", None)
+    payload["entries"][0].pop("body_sha256", None)
+    migration.write_json(changes, payload)
+
+    with pytest.raises(ValueError, match="invalid changes shape"):
+        migration.verify_changes(tmp_path, changes)
+    with pytest.raises(ValueError, match="invalid changes shape"):
+        migration.progress_summary(inventory, output)
+
+
+def test_verified_entry_without_passing_verification_record_is_rejected(tmp_path: Path) -> None:
+    # Critical 1b: verified=True without a passing check_file verification record
+    # cannot be counted by progress or baked into a milestone report.
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "metadata-only", "batch": 1, "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": None,
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    changes = output / "batch-001-changes.json"
+    migration.verify_changes(tmp_path, changes)
+
+    payload = json.loads(changes.read_text(encoding="utf-8"))
+    payload["entries"][0].pop("verification", None)
+    migration.write_json(changes, payload)
+
+    with pytest.raises(ValueError, match="verified entry lacks passing verification"):
+        migration.progress_summary(inventory, output)
+    with pytest.raises(ValueError, match="verified entry lacks passing verification"):
+        migration.milestone_report(inventory, output, tmp_path / "milestone.json")
+
+
+def test_forged_action_without_restamped_provenance_is_rejected(tmp_path: Path) -> None:
+    # Critical 1c: the deterministic provenance fingerprint binds the apply-result
+    # action; silently swapping it to another legal action is rejected at finalize.
+    migration = load_module()
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "process-local-pdf", "batch": 1, "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": str(pdf),
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    changes = output / "batch-001-changes.json"
+
+    payload = json.loads(changes.read_text(encoding="utf-8"))
+    entry = payload["entries"][0]
+    assert entry["action"] == "staged-local-pdf"
+    entry["action"] = "no-op"  # legal process action, but provenance still names staged-local-pdf
+    migration.write_json(changes, payload)
+
+    with pytest.raises(ValueError, match="unprovenanced changes entry"):
+        migration.finalize_entry(tmp_path, inventory, changes, "x")
+
+
+def test_apply_rejects_absolute_target_path(tmp_path: Path) -> None:
+    # Critical 2: absolute target paths cannot escape the vault chokepoint.
+    migration = load_module()
+    evil = tmp_path / "evil.md"
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "metadata-only", "batch": 1, "target_path": str(evil),
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": None,
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="unsafe target path"):
+        migration.apply_batch(tmp_path, inventory, 1, approved, tmp_path / "out")
+    assert not evil.exists()
+
+
+def test_apply_rejects_parent_traversal_target_path(tmp_path: Path) -> None:
+    # Critical 2: parent-traversal segments cannot escape the vault chokepoint.
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "metadata-only", "batch": 1, "target_path": "vault/papers/../../evil.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": None,
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="unsafe target path"):
+        migration.apply_batch(tmp_path, inventory, 1, approved, tmp_path / "out")
+    assert not (tmp_path / "evil.md").exists()
+
+
+def test_apply_rejects_sources_symlink_escape(tmp_path: Path) -> None:
+    # Critical 2: a sources/ symlink pointing outside the project root cannot
+    # stage a PDF beyond the root.
+    migration = load_module()
+    outside = tmp_path.parent / "quasi-pdf-escape"
+    outside.mkdir(exist_ok=True)
+    sources = tmp_path / "sources"
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "process-local-pdf", "batch": 1, "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": str(pdf),
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    try:
+        sources.symlink_to(outside)
+        with pytest.raises(ValueError, match="staged PDF escapes project root"):
+            migration.apply_batch(tmp_path, inventory, 1, approved, tmp_path / "out")
+        assert not (outside / "doe-paper-2024.pdf").exists()
+    finally:
+        if sources.is_symlink():
+            sources.unlink()
+        if outside.exists():
+            outside.rmdir()
+
+
+def test_finalize_drift_after_body_tamper_is_rejected_and_keeps_unverified(tmp_path: Path) -> None:
+    # Critical 3: after a clean finalize + verify, tampering with the body must be
+    # rejected on re-finalize (drift), clear the verified flag, and keep the item
+    # out of completion counts.
+    migration = load_module()
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    inventory = tmp_path / "entries.jsonl"
+    canonical = {
+        "type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+        "year": 2024, "journal": "Journal", "doi": "10.1000/x", "rating": 5,
+        "themes": ["materiality", "infrastructure-studies"],
+    }
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "process-local-pdf", "batch": 1, "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": canonical, "preferred_pdf": str(pdf),
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    target = tmp_path / "vault" / "papers" / "doe-paper-2024.md"
+    produced = {key: value for key, value in canonical.items() if key not in {"rating", "themes"}}
+    produced["themes"] = ["agent-invented-theme"]
+    body = migration.render_stub("paper", "Paper")
+    migration.write_frontmatter(target, produced, body)
+    changes = output / "batch-001-changes.json"
+    migration.finalize_entry(tmp_path, inventory, changes, "x")
+    migration.verify_changes(tmp_path, changes)
+
+    tampered = migration.read_frontmatter(target)
+    migration.write_frontmatter(target, tampered.frontmatter, tampered.body + "\nDrift.\n")
+    with pytest.raises(ValueError, match="finalize drift"):
+        migration.finalize_entry(tmp_path, inventory, changes, "x")
+
+    verified = migration.verify_changes(tmp_path, changes)
+    assert verified["entries"][0]["verified"] is False
+    progress = migration.progress_summary(inventory, output)
+    assert progress["completed"] == 0
+
+
+def test_record_failure_corrupt_review_leaves_changes_untouched_and_retries(tmp_path: Path) -> None:
+    # Important 1: a corrupt review file fails before any write, so changes are
+    # not half-marked-failed; fixing the review lets the same-reason retry converge.
+    migration = load_module()
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "bad", "bibtex_type": "article", "status": "safe-create",
+        "route": "process-local-pdf", "batch": 1, "target_path": "vault/papers/missing.md",
+        "canonical": {"type": "paper", "title": "Partial", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": str(pdf),
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["bad"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    migration.write_frontmatter(
+        tmp_path / "vault" / "papers" / "missing.md",
+        {"type": "paper", "title": "Partial", "authors": ["Jane Doe"], "year": 2024,
+         "journal": "Journal", "themes": ["materiality", "infrastructure-studies"]},
+        migration.render_stub("paper", "Partial"),
+    )
+    changes = output / "batch-001-changes.json"
+    review = output / "batch-001-review.json"
+    snapshot = changes.read_text(encoding="utf-8")
+    review.write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(json.JSONDecodeError):
+        migration.record_failure(tmp_path, inventory, changes, review, "bad", "workflow failed")
+    assert changes.read_text(encoding="utf-8") == snapshot
+    assert not json.loads(snapshot)["entries"][0].get("failed")
+
+    migration.write_json(review, {"version": 1, "batch": 1, "entries": []})
+    result = migration.record_failure(tmp_path, inventory, changes, review, "bad", "workflow failed")
+    assert result["failed"] is True
+    assert json.loads(changes.read_text(encoding="utf-8"))["entries"][0]["failed"] is True
+
+
+def test_apply_restores_missing_review_on_rerun(tmp_path: Path) -> None:
+    # Important 2: if the review cannot be written, the changes commit marker is
+    # not created; once unblocked, a rerun produces a complete review + changes.
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "metadata-only", "batch": 1, "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]}, "preferred_pdf": None,
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    output.mkdir(parents=True, exist_ok=True)
+    review_blocker = output / "batch-001-review.json"
+    review_blocker.mkdir()
+    (review_blocker / "blocker").write_text("x", encoding="utf-8")
+
+    with pytest.raises(OSError):
+        migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    assert not (output / "batch-001-changes.json").exists()
+
+    (review_blocker / "blocker").unlink()
+    review_blocker.rmdir()
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    review = output / "batch-001-review.json"
+    assert review.is_file()
+    assert isinstance(json.loads(review.read_text(encoding="utf-8"))["entries"], list)
+    assert (output / "batch-001-changes.json").is_file()
+
+
+def test_milestone_report_invalidates_stale_reached_artifact(tmp_path: Path) -> None:
+    # Important 3: a stale milestone_reached=true artifact cannot survive a later
+    # below-target run; the report reflects false on disk before the CLI exits 2.
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [
+        {"entry_key": f"exact-{index:03d}", "status": "exact-existing",
+         "route": "exact-existing", "bibtex_type": "book"}
+        for index in range(525)
+    ])
+    out = tmp_path / "milestone.json"
+    report = migration.milestone_report(inventory, tmp_path, out)
+    assert report["milestone_reached"] is True
+    assert json.loads(out.read_text(encoding="utf-8"))["milestone_reached"] is True
+
+    migration.write_jsonl(inventory, [
+        {"entry_key": f"exact-{index:03d}", "status": "exact-existing",
+         "route": "exact-existing", "bibtex_type": "book"}
+        for index in range(100)
+    ])
+    with pytest.raises(ValueError, match="milestone incomplete"):
+        migration.milestone_report(inventory, tmp_path, out)
+    on_disk = json.loads(out.read_text(encoding="utf-8"))
+    assert on_disk["milestone_reached"] is False
+    assert on_disk["completed"] == 100
+
+    proc = run_cli(
+        "report", "--inventory", str(inventory),
+        "--changes-dir", str(tmp_path), "--output", str(out), cwd=tmp_path,
+    )
+    assert proc.returncode == 2
+    assert json.loads(out.read_text(encoding="utf-8"))["milestone_reached"] is False
