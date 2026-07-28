@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -828,3 +831,76 @@ def test_conflicting_safe_enrichments_for_same_target_are_review() -> None:
     assert [row["status"] for row in collided] == ["review", "review"]
     assert all(row["reason"] == "source-entry-collision" for row in collided)
     assert all(row["collision_basis"] == ["target"] for row in collided)
+
+
+def run_cli(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+
+def test_inventory_is_read_only_and_writes_stable_artifacts(tmp_path: Path) -> None:
+    migration = load_module()
+    (tmp_path / "vault" / "papers").mkdir(parents=True)
+    source = tmp_path / "library.bib"
+    source.write_text(
+        "@article{x, title={New Paper}, author={Doe, Jane}, year={2024}, "
+        "journal={Journal}, abstract={Material infrastructure.}}\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "processing" / "imports" / "zotero-test"
+    before = sorted(path.relative_to(tmp_path) for path in (tmp_path / "vault").rglob("*"))
+    proc = run_cli(
+        "inventory",
+        "--source", str(source),
+        "--project-root", str(tmp_path),
+        "--output-dir", str(output),
+        cwd=tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    after = sorted(path.relative_to(tmp_path) for path in (tmp_path / "vault").rglob("*"))
+    assert after == before
+    assert (output / "source.bib").read_bytes() == source.read_bytes()
+    rows = [json.loads(line) for line in (output / "entries.jsonl").read_text().splitlines()]
+    assert rows[0]["status"] == "review"
+    assert rows[0]["reason"] == "theme-decision-missing"
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["counts"]["entries"] == 1
+    assert manifest["schema_version"] == migration.SCHEMA_VERSION
+
+
+def test_inventory_is_idempotent_and_rejects_source_replacement(tmp_path: Path) -> None:
+    (tmp_path / "vault" / "papers").mkdir(parents=True)
+    source = tmp_path / "library.bib"
+    source.write_text(
+        "@book{x, title={Book}, author={Doe, Jane}, year={2024}, publisher={Press}}\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "processing" / "imports" / "zotero-test"
+    args = (
+        "inventory", "--source", str(source), "--project-root", str(tmp_path),
+        "--output-dir", str(output),
+    )
+    first = run_cli(*args, cwd=tmp_path)
+    assert first.returncode == 0, first.stderr
+    before = {name: (output / name).read_bytes() for name in ("source.bib", "manifest.json", "entries.jsonl")}
+    second = run_cli(*args, cwd=tmp_path)
+    assert second.returncode == 0, second.stderr
+    after = {name: (output / name).read_bytes() for name in before}
+    assert after == before
+
+    replacement = tmp_path / "replacement.bib"
+    replacement.write_text(
+        "@book{y, title={Other}, author={Roe, Jane}, year={2023}, publisher={Press}}\n",
+        encoding="utf-8",
+    )
+    rejected = run_cli(
+        "inventory", "--source", str(replacement), "--project-root", str(tmp_path),
+        "--output-dir", str(output), cwd=tmp_path,
+    )
+    assert rejected.returncode == 2
+    assert "source.bib hash mismatch" in rejected.stderr

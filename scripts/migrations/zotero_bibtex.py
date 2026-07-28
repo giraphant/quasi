@@ -2,10 +2,15 @@
 """One-shot Zotero BibTeX inventory and BTS migration."""
 from __future__ import annotations
 
+import argparse
+import hashlib
+import importlib.metadata
+import json
 import re
+import shutil
 import sys
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -17,10 +22,10 @@ from pydantic import ValidationError
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
-from core import read_frontmatter, write_frontmatter  # noqa: E402
+from core import atomic_write_text, read_frontmatter, write_frontmatter, write_json  # noqa: E402
 from scripts.citation.slug import parse_author_token  # noqa: E402
 from scripts.localise.localise import normalise_isbn  # noqa: E402
-from scripts.schemas import canonical_type  # noqa: E402
+from scripts.schemas import __version__ as SCHEMA_VERSION, canonical_type  # noqa: E402
 from scripts.schemas.body import BOOK_BODY, PAPER_BODY  # noqa: E402
 from scripts.schemas.book import BookSchema  # noqa: E402
 from scripts.schemas.paper import PaperSchema  # noqa: E402
@@ -876,3 +881,217 @@ def parse_bibtex(path: Path) -> list[dict[str, Any]]:
         entries.append(entry)
 
     return sorted(entries, key=lambda entry: entry["entry_key"])
+
+
+TOOL_VERSION = "zotero-bibtex-migration.v1"
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    text = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows)
+    atomic_write_text(path, text)
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def inventory_counts(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    refs = [ref for entry in entries for ref in entry.get("file_refs", [])]
+    recognized = [ref for ref in refs if ref.get("path")]
+    ratings = Counter(entry.get("copyright_raw") for entry in entries if entry.get("rating"))
+    return {
+        "entries": len(entries),
+        "types": dict(sorted(Counter(entry["bibtex_type"] for entry in entries).items())),
+        "ratings": dict(sorted(ratings.items())),
+        "notes": {
+            "annote": sum(bool(entry.get("has_annote")) for entry in entries),
+            "note": sum(bool(entry.get("has_note")) for entry in entries),
+        },
+        "attachments": {
+            "references": len(refs),
+            "recognized_paths": len(recognized),
+            "unparsed": len(refs) - len(recognized),
+            "existing_paths": sum(bool(ref.get("exists")) for ref in recognized),
+            "missing_paths": sum(not ref.get("exists") for ref in recognized),
+        },
+    }
+
+
+def load_theme_decisions(path: Path | None) -> dict[str, dict[str, Any]]:
+    if path is None:
+        return {}
+    rows = read_jsonl(path)
+    decisions: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key = row.get("entry_key")
+        if not key or key in decisions:
+            raise ValueError(f"duplicate or missing theme entry_key: {key}")
+        decisions[key] = row
+    return decisions
+
+
+def load_key_set(path: Path | None) -> set[str] | None:
+    if path is None:
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list) or any(not isinstance(key, str) for key in data):
+        raise ValueError("key file must be a JSON string array")
+    if len(data) != len(set(data)):
+        raise ValueError("key file contains duplicates")
+    return set(data)
+
+
+def write_theme_work(
+    temp_dir: Path,
+    catalog: dict[str, dict[str, Any]],
+    entries: list[dict[str, Any]],
+) -> None:
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    write_jsonl(temp_dir / "theme-catalog.jsonl", [
+        {"theme": theme, **data} for theme, data in catalog.items()
+    ])
+    requests = [
+        {
+            "entry_key": entry["entry_key"],
+            "title": entry.get("title"),
+            "abstract": entry.get("abstract"),
+        }
+        for entry in entries
+        if entry["bibtex_type"] == "article"
+    ]
+    write_jsonl(temp_dir / "theme-requests.jsonl", requests)
+
+
+def run_inventory(
+    source: Path,
+    project_root: Path,
+    output_dir: Path,
+    theme_decisions_path: Path | None,
+    pilot_keys_path: Path | None,
+) -> dict[str, Any]:
+    source = source.resolve()
+    project_root = project_root.resolve()
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    copied_source = output_dir / "source.bib"
+    source_hash = sha256_file(source)
+    if copied_source.exists() and sha256_file(copied_source) != source_hash:
+        raise ValueError("source.bib hash mismatch")
+    if not copied_source.exists():
+        shutil.copy2(source, copied_source)
+
+    parsed = parse_bibtex(copied_source)
+    catalog = collect_theme_catalog(project_root)
+    decisions = load_theme_decisions(theme_decisions_path)
+    pilot_keys = load_key_set(pilot_keys_path)
+    index = build_vault_index(project_root)
+    assessed = assign_batches(
+        mark_source_collisions([
+            assess_entry(entry, index, decisions, catalog)
+            for entry in parsed
+        ]),
+        pilot_keys,
+    )
+
+    temp_dir = project_root / ".quasi" / "temp" / "zotero-2026-07-27"
+    assessed_by_key = {row["entry_key"]: row for row in assessed}
+    write_theme_work(temp_dir, catalog, [
+        entry for entry in parsed
+        if assessed_by_key[entry["entry_key"]]["reason"] == "theme-decision-missing"
+    ])
+    write_jsonl(output_dir / "entries.jsonl", assessed)
+
+    manifest_path = output_dir / "manifest.json"
+    plugin_manifest = json.loads(
+        (PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
+    manifest = {
+        "version": 1,
+        "tool_version": TOOL_VERSION,
+        "tool_path": str(Path(__file__).resolve()),
+        "quasi_plugin_root": str(PLUGIN_ROOT),
+        "quasi_version": plugin_manifest["version"],
+        "source_original_path": str(source),
+        "source_sha256": source_hash,
+        "source_copy": str(copied_source.relative_to(project_root)),
+        "bibtexparser_version": importlib.metadata.version("bibtexparser"),
+        "schema_version": SCHEMA_VERSION,
+        "counts": inventory_counts(parsed),
+        "scope": {
+            "supported": ["article", "book"],
+            "deferred": ["incollection", "inproceedings", "misc", "phdthesis", "techreport"],
+            "milestone_denominator": 2100,
+            "milestone_target": 525,
+            "excluded": ["collections", "note-conversion", "pdf-annotations", "full-attachment-sync"],
+        },
+    }
+    write_json(manifest_path, manifest)
+    return {"manifest": manifest, "entries": assessed, "temp_dir": str(temp_dir)}
+
+
+def merge_theme_decisions(catalog_path: Path, input_dir: Path, output: Path) -> int:
+    catalog = {
+        row["theme"]: {"count": row["count"], "examples": row["examples"]}
+        for row in read_jsonl(catalog_path)
+    }
+    merged: dict[str, dict[str, Any]] = {}
+    for path in sorted(input_dir.glob("*.jsonl")):
+        for row in read_jsonl(path):
+            key = row.get("entry_key")
+            if not key or key in merged:
+                raise ValueError(f"duplicate or missing theme entry_key: {key}")
+            _, error = validate_theme_decision(row, catalog)
+            if error:
+                row = {**row, "validation_error": error}
+            merged[key] = row
+    write_jsonl(output, [merged[key] for key in sorted(merged)])
+    return len(merged)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="zotero-bibtex-migration")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    inventory = sub.add_parser("inventory")
+    inventory.add_argument("--source", type=Path, required=True)
+    inventory.add_argument("--project-root", type=Path, required=True)
+    inventory.add_argument("--output-dir", type=Path, required=True)
+    inventory.add_argument("--theme-decisions", type=Path)
+    inventory.add_argument("--pilot-keys", type=Path)
+
+    merge = sub.add_parser("merge-themes")
+    merge.add_argument("--catalog", type=Path, required=True)
+    merge.add_argument("--input-dir", type=Path, required=True)
+    merge.add_argument("--output", type=Path, required=True)
+
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "inventory":
+            result = run_inventory(
+                args.source, args.project_root, args.output_dir,
+                args.theme_decisions, args.pilot_keys,
+            )
+            print(json.dumps({
+                "entries": len(result["entries"]),
+                "statuses": dict(Counter(row["status"] for row in result["entries"])),
+                "temp_dir": result["temp_dir"],
+            }, ensure_ascii=False, indent=2))
+            return 0
+        count = merge_theme_decisions(args.catalog, args.input_dir, args.output)
+        print(json.dumps({"decisions": count, "output": str(args.output)}, indent=2))
+        return 0
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
