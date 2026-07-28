@@ -1004,6 +1004,37 @@ def test_apply_enrich_rejects_post_inventory_conflict(tmp_path: Path) -> None:
     assert current.body == doc.body
 
 
+def test_apply_enrich_rejects_canonical_conflict_before_receipt(tmp_path: Path) -> None:
+    migration = load_module()
+    existing = write_existing_paper(tmp_path, "existing-2024", doi="10.1000/x")
+    doc = migration.read_frontmatter(existing)
+    assert doc.frontmatter is not None
+    doc.frontmatter.pop("rating", None)
+    canonical = {**doc.frontmatter, "rating": 5}
+    doc.frontmatter["journal"] = "Conflicting Journal"
+    migration.write_frontmatter(existing, doc.frontmatter, doc.body)
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-enrich",
+        "route": "metadata-only", "batch": 1,
+        "target_path": str(existing.relative_to(tmp_path)),
+        "canonical": canonical, "enrich_fields": {"rating": 5},
+        "preferred_pdf": None,
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+
+    with pytest.raises(ValueError, match="enrichment conflict.*journal"):
+        migration.apply_batch(tmp_path, inventory, 1, approved, output)
+
+    current = migration.read_frontmatter(existing)
+    assert current.frontmatter["journal"] == "Conflicting Journal"
+    assert "rating" not in current.frontmatter
+    assert not (output / "batch-001-approved.json").exists()
+    assert not (output / "batch-001-changes.json").exists()
+
+
 def test_apply_local_pdf_stages_source_without_writing_vault(tmp_path: Path) -> None:
     migration = load_module()
     pdf = tmp_path / "zotero.pdf"
@@ -1701,6 +1732,7 @@ def test_self_consistent_restamp_without_apply_receipt_is_rejected(tmp_path: Pat
     changes = output / "batch-001-changes.json"
     receipt = output / "batch-001-approved.json"
     assert receipt.is_file()
+    receipt_bytes = receipt.read_bytes()
 
     # missing trust root -> reject even though the changes entries are stamped
     receipt.unlink()
@@ -1708,9 +1740,11 @@ def test_self_consistent_restamp_without_apply_receipt_is_rejected(tmp_path: Pat
         migration.verify_changes(tmp_path, changes)
     with pytest.raises(ValueError, match="missing apply receipt"):
         migration.progress_summary(inventory, output)
+    with pytest.raises(ValueError, match="missing apply receipt"):
+        migration.apply_batch(tmp_path, inventory, 1, approved, output)
 
     # tampered trust root -> receipt hash no longer binds the changes file
-    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    receipt.write_bytes(receipt_bytes)
     tampered = json.loads(receipt.read_text(encoding="utf-8"))
     tampered["rows"]["x"]["row"]["target_path"] = "vault/papers/evil.md"
     migration.write_json(receipt, tampered)
@@ -1938,7 +1972,7 @@ def test_reapply_rejects_replaced_source_and_staged_even_when_they_match(
     migration.write_json(changes, payload)
     with pytest.raises(ValueError, match="invalid changes shape"):
         migration.progress_summary(inventory, output)
-    with pytest.raises(ValueError, match="apply receipt differs from approved inputs"):
+    with pytest.raises(ValueError, match="invalid changes shape"):
         migration.apply_batch(tmp_path, inventory, 1, approved, output)
 
 
@@ -2011,3 +2045,447 @@ def test_report_output_alias_does_not_overwrite_inventory(tmp_path: Path) -> Non
     with pytest.raises(ValueError, match="report output aliases migration input"):
         migration.milestone_report(inventory, tmp_path, inventory)
     assert inventory.read_bytes() == before
+
+
+def test_apply_receipt_hashes_the_parsed_approved_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "metadata-only", "batch": 1,
+        "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]},
+        "preferred_pdf": None,
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    approved_snapshot = approved.read_bytes()
+    real_read_bytes = Path.read_bytes
+    real_read_text = Path.read_text
+    approved_reads = 0
+
+    def replace_after_read_bytes(path: Path) -> bytes:
+        nonlocal approved_reads
+        data = real_read_bytes(path)
+        if path == approved:
+            approved_reads += 1
+            if approved_reads == 1:
+                path.write_text('["other"]\n', encoding="utf-8")
+        return data
+
+    def replace_after_read_text(path: Path, *args: object, **kwargs: object) -> str:
+        nonlocal approved_reads
+        data = real_read_text(path, *args, **kwargs)
+        if path == approved:
+            approved_reads += 1
+            if approved_reads == 1:
+                path.write_text('["other"]\n', encoding="utf-8")
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", replace_after_read_bytes)
+    monkeypatch.setattr(Path, "read_text", replace_after_read_text)
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    receipt = json.loads(
+        (output / "batch-001-approved.json").read_text(encoding="utf-8")
+    )
+
+    assert approved_reads == 1
+    assert receipt["approved_keys"] == ["x"]
+    assert receipt["approved_input_sha256"] == migration.hashlib.sha256(
+        approved_snapshot
+    ).hexdigest()
+
+
+def test_apply_receipt_hashes_the_parsed_inventory_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    row = {
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "metadata-only", "batch": 1,
+        "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]},
+        "preferred_pdf": None,
+    }
+    migration.write_jsonl(inventory, [row])
+    inventory_snapshot = inventory.read_bytes()
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    real_read_bytes = Path.read_bytes
+    real_read_text = Path.read_text
+    inventory_reads = 0
+
+    def replace_after_read_bytes(path: Path) -> bytes:
+        nonlocal inventory_reads
+        data = real_read_bytes(path)
+        if path == inventory:
+            inventory_reads += 1
+            if inventory_reads == 1:
+                migration.write_jsonl(inventory, [{**row, "entry_key": "other"}])
+        return data
+
+    def replace_after_read_text(path: Path, *args: object, **kwargs: object) -> str:
+        nonlocal inventory_reads
+        data = real_read_text(path, *args, **kwargs)
+        if path == inventory:
+            inventory_reads += 1
+            if inventory_reads == 1:
+                migration.write_jsonl(inventory, [{**row, "entry_key": "other"}])
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", replace_after_read_bytes)
+    monkeypatch.setattr(Path, "read_text", replace_after_read_text)
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    receipt = json.loads(
+        (output / "batch-001-approved.json").read_text(encoding="utf-8")
+    )
+
+    assert inventory_reads == 1
+    assert receipt["rows"]["x"]["row"] == row
+    assert receipt["inventory_sha256"] == migration.hashlib.sha256(
+        inventory_snapshot
+    ).hexdigest()
+
+
+def test_progress_rejects_inventory_replaced_between_count_and_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    applied_row = {
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "metadata-only", "batch": 1,
+        "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]},
+        "preferred_pdf": None,
+    }
+    migration.write_jsonl(inventory, [applied_row])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    receipt_bound_inventory = inventory.read_bytes()
+    migration.write_jsonl(inventory, [
+        {"entry_key": f"exact-{index:03d}", "status": "exact-existing",
+         "route": "exact-existing", "bibtex_type": "book"}
+        for index in range(525)
+    ] + [applied_row])
+    real_read_bytes = Path.read_bytes
+    real_read_text = Path.read_text
+    inventory_reads = 0
+
+    def replace_after_read_bytes(path: Path) -> bytes:
+        nonlocal inventory_reads
+        data = real_read_bytes(path)
+        if path == inventory:
+            inventory_reads += 1
+            if inventory_reads == 1:
+                inventory.write_bytes(receipt_bound_inventory)
+        return data
+
+    def replace_after_read_text(path: Path, *args: object, **kwargs: object) -> str:
+        nonlocal inventory_reads
+        data = real_read_text(path, *args, **kwargs)
+        if path == inventory:
+            inventory_reads += 1
+            if inventory_reads == 1:
+                inventory.write_bytes(receipt_bound_inventory)
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", replace_after_read_bytes)
+    monkeypatch.setattr(Path, "read_text", replace_after_read_text)
+    with pytest.raises(ValueError, match="inventory hash mismatch"):
+        migration.progress_summary(inventory, output)
+    assert inventory_reads == 1
+
+
+@pytest.mark.parametrize("scenario", ["body", "frontmatter"])
+def test_safe_enrich_receipt_binds_apply_time_target_baseline(
+    tmp_path: Path,
+    scenario: str,
+) -> None:
+    migration = load_module()
+    existing = write_existing_paper(tmp_path, "existing-2024", doi="10.1000/x")
+    original = migration.read_frontmatter(existing)
+    assert original.frontmatter is not None
+    original.frontmatter.pop("rating", None)
+    migration.write_frontmatter(existing, original.frontmatter, original.body)
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-enrich",
+        "route": "metadata-only", "batch": 1,
+        "target_path": str(existing.relative_to(tmp_path)),
+        "canonical": {**original.frontmatter, "rating": 5},
+        "enrich_fields": {"rating": 5}, "preferred_pdf": None,
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output)
+    changes = output / "batch-001-changes.json"
+    payload = json.loads(changes.read_text(encoding="utf-8"))
+    entry = payload["entries"][0]
+    forged = migration.read_frontmatter(existing)
+    assert forged.frontmatter is not None
+
+    if scenario == "body":
+        forged_body = forged.body + "\nAdditional context.\n"
+        migration.write_frontmatter(existing, forged.frontmatter, forged_body)
+        entry["body_sha256"] = migration._body_sha256(forged_body)
+    else:
+        forged.frontmatter["topics"] = ["forged-topic"]
+        migration.write_frontmatter(existing, forged.frontmatter, forged.body)
+        forged_before = dict(forged.frontmatter)
+        forged_before.pop("rating")
+        entry["before"] = forged_before
+        entry["after"] = dict(forged.frontmatter)
+
+    entry["provenance"] = migration._entry_provenance_stamp(
+        entry, payload["receipt_sha256"],
+    )
+    migration.write_json(changes, payload)
+    with pytest.raises(ValueError, match="invalid changes shape"):
+        migration.verify_changes(tmp_path, changes)
+
+
+@pytest.mark.parametrize("reserved_kind", ["changes", "approved", "review"])
+def test_report_rejects_case_variant_reserved_output(
+    tmp_path: Path,
+    reserved_kind: str,
+) -> None:
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [
+        {"entry_key": f"exact-{index:03d}", "status": "exact-existing",
+         "route": "exact-existing", "bibtex_type": "book"}
+        for index in range(525)
+    ])
+    output = tmp_path / f"BATCH-001-{reserved_kind.upper()}.JSON"
+
+    with pytest.raises(ValueError, match="report output aliases migration input"):
+        migration.milestone_report(inventory, tmp_path, output)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("reserved_kind", ["inventory", "changes", "approved", "review"])
+def test_report_rejects_existing_samefile_alias(
+    tmp_path: Path,
+    reserved_kind: str,
+) -> None:
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    safe_row = {
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "metadata-only", "batch": 1,
+        "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]},
+        "preferred_pdf": None,
+    }
+    migration.write_jsonl(inventory, [
+        {"entry_key": f"exact-{index:03d}", "status": "exact-existing",
+         "route": "exact-existing", "bibtex_type": "book"}
+        for index in range(525)
+    ] + [safe_row])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    output_dir = tmp_path / "out"
+    migration.apply_batch(tmp_path, inventory, 1, approved, output_dir)
+    reserved = {
+        "inventory": inventory,
+        "changes": output_dir / "batch-001-changes.json",
+        "approved": output_dir / "batch-001-approved.json",
+        "review": output_dir / "batch-001-review.json",
+    }[reserved_kind]
+    report_output = output_dir / f"milestone-{reserved_kind}.json"
+    report_output.hardlink_to(reserved)
+    before = reserved.read_bytes()
+
+    with pytest.raises(ValueError, match="report output aliases migration input"):
+        migration.milestone_report(inventory, output_dir, report_output)
+    assert reserved.read_bytes() == before
+
+
+def test_pdf_staging_uses_receipt_source_hash_until_commit_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration = load_module()
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "process-local-pdf", "batch": 1,
+        "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]},
+        "preferred_pdf": str(pdf),
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    real_build = migration._build_receipt
+
+    def replace_after_receipt_snapshot(*args, **kwargs):
+        receipt = real_build(*args, **kwargs)
+        pdf.write_bytes(b"%PDF-1.7\n" + b"x" * 2048)
+        return receipt
+
+    monkeypatch.setattr(migration, "_build_receipt", replace_after_receipt_snapshot)
+    output = tmp_path / "out"
+    with pytest.raises(ValueError, match="source PDF changed while staging"):
+        migration.apply_batch(tmp_path, inventory, 1, approved, output)
+
+    assert not (tmp_path / "sources" / "doe-paper-2024.pdf").exists()
+    assert not (output / "batch-001-changes.json").exists()
+
+
+def test_safe_enrich_rechecks_target_after_receipt_is_persisted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration = load_module()
+    existing = write_existing_paper(tmp_path, "existing-2024", doi="10.1000/x")
+    original = migration.read_frontmatter(existing)
+    assert original.frontmatter is not None
+    original.frontmatter.pop("rating", None)
+    migration.write_frontmatter(existing, original.frontmatter, original.body)
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-enrich",
+        "route": "metadata-only", "batch": 1,
+        "target_path": str(existing.relative_to(tmp_path)),
+        "canonical": {**original.frontmatter, "rating": 5},
+        "enrich_fields": {"rating": 5}, "preferred_pdf": None,
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    real_atomic_write = migration.atomic_write_text
+
+    def modify_after_receipt_write(path: Path, text: str) -> None:
+        real_atomic_write(path, text)
+        if path.name == "batch-001-approved.json":
+            changed = migration.read_frontmatter(existing)
+            assert changed.frontmatter is not None
+            changed.frontmatter["topics"] = ["concurrent-edit"]
+            migration.write_frontmatter(existing, changed.frontmatter, changed.body)
+
+    monkeypatch.setattr(migration, "atomic_write_text", modify_after_receipt_write)
+    output = tmp_path / "out"
+    with pytest.raises(ValueError, match="enrichment target changed after receipt"):
+        migration.apply_batch(tmp_path, inventory, 1, approved, output)
+
+    current = migration.read_frontmatter(existing)
+    assert current.frontmatter["topics"] == ["concurrent-edit"]
+    assert "rating" not in current.frontmatter
+    assert not (output / "batch-001-changes.json").exists()
+
+
+def test_pdf_precommit_hash_error_cleans_new_staged_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration = load_module()
+    pdf = tmp_path / "zotero.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [{
+        "entry_key": "x", "bibtex_type": "article", "status": "safe-create",
+        "route": "process-local-pdf", "batch": 1,
+        "target_path": "vault/papers/doe-paper-2024.md",
+        "canonical": {"type": "paper", "title": "Paper", "authors": ["Jane Doe"],
+                      "year": 2024, "journal": "Journal",
+                      "themes": ["materiality", "infrastructure-studies"]},
+        "preferred_pdf": str(pdf),
+    }])
+    approved = tmp_path / "approved.json"
+    approved.write_text('["x"]\n', encoding="utf-8")
+    real_copy = migration._copy_pdf_atomically
+    real_hash = migration.sha256_file
+    copied = False
+
+    def mark_copied(source: Path, staged: Path, expected_sha256: str) -> None:
+        nonlocal copied
+        real_copy(source, staged, expected_sha256)
+        copied = True
+
+    def fail_precommit_source_hash(path: Path) -> str:
+        if copied and path == pdf:
+            raise OSError("source hash unavailable")
+        return real_hash(path)
+
+    monkeypatch.setattr(migration, "_copy_pdf_atomically", mark_copied)
+    monkeypatch.setattr(migration, "sha256_file", fail_precommit_source_hash)
+    output = tmp_path / "out"
+    with pytest.raises(OSError, match="source hash unavailable"):
+        migration.apply_batch(tmp_path, inventory, 1, approved, output)
+
+    assert not (tmp_path / "sources" / "doe-paper-2024.pdf").exists()
+    assert not (output / "batch-001-changes.json").exists()
+
+
+def test_pdf_precommit_error_cleans_all_new_staged_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration = load_module()
+    pdf_a = tmp_path / "a.pdf"
+    pdf_b = tmp_path / "b.pdf"
+    pdf_a.write_bytes(b"%PDF-1.7\n" + b"a" * 2048)
+    pdf_b.write_bytes(b"%PDF-1.7\n" + b"b" * 2048)
+    rows = [
+        {
+            "entry_key": key, "bibtex_type": "article", "status": "safe-create",
+            "route": "process-local-pdf", "batch": 1,
+            "target_path": f"vault/papers/{key}-paper-2024.md",
+            "canonical": {
+                "type": "paper", "title": f"{key.upper()} Paper",
+                "authors": ["Jane Doe"], "year": 2024, "journal": "Journal",
+                "themes": ["materiality", "infrastructure-studies"],
+            },
+            "preferred_pdf": str(pdf),
+        }
+        for key, pdf in (("a", pdf_a), ("b", pdf_b))
+    ]
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, rows)
+    approved = tmp_path / "approved.json"
+    approved.write_text('["a", "b"]\n', encoding="utf-8")
+    real_copy = migration._copy_pdf_atomically
+    real_hash = migration.sha256_file
+    copied: set[Path] = set()
+
+    def mark_copied(source: Path, staged: Path, expected_sha256: str) -> None:
+        real_copy(source, staged, expected_sha256)
+        copied.add(source)
+
+    def fail_second_precommit_hash(path: Path) -> str:
+        if len(copied) == 2 and path == pdf_b:
+            raise OSError("second source hash unavailable")
+        return real_hash(path)
+
+    monkeypatch.setattr(migration, "_copy_pdf_atomically", mark_copied)
+    monkeypatch.setattr(migration, "sha256_file", fail_second_precommit_hash)
+    output = tmp_path / "out"
+    with pytest.raises(OSError, match="second source hash unavailable"):
+        migration.apply_batch(tmp_path, inventory, 1, approved, output)
+
+    assert not (tmp_path / "sources" / "a-paper-2024.pdf").exists()
+    assert not (tmp_path / "sources" / "b-paper-2024.pdf").exists()
+    assert not (output / "batch-001-changes.json").exists()

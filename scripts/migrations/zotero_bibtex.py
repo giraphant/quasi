@@ -894,13 +894,30 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _parse_jsonl_bytes(data: bytes) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in data.splitlines() if line.strip()]
+
+
+def _parse_key_set_bytes(data: bytes) -> set[str]:
+    parsed = json.loads(data)
+    if not isinstance(parsed, list) or any(not isinstance(key, str) for key in parsed):
+        raise ValueError("key file must be a JSON string array")
+    if len(parsed) != len(set(parsed)):
+        raise ValueError("key file contains duplicates")
+    return set(parsed)
+
+
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     text = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows)
     atomic_write_text(path, text)
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return _parse_jsonl_bytes(path.read_bytes())
 
 
 def inventory_counts(entries: list[dict[str, Any]]) -> dict[str, Any]:
@@ -941,12 +958,7 @@ def load_theme_decisions(path: Path | None) -> dict[str, dict[str, Any]]:
 def load_key_set(path: Path | None) -> set[str] | None:
     if path is None:
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, list) or any(not isinstance(key, str) for key in data):
-        raise ValueError("key file must be a JSON string array")
-    if len(data) != len(set(data)):
-        raise ValueError("key file contains duplicates")
-    return set(data)
+    return _parse_key_set_bytes(path.read_bytes())
 
 
 def write_theme_work(
@@ -1144,55 +1156,62 @@ def _build_receipt(
     project_root: Path,
     inventory_path: Path,
     batch: int,
-    approved_path: Path,
     approved: set[str],
     selected: list[dict[str, Any]],
+    *,
+    approved_input_sha256: str,
+    inventory_sha256: str,
+    row_snapshots: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     return {
         "version": 1,
         "batch": batch,
         "project_root": str(project_root),
         "inventory_path": str(inventory_path.resolve()),
-        "approved_input_sha256": sha256_file(approved_path),
+        "approved_input_sha256": approved_input_sha256,
         "approved_keys": sorted(approved),
-        "inventory_sha256": sha256_file(inventory_path),
+        "inventory_sha256": inventory_sha256,
         "rows": {
             row["entry_key"]: {
                 "row_sha256": _row_stamp(row),
                 "row": row,
-                **(
-                    {"source_sha256": sha256_file(Path(row["preferred_pdf"]))}
-                    if row["route"] == "process-local-pdf"
-                    else {}
-                ),
+                **row_snapshots.get(row["entry_key"], {}),
             }
             for row in selected
         },
     }
 
 
-def _load_receipt(changes_path: Path, expected_sha256: str) -> dict[str, Any]:
+def _load_receipt(
+    changes_path: Path,
+    expected_sha256: str | None,
+) -> tuple[dict[str, Any], str]:
     # The apply receipt and inventory are the trust roots. Rewriting both is an
     # administrator action outside this migration's local tamper threat model.
     receipt_path = _receipt_path(changes_path)
     if not receipt_path.is_file():
         raise ValueError(f"missing apply receipt: {receipt_path}")
-    if sha256_file(receipt_path) != expected_sha256:
+    receipt_bytes = receipt_path.read_bytes()
+    receipt_sha256 = _sha256_bytes(receipt_bytes)
+    if expected_sha256 is not None and receipt_sha256 != expected_sha256:
         raise ValueError(f"receipt hash mismatch: {receipt_path}")
-    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt = json.loads(receipt_bytes)
     if not isinstance(receipt, dict) \
             or type(receipt.get("version")) is not int \
             or receipt["version"] != 1:
         raise ValueError(f"invalid apply receipt: {receipt_path}")
-    return receipt
+    return receipt, receipt_sha256
 
 
 def _validated_receipt_rows(
     receipt: dict[str, Any],
     *,
     inventory_path: Path | None,
+    inventory_sha256: str | None,
     rows_by_key: dict[str, dict[str, Any]],
     project_root: Path | None,
+    approved_input_sha256: str | None = None,
+    approved_keys_input: set[str] | None = None,
 ) -> tuple[int, dict[str, dict[str, Any]], Path]:
     batch = receipt.get("batch")
     approved_keys = receipt.get("approved_keys")
@@ -1216,11 +1235,26 @@ def _validated_receipt_rows(
     receipt_inventory = Path(inventory_value).resolve()
     if project_root is not None and receipt_root != project_root.resolve():
         raise ValueError("apply receipt project root mismatch")
-    if inventory_path is not None and receipt_inventory != inventory_path.resolve():
-        raise ValueError("apply receipt inventory path mismatch")
-    if receipt["inventory_sha256"] != sha256_file(receipt_inventory):
+    if inventory_path is None:
+        inventory_bytes = receipt_inventory.read_bytes()
+        inventory_sha256 = _sha256_bytes(inventory_bytes)
+        current_rows = {
+            row["entry_key"]: row for row in _parse_jsonl_bytes(inventory_bytes)
+        }
+    else:
+        if receipt_inventory != inventory_path.resolve():
+            raise ValueError("apply receipt inventory path mismatch")
+        if inventory_sha256 is None:
+            raise ValueError("missing inventory snapshot")
+        current_rows = rows_by_key
+    if receipt["inventory_sha256"] != inventory_sha256:
         raise ValueError("inventory hash mismatch")
-    current_rows = {row["entry_key"]: row for row in read_jsonl(receipt_inventory)}
+    if approved_input_sha256 is not None and (
+        receipt["approved_input_sha256"] != approved_input_sha256
+        or approved_keys_input is None
+        or approved_keys != sorted(approved_keys_input)
+    ):
+        raise ValueError("apply receipt differs from approved inputs")
 
     receipt_rows: dict[str, dict[str, Any]] = {}
     for key in approved_keys:
@@ -1232,14 +1266,20 @@ def _validated_receipt_rows(
         if row.get("entry_key") != key or row.get("batch") != batch \
                 or row.get("status") not in {"safe-create", "safe-enrich"}:
             raise ValueError(f"invalid receipt row: {key}")
-        if current_rows.get(key) != row \
-                or (rows_by_key and rows_by_key.get(key) != row):
+        if current_rows.get(key) != row:
             raise ValueError(f"receipt row does not match inventory: {key}")
         if row["route"] == "process-local-pdf":
             source_sha256 = snapshot.get("source_sha256")
             if not isinstance(source_sha256, str):
                 raise ValueError(f"invalid receipt row: {key}")
             row = {**row, "_approved_source_sha256": source_sha256}
+        elif row["status"] == "safe-enrich":
+            target_before = snapshot.get("target_before")
+            if not isinstance(target_before, dict) \
+                    or not isinstance(target_before.get("frontmatter"), dict) \
+                    or not isinstance(target_before.get("body_sha256"), str):
+                raise ValueError(f"invalid receipt row: {key}")
+            row = {**row, "_approved_target_before": target_before}
         receipt_rows[key] = row
     return batch, receipt_rows, receipt_root
 
@@ -1302,6 +1342,27 @@ def _validate_review_payload(
 _PROCESS_ACTIONS = {"staged-local-pdf", "no-op", "processed-local-pdf"}
 
 
+def _safe_enrich_state(
+    row: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    target_before = row.get("_approved_target_before")
+    if not isinstance(target_before, dict) \
+            or not isinstance(target_before.get("frontmatter"), dict) \
+            or not isinstance(target_before.get("body_sha256"), str):
+        raise ValueError(f"invalid receipt row: {row['entry_key']}")
+    before = dict(target_before["frontmatter"])
+    after = dict(before)
+    for field, value in row.get("enrich_fields", {}).items():
+        existing = after.get(field)
+        if existing in (None, "", []):
+            after[field] = value
+        elif existing != value:
+            raise ValueError(f"invalid receipt row: {row['entry_key']}")
+    if _conflicting_fields(after, row["canonical"]):
+        raise ValueError(f"invalid receipt row: {row['entry_key']}")
+    return before, after, target_before["body_sha256"]
+
+
 def _require_apply_shape(
     project_root: Path,
     row: dict[str, Any],
@@ -1326,9 +1387,11 @@ def _require_apply_shape(
                     or entry["body_sha256"] != _body_sha256(expected_body):
                 raise ValueError(f"invalid changes shape: {key}")
         else:
-            expected = dict(before or {})
-            expected.update(row.get("enrich_fields", {}))
-            if after != expected or _conflicting_fields(after, row["canonical"]):
+            expected_before, expected_after, expected_body_sha256 = _safe_enrich_state(row)
+            expected_action = "enriched" if expected_after != expected_before else "no-op"
+            if before != expected_before or after != expected_after \
+                    or entry["body_sha256"] != expected_body_sha256 \
+                    or entry.get("action") != expected_action:
                 raise ValueError(f"invalid changes shape: {key}")
     elif route == "process-local-pdf":
         source_path = entry.get("source_path")
@@ -1414,7 +1477,10 @@ def _load_validated_payload(
     *,
     changes_path: Path,
     inventory_path: Path | None,
+    inventory_sha256: str | None,
     project_root: Path | None,
+    approved_input_sha256: str | None = None,
+    approved_keys_input: set[str] | None = None,
 ) -> tuple[
     int,
     dict[str, dict[str, Any]],
@@ -1437,12 +1503,15 @@ def _load_validated_payload(
         raise ValueError("changes file missing receipt_sha256")
     if not isinstance(entries, list):
         raise ValueError("changes file missing entries")
-    receipt = _load_receipt(changes_path, receipt_sha256)
+    receipt, _ = _load_receipt(changes_path, receipt_sha256)
     receipt_batch, receipt_rows, receipt_root = _validated_receipt_rows(
         receipt,
         inventory_path=inventory_path,
+        inventory_sha256=inventory_sha256,
         rows_by_key=rows_by_key,
         project_root=project_root,
+        approved_input_sha256=approved_input_sha256,
+        approved_keys_input=approved_keys_input,
     )
     if receipt_batch != batch:
         raise ValueError("changes file batch differs from receipt")
@@ -1485,9 +1554,14 @@ def apply_batch(
     output_dir: Path,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
-    rows = {row["entry_key"]: row for row in read_jsonl(inventory_path)}
-    approved = load_key_set(approved_path)
-    assert approved is not None
+    inventory_bytes = inventory_path.read_bytes()
+    inventory_sha256 = _sha256_bytes(inventory_bytes)
+    rows = {
+        row["entry_key"]: row for row in _parse_jsonl_bytes(inventory_bytes)
+    }
+    approved_bytes = approved_path.read_bytes()
+    approved_input_sha256 = _sha256_bytes(approved_bytes)
+    approved = _parse_key_set_bytes(approved_bytes)
     selected: list[dict[str, Any]] = []
     for key in sorted(approved):
         row = rows.get(key)
@@ -1502,29 +1576,25 @@ def apply_batch(
     changes_path = output_dir / f"batch-{batch:03d}-changes.json"
     review_path = output_dir / f"batch-{batch:03d}-review.json"
     receipt_path = _receipt_path(changes_path)
-    expected_receipt = _build_receipt(
-        project_root, inventory_path, batch, approved_path, approved, selected,
-    )
     if changes_path.exists():
-        if receipt_path.exists():
-            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-            if receipt != expected_receipt:
-                raise ValueError("apply receipt differs from approved inputs")
-        else:
-            write_json(receipt_path, expected_receipt)
-        prior_payload = json.loads(changes_path.read_text(encoding="utf-8"))
-        _, prior_by_key, receipt_sha256, _, _ = _load_validated_payload(
+        if not receipt_path.is_file():
+            raise ValueError(f"missing apply receipt: {receipt_path}")
+        prior_payload = json.loads(changes_path.read_bytes())
+        _, prior_by_key, receipt_sha256, _, receipt_rows = _load_validated_payload(
             prior_payload,
             rows,
             changes_path=changes_path,
             inventory_path=inventory_path,
+            inventory_sha256=inventory_sha256,
             project_root=project_root,
+            approved_input_sha256=approved_input_sha256,
+            approved_keys_input=approved,
         )
         if set(prior_by_key) != approved:
             raise ValueError("approved key set differs from existing changes file")
 
-        for row in selected:
-            key = row["entry_key"]
+        for key in sorted(approved):
+            row = receipt_rows[key]
             target = _resolve_vault_target(project_root, row["target_path"])
             prior = prior_by_key[key]
             if row["route"] == "process-local-pdf":
@@ -1546,10 +1616,9 @@ def apply_batch(
                 if not target.is_file():
                     raise ValueError(f"reapply is not a no-op: {key}")
                 doc = read_frontmatter(target)
-                if (
-                    doc.frontmatter != prior.get("after")
-                    or _body_sha256(doc.body) != prior["body_sha256"]
-                ):
+                _, expected_after, expected_body_sha256 = _safe_enrich_state(row)
+                if doc.frontmatter != expected_after \
+                        or _body_sha256(doc.body) != expected_body_sha256:
                     raise ValueError(f"reapply is not a no-op: {key}")
             else:
                 canonical = dict(row["canonical"])
@@ -1582,30 +1651,141 @@ def apply_batch(
         write_json(changes_path, prior_payload)
         return prior_payload
 
-    # Preflight every approved row before the first physical write.
-    for row in selected:
+    # Snapshot every trust-bound input before the first target/PDF write.
+    target_docs: dict[str, Any] = {}
+    row_snapshots: dict[str, dict[str, Any]] = {}
+    receipt_is_new = not receipt_path.exists()
+    if receipt_is_new:
+        for row in selected:
+            key = row["entry_key"]
+            target = _resolve_vault_target(project_root, row["target_path"])
+            if row["route"] == "process-local-pdf":
+                source = Path(row["preferred_pdf"])
+                staged = _resolve_staged_pdf(
+                    project_root, slug_from_target(row["target_path"]),
+                )
+                if not is_readable_pdf(source):
+                    raise ValueError(f"preferred PDF is no longer readable: {source}")
+                if collect_process_artifacts(project_root, row):
+                    raise ValueError(f"pre-existing process artifacts: {row['target_path']}")
+                source_sha256 = sha256_file(source)
+                if staged.exists() and sha256_file(staged) != source_sha256:
+                    raise ValueError(f"staged PDF conflict: {staged}")
+                row_snapshots[key] = {"source_sha256": source_sha256}
+            elif row["route"] != "metadata-only":
+                raise ValueError(f"unsupported route: {row['route']}")
+            elif row["status"] == "safe-enrich":
+                if not target.is_file():
+                    raise ValueError(f"invalid frontmatter: {target}")
+                current = read_frontmatter(target)
+                if current.frontmatter is None:
+                    raise ValueError(f"invalid frontmatter: {target}")
+                conflicts = _conflicting_fields(current.frontmatter, row["canonical"])
+                if conflicts:
+                    raise ValueError(
+                        f"enrichment conflict for {row['entry_key']}: "
+                        f"{', '.join(conflicts)}"
+                    )
+                for field, value in row["enrich_fields"].items():
+                    existing = current.frontmatter.get(field)
+                    if existing not in (None, "", []) and existing != value:
+                        raise ValueError(
+                            f"enrichment conflict for {row['entry_key']}: {field}"
+                        )
+                target_docs[key] = current
+                row_snapshots[key] = {
+                    "target_before": {
+                        "frontmatter": dict(current.frontmatter),
+                        "body_sha256": _body_sha256(current.body),
+                    },
+                }
+            else:
+                canonical = dict(row["canonical"])
+                if canonical["type"] == "paper":
+                    PaperSchema.model_validate(canonical)
+                else:
+                    BookSchema.model_validate(canonical)
+                if target.exists():
+                    current = read_frontmatter(target)
+                    body = render_stub(canonical["type"], canonical["title"])
+                    if current.frontmatter != canonical or current.body != body:
+                        raise ValueError(f"safe-create target conflict: {target}")
+        receipt = _build_receipt(
+            project_root,
+            inventory_path,
+            batch,
+            approved,
+            selected,
+            approved_input_sha256=approved_input_sha256,
+            inventory_sha256=inventory_sha256,
+            row_snapshots=row_snapshots,
+        )
+        _, receipt_rows, _ = _validated_receipt_rows(
+            receipt,
+            inventory_path=inventory_path,
+            inventory_sha256=inventory_sha256,
+            rows_by_key=rows,
+            project_root=project_root,
+            approved_input_sha256=approved_input_sha256,
+            approved_keys_input=approved,
+        )
+        receipt_text = json.dumps(receipt, ensure_ascii=False, indent=2) + "\n"
+        receipt_sha256 = _sha256_bytes(receipt_text.encode("utf-8"))
+    else:
+        receipt, receipt_sha256 = _load_receipt(changes_path, None)
+        _, receipt_rows, _ = _validated_receipt_rows(
+            receipt,
+            inventory_path=inventory_path,
+            inventory_sha256=inventory_sha256,
+            rows_by_key=rows,
+            project_root=project_root,
+            approved_input_sha256=approved_input_sha256,
+            approved_keys_input=approved,
+        )
+
+    expected_review = {
+        "version": 1,
+        "batch": batch,
+        "entries": _build_review_rows(rows, batch),
+    }
+    try:
+        review_raw = json.loads(review_path.read_bytes())
+        _validate_review_payload(review_raw, batch, rows)
+        regenerate_review = review_raw != expected_review
+    except (OSError, ValueError, json.JSONDecodeError):
+        regenerate_review = True
+    if regenerate_review:
+        write_json(review_path, expected_review)
+    if receipt_is_new:
+        atomic_write_text(receipt_path, receipt_text)
+
+    # A receipt-only rerun is a safe interruption recovery. Disk state must still
+    # be either the receipt baseline or its one permitted apply result.
+    for key in sorted(approved):
+        row = receipt_rows[key]
         target = _resolve_vault_target(project_root, row["target_path"])
         if row["route"] == "process-local-pdf":
             source = Path(row["preferred_pdf"])
-            staged = _resolve_staged_pdf(project_root, slug_from_target(row["target_path"]))
-            if not is_readable_pdf(source):
-                raise ValueError(f"preferred PDF is no longer readable: {source}")
+            staged = _resolve_staged_pdf(
+                project_root, slug_from_target(row["target_path"]),
+            )
+            expected_source_sha256 = row["_approved_source_sha256"]
+            if not is_readable_pdf(source) \
+                    or sha256_file(source) != expected_source_sha256:
+                raise ValueError(f"source PDF changed while staging: {source}")
             if collect_process_artifacts(project_root, row):
                 raise ValueError(f"pre-existing process artifacts: {row['target_path']}")
-            if staged.exists() and sha256_file(staged) != sha256_file(source):
+            if staged.exists() and sha256_file(staged) != expected_source_sha256:
                 raise ValueError(f"staged PDF conflict: {staged}")
-        elif row["route"] != "metadata-only":
-            raise ValueError(f"unsupported route: {row['route']}")
         elif row["status"] == "safe-enrich":
             if not target.is_file():
                 raise ValueError(f"invalid frontmatter: {target}")
             current = read_frontmatter(target)
-            if current.frontmatter is None:
-                raise ValueError(f"invalid frontmatter: {target}")
-            for field, value in row["enrich_fields"].items():
-                existing = current.frontmatter.get(field)
-                if existing not in (None, "", []) and existing != value:
-                    raise ValueError(f"enrichment conflict for {row['entry_key']}: {field}")
+            target_docs[key] = current
+            before, after, body_sha256 = _safe_enrich_state(row)
+            if current.frontmatter not in (before, after) \
+                    or _body_sha256(current.body) != body_sha256:
+                raise ValueError(f"enrichment target changed after receipt: {key}")
         else:
             canonical = dict(row["canonical"])
             if canonical["type"] == "paper":
@@ -1619,29 +1799,22 @@ def apply_batch(
                     raise ValueError(f"safe-create target conflict: {target}")
 
     changes: list[dict[str, Any]] = []
-    for row in selected:
-        key = row["entry_key"]
+    created_staged: set[Path] = set()
+    for key in sorted(approved):
+        row = receipt_rows[key]
         target = _resolve_vault_target(project_root, row["target_path"])
         route = row["route"]
         if route == "process-local-pdf":
             source = Path(row["preferred_pdf"])
-            if not is_readable_pdf(source):
-                raise ValueError(f"preferred PDF is no longer readable: {source}")
-            if collect_process_artifacts(project_root, row):
-                raise ValueError(f"pre-existing process artifacts: {row['target_path']}")
             staged = _resolve_staged_pdf(project_root, slug_from_target(row["target_path"]))
-            if staged.exists() and sha256_file(staged) != sha256_file(source):
-                raise ValueError(f"staged PDF conflict: {staged}")
-            source_sha256 = sha256_file(source)
+            source_sha256 = row["_approved_source_sha256"]
             if not staged.exists():
                 staged.parent.mkdir(parents=True, exist_ok=True)
                 _copy_pdf_atomically(source, staged, source_sha256)
+                created_staged.add(staged)
                 action = "staged-local-pdf"
             else:
                 action = "no-op"
-            if sha256_file(source) != source_sha256 \
-                    or sha256_file(staged) != source_sha256:
-                raise ValueError(f"source PDF changed while staging: {source}")
             entry = {
                 "entry_key": key, "status": row["status"],
                 "route": route, "action": action,
@@ -1657,23 +1830,11 @@ def apply_batch(
         if route != "metadata-only":
             raise ValueError(f"unsupported route: {route}")
         if row["status"] == "safe-enrich":
-            doc = read_frontmatter(target)
-            if doc.frontmatter is None:
-                raise ValueError(f"invalid frontmatter: {target}")
-            before = dict(doc.frontmatter)
-            after = dict(before)
-            for field, value in row.get("enrich_fields", {}).items():
-                existing = after.get(field)
-                if existing in (None, "", []):
-                    after[field] = value
-                elif existing != value:
-                    raise ValueError(f"enrichment conflict for {key}: {field}")
-            body_sha256 = _body_sha256(doc.body)
-            if after == before:
-                action = "no-op"
-            else:
+            doc = target_docs[key]
+            before, after, body_sha256 = _safe_enrich_state(row)
+            action = "enriched" if after != before else "no-op"
+            if doc.frontmatter == before and after != before:
                 write_frontmatter(target, after, doc.body)
-                action = "enriched"
             entry = {
                 "entry_key": key, "status": row["status"],
                 "route": route, "action": action,
@@ -1705,18 +1866,30 @@ def apply_batch(
             }
         changes.append(entry)
 
-    # Review and receipt are durable prerequisites; changes remains the commit marker.
-    write_json(
-        review_path,
-        {"version": 1, "batch": batch, "entries": _build_review_rows(rows, batch)},
-    )
-    if receipt_path.exists():
-        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-        if receipt != expected_receipt:
-            raise ValueError("apply receipt differs from approved inputs")
-    else:
-        write_json(receipt_path, expected_receipt)
-    receipt_sha256 = sha256_file(receipt_path)
+    # Recheck every receipt-bound source immediately before changes is committed.
+    for key in sorted(approved):
+        row = receipt_rows[key]
+        if row["route"] != "process-local-pdf":
+            continue
+        source = Path(row["preferred_pdf"])
+        staged = _resolve_staged_pdf(project_root, slug_from_target(row["target_path"]))
+        expected_source_sha256 = row["_approved_source_sha256"]
+        try:
+            matches_receipt = (
+                is_readable_pdf(source)
+                and is_readable_pdf(staged)
+                and sha256_file(source) == expected_source_sha256
+                and sha256_file(staged) == expected_source_sha256
+            )
+        except OSError:
+            for created in created_staged:
+                created.unlink(missing_ok=True)
+            raise
+        if not matches_receipt:
+            for created in created_staged:
+                created.unlink(missing_ok=True)
+            raise ValueError(f"source PDF changed while staging: {source}")
+
     for entry in changes:
         entry["provenance"] = _entry_provenance_stamp(entry, receipt_sha256)
     payload = {
@@ -1756,9 +1929,9 @@ def _process_source_files_match(
     row: dict[str, Any],
     entry: dict[str, Any],
 ) -> bool:
-    source = Path(entry["source_path"])
+    source = Path(row["preferred_pdf"])
     staged = _resolve_staged_pdf(project_root, slug_from_target(row["target_path"]))
-    expected = entry["source_sha256"]
+    expected = row["_approved_source_sha256"]
     return (
         is_readable_pdf(source)
         and is_readable_pdf(staged)
@@ -1774,16 +1947,21 @@ def finalize_entry(
     entry_key: str,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
-    rows_by_key = {row["entry_key"]: row for row in read_jsonl(inventory_path)}
-    payload = json.loads(changes_path.read_text(encoding="utf-8"))
-    _, by_key, receipt_sha256, _, _ = _load_validated_payload(
+    inventory_bytes = inventory_path.read_bytes()
+    inventory_sha256 = _sha256_bytes(inventory_bytes)
+    rows_by_key = {
+        row["entry_key"]: row for row in _parse_jsonl_bytes(inventory_bytes)
+    }
+    payload = json.loads(changes_path.read_bytes())
+    _, by_key, receipt_sha256, _, receipt_rows = _load_validated_payload(
         payload,
         rows_by_key,
         changes_path=changes_path,
         inventory_path=inventory_path,
+        inventory_sha256=inventory_sha256,
         project_root=project_root,
     )
-    row = rows_by_key[entry_key]
+    row = receipt_rows[entry_key]
     if row.get("route") != "process-local-pdf":
         raise ValueError(f"entry is not process-local-pdf: {entry_key}")
     change = by_key[entry_key]
@@ -1872,12 +2050,19 @@ def _live_verification(
             return False, {"path": str(target), "error": "process-artifacts-changed"}
 
     doc = read_frontmatter(target)
-    expected = entry.get("after") or (entry.get("finalize") or {}).get("after")
+    if row["route"] == "metadata-only" and row["status"] == "safe-enrich":
+        _, expected, body_sha256 = _safe_enrich_state(row)
+    elif row["route"] == "metadata-only":
+        expected = row["canonical"]
+        body_sha256 = _body_sha256(
+            render_stub(row["canonical"]["type"], row["canonical"]["title"])
+        )
+    else:
+        finalize = entry["finalize"]
+        expected = finalize["after"]
+        body_sha256 = finalize["body_sha256"]
     if doc.frontmatter != expected:
         return False, {"path": str(target), "error": "frontmatter-changed"}
-    body_sha256 = entry.get("body_sha256") or (entry.get("finalize") or {}).get(
-        "body_sha256"
-    )
     if _body_sha256(doc.body) != body_sha256:
         return False, {"path": str(target), "error": "body-changed"}
     result = check_file(target)
@@ -1889,12 +2074,13 @@ def _live_verification(
 
 def verify_changes(project_root: Path, changes_path: Path) -> dict[str, Any]:
     project_root = project_root.resolve()
-    payload = json.loads(changes_path.read_text(encoding="utf-8"))
+    payload = json.loads(changes_path.read_bytes())
     _, by_key, receipt_sha256, _, receipt_rows = _load_validated_payload(
         payload,
         {},
         changes_path=changes_path,
         inventory_path=None,
+        inventory_sha256=None,
         project_root=project_root,
     )
     for key, entry in by_key.items():
@@ -1915,21 +2101,27 @@ def record_failure(
     reason: str,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
-    rows_by_key = {row["entry_key"]: row for row in read_jsonl(inventory_path)}
-    payload = json.loads(changes_path.read_text(encoding="utf-8"))
-    batch, by_key, receipt_sha256, _, _ = _load_validated_payload(
+    inventory_bytes = inventory_path.read_bytes()
+    inventory_sha256 = _sha256_bytes(inventory_bytes)
+    rows_by_key = {
+        row["entry_key"]: row for row in _parse_jsonl_bytes(inventory_bytes)
+    }
+    payload = json.loads(changes_path.read_bytes())
+    batch, by_key, receipt_sha256, _, receipt_rows = _load_validated_payload(
         payload,
         rows_by_key,
         changes_path=changes_path,
         inventory_path=inventory_path,
+        inventory_sha256=inventory_sha256,
         project_root=project_root,
     )
     review = _validate_review_payload(
-        json.loads(review_path.read_text(encoding="utf-8")),
+        json.loads(review_path.read_bytes()),
         batch,
         rows_by_key,
     )
-    row = rows_by_key[entry_key]
+    inventory_row = rows_by_key[entry_key]
+    row = receipt_rows[entry_key]
     change = by_key[entry_key]
     if change.get("action") == "processed-local-pdf":
         raise ValueError(f"invalid failure change record: {entry_key}")
@@ -1948,7 +2140,7 @@ def record_failure(
         change["provenance"] = _entry_provenance_stamp(change, receipt_sha256)
 
     failure_row = {
-        **row,
+        **inventory_row,
         "execution_failure": reason,
         "partial_artifact_paths": partial_artifact_paths,
     }
@@ -1972,18 +2164,20 @@ def record_failure(
 def _validated_change_entries(
     rows_by_key: dict[str, dict[str, Any]],
     inventory_path: Path,
+    inventory_sha256: str,
     changes_dir: Path,
 ) -> tuple[list[tuple[dict[str, Any], dict[str, Any], Path]], list[int]]:
     entries: list[tuple[dict[str, Any], dict[str, Any], Path]] = []
     batches: list[int] = []
     seen: set[str] = set()
     for path in sorted(changes_dir.glob("batch-???-changes.json")):
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_bytes())
         batch, by_key, _, project_root, receipt_rows = _load_validated_payload(
             payload,
             rows_by_key,
             changes_path=path,
             inventory_path=inventory_path,
+            inventory_sha256=inventory_sha256,
             project_root=None,
         )
         batches.append(batch)
@@ -1996,10 +2190,14 @@ def _validated_change_entries(
 
 
 def progress_summary(inventory_path: Path, changes_dir: Path) -> dict[str, Any]:
-    rows = read_jsonl(inventory_path)
+    inventory_bytes = inventory_path.read_bytes()
+    inventory_sha256 = _sha256_bytes(inventory_bytes)
+    rows = _parse_jsonl_bytes(inventory_bytes)
     rows_by_key = {row["entry_key"]: row for row in rows}
     completed = {row["entry_key"] for row in rows if row["status"] == "exact-existing"}
-    changes, _ = _validated_change_entries(rows_by_key, inventory_path, changes_dir)
+    changes, _ = _validated_change_entries(
+        rows_by_key, inventory_path, inventory_sha256, changes_dir,
+    )
     completed.update(
         entry["entry_key"]
         for entry, row, project_root in changes
@@ -2022,16 +2220,19 @@ def milestone_report(
     output_path: Path,
 ) -> dict[str, Any]:
     output_resolved = output_path.resolve()
-    reserved = {inventory_path.resolve()}
-    reserved.update(path.resolve() for path in changes_dir.glob("batch-*.json"))
-    if output_resolved in reserved \
-            or (
-                output_resolved.parent == changes_dir.resolve()
-                and re.fullmatch(
-                    r"batch-\d{3}-(?:changes|approved|review)\.json",
-                    output_resolved.name,
-                )
-            ):
+    changes_root = changes_dir.resolve()
+    reserved_paths = [inventory_path, *changes_dir.glob("batch-*.json")]
+    same_identity = output_path.exists() and any(
+        path.exists() and output_path.samefile(path) for path in reserved_paths
+    )
+    reserved_names = output_resolved.parent == changes_root and re.fullmatch(
+        r"batch-\d{3}-(?:changes|approved|review)\.json",
+        output_resolved.name,
+        flags=re.IGNORECASE,
+    )
+    if same_identity \
+            or output_resolved in {path.resolve() for path in reserved_paths} \
+            or reserved_names:
         raise ValueError("report output aliases migration input")
     # Invalidate a stale success before parsing any untrusted input.
     write_json(output_path, {
@@ -2042,14 +2243,18 @@ def milestone_report(
         "milestone_reached": False,
         "status": "validation-pending",
     })
-    rows = read_jsonl(inventory_path)
+    inventory_bytes = inventory_path.read_bytes()
+    inventory_sha256 = _sha256_bytes(inventory_bytes)
+    rows = _parse_jsonl_bytes(inventory_bytes)
     rows_by_key = {row["entry_key"]: row for row in rows}
     exact_keys = {row["entry_key"] for row in rows if row["status"] == "exact-existing"}
     metadata_keys: set[str] = set()
     pdf_keys: set[str] = set()
     failed_keys: set[str] = set()
     actions: Counter[str] = Counter()
-    changes, batches = _validated_change_entries(rows_by_key, inventory_path, changes_dir)
+    changes, batches = _validated_change_entries(
+        rows_by_key, inventory_path, inventory_sha256, changes_dir,
+    )
     for entry, row, project_root in changes:
         actions[entry.get("action", "missing")] += 1
         if entry.get("failed"):
