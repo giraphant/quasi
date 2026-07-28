@@ -220,3 +220,556 @@ def test_theme_decision_must_use_existing_vocabulary() -> None:
     catalog["unclassified"] = {"count": 1, "examples": []}
     forbidden = {**valid, "themes": ["materiality", "unclassified"]}
     assert migration.validate_theme_decision(forbidden, catalog)[1] == "forbidden-theme"
+
+
+def write_existing_paper(
+    project: Path,
+    slug: str,
+    *,
+    doi: str,
+    rating: int | None = None,
+) -> Path:
+    migration = load_module()
+    path = project / "vault" / "papers" / f"{slug}.md"
+    fm = {
+        "type": "paper",
+        "title": "Existing Paper",
+        "authors": ["Jane Doe"],
+        "year": 2024,
+        "journal": "Test Journal",
+        "themes": ["materiality", "infrastructure-studies"],
+        "doi": doi,
+    }
+    if rating is not None:
+        fm["rating"] = rating
+    migration.write_frontmatter(
+        path,
+        fm,
+        migration.render_stub("paper", "Existing Paper"),
+    )
+    return path
+
+
+def test_journal_paper_is_included_in_vault_index(tmp_path: Path) -> None:
+    migration = load_module()
+    path = tmp_path / "vault" / "journals" / "journal" / "10_1000_x.md"
+    migration.write_frontmatter(
+        path,
+        {
+            "type": "paper",
+            "title": "Existing Paper",
+            "authors": ["Jane Doe"],
+            "year": 2024,
+            "journal": "Test Journal",
+            "themes": ["scoring"],
+            "doi": "10.1000/x",
+        },
+        migration.render_stub("paper", "Existing Paper"),
+    )
+
+    index = migration.build_vault_index(tmp_path)
+
+    assert index["by_doi"]["10.1000/x"][0]["path"] == (
+        "vault/journals/journal/10_1000_x.md"
+    )
+
+
+def test_duplicate_identifier_is_review(tmp_path: Path) -> None:
+    write_existing_paper(tmp_path, "first-2024", doi="10.1000/x")
+    write_existing_paper(tmp_path, "second-2024", doi="10.1000/x")
+    migration = load_module()
+    entry = {
+        "entry_key": "x",
+        "bibtex_type": "article",
+        "title": "Existing Paper",
+        "authors": ["Jane Doe"],
+        "editors": [],
+        "year": 2024,
+        "journal": "Test Journal",
+        "doi": "10.1000/x",
+        "isbn": None,
+        "publisher": None,
+        "rating": None,
+        "abstract": "Material infrastructure.",
+        "file_refs": [],
+        "has_annote": False,
+        "has_note": False,
+        "has_keywords": False,
+    }
+    assessed = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        {},
+        {"materiality": {"count": 1, "examples": []}},
+    )
+    assert assessed["status"] == "review"
+    assert assessed["reason"] == "identifier-matches-multiple-objects"
+    assert assessed["match_basis"] == "doi"
+
+
+def test_new_paper_with_local_pdf_routes_to_process(tmp_path: Path) -> None:
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    migration = load_module()
+    entry = {
+        "entry_key": "new",
+        "bibtex_type": "article",
+        "title": "A New Paper",
+        "authors": ["Jane Doe"],
+        "editors": [],
+        "year": 2024,
+        "journal": "Test Journal",
+        "doi": "10.1000/new",
+        "isbn": None,
+        "publisher": None,
+        "rating": 5,
+        "abstract": "An abstract.",
+        "file_refs": [
+            {"path": str(pdf), "mime": "application/pdf", "exists": True}
+        ],
+        "has_annote": True,
+        "has_note": False,
+        "has_keywords": True,
+    }
+    catalog = {
+        "materiality": {"count": 2, "examples": []},
+        "infrastructure-studies": {"count": 2, "examples": []},
+    }
+    decisions = {
+        "new": {
+            "entry_key": "new",
+            "themes": ["materiality", "infrastructure-studies"],
+            "confidence": "high",
+            "rationale": "Explicit in title and abstract.",
+        }
+    }
+    assessed = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        decisions,
+        catalog,
+    )
+    assert assessed["status"] == "safe-create"
+    assert assessed["route"] == "process-local-pdf"
+    assert assessed["preferred_pdf"] == str(pdf)
+    assert assessed["canonical"]["themes"] == [
+        "materiality",
+        "infrastructure-studies",
+    ]
+
+
+def test_deferred_type_still_records_preferred_local_pdf(tmp_path: Path) -> None:
+    pdf = tmp_path / "chapter.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    migration = load_module()
+    entry = {
+        "entry_key": "chapter",
+        "bibtex_type": "incollection",
+        "file_refs": [
+            {"path": str(pdf), "mime": "application/pdf", "exists": True},
+            {
+                "raw": "Relative:file.pdf:application/pdf",
+                "path": None,
+                "mime": "application/pdf",
+                "exists": False,
+            },
+        ],
+        "has_annote": False,
+        "has_note": False,
+        "has_keywords": False,
+    }
+    assessed = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        {},
+        {},
+    )
+    assert assessed["status"] == "deferred-type"
+    assert assessed["preferred_pdf"] == str(pdf)
+    assert assessed["preferred_pdf_reason"] == "single-local-pdf"
+    assert assessed["attachment_review"] == [
+        {
+            "raw": "Relative:file.pdf:application/pdf",
+            "reason": "unparsed-attachment-path",
+        }
+    ]
+
+
+def test_new_paper_without_pdf_needs_valid_theme_decision(tmp_path: Path) -> None:
+    migration = load_module()
+    entry = {
+        "entry_key": "new",
+        "bibtex_type": "article",
+        "title": "A New Paper",
+        "authors": ["Jane Doe"],
+        "editors": [],
+        "year": 2024,
+        "journal": "Test Journal",
+        "doi": "10.1000/new",
+        "isbn": None,
+        "publisher": None,
+        "rating": None,
+        "abstract": "Material infrastructure.",
+        "file_refs": [],
+        "has_annote": False,
+        "has_note": False,
+        "has_keywords": True,
+    }
+    catalog = {
+        "materiality": {"count": 2, "examples": []},
+        "infrastructure-studies": {"count": 2, "examples": []},
+    }
+    pending = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        {},
+        catalog,
+    )
+    assert pending["status"] == "review"
+    assert pending["reason"] == "theme-decision-missing"
+    decided = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        {
+            "new": {
+                "entry_key": "new",
+                "themes": ["materiality", "infrastructure-studies"],
+                "confidence": "high",
+                "rationale": "Explicit in abstract.",
+            }
+        },
+        catalog,
+    )
+    assert decided["status"] == "safe-create"
+    assert decided["route"] == "metadata-only"
+
+
+def test_safe_enrich_never_routes_to_process_local_pdf(tmp_path: Path) -> None:
+    path = write_existing_paper(tmp_path, "existing-2024", doi="10.1000/x")
+    migration = load_module()
+    fm = migration.read_frontmatter(path).frontmatter
+    assert fm is not None
+    fm.pop("rating", None)
+    migration.write_frontmatter(path, fm, migration.read_frontmatter(path).body)
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n" + b"p" * 2048)
+    entry = {
+        "entry_key": "x",
+        "bibtex_type": "article",
+        "title": "Existing Paper",
+        "authors": ["Jane Doe"],
+        "editors": [],
+        "year": 2024,
+        "journal": "Test Journal",
+        "doi": "10.1000/x",
+        "isbn": None,
+        "publisher": None,
+        "rating": 5,
+        "abstract": None,
+        "file_refs": [
+            {"path": str(pdf), "mime": "application/pdf", "exists": True}
+        ],
+        "has_annote": False,
+        "has_note": False,
+        "has_keywords": False,
+    }
+    assessed = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        {},
+        {},
+    )
+    assert assessed["status"] == "safe-enrich"
+    assert assessed["route"] == "metadata-only"
+    assert assessed["preferred_pdf"] == str(pdf)
+    assert assessed["preferred_pdf_reason"] == "single-local-pdf"
+
+
+def test_different_subtitles_do_not_match_on_two_short_title_keys(
+    tmp_path: Path,
+) -> None:
+    path = write_existing_paper(
+        tmp_path,
+        "volume-eros-2024",
+        doi="10.1000/existing",
+    )
+    migration = load_module()
+    doc = migration.read_frontmatter(path)
+    assert doc.frontmatter is not None
+    doc.frontmatter["title"] = "Volume One: Eros"
+    migration.write_frontmatter(path, doc.frontmatter, doc.body)
+    entry = {
+        "entry_key": "aphrodite",
+        "bibtex_type": "article",
+        "title": "Volume One: Aphrodite",
+        "authors": ["Jane Doe"],
+        "editors": [],
+        "year": 2024,
+        "journal": "Journal",
+        "doi": None,
+        "isbn": None,
+        "publisher": None,
+        "rating": None,
+        "abstract": "Material infrastructure.",
+        "file_refs": [],
+        "has_annote": False,
+        "has_note": False,
+        "has_keywords": False,
+    }
+    catalog = {
+        "materiality": {"count": 1, "examples": []},
+        "infrastructure-studies": {"count": 1, "examples": []},
+    }
+    decisions = {
+        "aphrodite": {
+            "entry_key": "aphrodite",
+            "themes": ["materiality", "infrastructure-studies"],
+            "confidence": "high",
+            "rationale": "Explicit in abstract.",
+        }
+    }
+    assessed = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        decisions,
+        catalog,
+    )
+    assert assessed["status"] == "safe-create"
+    assert assessed["match"] is None
+    assert assessed["match_basis"] is None
+
+
+def test_title_author_match_with_different_given_name_is_review(
+    tmp_path: Path,
+) -> None:
+    write_existing_paper(tmp_path, "existing-2024", doi="10.1000/existing")
+    migration = load_module()
+    entry = {
+        "entry_key": "other-doe",
+        "bibtex_type": "article",
+        "title": "Existing Paper",
+        "authors": ["John Doe"],
+        "editors": [],
+        "year": 2024,
+        "journal": "Test Journal",
+        "doi": None,
+        "isbn": None,
+        "isbns": [],
+        "publisher": None,
+        "rating": None,
+        "abstract": None,
+        "file_refs": [],
+        "has_annote": False,
+        "has_note": False,
+        "has_keywords": False,
+    }
+    assessed = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        {},
+        {},
+    )
+    assert assessed["status"] == "review"
+    assert assessed["match_basis"] == "title-author"
+    assert assessed["conflicts"] == ["authors"]
+
+
+def test_identifier_match_with_different_subtitle_is_review(
+    tmp_path: Path,
+) -> None:
+    path = write_existing_paper(
+        tmp_path,
+        "volume-eros-2024",
+        doi="10.1000/same",
+    )
+    migration = load_module()
+    doc = migration.read_frontmatter(path)
+    assert doc.frontmatter is not None
+    doc.frontmatter["title"] = "Volume One: Eros"
+    migration.write_frontmatter(path, doc.frontmatter, doc.body)
+    entry = {
+        "entry_key": "aphrodite",
+        "bibtex_type": "article",
+        "title": "Volume One: Aphrodite",
+        "authors": ["Jane Doe"],
+        "editors": [],
+        "year": 2024,
+        "journal": "Test Journal",
+        "doi": "10.1000/same",
+        "isbn": None,
+        "isbns": [],
+        "publisher": None,
+        "rating": None,
+        "abstract": None,
+        "file_refs": [],
+        "has_annote": False,
+        "has_note": False,
+        "has_keywords": False,
+    }
+    assessed = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        {},
+        {},
+    )
+    assert assessed["status"] == "review"
+    assert assessed["reason"] == "field-conflict"
+    assert assessed["conflicts"] == ["title"]
+
+
+def test_book_matches_any_source_isbn_without_false_conflict(
+    tmp_path: Path,
+) -> None:
+    migration = load_module()
+    path = tmp_path / "vault" / "books" / "doe-book-2024" / "00-overview.md"
+    migration.write_frontmatter(
+        path,
+        {
+            "type": "book",
+            "title": "Book",
+            "authors": ["Jane Doe"],
+            "year": 2024,
+            "publisher": "Press",
+            "isbn": "9780000000019",
+            "category": "monograph",
+            "themes": [],
+        },
+        migration.render_stub("book", "Book"),
+    )
+    entry = {
+        "entry_key": "book",
+        "bibtex_type": "book",
+        "title": "Book",
+        "authors": ["Jane Doe"],
+        "editors": [],
+        "year": 2024,
+        "publisher": "Press",
+        "isbn": "9780000000002",
+        "isbns": ["9780000000002", "9780000000019"],
+        "doi": None,
+        "journal": None,
+        "rating": None,
+        "abstract": None,
+        "file_refs": [],
+        "has_annote": False,
+        "has_note": False,
+        "has_keywords": False,
+    }
+    assessed = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        {},
+        {},
+    )
+    assert assessed["status"] == "exact-existing"
+    assert assessed["match_basis"] == "isbn"
+    assert assessed.get("conflicts") is None
+
+
+def test_missing_required_metadata_is_invalid_source(tmp_path: Path) -> None:
+    migration = load_module()
+    entry = {
+        "entry_key": "broken",
+        "bibtex_type": "article",
+        "title": "Broken",
+        "authors": [],
+        "editors": [],
+        "year": 2024,
+        "journal": None,
+        "doi": None,
+        "isbn": None,
+        "publisher": None,
+        "rating": None,
+        "abstract": None,
+        "file_refs": [],
+        "has_annote": False,
+        "has_note": False,
+        "has_keywords": False,
+    }
+    assessed = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        {},
+        {},
+    )
+    assert assessed["status"] == "invalid-source"
+    assert assessed["reason"] == "missing-paper-authors-or-journal"
+
+
+def test_parse_error_is_invalid_source(tmp_path: Path) -> None:
+    migration = load_module()
+    entry = migration._invalid_parse_entry(
+        "@article{broken, title={Broken}}",
+        1,
+        ValueError("bad entry"),
+    )
+    assessed = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        {},
+        {},
+    )
+    assert assessed["status"] == "invalid-source"
+    assert assessed["reason"] == "bibtex-parse-error"
+    assert assessed["parse_error"] == "ValueError: bad entry"
+
+
+def test_book_authors_take_precedence_over_editors() -> None:
+    migration = load_module()
+    kind, candidate, error = migration.map_candidate(
+        {
+            "entry_key": "book",
+            "bibtex_type": "book",
+            "title": "A Book",
+            "authors": ["Jane Doe"],
+            "editors": ["Richard Roe"],
+            "year": 2024,
+            "publisher": "Press",
+            "isbn": None,
+            "doi": None,
+            "rating": None,
+        },
+        None,
+    )
+    assert error is None
+    assert kind == "book"
+    assert candidate["authors"] == ["Jane Doe"]
+    assert candidate["category"] == "other"
+
+
+def test_batch_one_contains_25_articles_and_25_books() -> None:
+    migration = load_module()
+    rows = [
+        {"entry_key": f"a-{i:02d}", "bibtex_type": "article"}
+        for i in range(30)
+    ] + [
+        {"entry_key": f"b-{i:02d}", "bibtex_type": "book"}
+        for i in range(30)
+    ]
+    assigned = migration.assign_batches(rows)
+    pilot = [row for row in assigned if row["batch"] == 1]
+    assert sum(row["bibtex_type"] == "article" for row in pilot) == 25
+    assert sum(row["bibtex_type"] == "book" for row in pilot) == 25
+
+
+def test_source_entries_with_same_identifier_are_both_review() -> None:
+    migration = load_module()
+    rows = [
+        {
+            "entry_key": key,
+            "bibtex_type": "article",
+            "status": "safe-create",
+            "route": "metadata-only",
+            "target_path": f"vault/papers/{key}.md",
+            "source_fields": {
+                "doi": "10.1000/same",
+                "isbn": None,
+                "isbns": [],
+            },
+        }
+        for key in ("first", "second")
+    ]
+    collided = migration.mark_source_collisions(rows)
+    assert [row["status"] for row in collided] == ["review", "review"]
+    assert all(row["reason"] == "source-entry-collision" for row in collided)
+    assert all(row["collision_basis"] == ["doi"] for row in collided)

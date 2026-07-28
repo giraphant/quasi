@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import sys
 import unicodedata
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -15,13 +16,15 @@ from bibtexparser.customization import getnames
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
-from core import read_frontmatter  # noqa: E402
+from core import read_frontmatter, write_frontmatter  # noqa: E402
 from scripts.citation.slug import parse_author_token  # noqa: E402
 from scripts.localise.localise import normalise_isbn  # noqa: E402
 from scripts.schemas import canonical_type  # noqa: E402
 from scripts.schemas.body import BOOK_BODY, PAPER_BODY  # noqa: E402
+from scripts.schemas.book import BookSchema  # noqa: E402
+from scripts.schemas.paper import PaperSchema  # noqa: E402
 from scripts.typecheck.typecheck import check_body  # noqa: E402
-from scripts.vault.resolve import normalise_doi  # noqa: E402
+from scripts.vault.resolve import normalise_doi, surnames, title_keys  # noqa: E402
 
 
 SUPPORTED_TYPES = {"article", "book"}
@@ -275,6 +278,511 @@ def validate_theme_decision(
     if not clean_text(decision.get("rationale")):
         return None, "missing-rationale"
     return themes, None
+
+
+def map_candidate(
+    entry: dict[str, Any],
+    themes: list[str] | None,
+) -> tuple[str | None, dict[str, Any] | None, str | None]:
+    if entry["bibtex_type"] not in SUPPORTED_TYPES:
+        return None, None, "deferred-type"
+    title = entry.get("title")
+    year = entry.get("year")
+    if not title or not isinstance(year, int) or not 1500 <= year <= 2030:
+        return None, None, "missing-title-or-year"
+
+    if entry["bibtex_type"] == "article":
+        if not entry["authors"] or not entry.get("journal"):
+            return None, None, "missing-paper-authors-or-journal"
+        if themes is None:
+            return "paper", None, "theme-decision-missing"
+        candidate = {
+            "type": "paper",
+            "title": title,
+            "authors": entry["authors"],
+            "year": year,
+            "journal": entry["journal"],
+            "themes": themes,
+        }
+        if entry.get("doi"):
+            candidate["doi"] = entry["doi"]
+        if entry.get("rating"):
+            candidate["rating"] = entry["rating"]
+        PaperSchema.model_validate(candidate)
+        return "paper", candidate, None
+
+    authors = entry["authors"] or entry["editors"]
+    if not authors or not entry.get("publisher"):
+        return None, None, "missing-book-authors-or-publisher"
+    lower_title = title.lower()
+    if "handbook" in lower_title:
+        category = "handbook"
+    elif not entry["authors"] and entry["editors"]:
+        category = "edited-volume"
+    else:
+        category = "other"
+    candidate = {
+        "type": "book",
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "publisher": entry["publisher"],
+        "category": category,
+    }
+    if entry.get("isbn"):
+        candidate["isbn"] = entry["isbn"]
+    if entry.get("doi"):
+        candidate["doi"] = entry["doi"]
+    if entry.get("rating"):
+        candidate["rating"] = entry["rating"]
+    BookSchema.model_validate(candidate)
+    return "book", candidate, None
+
+
+def build_vault_index(project_root: Path) -> dict[str, Any]:
+    records: list[dict[str, Any]] = []
+    for path in sorted((project_root / "vault").rglob("*.md")):
+        doc = read_frontmatter(path)
+        fm = doc.frontmatter
+        if not fm:
+            continue
+        kind = canonical_type(fm.get("type"))
+        if kind not in {"paper", "book"}:
+            continue
+        slug = path.stem if kind == "paper" else path.parent.name
+        records.append({
+            "kind": kind,
+            "slug": slug,
+            "path": str(path.relative_to(project_root)),
+            "frontmatter": fm,
+        })
+
+    by_doi: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_isbn: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_title: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        fm = record["frontmatter"]
+        if doi := normalise_doi(fm.get("doi")):
+            by_doi[doi].append(record)
+        if isbn := normalise_isbn(fm.get("isbn")):
+            by_isbn[isbn].append(record)
+        for key_index, key in enumerate(title_keys(fm.get("title"))):
+            by_title[key].append({"record": record, "short": key_index > 0})
+    return {
+        "project_root": str(project_root.resolve()),
+        "records": records,
+        "by_doi": by_doi,
+        "by_isbn": by_isbn,
+        "by_title": by_title,
+    }
+
+
+def _record_candidates(
+    entry: dict[str, Any],
+    index: dict[str, Any],
+) -> tuple[list[dict], str | None, str | None]:
+    identifier_hits: dict[str, dict] = {}
+    matched_by: list[str] = []
+    doi_hits = index["by_doi"].get(entry.get("doi"), []) if entry.get("doi") else []
+    isbn_hits_by_path: dict[str, dict] = {}
+    for isbn in entry.get("isbns") or [entry.get("isbn")]:
+        if not isbn:
+            continue
+        for record in index["by_isbn"].get(isbn, []):
+            isbn_hits_by_path[record["path"]] = record
+    isbn_hits = list(isbn_hits_by_path.values())
+    if doi_hits:
+        matched_by.append("doi")
+        for record in doi_hits:
+            identifier_hits[record["path"]] = record
+    if isbn_hits:
+        matched_by.append("isbn")
+        for record in isbn_hits:
+            identifier_hits[record["path"]] = record
+    basis = "+".join(matched_by) or None
+    if len(identifier_hits) > 1:
+        return (
+            list(identifier_hits.values()),
+            "identifier-matches-multiple-objects",
+            basis,
+        )
+    if len(identifier_hits) == 1:
+        return list(identifier_hits.values()), None, basis
+
+    who = surnames(entry.get("authors") or entry.get("editors"))
+    title_hits: dict[str, dict] = {}
+    for key_index, key in enumerate(title_keys(entry.get("title"))):
+        for hit in index["by_title"].get(key, []):
+            record = hit["record"]
+            fm = record["frontmatter"]
+            both_keys_are_short = key_index > 0 and hit["short"]
+            if who & surnames(fm.get("authors")) and not both_keys_are_short:
+                title_hits[record["path"]] = record
+    if len(title_hits) > 1:
+        return (
+            list(title_hits.values()),
+            "title-author-ambiguous",
+            "title-author",
+        )
+    return (
+        list(title_hits.values()),
+        None,
+        "title-author" if title_hits else None,
+    )
+
+
+def _titles_compatible(existing: Any, candidate: Any) -> bool:
+    existing_keys = title_keys(existing)
+    candidate_keys = title_keys(candidate)
+    if not existing_keys or not candidate_keys:
+        return False
+    if existing_keys[0] == candidate_keys[0]:
+        return True
+    if len(existing_keys) == 1 and existing_keys[0] in candidate_keys:
+        return True
+    if len(candidate_keys) == 1 and candidate_keys[0] in existing_keys:
+        return True
+    return False
+
+
+def _conflicting_fields(
+    existing: dict[str, Any],
+    candidate: dict[str, Any],
+) -> list[str]:
+    conflicts: list[str] = []
+    for field in ("year", "journal", "publisher", "rating"):
+        if (
+            field in existing
+            and field in candidate
+            and existing[field] not in (None, "")
+            and existing[field] != candidate[field]
+        ):
+            conflicts.append(field)
+    if (
+        existing.get("category")
+        and candidate.get("category") not in (None, "other")
+        and existing["category"] != candidate["category"]
+    ):
+        conflicts.append("category")
+    if (
+        existing.get("doi")
+        and candidate.get("doi")
+        and normalise_doi(existing["doi"]) != normalise_doi(candidate["doi"])
+    ):
+        conflicts.append("doi")
+    if (
+        existing.get("isbn")
+        and candidate.get("isbn")
+        and normalise_isbn(existing["isbn"]) != normalise_isbn(candidate["isbn"])
+    ):
+        conflicts.append("isbn")
+    if existing.get("title") and candidate.get("title"):
+        if not _titles_compatible(existing["title"], candidate["title"]):
+            conflicts.append("title")
+    if existing.get("authors") and candidate.get("authors"):
+        existing_authors = [
+            re.sub(r"\W+", " ", str(name), flags=re.UNICODE).strip().casefold()
+            for name in existing["authors"]
+        ]
+        candidate_authors = [
+            re.sub(r"\W+", " ", str(name), flags=re.UNICODE).strip().casefold()
+            for name in candidate["authors"]
+        ]
+        if existing_authors != candidate_authors:
+            conflicts.append("authors")
+    return sorted(set(conflicts))
+
+
+def _missing_fields(
+    existing: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        field: value
+        for field, value in candidate.items()
+        if field not in existing or existing[field] in (None, "", [])
+    }
+
+
+def assess_entry(
+    entry: dict[str, Any],
+    index: dict[str, Any],
+    theme_decisions: dict[str, dict[str, Any]],
+    catalog: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    base = {
+        "entry_key": entry["entry_key"],
+        "bibtex_type": entry["bibtex_type"],
+        "source_fields": {
+            field: entry.get(field)
+            for field in (
+                "title",
+                "authors",
+                "editors",
+                "year",
+                "journal",
+                "publisher",
+                "doi",
+                "isbn",
+                "isbns",
+                "abstract",
+            )
+        },
+        "copyright_raw": entry.get("copyright_raw"),
+        "rating": entry.get("rating"),
+        "has_annote": entry.get("has_annote", False),
+        "has_note": entry.get("has_note", False),
+        "has_keywords": entry.get("has_keywords", False),
+        "file_raw": entry.get("file_raw"),
+        "file_refs": entry.get("file_refs", []),
+        "attachment_review": [
+            {"raw": ref.get("raw"), "reason": "unparsed-attachment-path"}
+            for ref in entry.get("file_refs", [])
+            if not ref.get("path")
+        ],
+        "status": None,
+        "route": "manual-review",
+        "reason": None,
+        "target_path": None,
+        "preferred_pdf": None,
+        "preferred_pdf_reason": None,
+        "theme_decision": theme_decisions.get(entry["entry_key"]),
+        "canonical": None,
+        "match": None,
+        "match_basis": None,
+        "parse_error": entry.get("parse_error"),
+        "batch": None,
+    }
+    if entry.get("parse_error"):
+        return {
+            **base,
+            "status": "invalid-source",
+            "reason": "bibtex-parse-error",
+        }
+
+    preferred_pdf, pdf_reason = choose_local_pdf(entry.get("file_refs", []))
+    base["preferred_pdf"] = preferred_pdf
+    base["preferred_pdf_reason"] = pdf_reason
+    if entry["bibtex_type"] not in SUPPORTED_TYPES:
+        return {
+            **base,
+            "status": "deferred-type",
+            "reason": "unsupported-first-round-type",
+        }
+
+    hits, match_error, match_basis = _record_candidates(entry, index)
+    base["match_basis"] = match_basis
+    expected_kind = "paper" if entry["bibtex_type"] == "article" else "book"
+    if match_error:
+        return {
+            **base,
+            "status": "review",
+            "reason": match_error,
+            "match": [record["path"] for record in hits],
+        }
+
+    existing = hits[0] if hits else None
+    if existing and existing["kind"] != expected_kind:
+        return {
+            **base,
+            "status": "review",
+            "reason": "matched-wrong-kind",
+            "match": existing["path"],
+        }
+    decision = theme_decisions.get(entry["entry_key"])
+    themes: list[str] | None = None
+    if expected_kind == "paper":
+        if existing and existing["frontmatter"].get("themes"):
+            themes = list(existing["frontmatter"]["themes"])
+        elif decision:
+            themes, theme_error = validate_theme_decision(decision, catalog)
+            if theme_error:
+                return {
+                    **base,
+                    "status": "review",
+                    "reason": theme_error,
+                    "preferred_pdf": preferred_pdf,
+                    "theme_decision": decision,
+                }
+
+    kind, candidate, map_error = map_candidate(entry, themes)
+    if map_error:
+        invalid_reasons = {
+            "missing-title-or-year",
+            "missing-paper-authors-or-journal",
+            "missing-book-authors-or-publisher",
+        }
+        status = "invalid-source" if map_error in invalid_reasons else "review"
+        return {
+            **base,
+            "status": status,
+            "reason": map_error,
+            "preferred_pdf": preferred_pdf,
+            "theme_decision": decision,
+        }
+
+    assert kind == expected_kind and candidate is not None
+    if existing:
+        conflicts = _conflicting_fields(existing["frontmatter"], candidate)
+        existing_isbn = normalise_isbn(existing["frontmatter"].get("isbn"))
+        if "isbn" in conflicts and existing_isbn in set(entry.get("isbns") or []):
+            conflicts.remove("isbn")
+        if conflicts:
+            return {
+                **base,
+                "status": "review",
+                "reason": "field-conflict",
+                "conflicts": conflicts,
+                "match": existing["path"],
+                "target_path": existing["path"],
+                "canonical": candidate,
+            }
+        missing = _missing_fields(existing["frontmatter"], candidate)
+        if not missing:
+            return {
+                **base,
+                "status": "exact-existing",
+                "route": "exact-existing",
+                "reason": "existing-object-complete",
+                "match": existing["path"],
+                "target_path": existing["path"],
+                "canonical": candidate,
+            }
+        return {
+            **base,
+            "status": "safe-enrich",
+            "route": "metadata-only",
+            "reason": "existing-object-missing-fields",
+            "match": existing["path"],
+            "target_path": existing["path"],
+            "canonical": candidate,
+            "enrich_fields": missing,
+        }
+
+    try:
+        slug = make_work_slug(
+            candidate["title"],
+            candidate["authors"],
+            candidate["year"],
+        )
+    except ValueError as exc:
+        return {**base, "status": "review", "reason": str(exc)}
+    target = (
+        f"vault/papers/{slug}.md"
+        if expected_kind == "paper"
+        else f"vault/books/{slug}/00-overview.md"
+    )
+    occupied = Path(index.get("project_root", ".")) / target
+    if occupied.exists():
+        return {
+            **base,
+            "status": "review",
+            "reason": "target-slug-occupied",
+            "target_path": target,
+            "canonical": candidate,
+        }
+    if pdf_reason == "multiple-local-pdfs":
+        return {
+            **base,
+            "status": "review",
+            "route": "manual-review",
+            "reason": pdf_reason,
+            "target_path": target,
+            "canonical": candidate,
+            "preferred_pdf_reason": pdf_reason,
+        }
+    route = "process-local-pdf" if preferred_pdf else "metadata-only"
+    return {
+        **base,
+        "status": "safe-create",
+        "route": route,
+        "reason": pdf_reason,
+        "target_path": target,
+        "preferred_pdf": preferred_pdf,
+        "preferred_pdf_reason": pdf_reason,
+        "canonical": candidate,
+    }
+
+
+def mark_source_collisions(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_identity: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for row in entries:
+        if row.get("status") != "safe-create":
+            continue
+        key = row["entry_key"]
+        source = row.get("source_fields") or {}
+        if source.get("doi"):
+            by_identity[("doi", source["doi"])].add(key)
+        for isbn in source.get("isbns") or (
+            [source.get("isbn")] if source.get("isbn") else []
+        ):
+            by_identity[("isbn", isbn)].add(key)
+        if row.get("target_path"):
+            by_identity[("target", row["target_path"])].add(key)
+
+    collision_by_key: dict[str, set[str]] = defaultdict(set)
+    peer_keys: dict[str, set[str]] = defaultdict(set)
+    for (basis, _), keys in by_identity.items():
+        if len(keys) < 2:
+            continue
+        for key in keys:
+            collision_by_key[key].add(basis)
+            peer_keys[key].update(keys - {key})
+
+    return [
+        {
+            **row,
+            "status": "review",
+            "route": "manual-review",
+            "reason": "source-entry-collision",
+            "collision_basis": sorted(collision_by_key[row["entry_key"]]),
+            "collision_entry_keys": sorted(peer_keys[row["entry_key"]]),
+        }
+        if row["entry_key"] in collision_by_key
+        else row
+        for row in entries
+    ]
+
+
+def assign_batches(
+    entries: list[dict[str, Any]],
+    pilot_keys: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    supported = [
+        entry for entry in entries if entry["bibtex_type"] in SUPPORTED_TYPES
+    ]
+    articles = [
+        entry for entry in supported if entry["bibtex_type"] == "article"
+    ]
+    books = [entry for entry in supported if entry["bibtex_type"] == "book"]
+    explicit_pilot = pilot_keys is not None
+    if pilot_keys is None:
+        pilot_keys = {
+            entry["entry_key"]
+            for entry in articles[:25] + books[:25]
+        }
+    pilot = [entry for entry in supported if entry["entry_key"] in pilot_keys]
+    if explicit_pilot:
+        if len(pilot_keys) != 50 or len(pilot) != 50:
+            raise ValueError("pilot must contain 50 known supported entry keys")
+        if sum(entry["bibtex_type"] == "article" for entry in pilot) != 25:
+            raise ValueError("pilot must contain 25 articles")
+        if sum(entry["bibtex_type"] == "book" for entry in pilot) != 25:
+            raise ValueError("pilot must contain 25 books")
+    remaining = [
+        entry for entry in supported if entry["entry_key"] not in pilot_keys
+    ]
+    batch_by_key = {key: 1 for key in pilot_keys}
+    for offset in range(0, len(remaining), 100):
+        batch_number = 2 + offset // 100
+        for entry in remaining[offset : offset + 100]:
+            batch_by_key[entry["entry_key"]] = batch_number
+    return [
+        {**entry, "batch": batch_by_key.get(entry["entry_key"])}
+        for entry in entries
+    ]
 
 
 def normalise_entry(raw: dict[str, Any]) -> dict[str, Any]:
