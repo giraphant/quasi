@@ -109,3 +109,114 @@ def test_duplicate_entry_keys_are_rejected(tmp_path: Path) -> None:
     migration = load_module()
     with pytest.raises(ValueError, match="duplicate BibTeX entry key: same"):
         migration.parse_bibtex(bib)
+
+
+def test_rating_mapping_is_exact() -> None:
+    migration = load_module()
+    assert migration.map_rating("⭐") == 1
+    assert migration.map_rating("⭐⭐") == 2
+    assert migration.map_rating("⭐⭐⭐") == 3
+    assert migration.map_rating("⭐⭐⭐⭐") == 4
+    assert migration.map_rating("⭐⭐⭐⭐⭐") == 5
+    assert migration.map_rating("💖") == 5
+    assert migration.map_rating("Copyright 2024") is None
+    assert migration.map_rating("⭐⭐⭐⭐⭐ extra") is None
+
+
+def test_attachment_parser_and_pdf_choice(tmp_path: Path) -> None:
+    original = tmp_path / "Original.pdf"
+    translated = tmp_path / "Original_zh-CN_translation.pdf"
+    original.write_bytes(b"%PDF-1.7\n" + b"x" * 2048)
+    translated.write_bytes(b"%PDF-1.7\n" + b"y" * 2048)
+    raw = (
+        f"Original:{original}:application/pdf;"
+        f"Translation:{translated}:application/pdf;"
+        "Snapshot:/missing/page.html:text/html;"
+        "Relative:attachments/file.pdf:application/pdf"
+    )
+    migration = load_module()
+    refs = migration.parse_file_refs(raw)
+    path, reason = migration.choose_local_pdf(refs)
+    assert path == str(original)
+    assert reason == "single-original-pdf"
+    assert refs[2]["exists"] is False
+    assert refs[3]["path"] is None
+    assert refs[3]["raw"] == "Relative:attachments/file.pdf:application/pdf"
+
+
+def test_multiple_original_pdfs_require_review(tmp_path: Path) -> None:
+    first = tmp_path / "a.pdf"
+    second = tmp_path / "b.pdf"
+    first.write_bytes(b"%PDF-1.7\n" + b"a" * 2048)
+    second.write_bytes(b"%PDF-1.7\n" + b"b" * 2048)
+    migration = load_module()
+    refs = migration.parse_file_refs(
+        f"A:{first}:application/pdf;B:{second}:application/pdf"
+    )
+    assert migration.choose_local_pdf(refs) == (None, "multiple-local-pdfs")
+
+
+def test_work_slug_and_stubs_pass_body_schema() -> None:
+    migration = load_module()
+    slug = migration.make_work_slug(
+        "Code Ethnography and the Materiality of Power",
+        ["Fernanda R. Rosa"],
+        2022,
+    )
+    assert slug == "rosa-code-ethnography-and-the-materiality-of-power-2022"
+    assert migration.make_work_slug("A Study", ["John Smith Jr"], 2024) == "smith-a-study-2024"
+    assert migration.check_body(migration.render_stub("book", "A Book"), migration.BOOK_BODY) == []
+    assert migration.check_body(migration.render_stub("paper", "A Paper"), migration.PAPER_BODY) == []
+
+
+def test_theme_catalog_scans_all_canonical_books_and_papers(tmp_path: Path) -> None:
+    migration = load_module()
+    journal_paper = tmp_path / "vault" / "journals" / "journal" / "paper.md"
+    chapter = tmp_path / "vault" / "books" / "book" / "ch01.md"
+    journal_paper.parent.mkdir(parents=True)
+    chapter.parent.mkdir(parents=True)
+    journal_paper.write_text(
+        "---\ntype: paper\ntitle: Journal Paper\nthemes:\n  - scoring\n---\n",
+        encoding="utf-8",
+    )
+    chapter.write_text(
+        "---\ntype: chapter\ntitle: Chapter\nthemes:\n  - chapter-only\n---\n",
+        encoding="utf-8",
+    )
+
+    catalog = migration.collect_theme_catalog(tmp_path)
+
+    assert catalog["scoring"]["examples"] == [{
+        "path": "vault/journals/journal/paper.md",
+        "title": "Journal Paper",
+    }]
+    assert "chapter-only" not in catalog
+
+
+def test_theme_decision_must_use_existing_vocabulary() -> None:
+    migration = load_module()
+    catalog = {
+        "infrastructure-studies": {
+            "count": 4,
+            "examples": [{"path": "vault/papers/a.md", "title": "A"}],
+        },
+        "materiality": {
+            "count": 8,
+            "examples": [{"path": "vault/books/b/00-overview.md", "title": "B"}],
+        },
+    }
+    valid = {
+        "entry_key": "x",
+        "themes": ["infrastructure-studies", "materiality"],
+        "confidence": "high",
+        "rationale": "Both are explicit in the abstract.",
+    }
+    assert migration.validate_theme_decision(valid, catalog) == (
+        ["infrastructure-studies", "materiality"],
+        None,
+    )
+    invalid = {**valid, "themes": ["infrastructure-studies", "invented-theme"]}
+    assert migration.validate_theme_decision(invalid, catalog)[1] == "unknown-theme"
+    catalog["unclassified"] = {"count": 1, "examples": []}
+    forbidden = {**valid, "themes": ["materiality", "unclassified"]}
+    assert migration.validate_theme_decision(forbidden, catalog)[1] == "forbidden-theme"
