@@ -773,3 +773,58 @@ def test_source_entries_with_same_identifier_are_both_review() -> None:
     assert [row["status"] for row in collided] == ["review", "review"]
     assert all(row["reason"] == "source-entry-collision" for row in collided)
     assert all(row["collision_basis"] == ["doi"] for row in collided)
+
+
+def test_schema_validation_error_is_invalid_source(tmp_path: Path) -> None:
+    migration = load_module()
+    entry = {
+        "entry_key": "invalid-schema",
+        "bibtex_type": "book",
+        "title": "X",
+        "authors": ["Jane Doe"],
+        "editors": [],
+        "year": 2024,
+        "publisher": "Press",
+        "isbn": None,
+        "isbns": [],
+        "doi": None,
+        "journal": None,
+        "rating": None,
+        "abstract": None,
+        "file_refs": [],
+        "has_annote": False,
+        "has_note": False,
+        "has_keywords": False,
+    }
+
+    assessed = migration.assess_entry(
+        entry,
+        migration.build_vault_index(tmp_path),
+        {},
+        {},
+    )
+
+    assert assessed["status"] == "invalid-source"
+    assert assessed["reason"] == "schema-validation-error"
+
+
+def test_conflicting_safe_enrichments_for_same_target_are_review() -> None:
+    migration = load_module()
+    rows = [
+        {
+            "entry_key": key,
+            "bibtex_type": "article",
+            "status": "safe-enrich",
+            "route": "metadata-only",
+            "target_path": "vault/papers/existing.md",
+            "source_fields": {"doi": None, "isbn": None, "isbns": []},
+            "enrich_fields": {"rating": rating},
+        }
+        for key, rating in (("first", 4), ("second", 5))
+    ]
+
+    collided = migration.mark_source_collisions(rows)
+
+    assert [row["status"] for row in collided] == ["review", "review"]
+    assert all(row["reason"] == "source-entry-collision" for row in collided)
+    assert all(row["collision_basis"] == ["target"] for row in collided)

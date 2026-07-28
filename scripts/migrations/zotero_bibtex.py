@@ -12,6 +12,7 @@ from typing import Any
 import bibtexparser
 from bibtexparser.bparser import BibTexParser
 from bibtexparser.customization import getnames
+from pydantic import ValidationError
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
@@ -605,7 +606,14 @@ def assess_entry(
                     "theme_decision": decision,
                 }
 
-    kind, candidate, map_error = map_candidate(entry, themes)
+    try:
+        kind, candidate, map_error = map_candidate(entry, themes)
+    except ValidationError:
+        return {
+            **base,
+            "status": "invalid-source",
+            "reason": "schema-validation-error",
+        }
     if map_error:
         invalid_reasons = {
             "missing-title-or-year",
@@ -709,7 +717,7 @@ def mark_source_collisions(
 ) -> list[dict[str, Any]]:
     by_identity: dict[tuple[str, str], set[str]] = defaultdict(set)
     for row in entries:
-        if row.get("status") != "safe-create":
+        if row.get("status") not in {"safe-create", "safe-enrich"}:
             continue
         key = row["entry_key"]
         source = row.get("source_fields") or {}
