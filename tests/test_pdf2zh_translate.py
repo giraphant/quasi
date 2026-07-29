@@ -23,6 +23,24 @@ from translate.immersive_translate import MissingAuthKeyError, TranslationError 
 CFG = {"base_url": "https://x/v1", "api_key": "k", "model": "m"}
 
 
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        ("https://api.deepseek.com", "https://api.deepseek.com/v1"),
+        ("https://api.deepseek.com/", "https://api.deepseek.com/v1"),
+        ("https://api.deepseek.com/v1", "https://api.deepseek.com/v1"),
+        ("https://open.bigmodel.cn/api/paas/v4", "https://open.bigmodel.cn/api/paas/v4"),
+    ],
+)
+def test_base_url_defaults_only_a_root_url_to_v1(configured, expected):
+    assert p2z.normalise_base_url(configured) == expected
+
+
+def test_base_url_rejects_a_bare_hostname():
+    with pytest.raises(TranslationError, match="http"):
+        p2z.normalise_base_url("api.deepseek.com")
+
+
 def _make_pdf(path: Path, pages: int) -> Path:
     doc = pymupdf.open()
     for _ in range(pages):

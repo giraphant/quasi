@@ -33,11 +33,11 @@ separate:
 |---|---|
 | `quasi-search` | `book|paper` metadata discovery |
 | `quasi-download` | `book candidates|fetch`; `paper fetch`; `accept` |
-| `quasi-extract` | `epub|ocr|split` text extraction (`ocr` default engine DS OCR2, `--engine dsocr2\|tesseract`) |
+| `quasi-extract` | `epub|ocr|split` text extraction (`ocr` default engine DS OCR2, `--engine dsocr2\|tesseract`, `--layout` replacement text layer) |
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
 | `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write`; `talk compress-media` |
 | `quasi-doctor` | runtime healthcheck: venv sync, core Python deps, optional external tools by profile |
-| `quasi-translate` | immersive translation |
+| `quasi-translate` | configured `immersive|pdf2zh` PDF translation; shared alternating-page, TOC, ToUnicode, and coverage contract |
 
 Removed legacy bins:
 
@@ -59,6 +59,7 @@ Removed legacy bins:
 - `scripts/citation/citation.py`: deterministic draft citation helpers only.
 - `scripts/proofread/proofread.py`: deterministic proofread setup/cleanup only.
 - `scripts/doctor/doctor.py`: runtime healthcheck for venv sync, core Python deps, and optional system tools by profile.
+- `scripts/translate/immersive_translate.py` and `pdf2zh_translate.py`: interchangeable PDF translation backends behind the `quasi-translate` shim. Both run `tounicode.py` repair followed by `coverage.py` acceptance; DS OCR2/MinerU are recovery dependencies only after `Under-translated`, not pdf2zh startup requirements.
 
 ## Active Agents
 

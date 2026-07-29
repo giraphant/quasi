@@ -66,12 +66,36 @@ quasi-helpers proofread prepare|cleanup ...
 quasi-helpers citation parse|biblio|resolve|review-cards|emit-bib ...
 quasi-helpers localise scan|write ...
 quasi-doctor [--json] [--sync] [--profile ...]
-quasi-translate ...
+quasi-translate SLUG [--backend immersive|pdf2zh] ...
 ```
 
 `quasi-extract ocr` 默认走 **DS OCR2**（DeepSeek-OCR-2，mlx-vlm，Apple
 Silicon 本地）。需要时设 `QUASI_DSOCR2_MODEL` 指向本地 BF16 模型目录，
 缺 MLX/模型时自动回退 tesseract（`--engine tesseract` 可强制）。
+
+### PDF 翻译
+
+`quasi-translate` 有两个后端，输出契约相同：
+`processing/translations/{slug}-{lang}.pdf`，原文/译文页交替并保留书签。
+
+| 后端 | Configure options | 本地前置条件 |
+|---|---|---|
+| `immersive`（默认） | `immersive_auth_key` | 无 |
+| `pdf2zh` | `translate_base_url`, `translate_api_key`, `translate_model` | `uvx`（首次运行自动下载 `pdf2zh-next`） |
+
+在 `/plugin` → Configure options 把 `translate_backend` 设成 `immersive` 或
+`pdf2zh`；未设置时明确默认 `immersive`。`translate_base_url` 可以只填服务根地址：
+例如 `https://api.deepseek.com` 会自动变成 `https://api.deepseek.com/v1`。
+如果已经填写路径，quasi 会原样保留，因为兼容端点也可能使用
+`/api/paas/v4`、`/v1beta/openai` 或 `/openai/v1`。不要包含
+`/chat/completions`。
+
+普通 born-digital PDF 走 pdf2zh **不需要** DS OCR2 或 MinerU。只有 coverage
+闸发现源文字层过碎、报 `Under-translated` 时，translate agent 才会执行一次
+`quasi-extract ocr --layout` 后重试：DS OCR2 需要 Apple Silicon，MinerU2.5-Pro
+只负责段落分组；两者由 `uvx`/Hugging Face 首次下载，可分别用
+`QUASI_DSOCR2_MODEL`、`QUASI_MINERU_MODEL` 指向本地模型。DS OCR2 不可用会
+fail-soft 到 tesseract，MinerU 不可用会退回逐行文本层，因此扫描书的恢复质量会下降。
 
 旧 `quasi-citation` 和 `quasi-proofread` bin 已移除;新流程走
 `quasi-helpers` 和 `quasi-audit`。
@@ -102,6 +126,8 @@ sources/
 |---|---|
 | Anna's Archive | `anna_donator_key` |
 | CookieCloud / EZProxy | `cookiecloud_server`, `cookiecloud_uuid`, `cookiecloud_password`, `cookiecloud_ezproxy_domain`, `cookiecloud_ezproxy_base_url` |
+| PDF 翻译后端 | `translate_backend`（`immersive` 或 `pdf2zh`） |
 | Immersive Translate | `immersive_auth_key` |
+| pdf2zh OpenAI-compatible endpoint | `translate_base_url`, `translate_api_key`, `translate_model` |
 | Kagi | `kagi_session_token` |
 | Google Scholar proxy | `google_scholar_proxy_url` |
