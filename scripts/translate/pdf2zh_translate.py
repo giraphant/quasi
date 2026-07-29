@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import pymupdf
 
@@ -46,6 +47,20 @@ PDF2ZH_SPEC = "pdf2zh-next"
 PDF2ZH_PYTHON = "3.12"  # upstream macOS install guidance
 
 
+def normalise_base_url(value: str) -> str:
+    parts = urlsplit(value.strip())
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise TranslationError(
+            "Invalid translate_base_url: expected an http(s) API base URL.",
+        )
+    path = parts.path.rstrip("/")
+    # ponytail: root-only OpenAI-compatible endpoints conventionally expose /v1;
+    # preserve every explicit path because real providers also use /v4 and /openai/v1.
+    if not path:
+        path = "/v1"
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
 def load_backend_config() -> dict[str, str]:
     """Read the OpenAI-compatible endpoint config injected by the userconfig hook."""
     cfg = {
@@ -59,6 +74,7 @@ def load_backend_config() -> dict[str, str]:
             "pdf2zh backend is not configured. Run /plugin → Configure options and fill: "
             + ", ".join(missing),
         )
+    cfg["base_url"] = normalise_base_url(cfg["base_url"])
     return cfg
 
 

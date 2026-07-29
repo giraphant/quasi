@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.51.3** (2026-07-29): **把双翻译后端的配置、URL 与 OCR 前置条件说清楚。**
+  - `translate_backend` 现在显式默认 `immersive`,Configure options 的标题直接列出合法值 `immersive` / `pdf2zh`;Claude Code 的 userConfig schema 不支持 enum 下拉,所以仍是文本字段,运行时继续拒绝其他值。pdf2zh 三个字段统一加前缀,不再看起来像两个后端共用的参数。
+  - `translate_base_url` 可以只填服务根地址:没有路径时 quasi 自动补 `/v1`(`https://api.deepseek.com` → `https://api.deepseek.com/v1`);已经给出的路径原样保留,因为兼容端点也真实使用 `/api/paas/v4`、`/v1beta/openai`、`/openai/v1`。`/chat/completions` 仍由 OpenAI client 追加,用户不填。
+  - README/architecture 补上两个后端、配置字段与依赖边界:普通 born-digital PDF 走 pdf2zh 只要求 `uvx` + OpenAI-compatible endpoint,**不要求** DS OCR2/MinerU;二者只在 coverage 报 `Under-translated` 后的一次性重 OCR 恢复路径里出现。DS OCR2 需要 Apple Silicon,模型由 uvx/Hugging Face 首次下载;缺失时的 tesseract/逐行 fail-soft 会降低扫描书恢复质量。
+  - `translate-agent` 不再把所有 auth 错误都误导成 `immersive_auth_key`:它按后端列出对应 Configure 字段,且禁止预先 OCR —— 只有 coverage 闸失败后才重做一次。
+
 - **0.51.2** (2026-07-29): **`--layout` 三个只有扩样本才暴露的缺陷:旧文字层没剥干净、脚注不成段、块框可能倒置。** 起因是把测试样本从 3 本扩到 8 本,回答"每本书松紧不同要不要按书标定字号"。
   - `strip_text` 现在也剥 **Form XObject**。ABBYY 式扫描把 OCR 文字层放在名为 `OCR-<id>` 的 Form 里,而不是页面自身的 content stream —— 新测的 5 本书全是这个形状。漏剥的后果是页面上叠了两层文字,BabelDOC 的反应是**静悄悄丢正文**:coverage 0.23-0.29(健康值 0.33),其中一本每页都丢掉最长的那一段。修复后五本全部回到 0.30-0.35,页边碎片 9→0 / 23→14 / 7→3,重叠 10→3 / 23→15 / 48→19。只重写 `/Form` 子类型:同一个 `BT…ET` 正则打到图像流上会把图毁掉。
   - `FLOW` 加入 `ref_text`。脚注就是段落,留在逐行模式里等于原样复现这条路径要修的那个毛病;它是被漏掉的最大可流类别(三本脚注密集的书各 44/52/52 行),加上后 galison 页边碎片 3→1、hounshell 32→15。叶子规则仍然保证每条注单独成段:装着它们的 `list` 父块因为有子块而被丢弃。
