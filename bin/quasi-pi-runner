@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec node "$ROOT/scripts/pi-runner.mjs" --plugin-root "$ROOT" "$@"

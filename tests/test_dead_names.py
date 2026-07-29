@@ -40,8 +40,6 @@ DEAD_NAMES = [
     "quasi:process-paper",
     "quasi:process-author",
     "quasi:process-topic",
-    "superset agents create",
-    "QUASI_SUPERSET_AGENT",
     "kb-update",
     "mode: journal",
     "profile-agent",
@@ -59,10 +57,12 @@ def active_markdown_files() -> list[Path]:
 def active_contract_files() -> list[Path]:
     files = active_markdown_files()
     files.extend((PLUGIN_ROOT / "bin").glob("quasi-*"))
-    files.extend([
-        PLUGIN_ROOT / "README.md",
-        PLUGIN_ROOT / "docs" / "ARCHITECTURE.md",
-    ])
+    files.extend(
+        [
+            PLUGIN_ROOT / "README.md",
+            PLUGIN_ROOT / "docs" / "ARCHITECTURE.md",
+        ]
+    )
     return [path for path in files if path.exists()]
 
 

@@ -67,7 +67,12 @@ quasi-helpers citation parse|biblio|resolve|review-cards|emit-bib ...
 quasi-helpers localise scan|write ...
 quasi-doctor [--json] [--sync] [--profile ...]
 quasi-translate SLUG [--backend immersive|pdf2zh] ...
+quasi-pi-runner --script PATH --args-file JSON [--cwd PROJECT] ...
 ```
+
+`quasi-pi-runner` 是 Pi 下的最小 `process-material` 图执行器:直接用 Pi 官方 SDK
+加载 `agents/*.md`,只实现现有图使用的 `agent` / `parallel` / `phase` / `log` /
+`args`;Claude Code 仍走原 Workflow 工具。
 
 `quasi-extract ocr` 默认走 **DS OCR2**（DeepSeek-OCR-2，mlx-vlm，Apple
 Silicon 本地）。需要时设 `QUASI_DSOCR2_MODEL` 指向本地 BF16 模型目录，
@@ -79,7 +84,7 @@ Silicon 本地）。需要时设 `QUASI_DSOCR2_MODEL` 指向本地 BF16 模型�
 `processing/translations/{slug}-{lang}.pdf`，原文/译文页交替并保留书签。
 
 | 后端 | Configure options | 本地前置条件 |
-|---|---|---|
+|---|---| --- |
 | `immersive`（默认） | `immersive_auth_key` | 无 |
 | `pdf2zh` | `translate_base_url`, `translate_api_key`, `translate_model` | `uvx`（首次运行自动下载 `pdf2zh-next`） |
 

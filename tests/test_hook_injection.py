@@ -24,7 +24,11 @@ def run_hook(command: str, env: dict[str, str]) -> dict:
 
 
 def test_hook_does_not_inject_session_token_for_native_kagi_command():
-    payload = {"tool_input": {"command": "kagi search --format json 'site:books.com.tw 不受掌控 ISBN'"}}
+    payload = {
+        "tool_input": {
+            "command": "kagi search --format json 'site:books.com.tw 不受掌控 ISBN'"
+        }
+    }
     result = subprocess.run(
         [sys.executable, str(HOOK)],
         input=json.dumps(payload),
@@ -96,29 +100,8 @@ def test_hook_keeps_quasi_user_config_injection():
     assert "CLAUDE_PLUGIN_DATA=/plugin/data" in updated
 
 
-def test_hook_ignores_superset_agents_create():
-    # `superset agents create` was the old process-topic dispatch channel; the
-    # userConfig option and its injection branch died with that skill (0.49.0).
-    # A superset command must now pass through with no env injection at all.
-    payload = {"tool_input": {"command": "superset agents create --workspace \"$SUPERSET_WORKSPACE_ID\" --prompt 'Run /quasi:process-material' --json --quiet"}}
-    result = subprocess.run(
-        [sys.executable, str(HOOK)],
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        env={
-            "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
-            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
-            "CLAUDE_PLUGIN_DATA": "/plugin/data",
-        },
-        check=True,
-    )
-
-    assert result.stdout == ""
-
-
 def test_hook_ignores_quoted_quasi_command_text_without_target_command():
-    payload = {"tool_input": {"command": "echo 'Run quasi-search and superset agents create later'"}}
+    payload = {"tool_input": {"command": "echo 'Run quasi-search later'"}}
     result = subprocess.run(
         [sys.executable, str(HOOK)],
         input=json.dumps(payload),

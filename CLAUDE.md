@@ -47,7 +47,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 Current userConfig mapping:
 
 | Configure field | Hook env input | Script env output | Main consumer |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `anna_donator_key` | `CLAUDE_PLUGIN_OPTION_ANNA_DONATOR_KEY` | `QUASI_ANNA_DONATOR_KEY` | `scripts/download/aa.py` |
 | `cookiecloud_server` | `CLAUDE_PLUGIN_OPTION_COOKIECLOUD_SERVER` | `QUASI_COOKIECLOUD_SERVER` | `scripts/download/cookiecloud.py` |
 | `cookiecloud_uuid` | `CLAUDE_PLUGIN_OPTION_COOKIECLOUD_UUID` | `QUASI_COOKIECLOUD_UUID` | `scripts/download/cookiecloud.py` |
@@ -92,7 +92,10 @@ quasi-helpers localise scan|write ...
 quasi-helpers vault resolve --items-json|--items-file ...
 quasi-doctor [--json] [--sync] [--profile ...]
 quasi-translate SLUG [--backend immersive|pdf2zh] ...
+quasi-pi-runner --script PATH --args-file JSON [--cwd PROJECT] ...
 ```
+
+`quasi-pi-runner` is the Pi-only adapter for the existing `skills/process-material/orchestrate.mjs` graph. It uses the official Pi SDK already installed with Pi, loads `quasi:<name>` definitions from root `agents/`, and deliberately implements only `agent`, `parallel`, `phase`, `log`, and `args`; do not add a third-party workflow compatibility dependency. Claude Code keeps using its native Workflow path.
 
 `quasi-translate` has two interchangeable backends behind one output contract (`processing/translations/{slug}-{lang}.pdf`, alternating original/translated pages, bookmarks): `immersive` (default, Immersive Translate Zotero API) and `pdf2zh` (local `pdf2zh-next` via uvx, driving a user-supplied OpenAI-compatible endpoint). Backend selection is user config (`translate_backend`), not an agent decision — `agents/translate-agent.md` is backend-agnostic. For pdf2zh, a root-only `translate_base_url` gets `/v1` appended; any explicit path is preserved because compatible providers also use paths such as `/api/paas/v4` and `/openai/v1`. The pdf2zh path uses `--use-alternating-pages-dual`, which emits the same page layout Immersive produces *after* `split_dual_pdf()`, so the TOC helpers are shared verbatim. Unrecognised flags pass straight through to `pdf2zh_next`. Because pdf2zh-next exits 0 on a mangled translation, the backend gates on output pages == 2× source pages and keeps failed output under `processing/translations/.pdf2zh-{slug}/`. Partial runs (`--pages`) skip the TOC step: a trimmed output has no 1:1 source page mapping, so bookmarks would land on the wrong pages silently.
 
@@ -169,4 +172,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.51.3.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.0.

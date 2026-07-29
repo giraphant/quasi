@@ -25,17 +25,18 @@ description: Use when the user wants to search, download, and analyse a book, a 
 ## 硬约束
 
 - **talk / draft 不走本 skill**——它们不是采集→分析主干(talk 用 transcribe 原语、draft 是交互审定)。
-- 编排在 Workflow 里跑,主进程只做:Step 0 本地召回/去重 + 归一化输入 + 处理图冒泡上来的人工卡点 + LOCALISE / TRANSLATE 回填 + 报告(采集→分析 spine 全在图里)。
+- 编排图不改:`orchestrate.mjs` 在 Claude Code 走 Workflow 工具,在 Pi 走 quasi 自带的 `quasi-pi-runner`;主进程只做 Step 0 本地召回/去重、归一化输入、人工卡点、LOCALISE / TRANSLATE 回填与报告。
 
 ## 状态
 
 - 图产物照常落 `vault/` `processing/` `sources/`——全库统一命名空间、文件幂等续跑。
-- **编排状态活在 Workflow 内,不落 skill manifest。** 续跑靠文件幂等(agent 见 output 存在即 no-op),不靠 Workflow 自身 resume。
+- **编排状态只活在本次图执行内,不落 skill manifest。** 续跑靠文件幂等(agent 见 output 存在即 no-op),不靠 runner resume。
 - LOCALISE 中译本缓存写入 `.quasi/localise/cndouban.json`,按原书 ISBN 幂等。
 
 ## Agent / Helper 合同
 
-- 通过 **Workflow 工具**调 `$CLAUDE_PLUGIN_ROOT/skills/process-material/orchestrate.mjs`,把 `{kind, ...}` 作为 `args` 传入。
+- Claude Code:通过 **Workflow 工具**调 `$CLAUDE_PLUGIN_ROOT/skills/process-material/orchestrate.mjs`,把 `{kind, ...}` 作为 `args` 传入。
+- Pi:把同一份 args 写到 `.quasi/temp/` JSON,运行 `quasi-pi-runner --script "$CLAUDE_PLUGIN_ROOT/skills/process-material/orchestrate.mjs" --args-file <path>`;stdout 是最终 JSON 回执。
 - 图内用 `agent(prompt, {agentType:'quasi:<name>'})` 起 worker agent(download/extract/analyse/synthesis/audit)。
 - 图不写 skill 状态文件;人工卡点由本 skill 主进程用 `AskUserQuestion` 处理。
 - **Step 0 召回与 LOCALISE / TRANSLATE 是主进程(图外)的活**:图无 fs、不能调 bin,所以本地召回/去重、`quasi-helpers localise scan|write`、translate-agent 调度都由本 skill 主进程执行。
@@ -52,7 +53,7 @@ description: Use when the user wants to search, download, and analyse a book, a 
 │    ├─ author/topic:产物存在 → 只提示"增量更新",继续跑(累积型材料,重跑就是为了吸收新条目)
 │    ├─ 均 miss → rg 模糊召回近似 key → 命中则列候选,提示可能重复(勿盲目新建)
 │    └─ 否则继续
-├─ Workflow(orchestrate.mjs, {kind, ...args}) → 后台跑图(采集→分析),完成回 result
+├─ Workflow / quasi-pi-runner(orchestrate.mjs, {kind, ...args}) → 跑图(采集→分析),完成回 result
 ├─ 读 result.status:
 │    ├─ ok               → 报告(kind 各异)→ LOCALISE
 │    ├─ year_ambiguous   → (仅单本 book)AskUserQuestion(year_evidence 原样)→ 带决定重投
@@ -99,17 +100,24 @@ dup = rg_fuzzy_recall(key, args.meta)   # 兜底:候选没带 ISBN/DOI 时的近
 if dup.candidates:
     report_candidate_list(dup.candidates, note="rg fuzzy recall only; 可能重复,勿盲目新建")
 
-# 后台跑图。book/paper 传 slug+meta;author 传 name+meta。
+# 跑图。book/paper 传 slug+meta;author 传 name+meta。Claude 与 Pi 共用同一脚本/args。
+def run_graph(wf_args):
+    if env("PI_CODING_AGENT") == "true":
+        wf_file = write_temp_json(wf_args)   # .quasi/temp/
+        return parse_json(Bash(f"quasi-pi-runner --script '$CLAUDE_PLUGIN_ROOT/skills/process-material/orchestrate.mjs' "
+                               f"--args-file '{wf_file}'").stdout)
+    return Workflow(scriptPath="$CLAUDE_PLUGIN_ROOT/skills/process-material/orchestrate.mjs", args=wf_args)
+
 wf_args = {"kind": args.kind, "meta": args.meta}
 wf_args["slug" if args.kind != "author" else "name"] = key
-result = Workflow(scriptPath="$CLAUDE_PLUGIN_ROOT/skills/process-material/orchestrate.mjs", args=wf_args)
+result = run_graph(wf_args)
 
 # 人工卡点:仅单本 book 会 year_mismatch/year_ambiguous(author 批量自动收、不冒泡)。
 # 两者都是"文件下下来了但年份对不上、留在 tmp_path 等人拍板",处理方式相同。
 if result.status in ("year_mismatch", "year_ambiguous"):
     decision = AskUserQuestion(present=result.year_evidence)   # 含 tmp_path
     wf_args["slug"], wf_args["year_decision"] = decision.slug, decision.choice
-    result = Workflow(scriptPath="...", args=wf_args)
+    result = run_graph(wf_args)
 
 # topic 死胡同:滚雪球滚不动了、语料还太薄。不硬写一篇没底子的综述,问用户要检索词。
 # 用户不补 → 带 final=True 原样重投,图直接跳到收口(条目全幂等,重跑几乎零成本)。
@@ -117,13 +125,13 @@ if result.status == "needs_seeds":
     decision = AskUserQuestion(present={"已收语料": result.collected, "已收证据卡": result.cards,
                                         "建议检索词": result.suggested_queries})
     wf_args["meta"] |= {"seeds": decision.seeds} if decision.seeds else {"final": True}
-    result = Workflow(scriptPath="...", args=wf_args)
+    result = run_graph(wf_args)
 
 # synth_failed 自动重投一次:语料都齐了,死的只是最后的 synth/audit——多半是瞬时 provider 错误
 # 连杀本体和 retry(0.48.2 E2E:90 分钟的跑一切都成,synth 双杀后整跑报废)。条目全幂等,
 # 重投时召回/探针秒过、直接冲到 synth,代价几分钟。两次都死才是真问题,报人工。
 if result.status == "synth_failed":
-    result = Workflow(scriptPath="$CLAUDE_PLUGIN_ROOT/skills/process-material/orchestrate.mjs", args=wf_args)
+    result = run_graph(wf_args)
     if result.status == "synth_failed":
         report(f"synth 连续两次失败:{result.get('notes')};交人工"); return
 
@@ -199,8 +207,8 @@ processing/translations/{paper-slug}-zh.pdf            ← 可选(translate: tru
 .quasi/localise/cndouban.json                          ← 中译本缓存(按原书 ISBN 幂等)
 ```
 
-topic 目录 = 三页脊柱(00 门面 / 01 清单 / 02 研究大纲)+ 毕业子问题的专章 NN-*.md
-+ `cards/` 圈外证据卡,不囤分析副本——分析在 `vault/papers/`、`vault/books/`、`vault/talks/` 里,各页用
+topic 目录 = 三页脊柱(00 门面 / 01 清单 / 02 研究大纲)、毕业子问题的专章 NN-*.md
+和 `cards/` 圈外证据卡。它不囤分析副本——分析在 `vault/papers/`、`vault/books/`、`vault/talks/` 里,各页用
 `[[wikilink]]` 指过去(讲座只可能来自图内本地召回,在线发现搜不到它们)。证据卡是例外:它是
 webcard-agent 就地写的一手材料(机型、SEC 文件、规章、口述),学术管线拿不到,所以住在主题目录里;
 它**不是**分析件,不进语料表,走 outline 的 `cards` 通道。02-outline 是

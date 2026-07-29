@@ -2,6 +2,13 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.0** (2026-07-29): **quasi 可以在 Pi 下跑了;plugin 配置全加密进 Keychain,runner 读同一份 blob。**
+  - 新增 `scripts/pi-runner.mjs` + `bin/quasi-pi-runner`:Pi 专用适配器,直接用 `@earendil-works/pi-coding-agent` SDK,不引入第三方 workflow 兼容层。它执行同一份 `skills/process-material/orchestrate.mjs` 图——把源码包进 `AsyncFunction`,注入 `agent`/`parallel`/`phase`/`log`/`args` 五个全局原语,所以图本身零改动。Claude Code 继续走原生 Workflow 路径,两条路径共享同一个确定性图和同一组 agent 定义。
+  - runner 从 `agents/*.md` 加载 `quasi:<name>` 定义(frontmatter name/tools/model + Markdown 正文),把 Claude 工具名映射成 Pi 小写工具名(`Read`→`read`、`Glob`→`find`、`WebFetch`→`web_fetch`),只给每个 agent 开它 frontmatter 声明的工具。structured output 用一个自定义 `structured_output` tool 实现(带 `terminate: true`),schema 由调用方传入;agent 没调就直接返 `null`,图的 `retryNull()` 照常重试。`web_fetch` 只在加载 `quasi:webcard-agent` 时注入,其余 session 里根本不存在。模型别名(opus/sonnet)找不到时继承父 Pi 的 `PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`。并发限流放在真正的 `agent()` 边界(全局 semaphore),嵌套 `parallel()` 不会突破总并发上限也不会死锁。
+  - **Keychain 配置桥**:runner 启动时从 macOS Keychain 读 Claude Code 的 `Claude Code-credentials` blob,解析 `pluginSecrets["quasi@*"]`,把每个字段写进 `process.env.QUASI_<KEY>`(已有环境变量优先)。这把 Claude 的 `PreToolUse hook → inject-userconfig.py` 链复刻到 Pi 路径:同一个 Keychain blob,同一个 `QUASI_*` 合同,两个宿主入口。非 macOS 或 Keychain 不可用时 fail-soft(退回手动 `QUASI_*` 环境变量)。
+  - `translate_backend` 标为 `sensitive: true`,这样它也进 Keychain blob 而不是明文 `~/.claude/settings.json`;加上 Keychain 桥,runner 只需读一处就拿到全部 14 个配置字段,不用再读 settings.json。
+  - 清理废弃的 `superset_agent`:从 `test_dead_names.py`、`test_hook_injection.py` 和 `process-draft/SKILL.md` 中移除残留引用。
+
 - **0.51.3** (2026-07-29): **把双翻译后端的配置、URL 与 OCR 前置条件说清楚。**
   - `translate_backend` 现在显式默认 `immersive`,Configure options 的标题直接列出合法值 `immersive` / `pdf2zh`;Claude Code 的 userConfig schema 不支持 enum 下拉,所以仍是文本字段,运行时继续拒绝其他值。pdf2zh 三个字段统一加前缀,不再看起来像两个后端共用的参数。
   - `translate_base_url` 可以只填服务根地址:没有路径时 quasi 自动补 `/v1`(`https://api.deepseek.com` → `https://api.deepseek.com/v1`);已经给出的路径原样保留,因为兼容端点也真实使用 `/api/paas/v4`、`/v1beta/openai`、`/openai/v1`。`/chat/completions` 仍由 OpenAI client 追加,用户不填。
@@ -1044,7 +1051,7 @@ Newest first. Entries record what changed and why at the time each release shipp
   carry the maintainer-facing convention. Enforcement landed as
   `tests/test_skill_orchestration.py::test_frontmatter_descriptions_are_routing_hints`
   (length cap 220, required prefix per kind, forbidden tokens
-  `user says / 前身 / Phase / → / 由 ` per kind).
+  `user says / 前身 / Phase / → / 由` per kind).
 
 - **0.32.0** (2026-05-18): **skill orchestration schema + bin
   surface trim.** All five active skills rewritten to the
@@ -1133,6 +1140,7 @@ Newest first. Entries record what changed and why at the time each release shipp
   - `scripts/schemas/book.py`: `cndouban` field removed. Comment in its place
     points readers to the external file.
   - `.quasi/audit/translations.json` schema bumped v1 → v2:
+
     ```json
     {
       "version": 2,
@@ -1148,6 +1156,7 @@ Newest first. Entries record what changed and why at the time each release shipp
       }
     }
     ```
+
     `verdict="none"` replaces the old `cndouban: []` semantic (查过、无中
     译本). `by_book[slug]` absent ⇒ 未查 (replaces `cndouban` field-absent
     semantic). v1 flat files are migrated by the script — readers do
@@ -1473,7 +1482,7 @@ Newest first. Entries record what changed and why at the time each release shipp
     (verb rename + delete validate/scholar).
 
 - **0.22.0** (2026-05-17): **citation review pivots to TUI — HTML report
-  + structured verdict enum deprecated.** Background: 0.20.0's tab-based
+  - structured verdict enum deprecated.** Background: 0.20.0's tab-based
   HTML review still had a coarse fit between agent output shape and what
   the user actually had to do per cite — and earlier reflection on the
   Decisions Report json export (274 entries, ~10% had unstructured-note
@@ -1732,7 +1741,7 @@ Newest first. Entries record what changed and why at the time each release shipp
   subprocesses" but empirically Bash-tool subprocesses don't get them — only
   hooks/MCP/LSP/monitor do. Solution: a PreToolUse(Bash) hook
   (`scripts/hooks/inject-userconfig.py`) runs in a real plugin subprocess, reads
-  its env, and prepends `export QUASI_<KEY>=...; ` to any `quasi-*` shell
+  its env, and prepends `export QUASI_<KEY>=...;` to any `quasi-*` shell
   command before Claude Code executes it. Scripts read clean `QUASI_*` env
   vars. Sensitive userConfig fields stay in the macOS keychain — they only
   materialise in the hook+bash process env for one tool call at a time. Also

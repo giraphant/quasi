@@ -38,6 +38,7 @@ separate:
 | `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write`; `talk compress-media` |
 | `quasi-doctor` | runtime healthcheck: venv sync, core Python deps, optional external tools by profile |
 | `quasi-translate` | configured `immersive|pdf2zh` PDF translation; shared alternating-page, TOC, ToUnicode, and coverage contract |
+| `quasi-pi-runner` | minimal Pi SDK runner for the existing deterministic `process-material` graph |
 
 Removed legacy bins:
 
@@ -60,6 +61,7 @@ Removed legacy bins:
 - `scripts/proofread/proofread.py`: deterministic proofread setup/cleanup only.
 - `scripts/doctor/doctor.py`: runtime healthcheck for venv sync, core Python deps, and optional system tools by profile.
 - `scripts/translate/immersive_translate.py` and `pdf2zh_translate.py`: interchangeable PDF translation backends behind the `quasi-translate` shim. Both run `tounicode.py` repair followed by `coverage.py` acceptance; DS OCR2/MinerU are recovery dependencies only after `Under-translated`, not pdf2zh startup requirements.
+- `scripts/pi-runner.mjs`: Pi SDK adapter for `orchestrate.mjs`; owns agent-definition loading, Claude→Pi tool mapping, bounded subagent concurrency, structured receipts, and aborts, but no generic workflow features.
 
 ## Active Agents
 

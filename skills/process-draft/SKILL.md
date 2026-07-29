@@ -93,6 +93,7 @@ if flags.citation_only:
 
 1. `quasi-helpers proofread prepare <draft> -o {pf_dir}/sections.json` — 按 H2/H3 切节,并在 draft 末尾创建空记录块(已存在则跳过)
 2. 对每节顺序处理(节间串行,避免并发改 draft 末尾块):
+
    ```
    for sec in sections:
      for r in 1..5:
@@ -110,7 +111,8 @@ if flags.citation_only:
 sonnet 全部收敛后,跑 codex 2 轮整篇 draft 作为**提议者**。codex prompt-following 弱常越界, 这里**只提议不改正文** (Stage C 主进程审稿决定接受/拒绝)。
 
 跨 draft 可并发(5 个 codex 同时跑 ok)。对每个 draft 顺序跑 `r = 1..2`。**必须**:
-- 用绝对路径 `/opt/homebrew/bin/codex`(绕过 superset shim 的 notify hook 阻塞)
+
+- 用绝对路径 `/opt/homebrew/bin/codex`(绕过 shell alias / notify hook 阻塞)
 - 重定向 stdin `< /dev/null`(`codex exec` 即使收到 prompt 参数也会等 stdin EOF)
 
 ```bash
@@ -135,14 +137,16 @@ EOF
 **Stage C — 主进程审稿**:
 
 对每条 `? c{N}` 提议:
+
 1. Read 提议行的 `{old片段}`,确认仍在正文中(verify codex 没越界)
 2. Read 正文 L{line} 周围上下文
 3. 判断是否真客观错 / 是否违反"不动"清单
-4. **Accept**: Edit 正文 + Edit 记录块删 `? ` 前缀; **Reject**: 删该行
+4. **Accept**: Edit 正文 + Edit 记录块删 `?` 前缀; **Reject**: 删该行
 
 也顺手 review `s{N}` sonnet 行 (应该极少需要反向)。结束后一句话总结。
 
 **硬约束**:
+
 - 主进程**同时**持有正文 + 记录块,审稿单 turn 内一次完成
 - 6 篇 draft 串行审
 
@@ -417,6 +421,7 @@ Wrap-up citation review done.
 如果有 draft_rewrites,提示用户按 `decisions.json` 里的 `draft_rewrites` 回改 draft,改完跑 `/quasi:wrap-up <draft> --citation-only` 重新审引用。
 
 **硬约束**:
+
 - Phase 1 必须全部完成才进入 Phase 2 (proofread 改字会让 parse 行号失效)
 - Phase 2.2 + 2.3 完成才进入 2.4 (主进程需要完整 review cards / recoveries)
 - CC-native review 是主进程串行驱动,每轮最多 4 张 card 并用 `AskUserQuestion` 收裁决;不要拆 agent,不要转 HTML/TUI
@@ -432,7 +437,7 @@ Wrap-up citation review done.
 ## 断点续跑
 
 | 阶段 | 检查 | 跳过条件 |
-|------|------|---------|
+| ------ | ------ | --------- |
 | Phase 1 | `citation_only` flag | 直接跳过 proofread |
 | Phase 1 prepare | `.quasi/proofread/{stem}/sections.json` | 存在则复用 section manifest |
 | Phase 2.1 | `{ct_dir}/manifest.json` | 存在则可复用 parse/resolve 结果 |
