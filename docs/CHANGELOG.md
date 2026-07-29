@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.1** (2026-07-29): **Pi extension:把 quasi 的 skills 注册进 Pi 的发现路径。**
+  - 新增 `extensions/quasi.ts`(15 行):监听 Pi 的 `resources_discover` 事件,把 quasi 的 `skills/` 目录注册为 Pi skill 搜索路径。打开任何 Pi 窗口,说"处理这篇论文",Pi 就能发现并路由到 `process-material` skill,不再需要手动调 `quasi-pi-runner`。Extension 通过 `import.meta.url` 反推 plugin root,不硬编码路径。
+  - 安装方式:`~/.pi/agent/extensions/quasi.ts` → symlink 到 `~/.agents/plugins/quasi/extensions/quasi.ts`(稳定路径,不带版本号,更新不断)。`~/.agents/plugins/quasi/` 是 quasi 的无版本号副本,每次发版后需要同步。
+
 - **0.52.0** (2026-07-29): **quasi 可以在 Pi 下跑了;plugin 配置全加密进 Keychain,runner 读同一份 blob。**
   - 新增 `scripts/pi-runner.mjs` + `bin/quasi-pi-runner`:Pi 专用适配器,直接用 `@earendil-works/pi-coding-agent` SDK,不引入第三方 workflow 兼容层。它执行同一份 `skills/process-material/orchestrate.mjs` 图——把源码包进 `AsyncFunction`,注入 `agent`/`parallel`/`phase`/`log`/`args` 五个全局原语,所以图本身零改动。Claude Code 继续走原生 Workflow 路径,两条路径共享同一个确定性图和同一组 agent 定义。
   - runner 从 `agents/*.md` 加载 `quasi:<name>` 定义(frontmatter name/tools/model + Markdown 正文),把 Claude 工具名映射成 Pi 小写工具名(`Read`→`read`、`Glob`→`find`、`WebFetch`→`web_fetch`),只给每个 agent 开它 frontmatter 声明的工具。structured output 用一个自定义 `structured_output` tool 实现(带 `terminate: true`),schema 由调用方传入;agent 没调就直接返 `null`,图的 `retryNull()` 照常重试。`web_fetch` 只在加载 `quasi:webcard-agent` 时注入,其余 session 里根本不存在。模型别名(opus/sonnet)找不到时继承父 Pi 的 `PI_PROVIDER`/`PI_MODEL`/`PI_REASONING_LEVEL`。并发限流放在真正的 `agent()` 边界(全局 semaphore),嵌套 `parallel()` 不会突破总并发上限也不会死锁。

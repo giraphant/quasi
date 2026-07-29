@@ -156,6 +156,7 @@ When changing config, runtime state, or handoff contracts:
 5. Update agent files when an agent input/output contract changes.
 6. Update tests that guard dead names, frontmatter routing hints, CLI surface, or manifest schema.
 7. Run `claude plugin validate plugins/quasi` after manifest/marketplace changes.
+8. After releasing, sync `~/.agents/plugins/quasi/` from the new version — the Pi extension symlink reads from there, so a stale copy means Pi discovers old skills.
 
 ## Verification
 
@@ -172,4 +173,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.0.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.1.
