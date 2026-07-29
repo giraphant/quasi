@@ -4,3 +4,4 @@ curl_cffi
 pydantic
 pyyaml
 pymupdf
+bibtexparser>=1.4,<2
