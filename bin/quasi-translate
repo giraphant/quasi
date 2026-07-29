@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# quasi-translate — Translate a local PDF via Immersive Translate (Zotero API).
+# quasi-translate — Translate a local PDF to a bilingual PDF.
 #
 # Usage:
-#   quasi-translate SLUG [additional args...]
+#   quasi-translate SLUG [--backend immersive|pdf2zh] [additional args...]
+#
+# Backend defaults to $QUASI_TRANSLATE_BACKEND, else `immersive`.
+#   immersive — Immersive Translate Zotero API (paid, needs immersive_auth_key)
+#   pdf2zh    — local pdf2zh-next + your own OpenAI-compatible endpoint
 
 set -e
 
@@ -11,6 +15,22 @@ PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
 PYTHON="$DATA_DIR/.venv/bin/python"
 
+BACKEND="${QUASI_TRANSLATE_BACKEND:-immersive}"
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --backend) BACKEND="$2"; shift 2 ;;
+    --backend=*) BACKEND="${1#*=}"; shift ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+
+case "$BACKEND" in
+  immersive) SCRIPT="immersive_translate.py" ;;
+  pdf2zh) SCRIPT="pdf2zh_translate.py" ;;
+  *) echo "quasi-translate: unknown backend '$BACKEND' (immersive|pdf2zh)" >&2; exit 2 ;;
+esac
+
 [ -x "$PYTHON" ] || "$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
 
-exec "$PYTHON" "$PLUGIN_ROOT/scripts/translate/immersive_translate.py" "$@"
+exec "$PYTHON" "$PLUGIN_ROOT/scripts/translate/$SCRIPT" "${ARGS[@]}"

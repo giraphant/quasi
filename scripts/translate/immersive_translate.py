@@ -27,6 +27,13 @@ from typing import Any
 import pymupdf
 import requests
 
+# Same reason as in pdf2zh_translate: resolve `translate.*` identically whether this
+# file was run as a script or imported as a module.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from translate.coverage import check as check_coverage  # noqa: E402
+from translate.tounicode import repair_pdf as repair_tounicode  # noqa: E402
+
 
 PROJECT_ROOT = Path.cwd()  # caller's research project root (output only, no config)
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "processing" / "translations"
@@ -560,6 +567,17 @@ def translate_slug(
         page_side=toc_page_side,
     )
     outputs["dual_tmp"].unlink(missing_ok=True)
+    repair_tounicode(outputs["final_pdf"])
+
+    # BabelDOC silently leaves body text untranslated when the source's text layer is
+    # too fragmented for its layout model, and the file looks fine either way. Must
+    # run after the ToUnicode repair: an unrepaired book extracts as mojibake in the
+    # CJK extension-A block, which this counter does not count, so a healthy 400-page
+    # book scores 0.17 and gets rejected.
+    report = check_coverage(outputs["final_pdf"], target_language=str(settings["target_language"]))
+    if not report["ok"]:
+        raise TranslationError(str(report["detail"]))
+    print(report["detail"], file=sys.stderr)
 
     return {
         "slug": slug,

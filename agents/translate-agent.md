@@ -37,7 +37,13 @@ model: sonnet
 3. 目录写入由脚本自动处理：优先复制源 PDF 内置 outline；若没有，则使用 `$CLAUDE_PROJECT_DIR/processing/chapters/{slug}/manifest.json`；若调用方提供 `toc_json`，追加 `--toc-json {toc_json_abs}`。需要让目录跳到译文页时追加 `--toc-page-side translated`。
 4. 若脚本以 exit code 5 报 `MissingAuthKeyError`：引导用户 `/plugin` → Configure options 填 `immersive_auth_key`，**不要**让用户在终端粘贴授权码。
 5. 若脚本报 source ambiguous：读出候选路径，向用户确认一次后用 `--source-file` 重跑。
-6. 脚本成功，按输出协议返回路径。
+6. 若脚本报 `Under-translated`：源 PDF 自带的文字层太碎，后端把正文当成图跳过了，产物不可交付。重做**一次**，不要循环：
+   ```bash
+   quasi-extract ocr {source_pdf_abs} $CLAUDE_PROJECT_DIR/processing/translations/{slug}-reocr.pdf eng --layout
+   quasi-translate {slug} --source-file $CLAUDE_PROJECT_DIR/processing/translations/{slug}-reocr.pdf
+   ```
+   第二次仍报 `Under-translated` 就按 error 返回，并在消息里带上两次的 coverage 数字。
+7. 脚本成功，按输出协议返回路径。
 
 ## 输出协议
 
