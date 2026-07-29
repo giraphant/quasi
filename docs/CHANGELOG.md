@@ -2,6 +2,25 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.51.2** (2026-07-29): **`--layout` 三个只有扩样本才暴露的缺陷:旧文字层没剥干净、脚注不成段、块框可能倒置。** 起因是把测试样本从 3 本扩到 8 本,回答"每本书松紧不同要不要按书标定字号"。
+  - `strip_text` 现在也剥 **Form XObject**。ABBYY 式扫描把 OCR 文字层放在名为 `OCR-<id>` 的 Form 里,而不是页面自身的 content stream —— 新测的 5 本书全是这个形状。漏剥的后果是页面上叠了两层文字,BabelDOC 的反应是**静悄悄丢正文**:coverage 0.23-0.29(健康值 0.33),其中一本每页都丢掉最长的那一段。修复后五本全部回到 0.30-0.35,页边碎片 9→0 / 23→14 / 7→3,重叠 10→3 / 23→15 / 48→19。只重写 `/Form` 子类型:同一个 `BT…ET` 正则打到图像流上会把图毁掉。
+  - `FLOW` 加入 `ref_text`。脚注就是段落,留在逐行模式里等于原样复现这条路径要修的那个毛病;它是被漏掉的最大可流类别(三本脚注密集的书各 44/52/52 行),加上后 galison 页边碎片 3→1、hounshell 32→15。叶子规则仍然保证每条注单独成段:装着它们的 `list` 父块因为有子块而被丢弃。
+  - 块框改用**排序后**的行边界,不再取 `lines[0]`/`lines[-1]`。grounding 顺序是阅读顺序,带插图的页面上一个块的末行可能在首行**上方**,于是算出倒置的矩形,PyMuPDF 直接抛 `text box must be finite and not empty` —— 真实书上的硬崩溃。
+  - 结论是不做按书标定:再测 5 本,0.95 与 0.90 的页边碎片计数在噪声内完全一致(9/9、23/23、0/0、7/7、12/12)。看起来像"书有松有紧"的那点方差,是上面这三个 bug。
+
+- **0.51.1** (2026-07-28): **`quasi-extract ocr --layout` 改为按段落成框,翻译后的中文不再被切碎。**
+  - 逐行文本层是可读性的真正瓶颈:给 BabelDOC 一个"行"框,该行的中文就必须塞进该行的宽度,塞不下的尾巴被丢到页边。三本书各 10 页实测,逐行的页边碎片 11/12/19、重叠 20/34/77,改成段落框后是 1/3/33 和 0/7/32,段落连贯性 3/3 修好。
+  - 段落归属来自 **MinerU2.5-Pro** 的 `layout_detect`,它只返回 `{type, bbox}`、不返回任何文字,所以 DS OCR2 的识别优势原封不动,MinerU 纯粹当分组器用。同一个 mlx-vlm 0.3.12 pin,约 2s/页(DS OCR2 约 20s/页),缺了就 fail-soft 退回旧的逐行层。
+  - 行距取源页自己的行间距,所以流出来的文字落在它替换的墨迹上,不需要把框撑大——撑大正是让框互相重叠、译文叠在一起的原因。几何计算(嵌套、底边外扩)对**所有** block 做,可流类别的过滤放**最后**:先过滤会让脚注 `list` 在 `ref_text` 子块消失后显得无子,六条编号注释流成一坨;也会让图上方的正文块长穿整张图、吞掉图注。这两个都是第二本书上的真实回归。
+  - 源层字号统一写 0.90 而不是逐段计算:BabelDOC 给 CJK 用 1.50 行距,而扫描书自己只有约 1.15,这个纵向缺口(不是字宽——中文同字号只要英文 0.70 的宽度)才是溢出的原因;scale 掉到 0.70 以下时 BabelDOC 不再缩字而是把段落框往右撑,那就是页边碎片本身。它还会把全文每段统一压到 `min(multimode(scales))`,所以源层字号一杂,输出就杂(主字号占比 41-49%,统一源层是 72-94%)。0.90 与 0.85 在三本书上缺陷持平,0.95 在最密的一本上一点没变大反而把均匀度腰斩,原大直接撞版。
+  - 段内各行用 `join_lines` 拼接,在拼接点还原行末连字符(两个切片共 104 处),因此 `pre-logical` 里真正的连字符不会被吃掉。
+
+- **0.51.0** (2026-07-28): **`quasi-translate` 长出第二个后端 pdf2zh,外加两道两个后端共用的产物闸。** 动机是本地化与自主可控,不是省钱。
+  - `quasi-translate SLUG [--backend immersive|pdf2zh]`,默认 immersive。选哪个后端是用户配置(`translate_backend`)而不是 agent 的判断,所以 `agents/translate-agent.md` 对后端无感。pdf2zh 路线用 uvx 拉 `pdf2zh-next`,驱动用户自备的 OpenAI 兼容端点;新增四个 userConfig:`translate_backend` / `translate_base_url` / `translate_api_key` / `translate_model`。输出契约与 immersive 逐字节同构(`processing/translations/{slug}-{lang}.pdf`、原文译文交替、书签),因为 `--use-alternating-pages-dual` 产出的页序正是 immersive 走完 `split_dual_pdf()` 之后的形状,所以源解析、输出路径、TOC 三组 helper 原样复用。不认识的 flag 直接透传给 `pdf2zh_next`。
+  - pdf2zh-next 把书译坏了也 exit 0,所以受理闸是输出页数 == 源页数 ×2;不合格的产物留在 `processing/translations/.pdf2zh-{slug}/` 供检查而不是删掉。`--pages` 局部跑会跳过 TOC:裁过的输出没有 1:1 的源页映射,书签会毫无征兆地落错页。
+  - **ToUnicode 重建**(`scripts/translate/tounicode.py`,两个后端都跑)。BabelDOC —— Immersive Translate 的 PDF 流水线用的是同一套字体栈 —— 一旦超过几页译文,`/ToUnicode` CMap 就只剩几十条而不是每个字形一条。页面渲染完全正常,但复制粘贴和 PDF 内搜索全是乱码,因为阅读器退化成把裸 CID 当码点读。子集字体是 Identity-H 且保留原始字形编号,所以映射从 `~/.cache/babeldoc/fonts` 缓存的原始 TTF 重建(`QUASI_BABELDOC_FONT_DIR` 可覆盖);每次重建都拿 BabelDOC 写对的那部分交叉验证,对不上的字体跳过而不是写坏。脚本可单独跑,用来修这之前译出的旧 PDF。
+  - **覆盖率闸**(`scripts/translate/coverage.py`,两个后端都跑,且必须排在 ToUnicode 修复之后)。一个页数正确、exit 0、零警告的 dual PDF,正文仍可能整段没译:源 PDF 自带的文字层太碎时,BabelDOC 的版面模型不再把段落认成可译块,原样留成扫描图。"译文汉字 / 源文拉丁字母"把两种情况分得很干净(实测健康页 0.30-0.36;一本只译出 43% 的书中位数 0.15、最差一页 0.01),所以闸门是逐页中位数对 `MIN_MEDIAN`。取中位数而不是均值或逐页规则,是为了不让一张图版或篇章扉页否决整本书;代价是好书里夹一张死页会放过。只对中文目标计分。顺序是硬要求:未修复的书在 CJK 扩展 A 区提取成乱码,而计数器故意不数那个区,于是一本健康的 368 页译作修复前算 0.17、修复后 0.31。`agents/translate-agent.md` 对这个错误的回答是走一次 `quasi-extract ocr --layout` 重 OCR 再译,只重一次。
+
 - **0.50.2** (2026-07-27): **证据卡通道补齐身份、落盘与失败账,Annual Reviews 下载补齐出版商路由。**
   - `steer-agent` 现在必须给每条 `web_task` 一个 2-80 字符的单段 kebab-case `card_slug`;持久 schema、Workflow structured-output 与运行时边界同时拒绝缺失值、过短/过长值、`../`、斜杠、`.md` 和大小写路径。图不再按 query 猜文件名或给碰撞项补序号,因此一次任务只有一个稳定身份,不会覆盖别卡或生成 `.md.md`。
   - agent 的 `status: ok|unchanged` 只是声明,图会另起只读探针对 expected exact path 跑 `test -s`;回执的 `card_path`/`subq` 不匹配、agent 死亡、empty/error、或文件缺失都进入统一 failure 账,只有实存卡才算证据、阻止 `no_works` 并进入 synth。steer 每次运行还会删掉大纲中的失踪卡,并从磁盘收回已写但未登记的 orphan 卡。

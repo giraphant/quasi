@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "quasi",
   "description": "Academic research toolkit — search, download, extract, analyze, synthesize",
-  "version": "0.50.2",
+  "version": "0.51.2",
   "author": {
     "name": "ramu"
   },
@@ -56,6 +56,29 @@
       "type": "string",
       "title": "Immersive Translate Zotero auth key",
       "description": "Auth key for the Immersive Translate Zotero PDF translation API. Used by the translate skill. Stored in the system keychain.",
+      "sensitive": true
+    },
+    "translate_backend": {
+      "type": "string",
+      "title": "PDF translation backend",
+      "description": "Which backend quasi-translate uses: `immersive` (Immersive Translate Zotero API, paid) or `pdf2zh` (local pdf2zh-next driving your own OpenAI-compatible endpoint). Defaults to immersive when empty."
+    },
+    "translate_base_url": {
+      "type": "string",
+      "title": "Translation model base URL",
+      "description": "OpenAI-compatible base URL for the pdf2zh backend, e.g. https://your-endpoint/v1. Stored in the system keychain.",
+      "sensitive": true
+    },
+    "translate_api_key": {
+      "type": "string",
+      "title": "Translation model API key",
+      "description": "API key for the OpenAI-compatible endpoint used by the pdf2zh backend. Stored in the system keychain.",
+      "sensitive": true
+    },
+    "translate_model": {
+      "type": "string",
+      "title": "Translation model name",
+      "description": "Model id sent to the OpenAI-compatible endpoint by the pdf2zh backend, e.g. deepseek-chat. Stored in the system keychain.",
       "sensitive": true
     },
     "kagi_session_token": {

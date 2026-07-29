@@ -21,6 +21,7 @@ quasi-extract — file → MD pipeline.
 Usage:
   quasi-extract epub  SOURCE_EPUB CHAPTERS_DIR
   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine dsocr2|tesseract]
+                                [--layout]
   quasi-extract split INPUT.pdf --output-dir DIR
                                 [--max-chapters N]
                                 [--chapters JSON]
@@ -41,11 +42,15 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
     fails, so OCR still works on machines without MLX or the model.
     """
     engine = "dsocr2"
+    layout: list[str] = []
     positional: list[str] = []
     i = 0
     while i < len(rest):
         a = rest[i]
-        if a == "--engine":
+        if a == "--layout":
+            layout = [a]
+            i += 1
+        elif a == "--engine":
             if i + 1 >= len(rest):
                 print("quasi-extract ocr: --engine requires a value (dsocr2|tesseract)", file=sys.stderr)
                 return 2
@@ -55,8 +60,10 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
             engine = a.split("=", 1)[1]
             i += 1
         elif a in ("-h", "--help"):
-            print("Usage: quasi-extract ocr INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine dsocr2|tesseract]")
+            print("Usage: quasi-extract ocr INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine dsocr2|tesseract] [--layout]")
             print("Default engine: dsocr2 (DeepSeek-OCR-2). Falls back to tesseract if unavailable.")
+            print("--layout: page image + invisible text at the OCR boxes, to re-OCR a")
+            print("          source PDF before quasi-translate. Default output is reflowed text.")
             return 0
         else:
             positional.append(a)
@@ -77,9 +84,10 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
         stem = positional[0][: -len(".pdf")] if positional[0].lower().endswith(".pdf") else positional[0]
         positional.append(f"{stem}_ocr.pdf")
 
-    rc = subprocess.call([sys.executable, str(here / "ocr_dsocr2.py"), *positional])
+    rc = subprocess.call([sys.executable, str(here / "ocr_dsocr2.py"), *positional, *layout])
     if rc == 0:
         return 0
+    # tesseract always writes image + text layer, so it satisfies --layout by default.
     sys.stderr.write("[extract] DS OCR2 unavailable/failed; falling back to tesseract.\n")
     return subprocess.call(["bash", str(here / "ocr_pdf.sh"), *positional])
 
