@@ -2397,6 +2397,57 @@ def test_safe_enrich_rechecks_target_after_receipt_is_persisted(
     assert not (output / "batch-001-changes.json").exists()
 
 
+def test_safe_enrich_rechecks_each_target_immediately_before_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration = load_module()
+    targets = {
+        "a": write_existing_paper(tmp_path, "a-2024", doi="10.1000/a"),
+        "b": write_existing_paper(tmp_path, "b-2024", doi="10.1000/b"),
+    }
+    rows = []
+    for key, target in targets.items():
+        doc = migration.read_frontmatter(target)
+        assert doc.frontmatter is not None
+        rows.append({
+            "entry_key": key, "bibtex_type": "article", "status": "safe-enrich",
+            "route": "metadata-only", "batch": 1,
+            "target_path": str(target.relative_to(tmp_path)),
+            "canonical": {**doc.frontmatter, "rating": 5},
+            "enrich_fields": {"rating": 5}, "preferred_pdf": None,
+        })
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, rows)
+    approved = tmp_path / "approved.json"
+    approved.write_text('["a", "b"]\n', encoding="utf-8")
+    real_read = migration.read_frontmatter
+    reads = {target: 0 for target in targets.values()}
+
+    def modify_first_after_preflight(path: Path):
+        doc = real_read(path)
+        if path in reads:
+            reads[path] += 1
+        if path == targets["b"] and reads[path] == 2:
+            changed = real_read(targets["a"])
+            assert changed.frontmatter is not None
+            changed.frontmatter["topics"] = ["concurrent-edit"]
+            migration.write_frontmatter(
+                targets["a"], changed.frontmatter, changed.body,
+            )
+        return doc
+
+    monkeypatch.setattr(migration, "read_frontmatter", modify_first_after_preflight)
+    output = tmp_path / "out"
+    with pytest.raises(ValueError, match="enrichment target changed after receipt: a"):
+        migration.apply_batch(tmp_path, inventory, 1, approved, output)
+
+    current = real_read(targets["a"])
+    assert current.frontmatter["topics"] == ["concurrent-edit"]
+    assert "rating" not in current.frontmatter
+    assert not (output / "batch-001-changes.json").exists()
+
+
 def test_pdf_precommit_hash_error_cleans_new_staged_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2489,3 +2540,64 @@ def test_pdf_precommit_error_cleans_all_new_staged_files(
     assert not (tmp_path / "sources" / "a-paper-2024.pdf").exists()
     assert not (tmp_path / "sources" / "b-paper-2024.pdf").exists()
     assert not (output / "batch-001-changes.json").exists()
+
+
+def test_pdf_copy_error_cleans_earlier_new_staged_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration = load_module()
+    pdf_a = tmp_path / "a.pdf"
+    pdf_b = tmp_path / "b.pdf"
+    pdf_a.write_bytes(b"%PDF-1.7\n" + b"a" * 2048)
+    pdf_b.write_bytes(b"%PDF-1.7\n" + b"b" * 2048)
+    rows = [
+        {
+            "entry_key": key, "bibtex_type": "article", "status": "safe-create",
+            "route": "process-local-pdf", "batch": 1,
+            "target_path": f"vault/papers/{key}-paper-2024.md",
+            "canonical": {
+                "type": "paper", "title": f"{key.upper()} Paper",
+                "authors": ["Jane Doe"], "year": 2024, "journal": "Journal",
+                "themes": ["materiality", "infrastructure-studies"],
+            },
+            "preferred_pdf": str(pdf),
+        }
+        for key, pdf in (("a", pdf_a), ("b", pdf_b))
+    ]
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, rows)
+    approved = tmp_path / "approved.json"
+    approved.write_text('["a", "b"]\n', encoding="utf-8")
+    real_copy = migration._copy_pdf_atomically
+
+    def fail_second_copy(source: Path, staged: Path, expected_sha256: str) -> None:
+        if source == pdf_b:
+            raise OSError("second PDF copy failed")
+        real_copy(source, staged, expected_sha256)
+
+    monkeypatch.setattr(migration, "_copy_pdf_atomically", fail_second_copy)
+    output = tmp_path / "out"
+    with pytest.raises(OSError, match="second PDF copy failed"):
+        migration.apply_batch(tmp_path, inventory, 1, approved, output)
+
+    assert not (tmp_path / "sources" / "a-paper-2024.pdf").exists()
+    assert not (tmp_path / "sources" / "b-paper-2024.pdf").exists()
+    assert not (output / "batch-001-changes.json").exists()
+
+
+def test_milestone_report_can_rewrite_the_same_output(tmp_path: Path) -> None:
+    migration = load_module()
+    inventory = tmp_path / "entries.jsonl"
+    migration.write_jsonl(inventory, [
+        {"entry_key": f"exact-{index:03d}", "status": "exact-existing",
+         "route": "exact-existing", "bibtex_type": "book"}
+        for index in range(525)
+    ])
+    output = tmp_path / "batch-001-milestone.json"
+
+    first = migration.milestone_report(inventory, tmp_path, output)
+    second = migration.milestone_report(inventory, tmp_path, output)
+
+    assert second == first
+    assert json.loads(output.read_text(encoding="utf-8")) == first

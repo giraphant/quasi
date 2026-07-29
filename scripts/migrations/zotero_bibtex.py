@@ -1652,7 +1652,6 @@ def apply_batch(
         return prior_payload
 
     # Snapshot every trust-bound input before the first target/PDF write.
-    target_docs: dict[str, Any] = {}
     row_snapshots: dict[str, dict[str, Any]] = {}
     receipt_is_new = not receipt_path.exists()
     if receipt_is_new:
@@ -1692,7 +1691,6 @@ def apply_batch(
                         raise ValueError(
                             f"enrichment conflict for {row['entry_key']}: {field}"
                         )
-                target_docs[key] = current
                 row_snapshots[key] = {
                     "target_before": {
                         "frontmatter": dict(current.frontmatter),
@@ -1781,7 +1779,6 @@ def apply_batch(
             if not target.is_file():
                 raise ValueError(f"invalid frontmatter: {target}")
             current = read_frontmatter(target)
-            target_docs[key] = current
             before, after, body_sha256 = _safe_enrich_state(row)
             if current.frontmatter not in (before, after) \
                     or _body_sha256(current.body) != body_sha256:
@@ -1800,105 +1797,110 @@ def apply_batch(
 
     changes: list[dict[str, Any]] = []
     created_staged: set[Path] = set()
-    for key in sorted(approved):
-        row = receipt_rows[key]
-        target = _resolve_vault_target(project_root, row["target_path"])
-        route = row["route"]
-        if route == "process-local-pdf":
-            source = Path(row["preferred_pdf"])
-            staged = _resolve_staged_pdf(project_root, slug_from_target(row["target_path"]))
-            source_sha256 = row["_approved_source_sha256"]
-            if not staged.exists():
-                staged.parent.mkdir(parents=True, exist_ok=True)
-                _copy_pdf_atomically(source, staged, source_sha256)
-                created_staged.add(staged)
-                action = "staged-local-pdf"
+    try:
+        for key in sorted(approved):
+            row = receipt_rows[key]
+            target = _resolve_vault_target(project_root, row["target_path"])
+            route = row["route"]
+            if route == "process-local-pdf":
+                source = Path(row["preferred_pdf"])
+                staged = _resolve_staged_pdf(
+                    project_root, slug_from_target(row["target_path"]),
+                )
+                source_sha256 = row["_approved_source_sha256"]
+                if not staged.exists():
+                    staged.parent.mkdir(parents=True, exist_ok=True)
+                    _copy_pdf_atomically(source, staged, source_sha256)
+                    created_staged.add(staged)
+                    action = "staged-local-pdf"
+                else:
+                    action = "no-op"
+                entry = {
+                    "entry_key": key, "status": row["status"],
+                    "route": route, "action": action,
+                    "target_path": row["target_path"],
+                    "source_path": str(source),
+                    "staged_path": str(staged.relative_to(project_root)),
+                    "source_sha256": source_sha256,
+                    "artifact_paths": [], "verified": False,
+                }
+                changes.append(entry)
+                continue
+
+            if route != "metadata-only":
+                raise ValueError(f"unsupported route: {route}")
+            if row["status"] == "safe-enrich":
+                doc = read_frontmatter(target)
+                before, after, body_sha256 = _safe_enrich_state(row)
+                if doc.frontmatter not in (before, after) \
+                        or _body_sha256(doc.body) != body_sha256:
+                    raise ValueError(f"enrichment target changed after receipt: {key}")
+                action = "enriched" if after != before else "no-op"
+                if doc.frontmatter == before and after != before:
+                    write_frontmatter(target, after, doc.body)
+                entry = {
+                    "entry_key": key, "status": row["status"],
+                    "route": route, "action": action,
+                    "target_path": row["target_path"], "before": before, "after": after,
+                    "body_sha256": body_sha256,
+                    "artifact_paths": [row["target_path"]], "verified": False,
+                }
             else:
-                action = "no-op"
-            entry = {
-                "entry_key": key, "status": row["status"],
-                "route": route, "action": action,
-                "target_path": row["target_path"],
-                "source_path": str(source),
-                "staged_path": str(staged.relative_to(project_root)),
-                "source_sha256": source_sha256,
-                "artifact_paths": [], "verified": False,
-            }
+                canonical = dict(row["canonical"])
+                if canonical["type"] == "paper":
+                    PaperSchema.model_validate(canonical)
+                else:
+                    BookSchema.model_validate(canonical)
+                body = render_stub(canonical["type"], canonical["title"])
+                if target.exists():
+                    current = read_frontmatter(target)
+                    if current.frontmatter != canonical or current.body != body:
+                        raise ValueError(f"safe-create target conflict: {target}")
+                    action = "no-op"
+                else:
+                    write_frontmatter(target, canonical, body)
+                    action = "created"
+                entry = {
+                    "entry_key": key, "status": row["status"],
+                    "route": route, "action": action,
+                    "target_path": row["target_path"], "before": None,
+                    "after": canonical, "body_sha256": _body_sha256(body),
+                    "artifact_paths": [row["target_path"]], "verified": False,
+                }
             changes.append(entry)
-            continue
 
-        if route != "metadata-only":
-            raise ValueError(f"unsupported route: {route}")
-        if row["status"] == "safe-enrich":
-            doc = target_docs[key]
-            before, after, body_sha256 = _safe_enrich_state(row)
-            action = "enriched" if after != before else "no-op"
-            if doc.frontmatter == before and after != before:
-                write_frontmatter(target, after, doc.body)
-            entry = {
-                "entry_key": key, "status": row["status"],
-                "route": route, "action": action,
-                "target_path": row["target_path"], "before": before, "after": after,
-                "body_sha256": body_sha256,
-                "artifact_paths": [row["target_path"]], "verified": False,
-            }
-        else:
-            canonical = dict(row["canonical"])
-            if canonical["type"] == "paper":
-                PaperSchema.model_validate(canonical)
-            else:
-                BookSchema.model_validate(canonical)
-            body = render_stub(canonical["type"], canonical["title"])
-            if target.exists():
-                current = read_frontmatter(target)
-                if current.frontmatter != canonical or current.body != body:
-                    raise ValueError(f"safe-create target conflict: {target}")
-                action = "no-op"
-            else:
-                write_frontmatter(target, canonical, body)
-                action = "created"
-            entry = {
-                "entry_key": key, "status": row["status"],
-                "route": route, "action": action,
-                "target_path": row["target_path"], "before": None, "after": canonical,
-                "body_sha256": _body_sha256(body),
-                "artifact_paths": [row["target_path"]], "verified": False,
-            }
-        changes.append(entry)
-
-    # Recheck every receipt-bound source immediately before changes is committed.
-    for key in sorted(approved):
-        row = receipt_rows[key]
-        if row["route"] != "process-local-pdf":
-            continue
-        source = Path(row["preferred_pdf"])
-        staged = _resolve_staged_pdf(project_root, slug_from_target(row["target_path"]))
-        expected_source_sha256 = row["_approved_source_sha256"]
-        try:
+        # Recheck every receipt-bound source immediately before changes is committed.
+        for key in sorted(approved):
+            row = receipt_rows[key]
+            if row["route"] != "process-local-pdf":
+                continue
+            source = Path(row["preferred_pdf"])
+            staged = _resolve_staged_pdf(
+                project_root, slug_from_target(row["target_path"]),
+            )
+            expected_source_sha256 = row["_approved_source_sha256"]
             matches_receipt = (
                 is_readable_pdf(source)
                 and is_readable_pdf(staged)
                 and sha256_file(source) == expected_source_sha256
                 and sha256_file(staged) == expected_source_sha256
             )
-        except OSError:
-            for created in created_staged:
-                created.unlink(missing_ok=True)
-            raise
-        if not matches_receipt:
-            for created in created_staged:
-                created.unlink(missing_ok=True)
-            raise ValueError(f"source PDF changed while staging: {source}")
+            if not matches_receipt:
+                raise ValueError(f"source PDF changed while staging: {source}")
 
-    for entry in changes:
-        entry["provenance"] = _entry_provenance_stamp(entry, receipt_sha256)
-    payload = {
-        "version": 1,
-        "batch": batch,
-        "receipt_sha256": receipt_sha256,
-        "entries": changes,
-    }
-    write_json(changes_path, payload)
+        for entry in changes:
+            entry["provenance"] = _entry_provenance_stamp(entry, receipt_sha256)
+        payload = {
+            "version": 1,
+            "batch": batch,
+            "receipt_sha256": receipt_sha256,
+            "entries": changes,
+        }
+        write_json(changes_path, payload)
+    except Exception:
+        for created in created_staged:
+            created.unlink(missing_ok=True)
+        raise
     return payload
 
 
@@ -2221,7 +2223,15 @@ def milestone_report(
 ) -> dict[str, Any]:
     output_resolved = output_path.resolve()
     changes_root = changes_dir.resolve()
-    reserved_paths = [inventory_path, *changes_dir.glob("batch-*.json")]
+    reserved_paths = [
+        inventory_path,
+        *(
+            path for path in changes_dir.glob("batch-*.json")
+            if re.fullmatch(
+                r"batch-\d{3}-(?:changes|approved|review)\.json", path.name,
+            )
+        ),
+    ]
     same_identity = output_path.exists() and any(
         path.exists() and output_path.samefile(path) for path in reserved_paths
     )
