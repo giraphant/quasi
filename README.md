@@ -70,7 +70,9 @@ acquisition 等非产物结构的行为，由所属 `scripts/workflows/operation
 
 | Agent | 职责 |
 |---|---|
-| `search-agent` | 将研究意图转成 `quasi-search book|paper` 查询 |
+| `metadata-agent` | 将一份已知 Book/Paper 请求解析为 canonical 书目身份 |
+| `discovery-agent` | 为 Author、Topic demand 或缺失引文发现 bounded candidates |
+| `localisation-agent` | 为一份 canonical Book 核验中文版本关系 |
 | `steer-agent` | topic 掌舵:维护 02-outline 研究大纲,返回子问题定向候选 |
 | `webcard-agent` | topic 圈外证据卡:一条 web 任务 → 一张核验过的 cards/*.md |
 | `download-agent` | 文件获取、候选判断、接受入库 |
@@ -117,7 +119,7 @@ Codex 插件当前不会从插件包直接注册 `agents/*.md`;运行
 这些角色,未安装或当前宿主没有 role selector 时仍回退通用 worker。同步后需开启新的
 Codex thread 才会加载新角色。
 `quasi-codex-runner` 用独立 `codex exec` worker,保留作 headless / CI fallback。
-只给题名的单本/论文请求会先由可见 `search-agent` 核定 DOI/ISBN、作者顺序、年份和
+只给题名的单本/论文请求会先由可见 `metadata-agent` 核定 DOI/ISBN、作者顺序、年份和
 canonical slug;主线程不会自行 WebSearch 猜 metadata。
 
 `quasi-extract ocr` 默认走 **DS OCR2**（DeepSeek-OCR-2，mlx-vlm，Apple

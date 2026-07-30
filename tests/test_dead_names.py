@@ -6,6 +6,7 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 DEAD_NAMES = [
+    "search-agent",
     "discover-agent",
     "new-discover-agent",
     "quasi-search books",

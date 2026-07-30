@@ -70,7 +70,7 @@ Current userConfig mapping:
 ### State and handoff contracts
 
 - The skill main process owns workflow state files: manifests, decisions, search caches, recovery files, and `.quasi/<domain>/...` orchestration artifacts.
-- `search-agent` returns JSON and does not write files.
+- `metadata-agent`, `discovery-agent`, and `localisation-agent` return JSON and do not write files.
 - `download-agent` accepts or rejects candidates through `quasi-download`; it returns `DOWNLOAD_RESULT.per_item` and does not own caller manifests.
 - `extract-agent` writes chapter extraction output and `processing/chapters/{slug}/manifest.json`.
 - `analyse-agent`, `synthesis-agent`, `proofread-agent`, and `citecheck-agent` write only the exact product path assigned by the caller.
@@ -145,7 +145,7 @@ writer receipt is an unknown outcome and must block rather than retry.
 
 Public skill routing separates material intake from topic research. `collect-material` owns paper, book, author, Talk, and Translation; `precise-topic` owns vault recall, outline steering, evidence cards, human seed gates, and topic synthesis. Both still call `workflows/process-material.mjs`, so topic candidates reuse the same paper/book router without duplicating graph nodes. Draft proofreading and citation closure use `finalise-draft`.
 
-For a single title-only book or paper request, `collect-material` must dispatch `search-agent` before vault recall or graph startup. The verified record owns author order, year, identifiers, venue, access URLs, and canonical slug. The main process must not substitute generic web or browser search; a failed download must preserve `failure_reason` and per-source `attempts` in the graph result.
+For a single title-only book or paper request, `collect-material` must dispatch `metadata-agent` before vault recall or graph startup. Author/Topic candidate finding uses `discovery-agent`; Chinese-edition matching uses `localisation-agent`. The verified metadata record owns author order, year, identifiers, venue, access URLs, and canonical slug. The main process must not substitute generic web or browser search; a failed download must preserve `failure_reason` and per-source `attempts` in the graph result.
 
 Paper metadata merging treats Crossref as the authority for the journal container title and decodes its HTML entities at the adapter boundary. Do not let asynchronous adapter completion order choose `venue`; OpenAlex may omit meaningful punctuation from the same journal name.
 
@@ -227,4 +227,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.13.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.14.

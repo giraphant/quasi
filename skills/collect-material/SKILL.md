@@ -34,7 +34,7 @@ Translation 则保持独立 receipt,不伪装成 Material。
 
 单本 `book|paper` 的输入归一化是强制前置阶段:
 
-- 用户只给题名/自然语言引文、没有 ISBN(book) / DOI(paper)时,**先 dispatch `quasi:search-agent` 一次**,再做 Step 0 和启动图。Book 即使已有 ISBN，只要缺 publisher，也必须用同一个 metadata agent 以 ISBN/title/authors 补 publisher；不可让 identifier-bearing request 静默进入 identity block。不可先凭题名猜 year、publisher、journal、作者顺序、材料类型或 canonical slug。
+- 用户只给题名/自然语言引文、没有 ISBN(book) / DOI(paper)时,**先 dispatch `quasi:metadata-agent` 一次**,再做 Step 0 和启动图。Book 即使已有 ISBN，只要缺 publisher，也必须用同一个 metadata agent 以 ISBN/title/authors 补 publisher；不可让 identifier-bearing request 静默进入 identity block。不可先凭题名猜 year、publisher、journal、作者顺序、材料类型或 canonical slug。
 - search 命中后以 `picked` 补齐 `title/authors/year/isbn|doi/oa_url/url/journal`;Book
   还必须合并有证据的 `publisher` 与显式
   `category=monograph|edited-volume|handbook|other`。采用 picked 按
@@ -73,13 +73,13 @@ Translation 则保持独立 receipt,不伪装成 Material。
 - Claude Code:通过 **Workflow 工具**调 `$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs`,把 `{kind, ...}` 作为 `args` 传入。
 - Pi:把同一份 args 写到 `.quasi/temp/` JSON,运行 `quasi-pi-runner --script "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" --args-file <path>`;stdout 是最终 JSON 回执。
 - Codex GUI:启动长驻 `quasi-codex-driver`,由**当前会话**响应其 JSONL `agent_request`,用原生 `spawn_agent` 启动 worker;这些 worker 必须登记在当前 thread 的 agent tree。启动前必须完整读取并遵守 `$CLAUDE_PLUGIN_ROOT/skills/collect-material/references/codex-native-driver.md`。只有当前宿主没有原生 subagent / 可续写 exec 工具时才回退 `quasi-codex-runner`。
-- Codex 的 title-only metadata 前置搜索也必须是当前 thread 的可见原生 worker:用 `fork_turns:"none"` 和已注册的 `quasi_search` role(若当前 `spawn_agent` 暴露 `agent_type`)启动唯一 target;task name 采用 `metadata_{slug}_{id_suffix}` 这样的可读唯一名。无 role selector 时才让通用 worker 读取本插件 `agents/search-agent.md`。只返回该 agent 合同的 JSON,不要由主进程自己 WebSearch。
+- Codex 的 title-only metadata resolution 也必须是当前 thread 的可见原生 worker:用 `fork_turns:"none"` 和已注册的 `quasi_metadata` role(若当前 `spawn_agent` 暴露 `agent_type`)启动唯一 target;task name 采用 `metadata_{slug}_{id_suffix}` 这样的可读唯一名。无 role selector 时才让通用 worker 读取本插件 `agents/metadata-agent.md`。只返回该 agent 合同的 JSON,不要由主进程自己 WebSearch。
 - 图内用 `agent(prompt, {agentType:'quasi:<name>'})` 起 worker
   agent(download/extract/analyse/synthesis/audit/translate)。
 - 图不写 skill 状态文件;人工卡点由本 skill 主进程用 `AskUserQuestion` 处理。
 - **Step 0 召回与 LOCALISE 是主进程(图外)的活**:图无 fs、不能调 bin,所以本地
   召回/去重与 `quasi-helpers localise scan|write` 由本 skill 主进程执行。
-- LOCALISE 时按需 dispatch `search-agent`(kind=book,读 overview 搜 `localisations.zh.candidates`),主进程再用 `quasi-helpers localise write` 落盘;幂等于原书 ISBN。适用面:单本 book 的产物,和 author 跑落地的每本书(图回执带 `book_slugs` 名单)。
+- LOCALISE 时按需 dispatch `localisation-agent`(读 exact overview,只核验 `localisations.zh.candidates`),主进程再用 `quasi-helpers localise write` 落盘;幂等于原书 ISBN。适用面:单本 book 的产物,和 author 跑落地的每本书(图回执带 `book_slugs` 名单)。
 - TRANSLATE:Paper 的 top-level `translate:true` 随 Paper args 进入同一次 shared
   Workflow;直接翻译请求使用同 bundle 的 `kind:translate`。Skill 只消费
   `translation_receipt`、展示 typed gate 并在用户明确选择 source 后发起新 run;
@@ -112,7 +112,7 @@ Translation 则保持独立 receipt,不伪装成 Material。
 │    ├─ synth_failed     → 报告 known failure；Paper/Book/Author 均不得自动重投 writer 或整张图
 │    ├─ audit_escalated  → 报告 escalated,交人工
 │    └─ 其余一律按失败报出(枚举 ok,不枚举失败态)
-├─ LOCALISE(book,及 author 的 book_slugs;ok 后,图外):localise scan → pending 则 search-agent → localise write
+├─ LOCALISE(book,及 author 的 book_slugs;ok 后,图外):localise scan → pending 则 localisation-agent → localise write
 └─ marple open 最终产物(best-effort)
 ```
 
@@ -129,8 +129,8 @@ if args.kind == "translate":
     args.target_language = args.get("target_language") or args.get("target") or "zh-CN"
 
 # 单本 title-only 请求先走专用 metadata agent。Claude 用注册的
-# Agent("quasi:search-agent");Codex 用当前 thread 原生 spawn_agent,worker 读取
-# $CLAUDE_PLUGIN_ROOT/agents/search-agent.md;Pi 用其原生 subagent。主进程不做 web search。
+# Agent("quasi:metadata-agent");Codex 用当前 thread 原生 spawn_agent,worker 读取
+# $CLAUDE_PLUGIN_ROOT/agents/metadata-agent.md;Pi 用其原生 subagent。主进程不做 web search。
 identifier = (
     args.meta.get("isbn") if args.kind == "book"
     else args.meta.get("doi") if args.kind == "paper"
@@ -144,7 +144,7 @@ needs_metadata = (
     )
 )
 if needs_metadata:
-    metadata = Agent("quasi:search-agent", foreground=True,
+    metadata = Agent("quasi:metadata-agent", foreground=True,
                      prompt=f"kind: {args.kind}\ntitle: {args.meta.get('title')}\n"
                             f"author: {first(args.meta.get('authors'))}\n"
                             f"identifier: {identifier}\n"
@@ -169,7 +169,7 @@ if needs_metadata:
             "toc_page_side",
         )
         args.meta = merge_non_null(args.meta, picked)
-        # search-agent uses high|medium for its own candidate judgement; the
+        # metadata-agent uses high|medium for its own candidate judgement; the
         # Workflow ingress contract records that accepted judgement as verified.
         args.meta["confidence"] = "verified"
         args.slug = picked.slug
@@ -425,9 +425,9 @@ if translation_receipt:
         report("translation receipt terminal status invalid"); return
 
 # Strict Paper/Book/Author/Translation writer 都只允许一次 invocation。null/timeout/cancel/畸形
-# receipt 不能盲目重投。唯一可自动发起的新 run 是 Paper acquisition 的只读式
-# reconciliation：receipt 明确要求 paper.reconcile，且 exact source 已存在，因此下一次
-# acquire invocation 只能核验 existing target，不允许再次 fetch。该新 run 最多一次。
+# receipt 不能盲目重投。唯一可自动发起的新 run 是 acquisition 的只读式 reconciliation：
+# receipt 明确要求对应 material.reconcile，且唯一 exact source 已存在，因此下一次 acquire
+# invocation 只能核验 existing target，不允许再次 fetch。该新 run 最多一次。
 if result.status == "blocked":
     typed = (
         result.get("translation_receipt")
@@ -444,10 +444,27 @@ if result.status == "blocked":
         and resume.get("operation_key") == "paper.reconcile"
         and exists(f"sources/{key}.pdf")
     )
-    if safe_paper_acquire_reconcile:
+    book_source_paths = [
+        path for path in (
+            f"sources/{key}.epub",
+            f"sources/{key}.pdf",
+        )
+        if exists(path)
+    ]
+    safe_book_acquire_reconcile = (
+        args.kind == "book"
+        and failure.get("code") == "book.writer_receipt_mismatch"
+        and failure.get("operation_key") in ("book.acquire", "book.download.legacy")
+        and failure.get("outcome") == "unknown"
+        and resume.get("operation_key") == "book.reconcile"
+        and len(book_source_paths) == 1
+    )
+    if safe_paper_acquire_reconcile or safe_book_acquire_reconcile:
+        material_kind = "Paper" if safe_paper_acquire_reconcile else "Book"
         report(
-            "Paper acquisition 回执未知，但 exact source 已存在；"
-            "发起一次 bounded paper.reconcile 新 run（只核验 existing target，不再 fetch）"
+            f"{material_kind} acquisition 回执未知，但唯一 exact source 已存在；"
+            f"发起一次 bounded {material_kind.lower()}.reconcile 新 run"
+            "（只核验 existing target，不再 fetch）"
         )
         result = run_graph(wf_args)
         typed = result.get("material_receipt")
@@ -501,9 +518,9 @@ for slug in localise_slugs:
     scan = Bash(f"quasi-helpers localise scan --path vault/books/{slug} --json")
     if scan.pending > 0:
         overview = f"vault/books/{slug}/00-overview.md"
-        search = Agent("quasi:search-agent", foreground=True,
-                       prompt=f"kind: book\ncontext: read {overview} and search metadata/localisations")
-        candidates_file = write_temp_json(search.localisations.zh.candidates)   # .quasi/temp/
+        localisation = Agent("quasi:localisation-agent", foreground=True,
+                             prompt=f"book_path: {overview}\nfind verified Chinese editions")
+        candidates_file = write_temp_json(localisation.localisations.zh.candidates)   # .quasi/temp/
         Bash(f"quasi-helpers localise write --book-path {overview} --candidates-file {candidates_file}")
 
 # marple open 最终产物(best-effort UX;失败不影响流程)

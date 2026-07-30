@@ -97,7 +97,9 @@ so unrelated subagents retain Claude Code's default row.
 
 | agent | depends on |
 |---|---|
-| `search-agent` | `quasi-search` |
+| `metadata-agent` | `quasi-search book|paper` → one canonical identity |
+| `discovery-agent` | `quasi-search book|paper` → bounded Author/Topic/citation candidates |
+| `localisation-agent` | `quasi-search book` localisation sidecar |
 | `steer-agent` | topic outline page + `quasi-search` |
 | `webcard-agent` | `quasi-search kagi` + WebFetch → topic `cards/` page |
 | `download-agent` | `quasi-download`, direct AA search import |

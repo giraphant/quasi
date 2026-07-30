@@ -69,7 +69,7 @@ def test_codex_agent_sync_generates_native_roles_from_canonical_markdown(
 
 def test_codex_agent_check_detects_missing_or_outdated_role(tmp_path: Path) -> None:
     run_sync(tmp_path)
-    role = tmp_path / ".codex" / "agents" / "quasi_search.toml"
+    role = tmp_path / ".codex" / "agents" / "quasi_metadata.toml"
     role.write_text(role.read_text(encoding="utf-8") + "# stale\n", encoding="utf-8")
 
     checked = run_sync(tmp_path, "--check", "--json", check=False)

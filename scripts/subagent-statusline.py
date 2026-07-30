@@ -42,7 +42,7 @@ LABEL_PHASES = (
     (
         "Author",
         re.compile(
-            r"^(?:search-books|search-papers|synth-author|audit-author|"
+            r"^(?:discover-books|discover-papers|synth-author|audit-author|"
             r"audit2-author|regen-author):"
         ),
     ),

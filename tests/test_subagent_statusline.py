@@ -236,8 +236,8 @@ def test_numeric_effort_and_percentage_require_both_numeric_fields() -> None:
             [
                 {
                     "id": "numeric-effort",
-                    "type": "quasi:search-agent",
-                    "label": "search-papers:author",
+                    "type": "quasi:discovery-agent",
+                    "label": "discover-papers:author",
                     "status": "running",
                     "model": "claude-haiku-4-5-20251001",
                     "effort": 4096,
@@ -258,9 +258,9 @@ def test_numeric_effort_and_percentage_require_both_numeric_fields() -> None:
     assert rows(proc) == [
         {
             "id": "numeric-effort",
-            "content": (
-                "Author/search-papers:author · running · Haiku 4.5 · 4096 · 50%"
-            ),
+                "content": (
+                    "Author/discover-papers:author · running · Haiku 4.5 · 4096 · 50%"
+                ),
         },
         {
             "id": "missing-window",

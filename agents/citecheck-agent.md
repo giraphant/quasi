@@ -66,7 +66,7 @@ unresolved  证据不足,不能硬判
 ```text
 keep         保留当前 picked_slug
 replace      建议替换为某个候选
-search_more  需要 search-agent 或人工继续查
+search_more  需要 discovery-agent 或人工继续查
 skip         建议本轮不出 bib
 ask_user     需要用户自由判断
 ```

@@ -33,7 +33,7 @@ description: Use when the user wants to finalise a draft by proofreading text an
 - `proofread-agent` 只处理一个 draft section;全局收敛和人工审稿由主进程完成。
 - `citecheck-agent` 只写指定 `verdict_out`;每条 note 是一张 review card,供主进程透传给用户。
 - `quasi-helpers citation review-cards` 只合并 `verdicts/batch-*.json` 为 `{ct_dir}/review-cards.json`;不做判断、不改 decisions。
-- `search-agent` 只为 miss citation 返回 recovery 候选;主进程判断是否进入
+- `discovery-agent` 只为 miss citation 返回 recovery 候选;主进程判断是否进入
   `vault_todo/draft_rewrites/skip`。
 - 所有人类决策集中在 Phase 2.4,不要拆给 agent。
 
@@ -53,7 +53,7 @@ description: Use when the user wants to finalise a draft by proofreading text an
 ├─ Phase 2  CITATION    ─ 解析 + LLM review cards + 在线 recover + CC-native 审定 + 增量 emit .bib
 │   ├─ 2.1 parse + resolve                         (deterministic)
 │   ├─ 2.2 citecheck-agent 批(single + multi only)  → review cards
-│   ├─ 2.3 search-agent 批(miss)                    → online recovery
+│   ├─ 2.3 discovery-agent 批(miss)                 → online recovery
 │   ├─ 2.4 CC-native 审定(AskUserQuestion 每轮≤4张) ← 每轮答复后立即 apply
 │   └─ 2.5 final summary + references.bib path
 └─ Phase 3  CLEANUP     ─ 等用户审完触发("审完了" 等)删 proofread 记录块
@@ -192,13 +192,13 @@ Agent("quasi:citecheck-agent", background=True,
 quasi-helpers citation review-cards {ct_dir}/verdicts -o {ct_dir}/review-cards.json
 ```
 
-### 2.3 — search-agent recover (miss only) — `--no-recover` 时跳过
+### 2.3 — discovery-agent recover (miss only) — `--no-recover` 时跳过
 
 ```python
 miss = [e for e in manifest.entries if e.status == "miss"]
 recovery_jobs = []
 for v in miss:  # 并发, cap 4
-    job = Agent("quasi:search-agent", background=True,
+    job = Agent("quasi:discovery-agent", background=True,
                 prompt=f"""
 task: recover the real source of this missing citation
 
@@ -214,7 +214,7 @@ constraints:
 """)
     recovery_jobs.append((v, job))
 
-# 等 search-agent 全部返回后,主进程自己判断/归一化/落盘。
+# 等 discovery-agent 全部返回后,主进程自己判断/归一化/落盘。
 for v, job in recovery_jobs:
     search = job.result
     recovery = choose_recovery_candidate(
@@ -232,7 +232,7 @@ for v, job in recovery_jobs:
 
 每条产出 `verdicts/recovery-{key}.json`,含 `online_recovery: {title, author, year, doi, isbn, suggested_slug, process_book_cmd, confidence}`。
 
-Recovery 的判断和落盘属于 `wrap-up` 主进程:search-agent 只搜索并返回候选,不写
+Recovery 的判断和落盘属于 `wrap-up` 主进程:discovery-agent 只搜索并返回候选,不写
 verdict 文件,也不决定是否进入后续用户审定。
 
 ### 2.4 — CC-native review cards 审定 (主进程, 关键步骤)
@@ -461,7 +461,7 @@ Wrap-up citation review done.
     ├── verdicts/
     │   ├── batch-001.json     # citecheck-agent review cards
     │   ├── batch-002.json
-    │   └── recovery-{key}.json # search-agent online recoveries
+    │   └── recovery-{key}.json # discovery-agent online recoveries
     └── decisions.json         # ← CC-native review 增量收集的最终决策
 
 (project_root)/

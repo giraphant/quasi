@@ -56,7 +56,7 @@ description: Use when the user wants to define and research a precise topic thro
 - Codex GUI:用长驻 `quasi-codex-driver` 连接当前 thread 的原生 subagents。启动前必须完整读取并遵守 `$CLAUDE_PLUGIN_ROOT/skills/collect-material/references/codex-native-driver.md`;没有原生 subagent 或可续写 exec 时才回退 `quasi-codex-runner`。
 - 图内 `steer-agent` 独占写 `02-outline.md`;`webcard-agent` 一次只写调用方指定的一张 card;paper/book 候选继续走共享 router。
 - 主进程只拥有 Step 0、本轮人工卡点、LOCALISE 回填和最终报告,不写图内研究状态。
-- LOCALISE:对 `result.book_slugs` 逐本运行 `quasi-helpers localise scan`;pending 时 dispatch `quasi:search-agent`,再用 `quasi-helpers localise write` 写入。
+- LOCALISE:对 `result.book_slugs` 逐本运行 `quasi-helpers localise scan`;pending 时 dispatch `quasi:localisation-agent`,再用 `quasi-helpers localise write` 写入。
 
 ## 工作流
 
@@ -178,11 +178,11 @@ for slug in result.get("book_slugs") or []:
     scan = Bash(f"quasi-helpers localise scan --path vault/books/{slug} --json")
     if scan.pending > 0:
         overview = f"vault/books/{slug}/00-overview.md"
-        search = Agent(
-            "quasi:search-agent",
+        localisation = Agent(
+            "quasi:localisation-agent",
             foreground=True,
-            prompt=f"kind: book\ncontext: read {overview} and search metadata/localisations")
-        candidates_file = write_temp_json(search.localisations.zh.candidates)
+            prompt=f"book_path: {overview}\nfind verified Chinese editions")
+        candidates_file = write_temp_json(localisation.localisations.zh.candidates)
         Bash(f"quasi-helpers localise write --book-path {overview} "
              f"--candidates-file {candidates_file}")
 

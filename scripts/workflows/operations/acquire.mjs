@@ -135,45 +135,6 @@ export const PAPER_ACQUIRE_SCHEMA = {
   },
 };
 
-export const SEARCH_SCHEMA = {
-  type: "object",
-  properties: {
-    candidates: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["slug"],
-        properties: {
-          kind: { type: "string" },
-          slug: { type: "string" },
-          title: { type: "string" },
-          authors: { type: "array" },
-          year: {},
-          isbn: { type: "string" },
-          publisher: { type: "string" },
-          category: {
-            type: "string",
-            enum: [
-              "monograph",
-              "edited-volume",
-              "handbook",
-              "other",
-            ],
-          },
-          confidence: {
-            type: "string",
-            enum: ["provided", "verified"],
-          },
-          doi: { type: "string" },
-          oa_url: { type: "string" },
-          url: { type: "string" },
-          journal: { type: "string" },
-        },
-      },
-    },
-  },
-};
-
 export const PROBE_SCHEMA = {
   type: "object",
   properties: {
@@ -517,6 +478,35 @@ export const BOOK_ACQUISITION_POLICY = {
     ],
   },
   year_evidence: {
+    receipt_contract: {
+      exact_keys: [
+        "slug_year",
+        "source_years",
+        "pdf_signals",
+        "recommended_year",
+        "recommendation_reason",
+        "verdict",
+      ],
+      source_years:
+        "object mapping each independently observed source label to one integer year",
+      pdf_signals: {
+        exact_keys: [
+          "first_published",
+          "copyright_year",
+          "original_year",
+          "other_years",
+        ],
+        nullable_fields: [
+          "first_published",
+          "copyright_year",
+          "original_year",
+        ],
+        other_years: "array of independently observed integer years",
+      },
+      recommended_year: "integer or null",
+      recommendation_reason: "non-empty evidence summary",
+      verdict: ["MATCH", "MISMATCH", "AMBIGUOUS"],
+    },
     min_independent_supports: 2,
     count_one_observation_once: true,
     decision_recheck: {
@@ -811,8 +801,9 @@ export function authorDiscoveryPrompt(
         ? BOOK_ARTIFACT_CONTRACT.identity
         : PAPER_ARTIFACT_CONTRACT.identity,
   };
-  return `Execute exactly one readonly ${key} operation through the search-agent contract.
-Call quasi-search for ${kind} metadata, once plus at most the contract's one search retry.
+  return `Execute exactly one readonly ${key} operation through the discovery-agent contract.
+Call quasi-search for ${kind} discovery exactly once in this invocation. Only the runtime may
+start a new worker with the same request after an unknown readonly outcome.
 Select at most count=${count} representative works by ${full}${
     topic ? ` relevant to ${topic}` : ""
   }, preserving the chosen order. Zero count means return an empty candidate list without
@@ -831,22 +822,6 @@ failure={code,operation_key:"${key}",outcome:"known",retryable:false,message}.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}
 \`\`\``;
-}
-
-export function authorSearchPrompt(full, topic, kind, count) {
-  return `task: find top ${count} representative ${kind}s by ${full}${topic ? ` on topic ${topic}` : ""}, sorted by citations
-context:
-  kind: ${kind}
-  author: ${full}
-  topic: ${topic}
-constraints:
-  count: ${count}
-  sort: citations
-输出 candidates[],每项带 canonical slug ({author-surname}-{short-title}-{year})、title、authors、year${
-    kind === "book"
-      ? "、isbn、由 metadata source 明确返回的 publisher、category(monograph|edited-volume|handbook|other)、confidence=verified；publisher 不可核验的书不要列入 candidates"
-      : "、doi、oa_url、journal"
-  }。`;
 }
 
 export function vaultRecallPrompt(desc, max) {

@@ -1553,7 +1553,7 @@ async function runMaterialRound(
             ),
         {
           phase: "Topic",
-          agentType: "quasi:search-agent",
+          agentType: "quasi:discovery-agent",
           label: `discover:${demandId}:${state.slug}`,
           schema: book
             ? TOPIC_DISCOVER_BOOK_SCHEMA

@@ -90,7 +90,7 @@ document slash-command syntax.
   `analyse-agent` writes the requested analysis file, `synthesis-agent` writes
   the requested synthesis file, `proofread-agent` edits the requested draft
   section, and `citecheck-agent` writes its `verdict_out`.
-- `search-agent` never writes files. It returns curated candidates to the
+- `metadata-agent`, `discovery-agent`, and `localisation-agent` never write files. They return curated evidence to the
   skill, and the skill decides whether and where to persist them.
 - Agents must not mutate manifests, decisions, caches, or other workflow state
   unless their agent contract names that exact output path.

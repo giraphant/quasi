@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.14** (2026-07-30): **按工作位置拆分检索 worker，并让 Book acquisition 可严格恢复。**
+  - 旧的多模式 `search-agent` 删除；已知材料书目核验、Author/Topic/缺失引文发现、中文版本关系分别由 `metadata-agent`、`discovery-agent`、`localisation-agent` 承担。`download-agent` 只为既定 identity 寻找访问路径，不再混入 metadata 或 discovery。
+  - Book acquisition envelope 现在逐字段声明固定 `year_evidence` 合同，禁止 worker 把年份证据改写为自拟字段或自然语言 verdict。真实下载已落盘但 receipt 未能证明严格合同时，`collect-material` 仅在唯一 exact source 存在且 resume 明确为 `book.reconcile` 时发起一次 bounded 新 run；它只核验现有文件，不再 fetch。
+  - Author、Topic、citation recovery、LOCALISE、Codex role 映射、状态行与维护文档全部切到新 worker 边界；生成 Workflow 与源码保持确定性一致。
+
 - **0.52.13** (2026-07-30): **材料 Skill 恢复自然语言“处理”路由。**
   - `collect-material` 的 routing description 现在明确覆盖处理一篇或多篇论文、文章或书籍；用户无需刻意说“采集入库”，原有采集、作者材料、PDF、翻译和录音意图仍保留。
 

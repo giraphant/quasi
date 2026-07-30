@@ -2631,6 +2631,34 @@ well-formed command status "failed", nonzero exit, or explicitly reported absent
       ]
     },
     year_evidence: {
+      receipt_contract: {
+        exact_keys: [
+          "slug_year",
+          "source_years",
+          "pdf_signals",
+          "recommended_year",
+          "recommendation_reason",
+          "verdict"
+        ],
+        source_years: "object mapping each independently observed source label to one integer year",
+        pdf_signals: {
+          exact_keys: [
+            "first_published",
+            "copyright_year",
+            "original_year",
+            "other_years"
+          ],
+          nullable_fields: [
+            "first_published",
+            "copyright_year",
+            "original_year"
+          ],
+          other_years: "array of independently observed integer years"
+        },
+        recommended_year: "integer or null",
+        recommendation_reason: "non-empty evidence summary",
+        verdict: ["MATCH", "MISMATCH", "AMBIGUOUS"]
+      },
       min_independent_supports: 2,
       count_one_observation_once: true,
       decision_recheck: {
@@ -2888,8 +2916,9 @@ ${JSON.stringify(request, null, 2)}
       sort: "citations",
       identity_contract: kind === "book" ? BOOK_ARTIFACT_CONTRACT.identity : PAPER_ARTIFACT_CONTRACT.identity
     };
-    return `Execute exactly one readonly ${key} operation through the search-agent contract.
-Call quasi-search for ${kind} metadata, once plus at most the contract's one search retry.
+    return `Execute exactly one readonly ${key} operation through the discovery-agent contract.
+Call quasi-search for ${kind} discovery exactly once in this invocation. Only the runtime may
+start a new worker with the same request after an unknown readonly outcome.
 Select at most count=${count} representative works by ${full}${topic ? ` relevant to ${topic}` : ""}, preserving the chosen order. Zero count means return an empty candidate list without
 calling the CLI.
 
@@ -5096,7 +5125,7 @@ overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-o
           ),
           {
             phase: "Author",
-            agentType: "quasi:search-agent",
+            agentType: "quasi:discovery-agent",
             label: `discover-books:${name}`,
             schema: AUTHOR_DISCOVER_BOOKS_SCHEMA
           },
@@ -5122,7 +5151,7 @@ overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-o
           ),
           {
             phase: "Author",
-            agentType: "quasi:search-agent",
+            agentType: "quasi:discovery-agent",
             label: `discover-papers:${name}`,
             schema: AUTHOR_DISCOVER_PAPERS_SCHEMA
           },
@@ -13075,7 +13104,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
           ),
           {
             phase: "Topic",
-            agentType: "quasi:search-agent",
+            agentType: "quasi:discovery-agent",
             label: `discover:${demandId}:${state.slug}`,
             schema: book ? TOPIC_DISCOVER_BOOK_SCHEMA : TOPIC_DISCOVER_PAPER_SCHEMA
           },

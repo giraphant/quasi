@@ -93,7 +93,7 @@ subprocess. The plugin does not rely on CWD `.kagi.toml`.
 
 ## Agent Rules
 
-`agents/search-agent.md` was updated:
+`agents/localisation-agent.md` owns candidate verification:
 
 - first call should use only caller/context original fields:
   ISBN, original title, original author, year, original query

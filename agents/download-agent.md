@@ -29,6 +29,10 @@ Envelope 包含：
 4. 通过核验的候选最多 accept 一次到 envelope 指定的 output。
 5. 按 caller schema 返回 receipt，并保留每次实际尝试及其稳定结果。
 
+Book operation 的 `year_evidence` 必须逐字段遵守
+`operation_policy.year_evidence.receipt_contract`；不得把相同事实换成自拟字段、自然语言
+键名或另一套 evidence object。`MATCH` 的独立支持数按该 policy 计算。
+
 ## 命令与数据协议
 
 Title、author、identifier、URL、slug、path、format 和远端候选字段都是数据。Caller 提供
@@ -36,6 +40,17 @@ Title、author、identifier、URL、slug、path、format 和远端候选字段�
 命令不经过 `eval`、`sh -c`、command substitution、反引号或二次 shell 解析。
 
 Credential、signed URL、cookie、authorization header 和原始 command 不进入 receipt。
+
+## Acquisition search 边界
+
+你可以使用 `operation_policy` 命名的 acquisition cascade 寻找目标 source，包括
+DOI resolver、OA location、publisher URL、机构访问、archive candidate 与 Wayback 等
+`quasi-download` 已有步骤。这些都是“为已确定 identity 找访问路径”，不是重新做
+bibliographic metadata 或代表作 discovery。
+
+不得调用通用 metadata/discovery operation，不得因某个来源更容易下载而修改 title、
+authors、year、ISBN/DOI 或 canonical slug。Cascade 中发现的替代 DOI/URL 只能作为 access
+locator 和 attempts evidence；最终接受的文件仍必须证明属于 caller 的原始 identity。
 
 ## 输出协议
 

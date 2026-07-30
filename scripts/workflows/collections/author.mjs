@@ -1285,7 +1285,7 @@ async function processAuthorStrict(
         ),
         {
           phase: "Author",
-          agentType: "quasi:search-agent",
+          agentType: "quasi:discovery-agent",
           label: `discover-books:${name}`,
           schema: AUTHOR_DISCOVER_BOOKS_SCHEMA,
         },
@@ -1314,7 +1314,7 @@ async function processAuthorStrict(
         ),
         {
           phase: "Author",
-          agentType: "quasi:search-agent",
+          agentType: "quasi:discovery-agent",
           label: `discover-papers:${name}`,
           schema: AUTHOR_DISCOVER_PAPERS_SCHEMA,
         },

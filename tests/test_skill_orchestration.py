@@ -156,20 +156,20 @@ def test_collect_material_title_only_input_requires_metadata_agent():
     skill = (
         PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
-    search_agent = (PLUGIN_ROOT / "agents" / "search-agent.md").read_text(
+    metadata_agent = (PLUGIN_ROOT / "agents" / "metadata-agent.md").read_text(
         encoding="utf-8"
     )
 
-    assert "title-only metadata 前置搜索" in skill
-    assert 'Agent("quasi:search-agent"' in skill
-    assert "quasi_search" in skill and 'fork_turns:"none"' in skill
+    assert "title-only metadata resolution" in skill
+    assert 'Agent("quasi:metadata-agent"' in skill
+    assert "quasi_metadata" in skill and 'fork_turns:"none"' in skill
     assert "metadata_{slug}_{id_suffix}" in skill
     assert "不得在主进程改用 WebSearch、WebFetch 或 browser" in skill
-    assert skill.index('Agent("quasi:search-agent"') < skill.index(
+    assert skill.index('Agent("quasi:metadata-agent"') < skill.index(
         "# 该 kind 的主键 + 最终产物路径"
     )
     assert "picked.slug" in skill
-    assert "{首列作者姓}-{短题名}-{year}" in search_agent
+    assert "{首列作者姓}-{短题名}-{year}" in metadata_agent
 
 
 def test_collect_material_step_zero_uses_temp_items_file_not_inline_json():
@@ -188,24 +188,22 @@ def test_collect_material_step_zero_uses_temp_items_file_not_inline_json():
     )
 
 
-def test_search_agent_book_picked_requires_evidence_backed_identity():
+def test_metadata_agent_book_picked_requires_evidence_backed_identity():
     skill = (
         PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
-    agent = (PLUGIN_ROOT / "agents" / "search-agent.md").read_text(
+    agent = (PLUGIN_ROOT / "agents" / "metadata-agent.md").read_text(
         encoding="utf-8"
     )
 
     for field in (
         "slug,title,authors,year,isbn,publisher,category,confidence",
-        '"publisher": "Evidence-backed Publisher"',
-        '"confidence": "high"',
+        "`picked:null`",
+        '`confidence:"low"`',
     ):
         assert field in agent
     assert "monograph|edited-volume|handbook|other" in agent
-    assert "没有 publisher 证据时不得猜" in agent
-    assert "`picked: null` 和顶层" in agent
-    assert '`confidence: "low"`' in agent
+    assert "Publisher 必须有 catalog" in agent
     assert 'picked_confidence in ("high", "medium")' in skill
     assert 'if args.kind == "book" and not trusted_picked:' in skill
     assert (
@@ -279,6 +277,16 @@ def test_book_download_match_requires_two_distinct_observed_year_signals():
     assert "count_one_observation_once: true" in acquire
     assert "BOOK_ACQUISITION_POLICY" in acquire
     assert "operation_policy: BOOK_ACQUISITION_POLICY" in acquire
+    for field in (
+        "slug_year",
+        "source_years",
+        "pdf_signals",
+        "recommended_year",
+        "recommendation_reason",
+        "verdict",
+    ):
+        assert f'"{field}"' in acquire
+    assert "operation_policy.year_evidence.receipt_contract" in agent
     assert "dc:date" not in agent
 
 
@@ -322,16 +330,50 @@ def test_frontmatter_descriptions_are_routing_hints():
     assert offenders == []
 
 
-def test_search_agent_does_not_hide_catalog_rescue_or_retry():
-    text = (PLUGIN_ROOT / "agents" / "search-agent.md").read_text(encoding="utf-8")
+def test_scenario_search_agents_keep_distinct_contracts():
+    metadata = (PLUGIN_ROOT / "agents" / "metadata-agent.md").read_text(
+        encoding="utf-8"
+    )
+    discovery = (PLUGIN_ROOT / "agents" / "discovery-agent.md").read_text(
+        encoding="utf-8"
+    )
+    localisation = (PLUGIN_ROOT / "agents" / "localisation-agent.md").read_text(
+        encoding="utf-8"
+    )
+    collect = (
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    topic = (
+        PLUGIN_ROOT / "skills" / "precise-topic" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    draft = (
+        PLUGIN_ROOT / "skills" / "finalise-draft" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    author_graph = source_file("collections/author.mjs")
+    topic_graph = source_file("research/topic-recall.mjs")
 
-    assert "一个 invocation 只运行 caller 要求的一次" in text
-    assert "不得自行改 query" in text
-    assert "隐藏重试" in text
-    assert "启动 Kagi rescue" in text
-    assert "重试、中文补强和人闸均由 Skill/Graph" in text
-    assert "最多 5 次" not in text
-    assert "site:books.com.tw" not in text
+    assert "运行一次 `quasi-search book|paper" in metadata
+    assert "追加第二轮搜索" in metadata
+    assert "启动 Kagi rescue" in metadata
+    assert "Author discovery" not in metadata
+    assert "Topic per-demand discovery" not in metadata
+    assert "localisations.zh" not in metadata
+
+    assert "Author discovery" in discovery
+    assert "Topic per-demand discovery" in discovery
+    assert "Missing citation discovery" in discovery
+    assert "不找中译本" in discovery
+
+    assert "localisations.zh.candidates" in localisation
+    assert "不包含 canonical Book `picked`" in localisation
+    assert "不写 localisation cache" in localisation
+    assert 'Agent("quasi:metadata-agent"' in collect
+    assert 'Agent("quasi:localisation-agent"' in collect
+    assert '"quasi:localisation-agent"' in topic
+    assert 'Agent("quasi:discovery-agent"' in draft
+    assert 'agentType: "quasi:discovery-agent"' in author_graph
+    assert 'agentType: "quasi:discovery-agent"' in topic_graph
+    assert not (PLUGIN_ROOT / "agents" / "search-agent.md").exists()
 
 
 def test_audit_agent_escalates_external_metadata_instead_of_searching():
@@ -428,11 +470,15 @@ def test_book_ingress_requires_publisher_enrichment_even_with_isbn():
         encoding="utf-8"
     )
     acquire = source_file("operations/acquire.mjs")
+    metadata = (PLUGIN_ROOT / "agents" / "metadata-agent.md").read_text(
+        encoding="utf-8"
+    )
 
     assert 'args.kind == "book" and not args.meta.get("publisher")' in skill
     assert 'report("Book publisher 无可靠 metadata evidence；未启动 Workflow")' in skill
     assert "publisher: { type: \"string\" }" in acquire
-    assert "publisher 不可核验的书不要列入 candidates" in acquire
+    assert "Publisher 必须有 catalog" in metadata
+    assert "`picked:null`" in metadata
 
 
 def test_book_strict_slice_uses_typed_operations_and_neutral_unknown_codes():
@@ -565,7 +611,7 @@ def test_material_and_author_operation_schemas_are_single_top_level_objects():
 
 def test_author_collection_uses_strict_operations_and_shared_agent_contracts():
     author = source_file("collections/author.mjs")
-    search = (PLUGIN_ROOT / "agents" / "search-agent.md").read_text(
+    discovery = (PLUGIN_ROOT / "agents" / "discovery-agent.md").read_text(
         encoding="utf-8"
     )
     synthesis = (
@@ -590,8 +636,9 @@ def test_author_collection_uses_strict_operations_and_shared_agent_contracts():
     assert "runtime.coalesce" in author
     assert "retryNull" not in author
     assert "OVERWRITE" not in author
-    assert "author.discover-books" in search
-    assert "author.discover-papers" in search
+    assert "author.discover-books" in discovery
+    assert "author.discover-papers" in discovery
+    assert 'agentType: "quasi:discovery-agent"' in author
     assert "author.synthesise" in synthesis
     assert "通用 audit transaction" in audit
     assert "Book chapter Read" in synthesis
@@ -974,7 +1021,7 @@ def test_material_and_topic_have_distinct_public_routing_hints():
     assert '{"kind": "topic"' in topic
 
 
-def test_collect_material_normalises_container_title_and_reconciles_only_existing_paper_acquisition():
+def test_collect_material_normalises_container_title_and_reconciles_only_existing_acquisition():
     material = (
         PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
@@ -983,6 +1030,10 @@ def test_collect_material_normalises_container_title_and_reconciles_only_existin
     assert 'failure.get("code") == "paper.writer_receipt_mismatch"' in material
     assert 'resume.get("operation_key") == "paper.reconcile"' in material
     assert 'exists(f"sources/{key}.pdf")' in material
+    assert 'failure.get("code") == "book.writer_receipt_mismatch"' in material
+    assert 'resume.get("operation_key") == "book.reconcile"' in material
+    assert 'f"sources/{key}.epub"' in material
+    assert "len(book_source_paths) == 1" in material
     assert "只核验 existing target，不再 fetch" in material
     assert material.count("result = run_graph(wf_args)") >= 2
 
