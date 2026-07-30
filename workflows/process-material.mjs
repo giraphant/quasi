@@ -7843,8 +7843,9 @@ ${JSON.stringify(request, null, 2)}`;
     ]) || !CHAPTER_SLOT.test(chapter.slot) || !BOOK_SLUG.test(chapter.slug) || !filenameIsSafe || !validText3(chapter.title, 1, 500) || !Number.isInteger(chapter.word_count) || chapter.word_count < 0)
       return false;
     const noPages = chapter.start_page === null && chapter.end_page === null;
+    const startOnly = Number.isInteger(chapter.start_page) && chapter.start_page >= 1 && chapter.end_page === null;
     const pages = Number.isInteger(chapter.start_page) && Number.isInteger(chapter.end_page) && chapter.start_page >= 1 && chapter.end_page >= chapter.start_page;
-    return noPages || pages;
+    return noPages || startOnly || pages;
   }
   function uniqueChapters(chapters) {
     if (!Array.isArray(chapters) || !chapters.length || chapters.length > 150 || chapters.some((chapter) => !validChapterRef(chapter)))

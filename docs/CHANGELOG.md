@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.15** (2026-07-30): **Book TOC 提取回执与严格 Graph 对齐。**
+  - `quasi-extract split --method toc` 的 manifest 会保留已知 `start_page`，在没有逐章写入确定性结束页时返回 `end_page: null`。Book Graph 现在接受这一合法的 start-only 章节引用，不再把已经事务落盘的 TOC 章节集误判为 `book.writer_receipt_mismatch`。
+  - 其它页码边界仍保持 fail closed：只有结束页、页码小于 1、或结束页早于起始页继续拒绝。回归覆盖真实 TOC receipt 形状与两个反例，并重新生成唯一 Workflow bundle。
+
 - **0.52.14** (2026-07-30): **按工作位置拆分检索 worker，并让 Book acquisition 可严格恢复。**
   - 旧的多模式 `search-agent` 删除；已知材料书目核验、Author/Topic/缺失引文发现、中文版本关系分别由 `metadata-agent`、`discovery-agent`、`localisation-agent` 承担。`download-agent` 只为既定 identity 寻找访问路径，不再混入 metadata 或 discovery。
   - Book acquisition envelope 现在逐字段声明固定 `year_evidence` 合同，禁止 worker 把年份证据改写为自拟字段或自然语言 verdict。真实下载已落盘但 receipt 未能证明严格合同时，`collect-material` 仅在唯一 exact source 存在且 resume 明确为 `book.reconcile` 时发起一次 bounded 新 run；它只核验现有文件，不再 fetch。

@@ -987,12 +987,16 @@ function validChapterRef(chapter) {
     return false;
   const noPages =
     chapter.start_page === null && chapter.end_page === null;
+  const startOnly =
+    Number.isInteger(chapter.start_page) &&
+    chapter.start_page >= 1 &&
+    chapter.end_page === null;
   const pages =
     Number.isInteger(chapter.start_page) &&
     Number.isInteger(chapter.end_page) &&
     chapter.start_page >= 1 &&
     chapter.end_page >= chapter.start_page;
-  return noPages || pages;
+  return noPages || startOnly || pages;
 }
 
 function uniqueChapters(chapters) {

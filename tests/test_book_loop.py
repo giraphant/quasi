@@ -1124,6 +1124,45 @@ def test_three_chapter_happy_path_has_out_of_order_fanout_barriers(
     assert request_path(synth_request, "output") == book_paths(slug)["overview"]
 
 
+def test_toc_extract_accepts_known_start_with_unknown_end_pages(
+    tmp_path: Path,
+) -> None:
+    slug = "book-toc-start-only-pages"
+    paths = book_paths(slug, extension="pdf")
+    members = manifest_members(slug)
+    for member in members:
+        member["end_page"] = None
+    responses = happy_responses(slug, extension="pdf")
+    plan = plan_receipt(
+        slug,
+        input_path=paths["source"],
+        normalized_path=paths["source_text"],
+        mode="toc",
+    )
+    plan["chapters"] = []
+    responses["chapter.plan"] = [reply(plan)]
+    responses["chapter.extract"] = [
+        reply(
+            chapter_extract_receipt(
+                slug,
+                input_path=paths["source"],
+                mode="toc",
+                members=members,
+            )
+        )
+    ]
+
+    report = run_book_module(
+        tmp_path,
+        slug=slug,
+        meta=book_meta(format="pdf"),
+        responses=responses,
+    )
+
+    assert_material_complete(report["result"], slug)
+    assert one_call(report, "chapter.extract")["mode"] == "toc"
+
+
 def test_book_identity_preserves_publisher_and_category_ingress(
     tmp_path: Path,
 ) -> None:
@@ -2180,6 +2219,20 @@ def test_every_book_writer_unknown_blocks_without_same_run_replay(
         (
             "unsafe-member-slug-slash",
             lambda members: members[0].update(slug="nested/chapter"),
+        ),
+        (
+            "end-page-without-start-page",
+            lambda members: members[0].update(
+                start_page=None,
+                end_page=10,
+            ),
+        ),
+        (
+            "end-page-before-start-page",
+            lambda members: members[0].update(
+                start_page=10,
+                end_page=9,
+            ),
         ),
         (
             "duplicate-member-slot",
