@@ -81,6 +81,29 @@ def test_paper_doi_exact_match():
     assert merged[0]["cited_by_count"] == 42
 
 
+def test_paper_venue_prefers_crossref_regardless_of_completion_order():
+    openalex = search.PaperRecord(
+        title="X",
+        doi="10.1234/y",
+        year=2020,
+        venue="Theory Culture & Society",
+    ).to_dict()
+    crossref = search.PaperRecord(
+        title="X",
+        doi="10.1234/y",
+        year=2020,
+        venue="Theory, Culture & Society",
+    ).to_dict()
+
+    for by_source in (
+        {"openalex": [openalex], "crossref": [crossref]},
+        {"crossref": [crossref], "openalex": [openalex]},
+    ):
+        merged = search.match_and_priority_merge(by_source, kind="paper")
+        assert merged[0]["venue"] == "Theory, Culture & Society"
+        assert merged[0]["_field_src"]["venue"] == "crossref"
+
+
 def test_conflict_only_on_whitelist_fields():
     """categories / subtitle / language disagreement does NOT surface as conflict."""
     by_source = {
@@ -101,6 +124,7 @@ def main():
         test_no_conflict_when_all_sources_agree,
         test_fuzzy_title_year_merge_when_no_isbn,
         test_paper_doi_exact_match,
+        test_paper_venue_prefers_crossref_regardless_of_completion_order,
         test_conflict_only_on_whitelist_fields,
     ]
     failed = 0

@@ -41,6 +41,19 @@ def test_base_url_rejects_a_bare_hostname():
         p2z.normalise_base_url("api.deepseek.com")
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://user:pass@api.example/v1",
+        "https://api.example/v1?token=secret",
+        "https://api.example/v1#secret",
+    ],
+)
+def test_base_url_rejects_secret_bearing_url_components(value):
+    with pytest.raises(TranslationError, match="userinfo|query"):
+        p2z.normalise_base_url(value)
+
+
 def _make_pdf(path: Path, pages: int) -> Path:
     doc = pymupdf.open()
     for _ in range(pages):
@@ -51,7 +64,7 @@ def _make_pdf(path: Path, pages: int) -> Path:
     return path
 
 
-def test_build_command_uses_alternating_dual_and_forwards_extras():
+def test_build_command_uses_alternating_dual_and_keeps_secrets_out_of_argv():
     cmd = p2z.build_command(
         source_pdf=Path("/s/a.pdf"),
         work_dir=Path("/w"),
@@ -64,10 +77,61 @@ def test_build_command_uses_alternating_dual_and_forwards_extras():
     assert "--no-mono" in cmd
     # Without this BabelDOC refuses every scanned book — most of the vault.
     assert "--auto-enable-ocr-workaround" in cmd
-    assert cmd[cmd.index("--openai-compatible-base-url") + 1] == "https://x/v1"
-    assert cmd[cmd.index("--openai-compatible-model") + 1] == "m"
+    assert CFG["base_url"] not in cmd
+    assert CFG["api_key"] not in cmd
+    assert CFG["model"] not in cmd
+    assert not any("openai-compatible-api-key" in item for item in cmd)
     assert cmd[-2:] == ["--qps", "4"]
     assert "--only-include-translated-page" not in cmd  # no --pages, nothing to trim
+
+
+def test_run_pdf2zh_delivers_provider_config_only_through_env(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run(cmd, *, check, env):
+        captured.update({"cmd": cmd, "check": check, "env": env})
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(p2z.shutil, "which", lambda name: "/usr/bin/uvx")
+    monkeypatch.setattr(p2z.subprocess, "run", fake_run)
+    monkeypatch.setenv("QUASI_TRANSLATE_BASE_URL", CFG["base_url"])
+    monkeypatch.setenv("QUASI_TRANSLATE_API_KEY", "secret-provider-key")
+    monkeypatch.setenv("QUASI_TRANSLATE_MODEL", CFG["model"])
+    cmd = p2z.build_command(
+        source_pdf=Path("/s/a.pdf"),
+        work_dir=tmp_path,
+        target_language="zh-CN",
+        cfg={**CFG, "api_key": "secret-provider-key"},
+        extra_args=[],
+    )
+
+    p2z.run_pdf2zh(cmd, tmp_path)
+
+    assert "secret-provider-key" not in captured["cmd"]
+    assert captured["env"]["PDF2ZH_OPENAI_COMPATIBLE_API_KEY"] == "secret-provider-key"
+    assert captured["env"]["PDF2ZH_OPENAI_COMPATIBLE_BASE_URL"] == CFG["base_url"]
+    assert captured["env"]["PDF2ZH_OPENAI_COMPATIBLE_MODEL"] == CFG["model"]
+
+
+@pytest.mark.parametrize(
+    "extras",
+    [
+        ["--output", "/tmp/override"],
+        ["--openai-compatible-api-key", "secret"],
+        ["--lang-out", "fr"],
+        ["--config-file", "/tmp/config.toml"],
+        ["--unknown", "value"],
+    ],
+)
+def test_legacy_extra_args_cannot_override_managed_contract(extras):
+    with pytest.raises(TranslationError, match="Unsupported"):
+        p2z.build_command(
+            source_pdf=Path("/s/a.pdf"),
+            work_dir=Path("/w"),
+            target_language="zh-CN",
+            cfg=CFG,
+            extra_args=extras,
+        )
 
 
 def test_pages_flag_trims_the_output():

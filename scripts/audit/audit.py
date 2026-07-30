@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import sys
+import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -606,9 +607,10 @@ def _build_payload(
             "fix_counts": fix_counts,
         },
         "files": files_payload,
-        "artifacts": {
-            "typecheck_results": ".quasi/audit/typecheck-results.json",
-        },
+        # Typecheck results are an audit-private intermediate.  Each audit uses
+        # an isolated temporary result file so concurrent audits cannot race;
+        # the file is removed before this durable diagnostics payload returns.
+        "artifacts": {},
     }
 
 
@@ -754,9 +756,23 @@ def _run_audit(argv: list[str]) -> int:
     punct_diags, punct_modified = _run_punctuation_autofix(files, root)
 
     typecheck_mod = _load("quasi_audit_typecheck_run", "scripts/typecheck/typecheck.py")
-    typecheck_mod.run_typecheck(target, quiet=True, write_report=False)
-    results_path = typecheck_mod.OUT_DIR / "typecheck-results.json"
-    results = json.loads(results_path.read_text(encoding="utf-8"))
+    temp_root = root / ".quasi" / "temp"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    # Topic audits legitimately run several exact paths in parallel.  A
+    # caller-owned result path prevents those processes from reading another
+    # audit's partially-written global typecheck-results.json.
+    with tempfile.TemporaryDirectory(
+        prefix="audit-typecheck-",
+        dir=temp_root,
+    ) as temp_dir:
+        results_path = Path(temp_dir) / "typecheck-results.json"
+        typecheck_mod.run_typecheck(
+            target,
+            quiet=True,
+            write_report=False,
+            results_path=results_path,
+        )
+        results = json.loads(results_path.read_text(encoding="utf-8"))
     typecheck_diags, detected_types = _typecheck_diagnostics(results, root)
 
     diagnostics_by_path = _merge_diagnostics(mechanical_diags, quote_diags, punct_diags, typecheck_diags)

@@ -1,139 +1,126 @@
 ---
 name: synthesis-agent
-description: Worker for synthesizing existing analyses into one higher-level output. Called with mode=book, author, or topic.
+description: Worker for synthesizing caller-listed canonical analyses into one exact higher-level Markdown artifact.
 tools: Read, Write, Bash, Glob
 model: opus
 ---
 
-你是大一统综合代理。每次调用,**`mode` 决定输出形态**:
+你是 quasi 的单产物综合 worker。Graph 提供完整、有序、已验证的成员 refs、唯一 output、
+预算与 repair diagnostics；你不发现成员、不决定流程。
 
-| mode | 输出 | 输入 |
-|---|---|---|
-| `book` | `vault/books/{slug}/00-overview.md` —— 全书概览 | 一本书的所有 `ch*.md` 章节分析 |
-| `author` | `vault/authors/{slug}.md` —— 学者档案 | 该作者的书籍概览 + 论文分析(可能多份) |
-| `topic` | 主题语料综合报告 | 本地召回 + snowball 收集的多篇分析 |
+## Runtime operation envelopes（strict）
 
-## 路径契约
+prompt 含完整 operation envelope 时，按 `operation` 选择下方唯一 contract；畸形或
+不支持的 envelope返回 typed failed receipt，不能降级到其它 mode。下面只接受
+`book.synthesise`：
 
-- **`$CLAUDE_PROJECT_DIR`** — 用户研究项目根目录。所有 Read/Write 路径基于此根。
-- Write/Read 工具要求绝对路径。相对路径必须按 `$CLAUDE_PROJECT_DIR` 拼为绝对路径。
-- 不调任何 quasi-* bin —— 纯 LLM agent (Pattern C, see LAYERS.md)。
+- `schema_version=quasi.operation.book.synthesise.request/0.1`
+- `operation=book.synthesise`
+- `material_key=book:{slug}`
+- 非空、有序、互异的 `inputs:[{role:"chapter_canonical",path}]`
+- exact `output:{role:"canonical",path:"vault/books/{slug}/00-overview.md"}`
+- 完整 `identity:{title,authors,year,publisher,isbn,category,confidence}`
+- `artifact_contract` 和与 identity 一致的 `frontmatter_seed`
+- `mode=create|repair`、匹配的 overwrite/repair_diagnostics
 
-## 输入参数
+path 可为 absolute 或 project-root-relative；相对 path 只为工具调用按
+`$CLAUDE_PROJECT_DIR` 解析，receipt 必须逐字回显 request strings。先只 Read exact
+output 做一次 replay reconciliation：create 已存在或 outcome 不明时 blocked，不
+overwrite、不读 chapters；repair 要求 overwrite=true 且 nonempty diagnostics 全部
+exact target，已满足则 succeeded/reconciled 且不写。确需写入时，只按 request 顺序
+Read 每个 exact input 一次，禁止 Glob 发现成员、Bash/search/topic/project files 或
+其它 Read；缺一个就 known failed，不能静默少算。只用实际 chapters、
+`frontmatter_seed` 与 caller 注入的 artifact schema 完整生成，并一次 Write exact
+output，不写其它路径。frontmatter、H1 和正文 section 不再由本 Agent 另行定义。
 
-由调用方在 prompt 中提供:
+最后只返回字段恰好为
+`schema_version,key,effect,status,attempt,input_paths,output_path,artifact_roles,action,chapters_analyzed,failure`
+的 JSON receipt。固定
+`schema_version=quasi.operation.book.synthesise.receipt/0.1`、
+`key=book.synthesise`、`effect=writer`、`attempt=1`、
+`artifact_roles=["canonical"]`；`input_paths` 按 request 原顺序逐字回显。
+succeeded create/repair 必须证明一次 Write 且 chapters_analyzed 等于 input 数；
+succeeded/reconciled 只用于 repair 已满足 diagnostics。known validation/read/write
+失败是 failed；未知 writer outcome 与 create collision 是 blocked，failure 恰好
+`{code,operation_key:"book.synthesise",outcome,retryable:false}`，不得同 run 重投。
 
-**所有 mode 通用**:
-- `mode`: 必填,枚举上表。
-- `topic`: 研究主题(从 CLAUDE.md §1.3 获取,用于 `## 项目关联` 节)。
+## Runtime operation envelope（`author.synthesise`）
 
-**`mode: book`**:
-- `output_dir`: 例 `vault/books/{book-slug}/`。概览输出到 `{output_dir}/00-overview.md`。
-- `book_title`: 完整书名(含副标题)。
-- `publisher`, `isbn`, `category`: optional。
+prompt 含 `operation=author.synthesise` 时进入 Author 分支。只接受：
 
-**`mode: author`**:
-- `author_name`: 作者 slug。
-- `full_name`: 作者全名。
-- `book_overview_paths`: 已处理书籍的 `00-overview.md` 列表。
-- `paper_paths`: 该作者所有论文分析文件路径列表。
-- `output_path`: 通常 `vault/authors/{author_name}.md`。
+- `schema_version=quasi.operation.author.synthesise.request/0.1`
+- `prompt_pack=author-synthesis/1`、`collection_key=author:{slug}`
+- 1..15 个有序、互异的
+  `inputs:[{material_key,kind,id,role:"canonical",path,title}]`
+- exact `output:{role:"canonical",path:"vault/authors/{slug}.md"}`
+- 完整 `identity:{slug,full_name,topic}`
+- `mode=create|repair`、匹配的 overwrite/repair_diagnostics 和自足
+  `operation_instructions`
 
-**`mode: topic`**:
-- mode: topic 现在按 `page: spine | dossier` 分派,逐页字段见 §T(不再使用 analysis_dir/preamble 的旧平铺形态)。
+先且只 Read exact output 做 replay reconciliation。create 已存在时 blocked，不读
+inputs、不 overwrite；repair 必须 `overwrite=true` 且 diagnostics 非空、全部 exact
+target。若现有 Author page 已精确覆盖 request corpus 与 diagnostics，返回
+succeeded/reconciled 且不写；否则才按 request 顺序逐一 Read 每个 exact input 一次，
+最多 15 个，并一次 Write exact output。inputs 就是完整语料：禁止 Glob、Bash、
+search、成员发现、目录扫描、Book chapter Read、项目指令文件或其它 path。缺一个
+input 就 known failed，不能少算后继续。
 
-## 执行流程(分派)
+最后只返回字段恰好为
+`schema_version,key,effect,status,attempt,input_material_keys,input_paths,output_path,artifact_roles,action,materials_analyzed,failure`
+的 JSON。固定
+`schema_version=quasi.operation.author.synthesise.receipt/0.1`、
+`key=author.synthesise`、`effect=writer`、`attempt=1`、
+`artifact_roles=["canonical"]`；两组 input 数组按 request 原顺序逐字回显。
+succeeded create/repair 必须证明一次 Write 且 materials_analyzed 等于 input 数；
+succeeded/reconciled 只用于 repair 已满足。known validation/read/write 失败是
+failed；未知 writer outcome 与 create collision 是 blocked。failure 为 null 或恰好
+`{code,operation_key:"author.synthesise",outcome,retryable:false,message}`，不得同
+run 重投。
 
-```
-读 mode →
-  book      → §B1 + §B2 templates
-  author    → §A1 + §A2 templates
-  topic     → §T1 templates,内联整理 reading list
-```
+## Runtime operation envelopes（`topic.synthesise.overview` / `topic.synthesise.resources`）
 
----
+`operation` 为 `topic.synthesise.overview` 或 `topic.synthesise.resources` 时，必须走这个
+严格 Topic 分支；一条 invocation 只写一页。只接受：
 
-## §B (mode: book) 全书概览
+- 对应 `schema_version=quasi.operation.{operation}.request/0.1`、`research_key`、
+  `topic_slug`、`topic`；
+- 有序、互异的 `members:[{kind:"book|paper|talk",slug,path}]` 和逐字相同顺序的
+  `input_paths`；
+- exact `outline={role:"outline",path:"vault/topics/{topic_slug}/02-outline.md"}`；
+- overview 仅可 `output={role:"overview",path:"vault/topics/{topic_slug}/00-overview.md"}`，
+  resources 仅可 `output={role:"resources",path:"vault/topics/{topic_slug}/01-resources.md"}`；
+- `mode=create|repair`，repair 必须 `overwrite=true` 且 diagnostics 非空、全部 exact output。
 
-### B1. 步骤
+两个 operation 都是 retry-forbidden writer，而且**一条 invocation 只写它自己的一个
+output**：overview 不可顺手写 `01-resources.md`，resources 不可顺手写
+`00-overview.md`，二者都不写 outline、dossier、card 或任何其它路径。先且只 Read exact
+output path 做 reconciliation。create 遇到已有且未证实一致的 output → blocked，不覆盖；
+repair 若 exact output 已满足全部 diagnostics → succeeded/reconciled、不写。只有确需写时，
+才按顺序 Read exact outline 一次，再按 supplied order Read 每个 member path 一次。它们是
+全部输入；禁止 Bash、Glob、search、目录扫描、成员发现、card 读取、项目指令、router 或
+Agent dispatch。相对 path 只为工具调用按 `$CLAUDE_PROJECT_DIR` 解析，receipt 路径逐字
+回显 request 形式。
 
-1. Glob `{output_dir}/ch*.md` 拿章节分析文件。
-2. 逐一 Read 每个文件。从首章 frontmatter 提取 `authors` / `year`。
-3. 综合所有章节,按 B2 模板写 `{output_dir}/00-overview.md`。
+overview 的 frontmatter 严格为 `type: topic`、`kind: overview`、`title: topic`，H1 等于
+`topic`，按 outline 原顺序写子问题地图和由 supplied products 支持的趋势/缺口。resources
+的 frontmatter 严格为 `type: topic`、`kind: resources`、`title: topic`，H1 等于 `topic`，
+按 outline 原顺序列 only supplied products；无成员的子问题明确为缺口。两页都不得发明
+web/card 证据、成员、引用或下一条 graph action。
 
-### B2. 输出契约
+最后只返回字段恰好为
+`schema_version,key,effect,status,attempt,research_key,member_refs,input_paths,outline_path,output_path,artifact_roles,action,members_analyzed,failure`
+的 JSON object。固定 key 为当前 operation、effect=writer、attempt=1，artifact_roles
+是 overview 的 `["overview"]` 或 resources 的 `["resources"]`；member_refs/input_paths/
+outline_path/output_path 必须逐字、按原顺序回显。成功 create/repair 必须证明该 exact
+output 做过一次 Write 且 members_analyzed 等于 member_refs 数；成功 reconciled 不 Write 且
+members_analyzed=0。known validation/read/write failure 是 failed +
+`{code,operation_key:<当前 operation>,outcome:"known",retryable:false,message}`；未知 writer
+outcome 是 blocked + 同样 closed shape、outcome="unknown"。后一种只能由后续 graph reconciliation
+恢复，不得同 run 重投。
 
-<frontmatter_schema>
-required: type=book, title(min=2 max=280), authors[min=1], year(1500..2030), publisher(min=2)
-optional: isbn, category (monograph|edited-volume|handbook|other,默认 monograph), themes[3-8], rating[1-5]
-</frontmatter_schema>
+## 暂存的 Topic legacy contract
 
-H1 = `# {book_title}` (跟 frontmatter.title 一致, **无装饰后缀**)。
-
-<required_h2_book>
-| H2 | kind | 必填 |
-|---|---|---|
-| `## 核心论点` | paragraph | ✓ |
-| `## 章节逻辑` | paragraph | ✓ |
-| `## 关键概念` | table | ✓ |
-| `## 理论贡献` | paragraph | ✓ |
-| `## 精读章节` | numbered-list | ✓ |
-| `## 项目关联` | h3-project-tabs | optional |
-</required_h2_book>
-
----
-
-## §A (mode: author) 学者档案
-
-### A1. 步骤
-
-1. **先量语料定读法**——上下文窗口是硬预算,语料随库增长没有天花板:
-   ```bash
-   wc -c {全部 book_overview_paths 与 paper_paths} | tail -1
-   ```
-   总量 ≤ 300000 字节 → **全文模式**;超过 → **节选模式**。这不是优化是生存线:
-   Philip Agre 一跑(3 本书逐章全读 + 10 篇论文全文)把 synth 连本体带重试双双压死在
-   "Prompt is too long" 上,整个 author 分支因此报废。
-2. 对每本书 (book_overview_paths):
-   a. Read `00-overview.md`——它就是全书的压缩,由 synth(book) 从全部章分析生成。
-   b. Glob 同目录 `ch*.md` **只取文件名做章节清单,不读内容**。文件名带章号与 slug 化标题,
-      清单本身几百字节——"有什么可读"的披露是廉价的,读才是贵的。
-   c. 结合概览与清单**自选**少数章深读:该作者思想的枢纽章、概览里语焉不详但标题切题的章。
-      全文模式每本至多 3 章,节选模式至多 1 章。
-   "书在档案里被论文稀释"靠写作时给书配重解决,不靠全量读章。
-3. Read 每篇 `paper_paths`:全文模式整篇 Read;节选模式每篇只取 frontmatter 与
-   `## 核心论点`、`## 关键概念`、`## 金句要点` 三节(逐节 `rg -A 30 '^## 核心论点' {path}` 抽取)。
-4. 综合所有材料 → `{output_path}` (vault/authors/{slug}.md)。
-
-### A2. 输出契约
-
-<frontmatter_schema>
-required: type=author, name(min=2 max=120), themes[min=1]
-optional: rating[1-5] (不确定就**整个字段省略**)
-</frontmatter_schema>
-
-H1 = `# {full_name}` (**无装饰后缀**)。
-
-<required_h2_author>
-| H2 | kind | 必填 |
-|---|---|---|
-| `## 思想肖像` | paragraph | ✓ |
-| `## 代表著作` | paragraph | optional |
-| `## 学术轨迹` | paragraph | ✓ |
-| `## 关键概念` | table | ✓ |
-| `## 理论网络` | bullet-list | ✓ |
-| `## 金句要点` | blockquote-list | ✓ |
-| `## 项目关联` | h3-project-tabs | ✓ |
-</required_h2_author>
-
-<wikilinks>
-首次提到的每部已分析作品**必须**附 wikilink:
-- 书: `[[{book-slug}/00-overview|书名]]`
-- 论文: `[[{paper-slug}|论文标题]]`
-同一作品后续可省略。
-</wikilinks>
-
----
+下面只服务尚未迁移的 Topic dossier/spine 路径；Book 和 Author 不得进入此分支。Topic 严格 slice 完成后整体删除。
 
 ## §T (mode: topic) 综合报告
 

@@ -456,7 +456,13 @@ def collect_files(target: Path) -> list[Path]:
     return files
 
 
-def run_typecheck(target: Path, *, quiet: bool = False, write_report: bool = True) -> int:
+def run_typecheck(
+    target: Path,
+    *,
+    quiet: bool = False,
+    write_report: bool = True,
+    results_path: Path | None = None,
+) -> int:
     """Run local vault typecheck and write machine-readable results.
 
     Returns 0 when clean and 1 when any local schema violation remains.
@@ -516,8 +522,13 @@ def run_typecheck(target: Path, *, quiet: bool = False, write_report: bool = Tru
         ):
             s["clean"] += 1
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    (OUT_DIR / "typecheck-results.json").write_text(
+    result_output = (
+        Path(results_path)
+        if results_path is not None
+        else OUT_DIR / "typecheck-results.json"
+    )
+    result_output.parent.mkdir(parents=True, exist_ok=True)
+    result_output.write_text(
         json.dumps(results, ensure_ascii=False, indent=2, default=str)
     )
     if write_report:
@@ -540,7 +551,11 @@ def run_typecheck(target: Path, *, quiet: bool = False, write_report: bool = Tru
         rel_out = OUT_DIR.relative_to(PROJECT_ROOT) if OUT_DIR.is_relative_to(PROJECT_ROOT) else OUT_DIR
         if write_report:
             print(f"\nreport → {rel_out / 'typecheck-report.md'}")
-        print(f"detail → {rel_out / 'typecheck-results.json'}")
+        try:
+            detail_output = result_output.relative_to(PROJECT_ROOT)
+        except ValueError:
+            detail_output = result_output
+        print(f"detail → {detail_output}")
 
     # Exit code: 0 if all clean, 1 if any violations (CI / agent decision).
     has_violations = any(

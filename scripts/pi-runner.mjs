@@ -543,7 +543,7 @@ async function main() {
 	const pluginRoot = resolve(cli["plugin-root"] || DEFAULT_PLUGIN_ROOT);
 	const script = resolve(
 		cli.script ||
-			join(pluginRoot, "skills", "process-material", "orchestrate.mjs"),
+			join(pluginRoot, "workflows", "process-material.mjs"),
 	);
 	const projectCwd = resolve(
 		cli.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd(),

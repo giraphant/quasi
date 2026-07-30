@@ -9,6 +9,7 @@ set -e
 
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+. "$PLUGIN_ROOT/scripts/load-keychain-env.sh"
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
 PYTHON="$DATA_DIR/.venv/bin/python"
 

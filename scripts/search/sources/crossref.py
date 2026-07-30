@@ -10,6 +10,7 @@ Crossref is the polite-pool source for humanities DOI coverage.
 
 from __future__ import annotations
 
+import html
 import sys
 import urllib.parse
 from pathlib import Path
@@ -48,7 +49,7 @@ def _normalise(raw: dict) -> dict:
     issued = (raw.get("issued") or {}).get("date-parts") or [[None]]
     p["year"]  = issued[0][0] if issued and issued[0] else None
     container  = raw.get("container-title") or []
-    p["venue"] = container[0] if container else ""
+    p["venue"] = html.unescape(str(container[0])) if container else ""
     p["volume"]= raw.get("volume")
     p["issue"] = raw.get("issue")
     p["pages"] = raw.get("page")

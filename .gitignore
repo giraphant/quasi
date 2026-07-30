@@ -3,5 +3,8 @@ config/*.json
 .claude/settings.local.json
 __pycache__/
 *.pyc
+node_modules/
+.pytest_cache/
+.ruff_cache/
 .worktrees/
 .quasi/

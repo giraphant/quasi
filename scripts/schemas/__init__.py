@@ -37,6 +37,7 @@ from .registry import (
     deprecated_canonical_type,
     schema_for_type,
 )
+from .contracts import artifact_contract_for_type
 
 __all__ = [
     # primitives
@@ -53,6 +54,7 @@ __all__ = [
     # registry
     "TYPE_REGISTRY", "TYPE_ALIASES", "DEPRECATED_TYPE_ALIASES",
     "canonical_type", "deprecated_canonical_type", "schema_for_type",
+    "artifact_contract_for_type",
 ]
 
 __version__ = "0.8.0"

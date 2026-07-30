@@ -2,20 +2,27 @@
 # quasi-extract — file → MD pipeline (EPUB / OCR / split-by-TOC).
 #
 # Subcommands:
-#   quasi-extract epub  SOURCE_EPUB CHAPTERS_DIR
+#   quasi-extract epub  SOURCE_EPUB CHAPTERS_DIR [--json]
 #       Extract chapter-level plain text from an EPUB.
 #
-#   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine dsocr2|tesseract]
+#   quasi-extract text  INPUT.pdf OUTPUT.txt [--json]
+#       Atomically extract the PDF text layer and report deterministic signals.
+#
+#   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine dsocr2|tesseract] [--no-clobber] [--json]
 #       OCR a scanned PDF into a searchable PDF. Default engine dsocr2
 #       (DeepSeek-OCR-2 via mlx-vlm); auto-falls-back to tesseract if unavailable.
 #
-#   quasi-extract split INPUT.pdf --output-dir DIR [--max-chapters N | --chapters JSON | --pages RANGE --title T]
+#   quasi-extract split INPUT.pdf --output-dir DIR [--method toc|pattern] [--max-chapters N]
+#       [--expected-manifest-fingerprint SHA256] [--json]
+#       Or use --chapters JSON, or repair one exact slot with
+#       --pages RANGE --title T --slot S --json.
 #       Split a PDF into per-chapter files.
 
 set -e
 
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+. "$PLUGIN_ROOT/scripts/load-keychain-env.sh"
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
 PYTHON="$DATA_DIR/.venv/bin/python"
 

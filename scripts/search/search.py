@@ -185,6 +185,7 @@ _BOOK_ISBN_PRIO  = ["goodreads", "amazon", "openlibrary", "storygraph",
                     "douban_cn", "googlebooks", "scholar"]
 _PAPER_YEAR_PRIO = ["openalex", "crossref", "scholar"]
 _PAPER_PUB_PRIO  = ["openalex", "crossref", "scholar"]
+_PAPER_VENUE_PRIO = ["crossref", "openalex", "scholar"]
 
 # Fields whose conflicts are surfaced in diagnostics.conflicts.
 _CONFLICT_FIELDS_BOOK  = {"year", "isbn_13", "publisher", "page_count", "authors"}
@@ -279,6 +280,10 @@ def _merge_candidate(entries_by_src: dict[str, dict], kind: str) -> tuple[dict, 
             ("isbn_13", _BOOK_ISBN_PRIO),
             ("isbn_10", _BOOK_ISBN_PRIO),
         ])
+    else:
+        # Crossref is the registration authority for journal container titles
+        # and preserves punctuation that OpenAlex display names can omit.
+        field_specs.append(("venue", _PAPER_VENUE_PRIO))
 
     for fld, prio in field_specs:
         v, src = _pick_by_priority(entries_by_src, fld, prio)
@@ -287,7 +292,7 @@ def _merge_candidate(entries_by_src: dict[str, dict], kind: str) -> tuple[dict, 
             merged["_field_src"][fld] = src
 
     # all other fields: first non-empty wins (source iteration order)
-    skip = {"title", "year", "publisher", "isbn_13", "isbn_10",
+    skip = {"title", "year", "publisher", "venue", "isbn_13", "isbn_10",
             "_sources", "_field_src", "source_ids", "ratings"}
     for src, e in entries_by_src.items():
         for fld, v in e.items():

@@ -4,8 +4,9 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 
 ## Important plugin-system facts
 
-- Installed plugins load components from root-level `skills/`, `agents/`, `bin/`, `hooks/`, `monitors/`, `.mcp.json`, and `.lsp.json`.
+- Installed plugins load components from root-level `skills/`, `workflows/`, `agents/`, `bin/`, `hooks/`, `monitors/`, `.mcp.json`, and `.lsp.json`.
 - `.claude-plugin/plugin.json` is metadata only. Do not place components inside `.claude-plugin/`.
+- `.codex-plugin/plugin.json` is the Codex-native package manifest. Codex discovers `skills/` and default `hooks/hooks.json`; it does not currently install plugin-root `agents/` as custom roles. Quasi loads those Markdown contracts through its runners, and `quasi-codex-agents` explicitly generates project/user Codex TOML roles when requested.
 - `CLAUDE.md` and `AGENTS.md` must stay byte-for-byte identical. They are mirrored instruction files for different agent frameworks, not separate reader-specific guides.
 - Claude Code does not load a plugin-root `CLAUDE.md` as context when quasi is installed as a plugin. Runtime guidance must live in skills, agents, hooks, or scripts.
 
@@ -14,10 +15,14 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 ### Layer ownership
 
 - `skills/` own user-facing workflow state machines: input normalisation, manifests, skip rules, human gates, and dispatch order.
+- `workflows/` owns host-neutral deterministic graphs. Graphs use only the injected `agent`, `parallel`, `phase`, `log`, and `args` primitives.
 - `agents/` are specialist workers. They call only the public `quasi-*` CLI or read/write the exact local artifact named in their contract. The sole remote-tool exception is `webcard-agent`, which may `WebFetch` the exact URLs returned by `quasi-search kagi` for its one assigned evidence card.
 - `bin/quasi-*` is the stable shell surface exposed to agents and skills.
-- `scripts/` contains deterministic capability entrypoints.
-- `scripts/schemas/` is for deterministic validation/migration code, not an agent-facing API.
+- `scripts/` contains deterministic capability entrypoints and build-only sources;
+  `scripts/workflows/` is the editable host-neutral graph source.
+- `scripts/schemas/` is the single source of truth for artifact frontmatter and body structure.
+  Agents do not import it directly: the workflow build injects canonical producer/search
+  projections, while audit/typecheck/migration consume the registry in Python.
 - `core/` is the minimal runtime base for path/frontmatter/json/module-loading helpers.
 
 ### Path roots
@@ -39,7 +44,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 - Claude Code injects configured values into hook/MCP/LSP/monitor subprocesses as `CLAUDE_PLUGIN_OPTION_<KEY>`.
 - Bash tool subprocesses do not receive those variables directly.
 - `hooks/hooks.json` registers a `PreToolUse` Bash hook that runs `scripts/hooks/inject-userconfig.py`.
-- For commands containing a bare `quasi-` word, the hook prepends `export ...;` with `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and each configured `QUASI_<KEY>`.
+- For commands containing a bare `quasi-` word, the hook prepends `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and the plugin `bin/` path. On macOS, configured `QUASI_<KEY>` values are loaded inside the Bash process through the same Keychain helper used by the shims, so credential values never enter the rewritten command or process argv; non-macOS retains the direct-export compatibility fallback.
 - Scripts read only `QUASI_*` service variables, not `CLAUDE_PLUGIN_OPTION_*`.
 - Kagi is special only at the subprocess edge: quasi reads `QUASI_KAGI_SESSION_TOKEN` and maps it to `KAGI_SESSION_TOKEN` for `kagi` CLI calls.
 - Do not document a Configure option as current unless it exists in `plugin.json#userConfig` and is forwarded by `_KEYS`.
@@ -83,7 +88,7 @@ quasi-search book|paper ...
 quasi-download book candidates|fetch ...
 quasi-download paper fetch ...
 quasi-download accept ...
-quasi-extract epub|ocr|split ...
+quasi-extract epub|text|ocr|split ...
 quasi-transcribe run|classify|silent ...
 quasi-audit --path ...
 quasi-helpers proofread prepare|cleanup ...
@@ -93,11 +98,60 @@ quasi-helpers vault resolve --items-json|--items-file ...
 quasi-doctor [--json] [--sync] [--profile ...]
 quasi-translate SLUG [--backend immersive|pdf2zh] ...
 quasi-pi-runner --script PATH --args-file JSON [--cwd PROJECT] ...
+quasi-codex-agents (--project PATH|--user) [--check] [--json]
+quasi-codex-driver --script PATH --args-file JSON [--cwd PROJECT] ...
+quasi-codex-runner --script PATH --args-file JSON [--cwd PROJECT] ...
 ```
 
-`quasi-pi-runner` is the Pi-only adapter for the existing `skills/process-material/orchestrate.mjs` graph. It uses the official Pi SDK already installed with Pi, loads `quasi:<name>` definitions from root `agents/`, and deliberately implements only `agent`, `parallel`, `phase`, `log`, and `args`; do not add a third-party workflow compatibility dependency. Claude Code keeps using its native Workflow path.
+`scripts/workflows/` contains the modular Claude Workflow graph source and generated
+artifact-schema projections. `npm run build:workflows` deterministically bundles it
+into the committed `workflows/process-material.mjs` entry; never hand-edit the
+generated bundle.
 
-`quasi-translate` has two interchangeable backends behind one output contract (`processing/translations/{slug}-{lang}.pdf`, alternating original/translated pages, bookmarks): `immersive` (default, Immersive Translate Zotero API) and `pdf2zh` (local `pdf2zh-next` via uvx, driving a user-supplied OpenAI-compatible endpoint). Backend selection is user config (`translate_backend`), not an agent decision — `agents/translate-agent.md` is backend-agnostic. For pdf2zh, a root-only `translate_base_url` gets `/v1` appended; any explicit path is preserved because compatible providers also use paths such as `/api/paas/v4` and `/openai/v1`. The pdf2zh path uses `--use-alternating-pages-dual`, which emits the same page layout Immersive produces *after* `split_dual_pdf()`, so the TOC helpers are shared verbatim. Unrecognised flags pass straight through to `pdf2zh_next`. Because pdf2zh-next exits 0 on a mangled translation, the backend gates on output pages == 2× source pages and keeps failed output under `processing/translations/.pdf2zh-{slug}/`. Partial runs (`--pages`) skip the TOC step: a trimmed output has no 1:1 source page mapping, so bookmarks would land on the wrong pages silently.
+Artifact writing has three ownership layers:
+
+- `agents/*.md` owns the worker's stable role, common request/receipt protocol,
+  epistemic rules, and generic execution sequence.
+- `scripts/schemas/{type}.py` plus `scripts/schemas/body.py` owns frontmatter,
+  path/identity fields, H1, section order, block shapes, table columns, and
+  section semantics. Producer projections omit migration-only aliases.
+- `scripts/workflows/operations/*.mjs` owns request/receipt schemas, exact refs,
+  dynamic frontmatter seeds, and operation-only evidence rules. It must not
+  duplicate artifact structure.
+
+Edit `scripts/schemas/` when changing a Paper, Chapter, Book overview, or Talk
+output structure, then run `npm run build:workflows`. The build updates
+`scripts/workflows/artifact-contracts/generated.mjs` and
+`workflows/process-material.mjs`; both are generated artifacts and must not be
+hand-edited. Non-artifact behavior such as acquisition policy is structured
+inside its owning `scripts/workflows/operations/*.mjs` request rather than kept
+as a prose prompt pack. `npm run check:workflows` verifies
+schema/projection/operation/bundle parity.
+
+The Paper loop is the first Operation-based vertical slice: it normalises every
+source through `quasi-extract text`, asks a read-only Agent to judge semantic
+readability, follows a bounded OCR recovery edge when needed, and gives one
+common `analyse-agent` a Paper-specific operation envelope. Writer receipts are
+strictly reconciled against exact target identity; a malformed or ambiguous
+writer receipt is an unknown outcome and must block rather than retry.
+
+`quasi-pi-runner` is the Pi-only adapter for the existing `workflows/process-material.mjs` graph. It uses the official Pi SDK already installed with Pi, loads `quasi:<name>` definitions from root `agents/`, and deliberately implements only `agent`, `parallel`, `phase`, `log`, and `args`; do not add a third-party workflow compatibility dependency. Claude Code keeps using its native Workflow path.
+
+`quasi-codex-runner` reuses the same `createRunner` graph runtime and replaces only the worker invoker with ephemeral `codex exec --output-schema` calls. Codex runs workers in `workspace-write`, grants network because acquisition commands require it, and adds only plugin data as an extra writable root. Claude agent model aliases are not mapped in this first compatibility release; their reasoning tiers map to `opus=high`, `sonnet=medium`, and general-purpose `low`. `QUASI_CODEX_MODEL` and `QUASI_CODEX_REASONING_LEVEL` may override the Codex worker defaults.
+
+`quasi-codex-agents` is the explicit native-role installation boundary. Root `agents/*.md` remains the sole source of truth; `--project PATH` generates `PATH/.codex/agents/quasi_*.toml`, while `--user` targets `${CODEX_HOME:-~/.codex}/agents`. It writes only `name`, `description`, and `developer_instructions`, inherits the coordinator model, does not delete unrelated files, and supports a non-mutating `--check`. Codex loads these files at thread startup, so a new thread is required after syncing.
+
+`quasi-codex-driver` is the Codex GUI path. It runs the same graph but turns each `agent()` into a bidirectional JSONL `agent_request`; each event carries both the cross-host `agent_type` and the registered `codex_agent_type` (`quasi_download`, `quasi_analyse`, etc., or built-in `worker` fallback). The full worker contract is stored in the event's short-lived `.quasi/temp/...` `request_path`, avoiding terminal truncation. The active skill answers through the current thread's native `spawn_agent` tools, serializes each full result to the assigned `receipt_path`, and writes only a short `result_path` event to the driver's PTY stdin. Those workers therefore appear in the current Codex agent tree, while large diagnostic receipts cannot be truncated by the PTY/tool input limit. The driver keeps graph continuations in memory, validates returned receipts against the graph schema, caps requests at three so the coordinator retains one thread slot, and emits `agent_cancel` when the graph aborts. `quasi-codex-runner` remains the headless/CI fallback when native subagent or resumable-exec tools are unavailable.
+
+Public skill routing separates the coupled paper → book → author material stack from topic research. `process-material` owns the former; `research-topic` owns vault recall, outline steering, evidence cards, human seed gates, and topic synthesis. Both still call `workflows/process-material.mjs`, so topic candidates reuse the same paper/book router without duplicating graph nodes.
+
+For a single title-only book or paper request, `process-material` must dispatch `search-agent` before vault recall or graph startup. The verified record owns author order, year, identifiers, venue, access URLs, and canonical slug. The main process must not substitute generic web or browser search; a failed download must preserve `failure_reason` and per-source `attempts` in the graph result.
+
+Paper metadata merging treats Crossref as the authority for the journal container title and decodes its HTML entities at the adapter boundary. Do not let asynchronous adapter completion order choose `venue`; OpenAlex may omit meaningful punctuation from the same journal name.
+
+Codex does not inject Claude plugin Configure options, and a native subagent may not inherit the coordinator's plugin hook. Every Python-facing `quasi-*` shim therefore sources `scripts/load-keychain-env.sh`, which fills missing `QUASI_*` values at runtime from the existing encrypted `Claude Code-credentials` Keychain record. On macOS the PreToolUse hook uses the same `--keychain-exports` helper for coordinator commands, including Claude-hosted commands whose `CLAUDE_PLUGIN_OPTION_*` values are visible only to the hook. Command argv contains only helper paths, never secret values; explicit `QUASI_*` values take precedence because the helper fills only missing keys. This is also the config source used by the Pi bridge; secrets are not written to request envelopes or plugin data. Non-macOS currently keeps the older direct-export hook fallback because it has no shared Keychain provider.
+
+`quasi-translate` has two interchangeable backends behind one output contract (`processing/translations/{slug}-{full-target-tag-lower}.pdf`, for example `-zh-cn.pdf`; alternating original/translated pages, bookmarks): `immersive` (default, Immersive Translate Zotero API) and `pdf2zh` (local `pdf2zh-next` via uvx, driving a user-supplied OpenAI-compatible endpoint). Backend selection is user config (`translate_backend`), not an agent decision — strict `observe`/`run` reject a caller backend override, while the legacy prose entry still accepts `--backend` as a compatibility adapter into the same transaction. For pdf2zh, a root-only `translate_base_url` gets `/v1` appended; any explicit path is preserved because compatible providers also use paths such as `/api/paas/v4` and `/openai/v1`. The pdf2zh path uses `--use-alternating-pages-dual`, which emits the same page layout Immersive produces *after* `split_dual_pdf()`, so the TOC helpers are shared verbatim. Strict and legacy public entries reject free backend arguments; provider credentials stay out of argv. Because pdf2zh-next exits 0 on a mangled translation, the transaction gates on output pages == 2× source pages, then ToUnicode repair and coverage, before manifest-last publication. Rejected or uncertain generations remain in their fenced `processing/translations/.{stem}.translate-*` directory and never become canonical output.
 
 Both backends also gate on translation coverage (`scripts/translate/coverage.py`), because a structurally perfect dual PDF — right page count, exit 0, no warning — can still be missing most of its body text: when the source's own text layer is fragmented, BabelDOC's layout model stops recognising paragraphs as translatable blocks and leaves them as untouched scan. Translated Han characters per source Latin letter separates the two cleanly (0.30–0.36 on every healthy page measured; 0.15 median, 0.01 at worst on a book that came out 43% translated), so the gate is the per-page median against `MIN_MEDIAN`. It is a median, not a mean or a per-page rule, so one plate or part-title page cannot reject a complete book; the cost is that a single dead page inside a good book passes. Only Chinese targets are scored. The check must run *after* `tounicode.py::repair_pdf`, and does in both backends: an unrepaired book extracts as mojibake in the CJK extension-A block, which the counter deliberately does not count, so a healthy 368-page translation scored 0.17 before repair and 0.31 after. Run the script standalone to audit PDFs translated before this existed — repair first. `agents/translate-agent.md` answers the error with exactly one re-OCR-and-retry through `quasi-extract ocr --layout`.
 
@@ -168,9 +222,9 @@ When changing config, runtime state, or handoff contracts:
 
 - `$CLAUDE_PROJECT_DIR` is fixed at session start; a `cd` inside a dispatched worker's *prompt* does not redirect where the orchestration graph writes. Dispatch E2E workers with the correct cwd; never rely on an in-prompt `cd`.
 - A dead Workflow subagent writes no `result` line in `journal.jsonl` — its key stays `started`-only forever, and a retry shows up as a *new* started+result pair. Count `started` vs `result` keys to find deaths; do not look for `result: null`.
-- `agent()` returns `null` when a subagent dies on a terminal API error after retries. `orchestrate.mjs::retryNull` pays exactly one retry per null, because a `null` cannot distinguish a deterministic failure from a transient one.
-- A run that looks hung is usually harness backoff, not deadlock. A dying subagent's transcript ends in a synthetic `API Error: …` assistant message, but the harness can sit in invisible retry backoff for 20–40 minutes before `agent()` finally sees `null` — no result line, no progress, nothing a script can observe or shorten. Before declaring a run dead, check each no-result agent's transcript mtime: still advancing = live agent (a `0 tok` display can just be a slow provider), stale with an API-error tail = a death still waiting to be reported. Since 0.49.9 `orchestrate.mjs::guard` races every `agent()` against a 45-minute timer and feeds the timeout into `retryNull` as a `null`, so that graph self-cuts; a stall longer than ~90 minutes on one node means something outside `agent()` is wrong. Other workflow scripts have no such bound — there, killing the run and re-invoking with `resumeFromRunId` is still the only shortcut.
+- `agent()` returns `null` when a subagent dies on a terminal API error after retries. `process-material.mjs::retryNull` pays exactly one retry per null, because a `null` cannot distinguish a deterministic failure from a transient one.
+- A run that looks hung is usually harness backoff, not deadlock. A dying subagent's transcript ends in a synthetic `API Error: …` assistant message, but the harness can sit in invisible retry backoff for 20–40 minutes before `agent()` finally sees `null` — no result line, no progress, nothing a script can observe or shorten. Before declaring a run dead, check each no-result agent's transcript mtime: still advancing = live agent (a `0 tok` display can just be a slow provider), stale with an API-error tail = a death still waiting to be reported. Legacy and read-only graph calls may still use `guard` and `retryNull` to bound a dead worker. Paper writer Operations deliberately await their exact Agent call without a timer race: a timed-out Promise could continue writing after the graph had followed another edge. Resume or reconciliation, not a concurrent retry, is the safe recovery for an unknown writer outcome. Other workflow scripts have no such bound — there, killing the run and re-invoking with `resumeFromRunId` is still the only shortcut.
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.1.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.7.

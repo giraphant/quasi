@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -84,6 +85,43 @@ def test_audit_emits_diagnostic_first_contract_on_empty_vault(tmp_path: Path):
     assert payload["files"] == []
     assert "llm_editable" not in payload
     assert "escalated" not in payload
+
+
+def test_parallel_audits_use_isolated_typecheck_results(tmp_path: Path):
+    project = tmp_path / "project"
+    papers = []
+    for index in range(8):
+        paper = project / "vault" / "papers" / f"parallel-{index}-2020.md"
+        write_paper(
+            paper,
+            f"""type: paper
+title: Parallel Paper {index}
+authors:
+- Aryn Martin
+year: 2020
+journal: Endeavour
+themes:
+- concurrency""",
+        )
+        papers.append(paper)
+
+    with ThreadPoolExecutor(max_workers=len(papers)) as pool:
+        results = list(
+            pool.map(
+                lambda path: run_audit(project, "--path", str(path)),
+                papers,
+            )
+        )
+
+    assert all(result.returncode == 0 for result in results), [
+        result.stderr for result in results
+    ]
+    payloads = [json.loads(result.stdout) for result in results]
+    assert all(payload["status"] == "clean" for payload in payloads)
+    assert all(payload["summary"]["files_checked"] == 1 for payload in payloads)
+    assert all(payload["artifacts"] == {} for payload in payloads)
+    assert not (project / ".quasi" / "audit" / "typecheck-results.json").exists()
+    assert not list((project / ".quasi" / "temp").glob("audit-typecheck-*"))
 
 
 def test_audit_auto_fixes_frontmatter_flow_arrays_with_diagnostics(tmp_path: Path):

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -41,6 +42,7 @@ from translate.immersive_translate import (  # noqa: E402
 )
 from translate.coverage import check as check_coverage  # noqa: E402
 from translate.tounicode import repair_pdf as repair_tounicode  # noqa: E402
+from translate.translate_commit import redact_text, validate_language, validate_slug  # noqa: E402
 
 # ponytail: unpinned. Pin to `pdf2zh-next==X.Y.Z` here if a release breaks the CLI.
 PDF2ZH_SPEC = "pdf2zh-next"
@@ -52,6 +54,10 @@ def normalise_base_url(value: str) -> str:
     if parts.scheme not in {"http", "https"} or not parts.netloc:
         raise TranslationError(
             "Invalid translate_base_url: expected an http(s) API base URL.",
+        )
+    if parts.username or parts.password or parts.query or parts.fragment:
+        raise TranslationError(
+            "Invalid translate_base_url: userinfo, query strings, and fragments are not allowed.",
         )
     path = parts.path.rstrip("/")
     # ponytail: root-only OpenAI-compatible endpoints conventionally expose /v1;
@@ -86,9 +92,7 @@ def build_command(
     cfg: dict[str, str],
     extra_args: list[str],
 ) -> list[str]:
-    # ponytail: api key lands on the argv, visible to this user's own `ps`.
-    # Matches the existing hook, which already does `export QUASI_...=<secret>; cmd`.
-    # Move to a 0600 config file if the threat model ever includes other local users.
+    safe_extra_args = validate_extra_args(extra_args)
     return [
         "uvx",
         "--python",
@@ -110,20 +114,49 @@ def build_command(
         "--auto-enable-ocr-workaround",
         # --pages only limits *what gets translated*; without this the dual PDF still
         # carries every source page, burying the translated range in a full-book file.
-        *(["--only-include-translated-page"] if _has_pages_flag(extra_args) else []),
+        *(["--only-include-translated-page"] if _has_pages_flag(safe_extra_args) else []),
         "--openaicompatible",
-        "--openai-compatible-base-url",
-        cfg["base_url"],
-        "--openai-compatible-api-key",
-        cfg["api_key"],
-        "--openai-compatible-model",
-        cfg["model"],
-        *extra_args,
+        # Provider configuration is delivered through the provider's native
+        # PDF2ZH_* environment surface in run_pdf2zh.  In particular, the API
+        # key must never appear in argv or a receipt.
+        *safe_extra_args,
     ]
 
 
 def _has_pages_flag(extra_args: list[str]) -> bool:
     return any(arg == "--pages" or arg.startswith("--pages=") for arg in extra_args)
+
+
+_SAFE_VALUE_FLAGS = {
+    "--pages": re.compile(r"^[0-9,-]+$"),
+    "--qps": re.compile(r"^[0-9]+(?:\.[0-9]+)?$"),
+    "--pool-max-workers": re.compile(r"^[0-9]+$"),
+}
+
+
+def validate_extra_args(extra_args: list[str]) -> list[str]:
+    """Keep a small legacy tuning surface without exposing managed arguments."""
+    validated: list[str] = []
+    index = 0
+    while index < len(extra_args):
+        item = extra_args[index]
+        if "=" in item:
+            flag, value = item.split("=", 1)
+            pattern = _SAFE_VALUE_FLAGS.get(flag)
+            if pattern is None or not pattern.fullmatch(value):
+                raise TranslationError(f"Unsupported or invalid pdf2zh option: {flag}")
+            validated.append(item)
+            index += 1
+            continue
+        pattern = _SAFE_VALUE_FLAGS.get(item)
+        if pattern is None or index + 1 >= len(extra_args):
+            raise TranslationError(f"Unsupported pdf2zh option: {item}")
+        value = extra_args[index + 1]
+        if not pattern.fullmatch(value):
+            raise TranslationError(f"Invalid value for pdf2zh option {item}")
+        validated.extend((item, value))
+        index += 2
+    return validated
 
 
 def page_count(pdf_path: Path) -> int:
@@ -160,11 +193,53 @@ def run_pdf2zh(cmd: list[str], work_dir: Path) -> None:
         raise TranslationError(
             "uvx not found. Install uv (https://docs.astral.sh/uv/) to use the pdf2zh backend.",
         )
-    result = subprocess.run(cmd, check=False)
+    cfg = load_backend_config()
+    child_env = os.environ.copy()
+    child_env.update(
+        {
+            "PDF2ZH_OPENAICOMPATIBLE": "true",
+            "PDF2ZH_OPENAI_COMPATIBLE_BASE_URL": cfg["base_url"],
+            "PDF2ZH_OPENAI_COMPATIBLE_API_KEY": cfg["api_key"],
+            "PDF2ZH_OPENAI_COMPATIBLE_MODEL": cfg["model"],
+        }
+    )
+    result = subprocess.run(cmd, check=False, env=child_env)
     if result.returncode != 0:
         raise TranslationError(
-            f"pdf2zh-next exited {result.returncode}. Partial output kept at {work_dir}.",
+            redact_text(
+                f"pdf2zh-next exited {result.returncode}. Partial output kept at {work_dir}.",
+                secrets=(cfg["api_key"],),
+            ),
         )
+
+
+def translate_to_candidate(
+    *,
+    source_pdf: Path,
+    candidate_pdf: Path,
+    target_language: str,
+    work_dir: Path,
+    on_state,
+) -> dict[str, object]:
+    """Run pdf2zh once and move only its alternating PDF to staged candidate."""
+    validate_language(target_language)
+    cfg = load_backend_config()
+    work_dir.mkdir(parents=True, exist_ok=False)
+    on_state("backend_running", None)
+    run_pdf2zh(
+        build_command(
+            source_pdf=source_pdf,
+            work_dir=work_dir,
+            target_language=target_language,
+            cfg=cfg,
+            extra_args=[],
+        ),
+        work_dir,
+    )
+    dual_pdf = find_dual_pdf(work_dir)
+    candidate_pdf.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(dual_pdf), str(candidate_pdf))
+    return {"task_id": None}
 
 
 def translate_slug(
@@ -177,6 +252,8 @@ def translate_slug(
     toc_page_side: str = "original",
     extra_args: list[str] | None = None,
 ) -> dict[str, object]:
+    validate_slug(slug)
+    validate_language(target_language)
     cfg = load_backend_config()
     source_pdf = resolve_source_pdf(slug, project_root=project_root, explicit_source=source_file)
     outputs = build_output_paths(

@@ -2,17 +2,22 @@
 # quasi-transcribe — deterministic multi-engine transcription for process-talk.
 #
 # Usage:
-#   quasi-transcribe run --media FILE --slug SLUG [--title T] [--engines a,b,c] [--lang auto]
-#   quasi-transcribe classify (--slug SLUG | --transcript FILE)
-#   quasi-transcribe silent --slug SLUG --title T --date YYYY-MM-DD --media FILE
+#   quasi-transcribe observe --media FILE --slug SLUG --title T --date YYYY-MM-DD --json
+#   quasi-transcribe prepare-media --media FILE --output vault/talks/SLUG/recording.mp4 --json
+#   quasi-transcribe run --media FILE --slug SLUG [--title T] [--engines a,b,c] [--lang auto] [--json]
+#   quasi-transcribe classify (--slug SLUG | --transcript FILE) [--json]
+#   quasi-transcribe silent --slug SLUG --title T --date YYYY-MM-DD --media FILE \
+#     --transcript PATH --state dead|empty --mode create|repair --output PATH [--json]
 #
-# Emits JSON to stdout. The skill orchestrates; analyse-agent reads the
-# per-engine transcripts this leaves under .quasi/talks/<slug>/.
+# Strict --json calls emit one closed Operation receipt.  Legacy calls retain
+# their historical JSON/prose surface.  Per-engine transcripts are committed
+# under processing/talks/<slug>/.
 
 set -e
 
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+. "$PLUGIN_ROOT/scripts/load-keychain-env.sh"
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
 PYTHON="$DATA_DIR/.venv/bin/python"
 

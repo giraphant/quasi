@@ -1,0 +1,12 @@
+{
+  "name": "quasi-workflow-build",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:workflows": "node scripts/build-workflows.mjs",
+    "check:workflows": "node scripts/build-workflows.mjs --check"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  }
+}

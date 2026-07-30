@@ -33,6 +33,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from translate.coverage import check as check_coverage  # noqa: E402
 from translate.tounicode import repair_pdf as repair_tounicode  # noqa: E402
+from translate.translate_commit import (  # noqa: E402
+    redact_text,
+    validate_language,
+    validate_slug,
+    validate_source,
+)
 
 
 PROJECT_ROOT = Path.cwd()  # caller's research project root (output only, no config)
@@ -102,17 +108,19 @@ def resolve_source_pdf(
     project_root: Path = PROJECT_ROOT,
     explicit_source: Path | None = None,
 ) -> Path:
+    validate_slug(slug)
     if explicit_source is not None:
-        source = explicit_source.expanduser().resolve()
-        if not source.exists():
-            raise SourceNotFoundError(f"Source file does not exist: {source}")
-        if source.suffix.lower() != ".pdf":
-            raise SourceNotFoundError(f"Source file is not a PDF: {source}")
-        return source
+        try:
+            return validate_source(explicit_source)
+        except Exception as exc:
+            raise SourceNotFoundError(str(exc)) from exc
 
     exact = project_root / "sources" / f"{slug}.pdf"
     if exact.exists():
-        return exact
+        try:
+            return validate_source(exact)
+        except Exception as exc:
+            raise SourceNotFoundError(str(exc)) from exc
 
     epub_candidate = project_root / "sources" / f"{slug}.epub"
     if epub_candidate.exists():
@@ -120,13 +128,13 @@ def resolve_source_pdf(
             f"Found EPUB but no PDF for '{slug}'. Convert or supply a PDF path explicitly.",
         )
 
-    candidates = sorted(
-        {
-            path.resolve()
-            for path in project_root.glob(f"processing/**/{slug}.pdf")
-            if path.is_file()
-        },
-    )
+    candidates_set: set[Path] = set()
+    for path in project_root.glob(f"processing/**/{slug}.pdf"):
+        try:
+            candidates_set.add(validate_source(path))
+        except Exception:
+            continue
+    candidates = sorted(candidates_set)
     if len(candidates) == 1:
         return candidates[0]
     if len(candidates) > 1:
@@ -143,6 +151,8 @@ def build_output_paths(
     target_language: str,
     project_root: Path = PROJECT_ROOT,
 ) -> dict[str, Path]:
+    validate_slug(slug)
+    validate_language(target_language)
     lang_short = target_language.split("-", 1)[0].lower()
     output_dir = project_root / "processing" / "translations"
     final_pdf = output_dir / f"{slug}-{lang_short}.pdf"
@@ -405,15 +415,21 @@ class ImmersiveTranslateClient:
                 if isinstance(data, dict) and "code" in data:
                     if data["code"] != 0:
                         message = data.get("message") or data.get("error") or f"API code {data['code']}"
-                        raise TranslationError(str(message))
+                        raise TranslationError(
+                            redact_text(message, secrets=(self.auth_key,))
+                        )
                     return data.get("data", data)
                 return data
             except (requests.RequestException, ValueError) as exc:
                 # Match the official Zotero plugin: never retry 4xx client errors
                 if isinstance(exc, requests.HTTPError) and exc.response is not None and 400 <= exc.response.status_code < 500:
-                    raise TranslationError(str(exc)) from exc
+                    raise TranslationError(
+                        redact_text(exc, secrets=(self.auth_key,))
+                    ) from exc
                 if attempt >= retries:
-                    raise TranslationError(str(exc)) from exc
+                    raise TranslationError(
+                        redact_text(exc, secrets=(self.auth_key,))
+                    ) from exc
                 attempt += 1
                 time.sleep(1)
 
@@ -436,7 +452,10 @@ class ImmersiveTranslateClient:
             response = self.session.put(upload_url, data=data, headers=headers, timeout=self.timeout)
             response.raise_for_status()
         except (OSError, requests.RequestException) as exc:
-            raise TranslationError(f"Failed to upload PDF {pdf_path}: {exc}") from exc
+            raise TranslationError(
+                f"Failed to upload PDF {pdf_path}: "
+                f"{redact_text(exc, secrets=(self.auth_key,))}"
+            ) from exc
 
     def create_translate_task(self, object_key: str, source_pdf: Path) -> str:
         ocr_mode = str(self.settings["ocr_workaround"]).lower()
@@ -461,7 +480,10 @@ class ImmersiveTranslateClient:
                 "POST",
                 "/backend-babel-pdf",
                 json_body=payload,
-                retries=3,
+                # This POST starts a paid, non-idempotent task.  A lost response
+                # is an unknown outcome and must be reconciled by the fenced
+                # strict transaction, never replayed here.
+                retries=0,
             ),
         )
 
@@ -513,6 +535,65 @@ def download_outputs(
             f"Failed to write dual PDF to {outputs['dual_tmp']}: {exc}",
         ) from exc
     return outputs
+
+
+def translate_to_candidate(
+    *,
+    source_pdf: Path,
+    candidate_pdf: Path,
+    target_language: str,
+    work_dir: Path,
+    on_state,
+    poll_interval: int = 10,
+    max_polls: int = 180,
+) -> dict[str, Any]:
+    """Run Immersive once and write only the caller's staged candidate path."""
+    settings = load_settings_from_env()
+    settings["target_language"] = target_language
+    work_dir.mkdir(parents=True, exist_ok=True)
+    raw_dual = work_dir / "immersive.dual.pdf"
+    client = ImmersiveTranslateClient(settings)
+
+    on_state("checking_auth", None)
+    if not client.check_auth_key():
+        raise TranslationError("Immersive Translate auth key check failed")
+    on_state("requesting_upload", None)
+    upload_info = client.get_pdf_upload_url()
+    upload_result = upload_info.get("result") or {}
+    upload_url = upload_result.get("preSignedURL")
+    object_key = upload_result.get("objectKey")
+    if not upload_url or not object_key:
+        raise TranslationError("Upload URL response did not include preSignedURL/objectKey")
+    on_state("uploading", None)
+    client.upload_pdf(str(upload_url), source_pdf)
+
+    # Persist this state before the non-idempotent POST.  If the response is
+    # lost, the next strict run sees an unfenced outcome and does not create a
+    # second paid task.
+    on_state("creating_remote_task", None)
+    pdf_id = client.create_translate_task(str(object_key), source_pdf)
+    on_state("polling", pdf_id)
+    poll_until_complete(
+        client,
+        pdf_id,
+        interval_seconds=poll_interval,
+        max_polls=max_polls,
+    )
+    on_state("downloading", pdf_id)
+    result = client.get_translate_result(pdf_id)
+    dual_url = result.get("translationDualPdfOssUrl")
+    if not dual_url:
+        raise TranslationError(f"Missing dual PDF URL for translation task {pdf_id}")
+    try:
+        raw_dual.write_bytes(client.download_binary(str(dual_url)))
+    except OSError as exc:
+        raise TranslationError(
+            f"Failed to write staged dual PDF: "
+            f"{redact_text(exc, secrets=(client.auth_key,))}"
+        ) from exc
+    split_dual_pdf(raw_dual, candidate_pdf)
+    raw_dual.unlink(missing_ok=True)
+    return {"task_id": pdf_id}
 
 
 def translate_slug(

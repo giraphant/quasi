@@ -69,26 +69,54 @@ def check(pdf_path: Path, *, target_language: str = "zh-CN") -> dict[str, object
     if not target_language.lower().startswith("zh"):
         # The ratio counts Han characters, so kana, hangul and Latin targets would
         # all score zero. ponytail: recalibrate per language if one gets used.
-        return {"ok": True, "detail": f"coverage check skipped: target {target_language} is not Chinese"}
+        return {
+            "ok": True,
+            "signal": "not_applicable",
+            "median": None,
+            "measured_pages": 0,
+            "minimum_median": MIN_MEDIAN,
+            "weakest": [],
+            "detail": f"coverage check skipped: target {target_language} is not Chinese",
+        }
 
     ratios = page_ratios(pdf_path)
     if len(ratios) < MIN_PAGES:
         return {
             "ok": True,
+            "signal": "insufficient_evidence",
+            "median": None,
+            "measured_pages": len(ratios),
+            "minimum_median": MIN_MEDIAN,
+            "weakest": [
+                {"page": page, "ratio": ratio}
+                for page, ratio in sorted(ratios, key=lambda item: item[1])[:5]
+            ],
             "detail": f"coverage check skipped: only {len(ratios)} page(s) carry enough source text",
         }
 
     median = statistics.median(ratio for _, ratio in ratios)
-    worst = ", ".join(f"p{page}={ratio:.2f}" for page, ratio in sorted(ratios, key=lambda pr: pr[1])[:5])
+    weakest = [
+        {"page": page, "ratio": ratio}
+        for page, ratio in sorted(ratios, key=lambda item: item[1])[:5]
+    ]
+    worst = ", ".join(f"p{item['page']}={item['ratio']:.2f}" for item in weakest)
     if median >= MIN_MEDIAN:
         return {
             "ok": True,
+            "signal": "pass",
             "median": median,
+            "measured_pages": len(ratios),
+            "minimum_median": MIN_MEDIAN,
+            "weakest": weakest,
             "detail": f"coverage {median:.2f} over {len(ratios)} pages (weakest {worst})",
         }
     return {
         "ok": False,
+        "signal": "under_translated",
         "median": median,
+        "measured_pages": len(ratios),
+        "minimum_median": MIN_MEDIAN,
+        "weakest": weakest,
         "detail": (
             f"Under-translated: {median:.2f} Chinese characters per source letter over "
             f"{len(ratios)} pages, expected at least {MIN_MEDIAN:.2f}. BabelDOC skipped body "

@@ -2,6 +2,45 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.7** (2026-07-30): **单入口 Workflow 分层、Schema 驱动产物合同与可恢复的材料事务。**
+  - `workflows/process-material.mjs` 继续是 Claude/Pi/Codex 共用的唯一运行入口，但可维护源码拆到 `scripts/workflows/`：Material、Collection、Research、Derivative Loop 只消费 typed Operation receipt；构建器确定性生成并校验 host-neutral bundle，不再靠手改 15K 行生成物。
+  - Paper 与 Book 已迁到 fail-closed Material Loop：writer 的 null/timeout/malformed receipt 一律 blocked/unknown、下一轮从 reconcile 观察真实 artifact；Paper 的 extract/readability/OCR/analyse/audit 与 Book 的 transactional chapter extraction、boundary assessment、fan-out/join/refill/synthesis/audit 都有 exact path、有限预算和 owner routing。原生 Claude Book 三章 E2E 已完成 10 started/10 result、MaterialReceipt complete、双重 audit clean。
+  - Paper、Chapter、Book overview 与 Talk 的 frontmatter、路径、identity、H1/H2、block kind 和表格列统一由 `scripts/schemas/` 导出 artifact contract；analyse/synthesis Operation 只注入 schema projection、exact refs 与动态 seed。原来仅供 acquisition 使用的 prose prompt-pack 生成链也已删除，Paper/Book acquisition 改为所属 Operation 注入结构化 policy。
+  - Book PDF/EPUB extraction 统一走同目录锁、sibling staging、manifest-last publish、manifest fingerprint 与精确 slot repair；旧 generation、stale managed files、并发 legacy/JSON writer 和 post-manifest fsync failure 都有 typed receipt 与故障注入回归。Talk transcription/compression 与 PDF translation 同样获得 observe/run transaction、generation fence 和严格 receipt。
+  - Author 开始只消费 exact child MaterialReceipt，Topic 独立为 `research-topic` 公共 Skill；两者仍复用同一 router，不复制 Paper/Book 图。Topic recall/discovery、outline、evidence cards 和 material dispatch 已有 typed 边界，复杂研究图继续按真实场景渐进收紧。
+  - 新增 `quasi-codex-agents`:从唯一源码 `agents/*.md` 确定性生成项目级或用户级 `.codex/agents/quasi_*.toml`;默认不写任何范围,必须显式 `--project PATH` 或 `--user`,`--check` 可只验证漂移。插件 manifest 仍不声称能直接携带 Codex custom agents。
+  - Codex driver 的 request 新增 `codex_agent_type`:`quasi:download-agent` 映射为 `quasi_download` 等已注册角色,普通调用映射为 `worker`。Skill 优先传原生角色,当前宿主未暴露 role selector 时仍执行通用 worker fallback。
+  - 原来不可读的 `quasi_agent_N` task 名改成由 label + request suffix 生成的可读唯一名;完整 driver 协议抽到 `skills/process-material/references/codex-native-driver.md`,只在 Codex 路径渐进加载。
+  - `research-topic` 成为独立公开 Skill,拥有 vault recall、outline、evidence card、`needs_seeds` 人工卡点与 topic 报告;`process-material` 只路由耦合的 paper/book/author 栈。二者仍共享 `workflows/process-material.mjs`,topic 的每个材料节点继续递归复用同一 paper/book router。
+
+- **0.52.6** (2026-07-29): **title-only 输入先核定 metadata,下载失败保留证据。**
+  - Codex BTS E2E 复现了与 Claude 的入口差异:Claude 先 dispatch `search-agent`,Codex 却从题名猜作者/年份/材料类型,以空 DOI 和非 canonical slug 启动图。`process-material` 现在把单本 `book|paper` 缺 ISBN/DOI 的 metadata search 写成强制前置阶段;Codex 用当前 thread 的可见 `quasi_metadata` worker,主进程禁止 WebSearch/WebFetch/browser 旁路。
+  - `search-agent.picked` 必须按 provider 作者顺序补 canonical slug。BTS 实测 `Property, Power, Politics` 的正确记录是 Folkers 等、2026、*Theory, Culture & Society*、DOI `10.1177/02632764261457554`,不再从题名里把首位受访者误当作者首列。
+  - 论文 metadata 合并器不再按并发完成顺序挑 `venue`:期刊名明确优先 Crossref,其 HTML entity 在 adapter 边界解码。此前 OpenAlex 先返回时会得到 `Theory Culture & Society`,而 Crossref 的注册名 `Theory, Culture &amp; Society` 虽已取回却被丢弃。
+  - `download-agent` 的失败回执新增 `doi`、`failure_reason` 和逐来源 `attempts`;workflow schema 与 paper/book 失败结果原样上抛。此前 SAGE direct/OA/publisher 403、Sci-Hub 404、EZProxy 未配置、Wayback timeout 最终只剩 `download_failed`,主线程无法解释也容易临时转 browser。
+  - Round 2 证明丰富 receipt 内联回 PTY 时会在约 1000 字符处截断并触发 `protocol_error`。driver 现在为每个 request 指定同目录 `receipt_path`;主线程把完整 JSON 落该路径,stdin 只发短 `result_path` event。driver 从指定路径读取、校验 schema,run 结束随 request dir 一起清理。
+  - Codex 不提供 Claude Configure option env,且 native subagent 未必继承 coordinator 的 plugin hook。所有 Python-facing `quasi-*` shim 都 source `scripts/load-keychain-env.sh`,与 PreToolUse hook 共用运行时 `--keychain-exports` helper;缺失的 `QUASI_*` 从 `Claude Code-credentials` Keychain 填入,显式 env/宿主 option 优先。command argv 只含 helper 路径,不含 secret 值;也不把 secret 写进 driver envelope。
+  - 真实诊断同时发现旧 Claude hook 会把 `CLAUDE_PLUGIN_OPTION_*` 展开为命令行 `export`,可被同用户的进程列表读到。macOS Claude 分支现在也改走进程内 Keychain helper,显式 `QUASI_*` 靠普通环境继承并由 helper 保留;测试用唯一 marker 守卫 rewritten command 不再含 secret 字面值。非 macOS 因无共享 Keychain provider 暂保留 direct-export 兼容路径。
+
+- **0.52.5** (2026-07-29): **Codex GUI 原生 subagent driver。**
+  - 新增 `quasi-codex-driver` / `scripts/codex-driver.mjs`:继续执行唯一的 `workflows/process-material.mjs`,但注入的 `agent()` 只经 stdout 发 JSONL `agent_request` 并在内存中等待 receipt。`process-material` skill 用当前 Codex thread 的 `spawn_agent` 响应,所以 download / extract / analyse 等 worker 会登记进同一 agent tree,GUI 可见、可 wait / followup / interrupt。
+  - driver 的 PTY stdin 接收 `agent_result|agent_error|cancel`;原 workflow 的 JS continuation 不落盘也不复制。完整 worker 合同写到 `.quasi/temp/.../agent-N.json`,`agent_request` 只传短 `request_path`,避免 instructions / prompt / schema 被终端输出上限截断;run 结束后清理整个请求目录。
+  - receipt 在 resolve 前按图内原 schema 校验,坏 JSON 发 `receipt_rejected` 让同一 worker修正;超时/取消发 `agent_cancel`。并发上限默认 3,给 coordinator 留一个 thread 槽。
+  - Codex 有 native subagent + resumable exec 时默认走 driver;`quasi-codex-runner` 保留为 headless/CI fallback。真实 Codex exec 工具只有 `tty=true` 才保留可写 stdin,driver 在 PTY 中切 raw mode 关闭输入回显,避免回写 receipt 混入事件流。
+
+- **0.52.4** (2026-07-29): **Codex 原生插件预览与薄 workflow runner。**
+  - 新增 `.codex-plugin/plugin.json`,Codex 直接发现同一份标准 `skills/`;不复制 skill / agent / workflow 内容。
+  - 新增 `quasi-codex-runner` / `scripts/codex-runner.mjs`:复用 Pi runner 已导出的 `createRunner` 图运行时,只把 worker invoker 换成临时 `codex exec --output-schema`。Claude 的可选 receipt schema 会被收紧为 Codex strict schema,结果仍按原 JSON 合同返回给 `process-material.mjs`。
+  - `process-material` 根据 `CODEX_THREAD_ID` 走 Codex runner;Claude Code 的原生 Workflow 与 Pi runner 路径不变。Codex worker 默认 `workspace-write`、开启采集所需网络,只额外放行 plugin data;首版不硬映射 `sonnet|opus` 模型,只映射 reasoning(`high|medium`),可用 `QUASI_CODEX_MODEL` / `QUASI_CODEX_REASONING_LEVEL` 统一覆盖。
+  - Codex 不把插件 `bin/` 自动加入 PATH;现有 PreToolUse hook 在改写 bare `quasi-*` 命令时同时注入 `<plugin>/bin`,继续维持所有 active skill 的稳定 shell surface。
+
+- **0.52.3** (2026-07-29): **编排图迁到官方 `workflows/` 目录。**
+  - `skills/process-material/orchestrate.mjs` → `workflows/process-material.mjs`(文件名对齐图内 `meta.name`)。官方插件参考把 `workflows/` 列为 Workflow 脚本的默认位置;放在 skill 目录里虽被允许,但专用位置让 `claude plugin validate` 与未来工具链都能认出它,也为日后按名调用(registered workflow)铺路。引用同步更新:`process-material/SKILL.md`、`pi-runner.mjs` 默认 `--script` 路径、两个测试文件、`docs/ARCHITECTURE.md`、CLAUDE/AGENTS 镜像。图本身零改动,Claude Code 走 Workflow 工具、Pi 走 `quasi-pi-runner` 的双路径不变。
+
+- **0.52.2** (2026-07-29): **修复 Pi skill 发现:标准名称 + symlink 实路径。**
+  - 三个 active `SKILL.md` 的 frontmatter name 从 `quasi:process-*` 改为 Agent Skills 标准 slug `process-*`;Claude Code 仍由插件宿主自动提供 `/quasi:process-*` 命令,Pi 则不再因冒号违反 `[a-z0-9-]+` 规则而拒绝加载。新增测试守卫 active skill 名称标准。
+  - extension 用 `realpathSync(import.meta.url)` 解析 symlink,确保 `~/.pi/agent/extensions/quasi.ts` 指到稳定副本时仍把 `~/.agents/plugins/quasi/skills/` 注册给 Pi,而不是误算成 `~/.pi/agent/skills/`。
+
 - **0.52.1** (2026-07-29): **Pi extension:把 quasi 的 skills 注册进 Pi 的发现路径。**
   - 新增 `extensions/quasi.ts`(15 行):监听 Pi 的 `resources_discover` 事件,把 quasi 的 `skills/` 目录注册为 Pi skill 搜索路径。打开任何 Pi 窗口,说"处理这篇论文",Pi 就能发现并路由到 `process-material` skill,不再需要手动调 `quasi-pi-runner`。Extension 通过 `import.meta.url` 反推 plugin root,不硬编码路径。
   - 安装方式:`~/.pi/agent/extensions/quasi.ts` → symlink 到 `~/.agents/plugins/quasi/extensions/quasi.ts`(稳定路径,不带版本号,更新不断)。`~/.agents/plugins/quasi/` 是 quasi 的无版本号副本,每次发版后需要同步。

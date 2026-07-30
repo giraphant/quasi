@@ -46,6 +46,9 @@ class BodySection:
     child_kind: BlockKind | None = None         # h3-* kinds 下 H3 之下的形状
     aliases: list[Union[str, Pattern]] = field(default_factory=list)
     description: str = ""                       # 给 LLM prompt 用的语义说明
+    columns: list[str] = field(default_factory=list)
+    recommended_items: tuple[int, int] | None = None
+    condition: str = ""
 
 
 @dataclass
@@ -54,6 +57,11 @@ class BodySchema:
 
     type_name: str
     sections: list[BodySection]
+    artifact_schema_version: str = ""
+    path_pattern: str = ""
+    identity_fields: list[str] = field(default_factory=list)
+    h1: str = ""
+    metadata_lines: list[str] = field(default_factory=list)
     # Phase 1 = False(只 warn);Phase 3 = True(未知 H2 直接 fail)
     strict: bool = False
 
@@ -137,12 +145,23 @@ AUTHOR_BODY = BodySchema(
 
 BOOK_BODY = BodySchema(
     type_name="book",
+    artifact_schema_version="quasi.artifact.book/0.1",
+    path_pattern="vault/books/{slug}/00-overview.md",
+    identity_fields=[
+        "title",
+        "authors",
+        "year",
+        "publisher",
+        "isbn",
+        "category",
+    ],
+    h1="使用 frontmatter.title；不添加模板式或项目式后缀",
     sections=[
         BodySection(
             h2="核心论点",
             kind="paragraph",
             required=True,
-            description="全书的中心主题和核心论证",
+            description="综合全部 supplied chapter analyses，说明全书的中心主题、核心论证和证据关系",
             aliases=["全书核心论点", "一、全书核心论点"],
         ),
         BodySection(
@@ -157,6 +176,7 @@ BOOK_BODY = BodySchema(
             kind="table",
             required=True,
             description="全书的核心概念表(同名 H2,book 用 table 形态)",
+            columns=["概念", "英文", "提出者", "定义"],
             aliases=["关键概念表", "核心概念表", "关键概念谱系", "三、核心概念表"],
         ),
         BodySection(
@@ -171,6 +191,7 @@ BOOK_BODY = BodySchema(
             kind="numbered-list",
             required=True,
             description="按优先级排序的推荐精读章节",
+            condition="只推荐 supplied chapter analyses 中实际存在的章节",
             aliases=["推荐精读章节"],
         ),
         BodySection(
@@ -178,6 +199,7 @@ BOOK_BODY = BodySchema(
             kind="h3-project-tabs",
             required=False,
             child_kind="paragraph",
+            condition="只有 caller identity 明确提供项目语境时才生成",
             aliases=[
                 re.compile(r"^与 .+ 的关联$"),
                 re.compile(r"^与\".+\"的关联$"),
@@ -192,6 +214,18 @@ BOOK_BODY = BodySchema(
 
 CHAPTER_BODY = BodySchema(
     type_name="chapter",
+    artifact_schema_version="quasi.artifact.chapter/0.1",
+    path_pattern="vault/books/{book_slug}/ch{slot}-{chapter_slug}.md",
+    identity_fields=[
+        "title",
+        "authors",
+        "year",
+        "book",
+    ],
+    h1="忠实呈现 caller identity 中的 chapter label 与 chapter title，不添加装饰性后缀",
+    metadata_lines=[
+        "可写原文标题、作者和关键词；每一项必须由 input 或 caller identity 支持",
+    ],
     sections=[
         BodySection(
             h2="核心论点",
@@ -217,12 +251,15 @@ CHAPTER_BODY = BodySchema(
             kind="table",
             required=True,
             description="章节中讨论的核心概念(同名 H2,chapter 用 table)",
+            columns=["概念", "英文", "提出者", "定义"],
+            recommended_items=(3, 5),
         ),
         BodySection(
             h2="核心引用",
             kind="numbered-list",
             required=True,
-            description="本章最重要的 5-15 个引用",
+            description="本章实质使用的著作及其在论证中的作用；不补写 input 无法支持的书目信息",
+            recommended_items=(5, 15),
             aliases=["核心引用文献"],
         ),
         BodySection(
@@ -230,6 +267,7 @@ CHAPTER_BODY = BodySchema(
             kind="blockquote-list",
             required=False,
             description="可引用段落 / 原文金句",
+            condition="只有 input 中存在可定位的准确引文时才生成",
             aliases=["可引用段落"],
         ),
         BodySection(
@@ -237,6 +275,7 @@ CHAPTER_BODY = BodySchema(
             kind="h3-project-tabs",
             required=False,
             child_kind="numbered-list",
+            condition="只有 caller identity 明确提供项目语境时才生成",
             aliases=[
                 re.compile(r"^与 .+ 的关联$"),
                 re.compile(r"^与\".+\"的关联$"),
@@ -252,12 +291,28 @@ CHAPTER_BODY = BodySchema(
 
 PAPER_BODY = BodySchema(
     type_name="paper",
+    artifact_schema_version="quasi.artifact.paper/0.1",
+    path_pattern="vault/papers/{slug}.md",
+    identity_fields=[
+        "title",
+        "authors",
+        "year",
+        "journal",
+        "doi",
+    ],
+    h1="忠实概括论文标题；不添加装饰性或项目式后缀",
+    metadata_lines=[
+        "英文原标题",
+        "作者",
+        "期刊来源",
+        "仅在 identity 提供 DOI 时写 DOI",
+    ],
     sections=[
         BodySection(
             h2="核心论点",
             kind="paragraph",
             required=True,
-            description="论文的中心论点和论证逻辑",
+            description="说明研究问题、中心论点、证据、推理、贡献，以及正文实际提出的限制",
         ),
         BodySection(
             h2="理论框架",
@@ -277,12 +332,15 @@ PAPER_BODY = BodySchema(
             kind="table",
             required=True,
             description="论文中讨论的核心概念(同名 H2,paper 用 table)",
+            columns=["概念", "英文", "提出者", "定义"],
+            recommended_items=(3, 5),
         ),
         BodySection(
             h2="核心引用",
             kind="numbered-list",
             required=True,
-            description="本论文最重要的 5-15 个引用",
+            description="论文实质使用的著作及其在论证中的作用；不补写 input 无法支持的书目信息",
+            recommended_items=(5, 15),
             aliases=["核心引用文献"],
         ),
         BodySection(
@@ -290,6 +348,7 @@ PAPER_BODY = BodySchema(
             kind="blockquote-list",
             required=False,
             description="可引用段落 / 原文金句",
+            condition="只有 input 中存在可定位的准确引文时才生成",
             aliases=["可引用段落"],
         ),
         BodySection(
@@ -297,6 +356,7 @@ PAPER_BODY = BodySchema(
             kind="h3-project-tabs",
             required=False,
             child_kind="numbered-list",
+            condition="只有 caller identity 明确提供项目语境时才生成",
             aliases=[
                 re.compile(r"^与 .+ 的关联$"),
                 re.compile(r"^与\".+\"的关联$"),
@@ -316,6 +376,17 @@ PAPER_BODY = BodySchema(
 
 TALK_BODY = BodySchema(
     type_name="talk",
+    artifact_schema_version="quasi.artifact.talk/0.1",
+    path_pattern="vault/talks/{slug}/talk.md",
+    identity_fields=["title", "date", "media"],
+    h1="使用 frontmatter.title",
+    metadata_lines=[
+        "讲者",
+        "日期",
+        "场合",
+        "时长",
+        "transcript 未说明的非必填展示项标为（未说明）",
+    ],
     sections=[
         BodySection(
             h2="核心论点",
@@ -335,6 +406,7 @@ TALK_BODY = BodySchema(
             kind="table",
             required=True,
             description="讲座提出/反复使用的核心概念表;无则保留表头写一行",
+            columns=["概念", "英文", "定义"],
         ),
         BodySection(
             h2="项目关联",

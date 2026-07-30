@@ -28,9 +28,12 @@ SPAM_PHRASES = (
     "字幕志愿者",
 )
 
-# a transcript paragraph that begins with a timestamp marker, e.g. `[00:00]` …
-_SEG_RE = re.compile(r"^`?\[\d{1,2}:\d{2}")
-_TS_RE = re.compile(r"`?\[\d{1,2}:\d{2}(?::\d{2})?\]`?")
+# One cue per actual timestamp line.  transcript.md intentionally groups many
+# cue lines into a visual paragraph, so splitting on blank lines collapses
+# dozens of observations and can hide a repetition loop.
+_CUE_RE = re.compile(
+    r"^\s*`?\[(?:\d{1,2}:)?\d{1,2}:\d{2}\]`?\s*(?P<text>.*)$"
+)
 
 
 @dataclass
@@ -56,12 +59,12 @@ class Verdict:
 
 
 def _segments(body: str) -> list[str]:
-    """Return the timestamped segment paragraphs' *text* (timestamp stripped)."""
+    """Return each timestamp cue's text, independent of Markdown paragraphs."""
     out: list[str] = []
-    for para in body.split("\n\n"):
-        p = para.strip()
-        if _SEG_RE.match(p):
-            out.append(_TS_RE.sub("", p).strip())
+    for line in body.splitlines():
+        match = _CUE_RE.match(line)
+        if match:
+            out.append(match.group("text").strip())
     return out
 
 

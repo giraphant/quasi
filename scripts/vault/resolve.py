@@ -28,9 +28,10 @@ vault resolve —— 判断候选 work 是否已在 vault,slug 漂移也能认�
     quasi-helpers vault resolve --items-file -   # stdin(书名带撇号时比 --items-json 安全)
     quasi-helpers vault resolve --items-json '[{"kind":"book","slug":"x","isbn":"9780226185903"}]'
 
-每项 ``{kind: "book"|"paper", slug, isbn?, doi?, title?, authors?}``;输出
+每项 ``{kind: "book"|"paper"|"talk"|"author", slug, isbn?, doi?, title?, authors?}``;输出
 ``{"resolved":[{kind, slug, vault_slug, path, match}], "scanned": {...}}``,
 未命中的 ``vault_slug``/``path``/``match`` 均为 ``null``。只读,不写任何文件。
+``talk`` 与 ``author`` 只做 exact slug/path 观察,不参与书/论文的 identifier/title 索引。
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -100,8 +102,48 @@ def surnames(raw: Any) -> set[str]:
 
 
 def _product_path(root: Path, kind: str, slug: str) -> Path:
-    return (root / "vault" / "books" / slug / "00-overview.md" if kind == "book"
-            else root / "vault" / "papers" / f"{slug}.md")
+    if kind == "book":
+        return root / "vault" / "books" / slug / "00-overview.md"
+    if kind == "paper":
+        return root / "vault" / "papers" / f"{slug}.md"
+    if kind == "talk":
+        return root / "vault" / "talks" / slug / "talk.md"
+    return root / "vault" / "authors" / f"{slug}.md"
+
+
+def _product_state(root: Path, path: Path) -> str:
+    """Return safe|missing|unsafe without following product-path symlinks."""
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return "unsafe"
+
+    current = root
+    for part in relative.parts[:-1]:
+        current /= part
+        try:
+            mode = current.lstat().st_mode
+        except FileNotFoundError:
+            return "missing"
+        except OSError:
+            return "unsafe"
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            return "unsafe"
+
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "unsafe"
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+        return "unsafe"
+
+    try:
+        path.resolve(strict=True).relative_to(root.resolve(strict=True))
+    except (OSError, ValueError):
+        return "unsafe"
+    return "safe"
 
 
 def _index(root: Path, kind: str) -> tuple[dict[str, str], dict[str, list[tuple[str, set[str], bool]]]]:
@@ -119,6 +161,8 @@ def _index(root: Path, kind: str) -> tuple[dict[str, str], dict[str, list[tuple[
     idents: dict[str, str] = {}
     titles: dict[str, list[tuple[str, set[str], bool]]] = {}
     for slug, path in pairs:
+        if _product_state(root, path) != "safe":
+            continue
         try:
             fm = read_frontmatter(path).frontmatter or {}
         except OSError:
@@ -156,15 +200,31 @@ def resolve(root: Path, items: list[dict]) -> dict:
     for item in items:
         kind = (item.get("kind") or "book").strip()
         slug = (item.get("slug") or "").strip()
-        if kind not in ("book", "paper") or not slug:
+        if kind not in ("book", "paper", "talk", "author") or not slug:
             resolved.append({"kind": kind, "slug": slug, "vault_slug": None,
-                             "path": None, "match": None, "error": "kind must be book|paper and slug non-empty"})
+                             "path": None, "match": None,
+                             "error": "kind must be book|paper|talk|author and slug non-empty"})
             continue
 
-        # 1. 精确路径
-        if _product_path(root, kind, slug).is_file():
+        # 1. 精确路径。Agent 后续会写这些 lexical paths，所以 symlink/non-regular
+        # targets and symlinked ancestors must fail closed rather than count as existence.
+        product = _product_path(root, kind, slug)
+        product_state = _product_state(root, product)
+        if product_state == "safe":
             resolved.append({"kind": kind, "slug": slug, "vault_slug": slug,
-                             "path": str(_product_path(root, kind, slug).relative_to(root)), "match": "slug"})
+                             "path": str(product.relative_to(root)), "match": "slug"})
+            continue
+        if product_state == "unsafe":
+            resolved.append({"kind": kind, "slug": slug, "vault_slug": None,
+                             "path": None, "match": None,
+                             "error": "product path or ancestor is symlink/non-regular"})
+            continue
+
+        # Talk and Author are not identifier-addressable works here. Their
+        # canonical exact paths are the only safe resolver signal.
+        if kind in ("talk", "author"):
+            resolved.append({"kind": kind, "slug": slug, "vault_slug": None,
+                             "path": None, "match": None})
             continue
 
         # 2/3. 标识符 → 标题+作者姓(懒建索引:两者都无可用输入的 item 不触发全 vault 扫描)
@@ -181,6 +241,16 @@ def resolve(root: Path, items: list[dict]) -> dict:
             if not hit and titled:
                 hit = _title_hit(titles, item)
                 how = "title" if hit else None
+            if hit and _product_state(
+                root,
+                _product_path(root, kind, hit),
+            ) != "safe":
+                resolved.append({
+                    "kind": kind, "slug": slug,
+                    "vault_slug": None, "path": None, "match": None,
+                    "error": "resolved product path is symlink/non-regular",
+                })
+                continue
 
         resolved.append({
             "kind": kind, "slug": slug,

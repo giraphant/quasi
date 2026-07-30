@@ -1,5 +1,5 @@
 ---
-name: quasi:process-draft
+name: process-draft
 description: Use when the user wants to finalise a draft by proofreading text and checking citations, or clean up proofread records after review.
 ---
 

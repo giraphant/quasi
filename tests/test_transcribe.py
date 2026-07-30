@@ -15,7 +15,7 @@ sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 sys.path.insert(0, str(PLUGIN_ROOT))
 
 from transcribe import engines  # noqa: E402
-from transcribe.classify import classify_text  # noqa: E402
+from transcribe.classify import _segments, classify_text  # noqa: E402
 from transcribe.silent import build_silent_talk_md  # noqa: E402
 from transcribe.transcribe import _build_transcript_md, _fmt_ts  # noqa: E402
 from scripts.typecheck.typecheck import check_file  # noqa: E402
@@ -66,6 +66,17 @@ def test_classify_live_vs_dead():
     assert classify_text(spam).state == "dead"
 
     assert classify_text("no segments here").state == "empty"
+
+
+def test_classify_counts_each_timestamp_cue_inside_one_markdown_paragraph():
+    body = "\n".join(
+        f"`[00:{index:02d}]` repeated subtitle volunteer line"
+        for index in range(12)
+    )
+    assert len(_segments(body)) == 12
+    verdict = classify_text(body)
+    assert verdict.total == 12
+    assert verdict.state == "dead"
 
 
 def test_silent_template_conforms_to_talk_body(tmp_path):

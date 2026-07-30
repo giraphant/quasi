@@ -46,6 +46,24 @@ def write_paper(project: Path, slug: str, doi: str | None) -> None:
     )
 
 
+def write_author(project: Path, slug: str) -> None:
+    path = project / "vault" / "authors" / f"{slug}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\ntype: author\nname: Ada Example\nthemes:\n  - testing\n---\n\n",
+        encoding="utf-8",
+    )
+
+
+def write_talk(project: Path, slug: str) -> None:
+    path = project / "vault" / "talks" / slug / "talk.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\ntype: talk\ntitle: A Talk\ndate: 2026-07-30\n---\n\n",
+        encoding="utf-8",
+    )
+
+
 @pytest.fixture()
 def vault(tmp_path: Path) -> Path:
     write_book(tmp_path, "fourcade-economists-societies-2009", "9781400833139")
@@ -193,6 +211,197 @@ def test_identifier_wins_over_title(vault: Path) -> None:
 
 
 def test_bad_kind_is_reported_not_crashed(vault: Path) -> None:
-    (item,) = run_resolve(vault, [{"kind": "talk", "slug": "whatever"}])["resolved"]
+    (item,) = run_resolve(vault, [{"kind": "image", "slug": "whatever"}])["resolved"]
     assert item["vault_slug"] is None
     assert "error" in item
+
+
+def test_talk_exact_path_is_observed_without_work_indexes(tmp_path: Path) -> None:
+    write_talk(tmp_path, "ada-keynote-2026")
+
+    out = run_resolve(
+        tmp_path,
+        [
+            {"kind": "talk", "slug": "ada-keynote-2026"},
+            {"kind": "talk", "slug": "missing-talk"},
+        ],
+    )
+
+    assert out == {
+        "resolved": [
+            {
+                "kind": "talk",
+                "slug": "ada-keynote-2026",
+                "vault_slug": "ada-keynote-2026",
+                "path": "vault/talks/ada-keynote-2026/talk.md",
+                "match": "slug",
+            },
+            {
+                "kind": "talk",
+                "slug": "missing-talk",
+                "vault_slug": None,
+                "path": None,
+                "match": None,
+            },
+        ],
+        "scanned": {},
+    }
+
+
+def test_author_exact_path_is_observed_without_work_indexes(tmp_path: Path) -> None:
+    write_author(tmp_path, "ada-example")
+
+    out = run_resolve(
+        tmp_path,
+        [
+            {"kind": "author", "slug": "ada-example"},
+            {"kind": "author", "slug": "missing-author"},
+        ],
+    )
+
+    assert out == {
+        "resolved": [
+            {
+                "kind": "author",
+                "slug": "ada-example",
+                "vault_slug": "ada-example",
+                "path": "vault/authors/ada-example.md",
+                "match": "slug",
+            },
+            {
+                "kind": "author",
+                "slug": "missing-author",
+                "vault_slug": None,
+                "path": None,
+                "match": None,
+            },
+        ],
+        "scanned": {},
+    }
+
+
+def test_author_exact_file_symlink_is_rejected(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside\n", encoding="utf-8")
+    path = tmp_path / "vault" / "authors" / "ada-example.md"
+    path.parent.mkdir(parents=True)
+    path.symlink_to(outside)
+
+    (item,) = run_resolve(
+        tmp_path,
+        [{"kind": "author", "slug": "ada-example"}],
+    )["resolved"]
+
+    assert item["vault_slug"] is None
+    assert item["path"] is None
+    assert item["match"] is None
+    assert "error" in item
+
+
+def test_author_symlinked_parent_directory_is_rejected(tmp_path: Path) -> None:
+    outside = tmp_path / "outside-authors"
+    outside.mkdir()
+    (outside / "ada-example.md").write_text("outside\n", encoding="utf-8")
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "authors").symlink_to(outside, target_is_directory=True)
+
+    (item,) = run_resolve(
+        tmp_path,
+        [{"kind": "author", "slug": "ada-example"}],
+    )["resolved"]
+
+    assert item["vault_slug"] is None
+    assert item["path"] is None
+    assert item["match"] is None
+    assert "error" in item
+
+
+def test_paper_identifier_index_skips_symlinked_product(tmp_path: Path) -> None:
+    outside = tmp_path / "outside-paper.md"
+    outside.write_text(
+        "---\ntype: paper\ntitle: Outside\nauthors:\n  - Ada Example\n"
+        "doi: 10.5555/outside\n---\n",
+        encoding="utf-8",
+    )
+    paper = tmp_path / "vault" / "papers" / "evil.md"
+    paper.parent.mkdir(parents=True)
+    paper.symlink_to(outside)
+
+    (item,) = run_resolve(
+        tmp_path,
+        [
+            {
+                "kind": "paper",
+                "slug": "requested-paper",
+                "doi": "10.5555/outside",
+                "title": "Outside",
+                "authors": ["Ada Example"],
+            }
+        ],
+    )["resolved"]
+
+    assert item["vault_slug"] is None
+    assert item["path"] is None
+    assert item["match"] is None
+
+
+def test_book_identifier_index_skips_symlinked_book_directory(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside-book"
+    outside.mkdir()
+    (outside / "00-overview.md").write_text(
+        "---\ntype: book\ntitle: Outside\nauthors:\n  - Ada Example\n"
+        "isbn: 9780000000002\n---\n",
+        encoding="utf-8",
+    )
+    books = tmp_path / "vault" / "books"
+    books.mkdir(parents=True)
+    (books / "evil").symlink_to(outside, target_is_directory=True)
+
+    (item,) = run_resolve(
+        tmp_path,
+        [
+            {
+                "kind": "book",
+                "slug": "requested-book",
+                "isbn": "9780000000002",
+                "title": "Outside",
+                "authors": ["Ada Example"],
+            }
+        ],
+    )["resolved"]
+
+    assert item["vault_slug"] is None
+    assert item["path"] is None
+    assert item["match"] is None
+
+
+def test_book_identifier_index_skips_symlinked_overview(tmp_path: Path) -> None:
+    outside = tmp_path / "outside-overview.md"
+    outside.write_text(
+        "---\ntype: book\ntitle: Outside\nauthors:\n  - Ada Example\n"
+        "isbn: 9780000000002\n---\n",
+        encoding="utf-8",
+    )
+    overview = tmp_path / "vault" / "books" / "evil" / "00-overview.md"
+    overview.parent.mkdir(parents=True)
+    overview.symlink_to(outside)
+
+    (item,) = run_resolve(
+        tmp_path,
+        [
+            {
+                "kind": "book",
+                "slug": "requested-book",
+                "isbn": "9780000000002",
+                "title": "Outside",
+                "authors": ["Ada Example"],
+            }
+        ],
+    )["resolved"]
+
+    assert item["vault_slug"] is None
+    assert item["path"] is None
+    assert item["match"] is None

@@ -2,7 +2,9 @@
 # quasi-translate — Translate a local PDF to a bilingual PDF.
 #
 # Usage:
-#   quasi-translate SLUG [--backend immersive|pdf2zh] [additional args...]
+#   quasi-translate SLUG [--backend immersive|pdf2zh]
+#       [--source-file PDF] [--target-language TAG]
+#       [--toc-json JSON] [--toc-page-side original|translated]
 #
 # Backend defaults to $QUASI_TRANSLATE_BACKEND, else `immersive`.
 #   immersive — Immersive Translate Zotero API (paid, needs immersive_auth_key)
@@ -12,25 +14,40 @@ set -e
 
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
+. "$PLUGIN_ROOT/scripts/load-keychain-env.sh"
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
 PYTHON="$DATA_DIR/.venv/bin/python"
+
+[ -x "$PYTHON" ] || "$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
+
+# Strict graph-facing surface.  Backend ownership remains in configured
+# QUASI_TRANSLATE_BACKEND; translate.py rejects a caller --backend override.
+case "${1:-}" in
+  observe|run)
+    exec "$PYTHON" "$PLUGIN_ROOT/scripts/translate/translate.py" "$@"
+    ;;
+esac
 
 BACKEND="${QUASI_TRANSLATE_BACKEND:-immersive}"
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --backend) BACKEND="$2"; shift 2 ;;
+    --backend)
+      [ $# -ge 2 ] || { echo "quasi-translate: --backend needs a value" >&2; exit 2; }
+      BACKEND="$2"
+      shift 2
+      ;;
     --backend=*) BACKEND="${1#*=}"; shift ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
 
 case "$BACKEND" in
-  immersive) SCRIPT="immersive_translate.py" ;;
-  pdf2zh) SCRIPT="pdf2zh_translate.py" ;;
+  immersive|pdf2zh) ;;
   *) echo "quasi-translate: unknown backend '$BACKEND' (immersive|pdf2zh)" >&2; exit 2 ;;
 esac
 
-[ -x "$PYTHON" ] || "$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
-
-exec "$PYTHON" "$PLUGIN_ROOT/scripts/translate/$SCRIPT" "${ARGS[@]}"
+# The legacy prose surface is only a renderer.  It deliberately publishes
+# through the same lock/stage/manifest-last transaction as observe/run.
+export QUASI_TRANSLATE_BACKEND="$BACKEND"
+exec "$PYTHON" "$PLUGIN_ROOT/scripts/translate/translate.py" legacy "${ARGS[@]}"

@@ -22,12 +22,14 @@ def test_doi_lookup_hits_works_endpoint():
     fake_resp = {"status": "ok", "message": {
         "DOI": "10.1/y", "title": ["Test"], "issued": {"date-parts": [[2020]]},
         "author": [{"family": "Smith", "given": "J"}], "type": "journal-article",
+        "container-title": ["Theory, Culture &amp; Society"],
     }}
     with patch("sources.crossref._get_json", return_value=fake_resp) as mock_get:
         r = crossref.search_paper(search.PaperQuery(doi="10.1/y"))
     assert r.success is True
     assert len(r.entries) == 1
     assert r.entries[0]["doi"] == "10.1/y"
+    assert r.entries[0]["venue"] == "Theory, Culture & Society"
     assert "works/10.1/y" in mock_get.call_args[0][0]
 
 

@@ -1,0 +1,36 @@
+{
+  "name": "quasi",
+  "version": "0.52.7+codex.20260730175943",
+  "description": "Academic research toolkit for discovery, download, extraction, analysis, synthesis, and translation.",
+  "author": {
+    "name": "ramu",
+    "url": "https://github.com/giraphant"
+  },
+  "homepage": "https://github.com/giraphant/quasi",
+  "repository": "https://github.com/giraphant/quasi",
+  "keywords": [
+    "academic-research",
+    "papers",
+    "books",
+    "knowledge-base",
+    "translation"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Quasi",
+    "shortDescription": "Academic reading and research workflows",
+    "longDescription": "Search, acquire, extract, analyse, synthesise, translate, and validate academic materials through reusable workflows.",
+    "developerName": "ramu",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Web"
+    ],
+    "defaultPrompt": [
+      "Process this paper into my research vault.",
+      "Research this topic and build a structured review.",
+      "Transcribe and analyse this academic talk."
+    ]
+  }
+}
