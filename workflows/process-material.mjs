@@ -2260,6 +2260,7 @@ well-formed command status "failed", nonzero exit, or explicitly reported absent
             "status",
             "disposition",
             "identity_verified",
+            "source",
             "attempts"
           ],
           properties: {
@@ -2275,7 +2276,7 @@ well-formed command status "failed", nonzero exit, or explicitly reported absent
             },
             identity_verified: { type: "boolean" },
             path: { type: "string" },
-            source: { type: "string" },
+            source: { type: ["string", "null"] },
             doi: { type: ["string", "null"] },
             verdict_note: { type: "string" },
             failure_reason: { type: "string" },
@@ -2645,6 +2646,8 @@ well-formed command status "failed", nonzero exit, or explicitly reported absent
       preserve_attempt_rows: true,
       known_exhaustion: "download_failed",
       uncertain_identity_path_or_writer: "blocked",
+      success_source_required: true,
+      success_source_examples: ["existing_file", "anna_archive", "doi_cascade"],
       path_echo: {
         source: "request.allowed_outputs[].path",
         byte_for_byte: true,
@@ -2674,6 +2677,8 @@ well-formed command status "failed", nonzero exit, or explicitly reported absent
       preserve_attempt_rows: true,
       known_exhaustion: "download_failed",
       uncertain_identity_path_or_writer: "blocked",
+      success_source_required: true,
+      success_source_examples: ["existing_file", "doi_cascade"],
       path_echo: {
         source: "request.exact_output",
         byte_for_byte: true,
@@ -2730,7 +2735,8 @@ well-formed command status "failed", nonzero exit, or explicitly reported absent
     return `Execute one acquisition operation from this self-contained JSON request.
 For a succeeded item, receipt path must echo the chosen request.allowed_outputs[].path
 byte-for-byte. An absolute/resolved path printed by quasi-download is observation evidence only;
-never copy that rendering into the receipt.
+never copy that rendering into the receipt. Every succeeded item must also name the stable source
+that proved the artifact, using source="existing_file" for verified reuse.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}
 \`\`\``;
@@ -2774,7 +2780,8 @@ ${JSON.stringify(request, null, 2)}
     return `Execute one acquisition operation from this self-contained JSON request.
 For a succeeded item, receipt path must equal request.exact_output byte-for-byte. An
 absolute/resolved path printed by quasi-download is observation evidence only; never copy that
-rendering into the receipt.
+rendering into the receipt. Every succeeded item must also name the stable source that proved the
+artifact, using source="existing_file" for verified reuse.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}
 \`\`\``;
@@ -9524,6 +9531,7 @@ ${JSON.stringify(request, null, 2)}`;
       "status",
       "disposition",
       "identity_verified",
+      "source",
       "attempts"
     ];
     const allowed = [
@@ -9540,7 +9548,7 @@ ${JSON.stringify(request, null, 2)}`;
       return false;
     if (item.status === "ok")
       return receipt2.acquired === 1 && receipt2.failed === 0 && ["created", "reused"].includes(item.disposition) && item.identity_verified === true && item.path === output && validText4(item.source, 1, 200) && item.failure_reason === void 0;
-    if (item.disposition !== null || item.identity_verified !== false || item.path !== void 0 || !validText4(item.failure_reason, 1, 4e3))
+    if (item.disposition !== null || item.identity_verified !== false || item.path !== void 0 || !(item.source === null || validText4(item.source, 1, 200)) || !validText4(item.failure_reason, 1, 4e3))
       return false;
     if (item.status === "download_failed")
       return receipt2.acquired === 0 && receipt2.failed === 1 && item.attempts.length > 0;

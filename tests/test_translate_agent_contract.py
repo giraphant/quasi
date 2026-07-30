@@ -14,7 +14,7 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 AGENT = PLUGIN_ROOT / "agents" / "translate-agent.md"
-SKILL = PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+SKILL = PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
 OPERATIONS = PLUGIN_ROOT / "scripts/workflows" / "operations" / "translate.mjs"
 
 
@@ -334,7 +334,7 @@ def test_translate_receipt_copies_nullable_fields_as_literal_json_tokens() -> No
     assert "不得\n  填 sentinel、猜默认值或伪造一个 valid-looking receipt" in contract
 
 
-def test_process_material_routes_translation_through_the_shared_workflow() -> None:
+def test_collect_material_routes_translation_through_the_shared_workflow() -> None:
     skill = text(SKILL)
 
     assert 'args.kind not in ("book", "paper", "author", "talk", "translate")' in skill
@@ -353,7 +353,7 @@ def test_process_material_routes_translation_through_the_shared_workflow() -> No
     assert "TRANSLATE 是主进程(图外)" not in skill
 
 
-def test_process_material_consumes_translation_receipt_without_rewriting_material() -> None:
+def test_collect_material_consumes_translation_receipt_without_rewriting_material() -> None:
     skill = text(SKILL)
 
     assert "quasi.derivative.translation.receipt/0.1" in skill
@@ -374,7 +374,7 @@ def test_process_material_consumes_translation_receipt_without_rewriting_materia
     assert "zh-CN → -zh-cn.pdf" in skill
 
 
-def test_process_material_owns_translation_human_gates_only() -> None:
+def test_collect_material_owns_translation_human_gates_only() -> None:
     skill = text(SKILL)
 
     assert 'gate.get("kind") == "source_selection"' in skill

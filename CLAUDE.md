@@ -143,9 +143,9 @@ writer receipt is an unknown outcome and must block rather than retry.
 
 `quasi-codex-driver` is the Codex GUI path. It runs the same graph but turns each `agent()` into a bidirectional JSONL `agent_request`; each event carries both the cross-host `agent_type` and the registered `codex_agent_type` (`quasi_download`, `quasi_analyse`, etc., or built-in `worker` fallback). The full worker contract is stored in the event's short-lived `.quasi/temp/...` `request_path`, avoiding terminal truncation. The active skill answers through the current thread's native `spawn_agent` tools, serializes each full result to the assigned `receipt_path`, and writes only a short `result_path` event to the driver's PTY stdin. Those workers therefore appear in the current Codex agent tree, while large diagnostic receipts cannot be truncated by the PTY/tool input limit. The driver keeps graph continuations in memory, validates returned receipts against the graph schema, caps requests at three so the coordinator retains one thread slot, and emits `agent_cancel` when the graph aborts. `quasi-codex-runner` remains the headless/CI fallback when native subagent or resumable-exec tools are unavailable.
 
-Public skill routing separates material intake from topic organisation. `process-material` owns paper, book, author, Talk, and Translation; `organise-topic` owns vault recall, outline steering, evidence cards, human seed gates, and topic synthesis. Both still call `workflows/process-material.mjs`, so topic candidates reuse the same paper/book router without duplicating graph nodes. Draft proofreading and citation closure use `finalise-draft`.
+Public skill routing separates material intake from topic research. `collect-material` owns paper, book, author, Talk, and Translation; `precise-topic` owns vault recall, outline steering, evidence cards, human seed gates, and topic synthesis. Both still call `workflows/process-material.mjs`, so topic candidates reuse the same paper/book router without duplicating graph nodes. Draft proofreading and citation closure use `finalize-draft`.
 
-For a single title-only book or paper request, `process-material` must dispatch `search-agent` before vault recall or graph startup. The verified record owns author order, year, identifiers, venue, access URLs, and canonical slug. The main process must not substitute generic web or browser search; a failed download must preserve `failure_reason` and per-source `attempts` in the graph result.
+For a single title-only book or paper request, `collect-material` must dispatch `search-agent` before vault recall or graph startup. The verified record owns author order, year, identifiers, venue, access URLs, and canonical slug. The main process must not substitute generic web or browser search; a failed download must preserve `failure_reason` and per-source `attempts` in the graph result.
 
 Paper metadata merging treats Crossref as the authority for the journal container title and decodes its HTML entities at the adapter boundary. Do not let asynchronous adapter completion order choose `venue`; OpenAlex may omit meaningful punctuation from the same journal name.
 
@@ -227,4 +227,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.10.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.11.

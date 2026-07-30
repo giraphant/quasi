@@ -542,7 +542,7 @@ rating: 4
 ### 3.9 `talk`
 
 会议/讲座录制(video/audio)的结构化摘要。转写本体是同目录的 `transcript.md`;
-媒体本体 `recording.<ext>` 不入库(gitignore)。由 `process-material` 的 Talk 分支生成。
+媒体本体 `recording.<ext>` 不入库(gitignore)。由 `collect-material` 的 Talk 分支生成。
 
 ```ts
 export const TalkSchema = z.object({

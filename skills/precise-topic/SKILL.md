@@ -1,9 +1,9 @@
 ---
-name: organise-topic
-description: Use when the user wants to organise a topic through iterative vault recall, academic discovery, evidence cards, and a structured literature review.
+name: precise-topic
+description: Use when the user wants to define and research a precise topic through iterative vault recall, academic discovery, evidence cards, and a structured literature review.
 ---
 
-# Organise Topic — 主题组织
+# Precise Topic — 主题界定与研究
 
 ## 任务
 
@@ -53,7 +53,7 @@ description: Use when the user wants to organise a topic through iterative vault
 
 - Claude Code:用 Workflow 工具运行 `$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs`,args 为 `{kind:"topic",slug,meta}`。
 - Pi:把 args 写入 `.quasi/temp/`,运行 `quasi-pi-runner --script "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" --args-file <path>`。
-- Codex GUI:用长驻 `quasi-codex-driver` 连接当前 thread 的原生 subagents。启动前必须完整读取并遵守 `$CLAUDE_PLUGIN_ROOT/skills/process-material/references/codex-native-driver.md`;没有原生 subagent 或可续写 exec 时才回退 `quasi-codex-runner`。
+- Codex GUI:用长驻 `quasi-codex-driver` 连接当前 thread 的原生 subagents。启动前必须完整读取并遵守 `$CLAUDE_PLUGIN_ROOT/skills/collect-material/references/codex-native-driver.md`;没有原生 subagent 或可续写 exec 时才回退 `quasi-codex-runner`。
 - 图内 `steer-agent` 独占写 `02-outline.md`;`webcard-agent` 一次只写调用方指定的一张 card;paper/book 候选继续走共享 router。
 - 主进程只拥有 Step 0、本轮人工卡点、LOCALISE 回填和最终报告,不写图内研究状态。
 - LOCALISE:对 `result.book_slugs` 逐本运行 `quasi-helpers localise scan`;pending 时 dispatch `quasi:search-agent`,再用 `quasi-helpers localise write` 写入。
@@ -110,7 +110,7 @@ def run_graph(current_args):
         args_file = write_temp_json(current_args)  # .quasi/temp/
         if has_tools("spawn_agent", "wait_agent", "followup_task",
                      "interrupt_agent", "resumable_exec"):
-            # 先完整读取 skills/process-material/references/codex-native-driver.md,
+            # 先完整读取 skills/collect-material/references/codex-native-driver.md,
             # 再按其合同驱动。
             return drive_codex_native(
                 command=f"quasi-codex-driver --script '$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs' "

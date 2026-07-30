@@ -590,6 +590,7 @@ function strictPaperDownloadReceipt(receipt, slug, output) {
     "status",
     "disposition",
     "identity_verified",
+    "source",
     "attempts",
   ];
   const allowed = [
@@ -636,6 +637,10 @@ function strictPaperDownloadReceipt(receipt, slug, output) {
     item.disposition !== null ||
     item.identity_verified !== false ||
     item.path !== undefined ||
+    !(
+      item.source === null ||
+      validText(item.source, 1, 200)
+    ) ||
     !validText(item.failure_reason, 1, 4000)
   )
     return false;

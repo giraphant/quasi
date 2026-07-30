@@ -190,6 +190,7 @@ function harness() {{
           status: 'download_failed',
           disposition: null,
           identity_verified: false,
+          source: null,
           doi: '10.1000/parity',
           failure_reason: 'not available',
           attempts: [{{ source: 'oa', status: 'failed', error: '404' }}],

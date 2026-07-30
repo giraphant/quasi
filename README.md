@@ -60,9 +60,9 @@ acquisition 等非产物结构的行为，由所属 `scripts/workflows/operation
 
 | Skill | 功能 |
 |---|---|
-| `process-material` | 统一采集→分析编排图:book / paper / author / talk / PDF translation |
-| `organise-topic` | topic 独立组织循环:vault 召回、滚雪球、证据卡、研究大纲与主题综合 |
-| `finalise-draft` | draft 校对 + 引文审查 + references.bib |
+| `collect-material` | 统一采集→分析编排图:book / paper / author / talk / PDF translation |
+| `precise-topic` | topic 界定与研究循环:vault 召回、滚雪球、证据卡、研究大纲与主题综合 |
+| `finalize-draft` | draft 校对 + 引文审查 + references.bib |
 
 `process-journal` 当前已归档到 `deprecated/skills/`,等待 journal acquisition 重新设计。
 
@@ -103,7 +103,7 @@ quasi-codex-driver --script PATH --args-file JSON [--cwd PROJECT] ...
 quasi-codex-runner --script PATH --args-file JSON [--cwd PROJECT] ...
 ```
 
-`quasi-pi-runner` 是 Pi 下的最小 `process-material` 图执行器:直接用 Pi 官方 SDK
+`quasi-pi-runner` 是 Pi 下的最小 material 图执行器:直接用 Pi 官方 SDK
 加载 `agents/*.md`,只实现现有图使用的 `agent` / `parallel` / `phase` / `log` /
 `args`;Claude Code 仍走原 Workflow 工具。
 

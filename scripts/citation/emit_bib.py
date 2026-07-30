@@ -122,7 +122,7 @@ def emit_bib(manifest: dict, biblio: dict,
         elif reason == "new-entry-pending":
             out.append(render_skeleton(
                 key, entry.get("authors_raw", ""), entry.get("year", ""),
-                "new-entry-pending (run /quasi:process-material to add)"))
+                "new-entry-pending (run /quasi:collect-material to add)"))
             counts["new_pending"] += 1
         else:
             out.append(render_skeleton(

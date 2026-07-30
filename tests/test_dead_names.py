@@ -43,6 +43,9 @@ DEAD_NAMES = [
     "process-talk",
     "process-draft",
     "research-topic",
+    "quasi:process-material",
+    "organise-topic",
+    "finalise-draft",
     "kb-update",
     "mode: journal",
     "profile-agent",
@@ -83,3 +86,15 @@ def test_active_agents_and_skills_do_not_reference_dead_names():
 def test_removed_legacy_bins_are_not_present():
     assert not (PLUGIN_ROOT / "bin" / "quasi-citation").exists()
     assert not (PLUGIN_ROOT / "bin" / "quasi-proofread").exists()
+
+
+def test_removed_public_skill_directories_are_not_present():
+    for name in (
+        "process-material",
+        "organise-topic",
+        "finalise-draft",
+        "process-talk",
+        "process-draft",
+        "research-topic",
+    ):
+        assert not (PLUGIN_ROOT / "skills" / name).exists()

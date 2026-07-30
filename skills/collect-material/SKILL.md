@@ -1,9 +1,9 @@
 ---
-name: process-material
+name: collect-material
 description: Use when the user wants to search, download, analyse, translate, or transcribe a book, paper, author's representative works, existing PDF, meeting, or lecture recording into structured outputs.
 ---
 
-# Process Material — 统一材料处理
+# Collect Material — 材料采集与处理
 
 ## 任务
 
@@ -47,8 +47,8 @@ Translation 则保持独立 receipt,不伪装成 Material。
 
 ## 硬约束
 
-- **topic / draft 不走本 skill**——topic 用 `organise-topic`,draft 用
-  `finalise-draft`。Talk 是本 skill 的 `kind:talk` 分支；只有命中 Talk 意图时才读取
+- **topic / draft 不走本 skill**——topic 用 `precise-topic`,draft 用
+  `finalize-draft`。Talk 是本 skill 的 `kind:talk` 分支；只有命中 Talk 意图时才读取
   `references/talk.md`。
 - shared `workflows/process-material.mjs` 在 Claude Code 走 Workflow 工具,在 Pi
   走薄 runner,在 Codex GUI 走原生 subagent driver;主进程只做 Step 0
@@ -72,7 +72,7 @@ Translation 则保持独立 receipt,不伪装成 Material。
 
 - Claude Code:通过 **Workflow 工具**调 `$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs`,把 `{kind, ...}` 作为 `args` 传入。
 - Pi:把同一份 args 写到 `.quasi/temp/` JSON,运行 `quasi-pi-runner --script "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" --args-file <path>`;stdout 是最终 JSON 回执。
-- Codex GUI:启动长驻 `quasi-codex-driver`,由**当前会话**响应其 JSONL `agent_request`,用原生 `spawn_agent` 启动 worker;这些 worker 必须登记在当前 thread 的 agent tree。启动前必须完整读取并遵守 `$CLAUDE_PLUGIN_ROOT/skills/process-material/references/codex-native-driver.md`。只有当前宿主没有原生 subagent / 可续写 exec 工具时才回退 `quasi-codex-runner`。
+- Codex GUI:启动长驻 `quasi-codex-driver`,由**当前会话**响应其 JSONL `agent_request`,用原生 `spawn_agent` 启动 worker;这些 worker 必须登记在当前 thread 的 agent tree。启动前必须完整读取并遵守 `$CLAUDE_PLUGIN_ROOT/skills/collect-material/references/codex-native-driver.md`。只有当前宿主没有原生 subagent / 可续写 exec 工具时才回退 `quasi-codex-runner`。
 - Codex 的 title-only metadata 前置搜索也必须是当前 thread 的可见原生 worker:用 `fork_turns:"none"` 和已注册的 `quasi_search` role(若当前 `spawn_agent` 暴露 `agent_type`)启动唯一 target;task name 采用 `metadata_{slug}_{id_suffix}` 这样的可读唯一名。无 role selector 时才让通用 worker 读取本插件 `agents/search-agent.md`。只返回该 agent 合同的 JSON,不要由主进程自己 WebSearch。
 - 图内用 `agent(prompt, {agentType:'quasi:<name>'})` 起 worker
   agent(download/extract/analyse/synthesis/audit/translate)。
@@ -174,6 +174,12 @@ if needs_metadata:
         args.meta["confidence"] = "verified"
         args.slug = picked.slug
         args |= intent
+if args.kind == "paper" and not args.meta.get("journal"):
+    # Search adapters may expose a proceedings/book container as container_title
+    # or venue. Paper identity uses the same bibliographic fact under `journal`.
+    args.meta["journal"] = (
+        args.meta.get("container_title") or args.meta.get("venue")
+    )
 if args.kind == "book":
     if not args.meta.get("publisher"):
         report("Book publisher 无可靠 metadata evidence；未启动 Workflow"); return
@@ -419,16 +425,40 @@ if translation_receipt:
         report("translation receipt terminal status invalid"); return
 
 # Strict Paper/Book/Author/Translation writer 都只允许一次 invocation。null/timeout/cancel/畸形
-# receipt 或 status=blocked 的下一步只能是 receipt.resume 指向的 caller next run
-# reconciliation；本 skill 不自动重投 synthesis、audit 或整张图。
+# receipt 不能盲目重投。唯一可自动发起的新 run 是 Paper acquisition 的只读式
+# reconciliation：receipt 明确要求 paper.reconcile，且 exact source 已存在，因此下一次
+# acquire invocation 只能核验 existing target，不允许再次 fetch。该新 run 最多一次。
 if result.status == "blocked":
     typed = (
         result.get("translation_receipt")
         or result.get("collection_receipt")
         or result.get("material_receipt")
     )
-    report(f"blocked:{typed.get('failure') if typed else result};"
-           f"resume={typed.get('resume') if typed else None};交 caller 下一次 run"); return
+    failure = (typed or {}).get("failure") or {}
+    resume = (typed or {}).get("resume") or {}
+    safe_paper_acquire_reconcile = (
+        args.kind == "paper"
+        and failure.get("code") == "paper.writer_receipt_mismatch"
+        and failure.get("operation_key") in ("paper.acquire", "paper.download.legacy")
+        and failure.get("outcome") == "unknown"
+        and resume.get("operation_key") == "paper.reconcile"
+        and exists(f"sources/{key}.pdf")
+    )
+    if safe_paper_acquire_reconcile:
+        report(
+            "Paper acquisition 回执未知，但 exact source 已存在；"
+            "发起一次 bounded paper.reconcile 新 run（只核验 existing target，不再 fetch）"
+        )
+        result = run_graph(wf_args)
+        typed = result.get("material_receipt")
+    if result.status == "blocked":
+        typed = typed or result.get("material_receipt")
+        report(
+            f"blocked: stage={(typed or {}).get('stage')};"
+            f"failure={(typed or {}).get('failure') or result};"
+            f"resume={(typed or {}).get('resume')};"
+            "未绕过合同或继续重投 writer"
+        ); return
 
 if result.status == "audit_escalated":
     report(f"audit 仍 escalated:{result.escalated};交人工"); return

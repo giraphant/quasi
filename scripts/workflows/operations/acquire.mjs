@@ -96,6 +96,7 @@ export const PAPER_ACQUIRE_SCHEMA = {
           "status",
           "disposition",
           "identity_verified",
+          "source",
           "attempts",
         ],
         properties: {
@@ -111,7 +112,7 @@ export const PAPER_ACQUIRE_SCHEMA = {
           },
           identity_verified: { type: "boolean" },
           path: { type: "string" },
-          source: { type: "string" },
+          source: { type: ["string", "null"] },
           doi: { type: ["string", "null"] },
           verdict_note: { type: "string" },
           failure_reason: { type: "string" },
@@ -531,6 +532,8 @@ export const BOOK_ACQUISITION_POLICY = {
     preserve_attempt_rows: true,
     known_exhaustion: "download_failed",
     uncertain_identity_path_or_writer: "blocked",
+    success_source_required: true,
+    success_source_examples: ["existing_file", "anna_archive", "doi_cascade"],
     path_echo: {
       source: "request.allowed_outputs[].path",
       byte_for_byte: true,
@@ -561,6 +564,8 @@ export const PAPER_ACQUISITION_POLICY = {
     preserve_attempt_rows: true,
     known_exhaustion: "download_failed",
     uncertain_identity_path_or_writer: "blocked",
+    success_source_required: true,
+    success_source_examples: ["existing_file", "doi_cascade"],
     path_echo: {
       source: "request.exact_output",
       byte_for_byte: true,
@@ -628,7 +633,8 @@ export function bookAcquirePrompt(
   return `Execute one acquisition operation from this self-contained JSON request.
 For a succeeded item, receipt path must echo the chosen request.allowed_outputs[].path
 byte-for-byte. An absolute/resolved path printed by quasi-download is observation evidence only;
-never copy that rendering into the receipt.
+never copy that rendering into the receipt. Every succeeded item must also name the stable source
+that proved the artifact, using source="existing_file" for verified reuse.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}
 \`\`\``;
@@ -675,7 +681,8 @@ export function paperAcquirePrompt(slug, meta) {
   return `Execute one acquisition operation from this self-contained JSON request.
 For a succeeded item, receipt path must equal request.exact_output byte-for-byte. An
 absolute/resolved path printed by quasi-download is observation evidence only; never copy that
-rendering into the receipt.
+rendering into the receipt. Every succeeded item must also name the stable source that proved the
+artifact, using source="existing_file" for verified reuse.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}
 \`\`\``;

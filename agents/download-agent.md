@@ -47,3 +47,5 @@ outcome 无法确认时返回 blocked/unknown。每次 invocation 只处理这�
 `quasi-download` 为观察或 accept 回执打印的绝对/resolved path 只用于证明实际文件；
 最终 acquisition receipt 的 `path` 必须按 `operation_policy.receipt.path_echo` 逐字使用
 request 中的 `exact_output` 或所选 `allowed_outputs[].path`，不得把 CLI 的路径表示抄回。
+每个 `status: ok` item 还必须提供非空 `source`，标明实际证明该 artifact 的稳定来源；
+对已存在且重新核验通过的 exact output 固定写 `source: "existing_file"`。

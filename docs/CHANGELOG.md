@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.11** (2026-07-30): **采集成功回执补齐来源证明，公共 Skill 采用更顺手的动词。**
+  - Paper acquisition 的成功 item 现在必须返回非空 `source`；验证并复用既有 PDF 时固定为 `existing_file`。此前 0.52.10 已统一 caller path，但真实 Workflow 又证明 Agent 可能漏掉 strict validator 所需的来源字段，导致正确 source 仍被 fail-closed。
+  - 最外层材料 Skill 会把可信 metadata 的 `container_title|venue` 归一化为 Paper `journal`；对 `paper.acquire` 的 unknown receipt，仅在 exact source 已存在且 resume 明确为 `paper.reconcile` 时自动发起一次 bounded 新 run。其它 unknown writer 仍不重投，并报告 stage、failure 与 resume。
+  - 公共入口改名为 `collect-material`、`finalize-draft`、`precise-topic`；内部 host-neutral bundle 仍叫 `workflows/process-material.mjs`，避免把用户路由名称与稳定运行 ABI 混为一谈。
+
 - **0.52.10** (2026-07-30): **收敛公共 Skill，并修正 Paper 获取回执的路径边界。**
   - `process-talk` 合入 `process-material`，Talk 的渐进加载合同移到该 Skill 的 reference；`process-draft` 改名为英式拼写的 `finalise-draft`，`research-topic` 改名为 `organise-topic`。公共入口由四个收敛为三个，但底层 Talk、Material 与 Topic Workflow 能力不变。
   - Paper/Book acquisition receipt 的 `path` 现在必须逐字回显 request 中 caller 指定的相对路径；`quasi-download` 返回的绝对解析路径只作为观察证据。此前已正确取得并核验的 PDF 会因两种等价路径写法不一致而被误判为 `writer_receipt_mismatch`。

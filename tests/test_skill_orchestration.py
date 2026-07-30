@@ -124,20 +124,20 @@ def test_skill_names_follow_agent_skills_standard():
     assert offenders == []
 
 
-def test_process_material_codex_prefers_visible_native_driver():
+def test_collect_material_codex_prefers_visible_native_driver():
     skill = (
-        PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
     runtime = (
         PLUGIN_ROOT
         / "skills"
-        / "process-material"
+        / "collect-material"
         / "references"
         / "codex-native-driver.md"
     ).read_text(encoding="utf-8")
 
     assert "quasi-codex-driver" in skill
-    assert "skills/process-material/references/codex-native-driver.md" in skill
+    assert "skills/collect-material/references/codex-native-driver.md" in skill
     assert 'protocol="quasi-codex-driver/1"' in skill
     assert 'fork_turns:"none"' in runtime
     assert "spawn_agent" in runtime and "current thread" in runtime
@@ -152,9 +152,9 @@ def test_process_material_codex_prefers_visible_native_driver():
     )
 
 
-def test_process_material_title_only_input_requires_metadata_agent():
+def test_collect_material_title_only_input_requires_metadata_agent():
     skill = (
-        PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
     search_agent = (PLUGIN_ROOT / "agents" / "search-agent.md").read_text(
         encoding="utf-8"
@@ -172,9 +172,9 @@ def test_process_material_title_only_input_requires_metadata_agent():
     assert "{首列作者姓}-{短题名}-{year}" in search_agent
 
 
-def test_process_material_step_zero_uses_temp_items_file_not_inline_json():
+def test_collect_material_step_zero_uses_temp_items_file_not_inline_json():
     skill = (
-        PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
 
     assert "--items-json" not in skill
@@ -190,7 +190,7 @@ def test_process_material_step_zero_uses_temp_items_file_not_inline_json():
 
 def test_search_agent_book_picked_requires_evidence_backed_identity():
     skill = (
-        PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
     agent = (PLUGIN_ROOT / "agents" / "search-agent.md").read_text(
         encoding="utf-8"
@@ -222,9 +222,9 @@ def test_search_agent_book_picked_requires_evidence_backed_identity():
     assert 'report("Book publisher 无可靠 metadata evidence；未启动 Workflow")' in skill
 
 
-def test_process_material_year_gate_builds_exact_graph_decision_envelope():
+def test_collect_material_year_gate_builds_exact_graph_decision_envelope():
     skill = (
-        PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
     graph = source_file("materials/book.mjs")
 
@@ -424,7 +424,7 @@ def test_orchestrate_book_reconciles_exact_chapter_receipts_before_reporting_ok(
 
 
 def test_book_ingress_requires_publisher_enrichment_even_with_isbn():
-    skill = (PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md").read_text(
+    skill = (PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
         encoding="utf-8"
     )
     acquire = source_file("operations/acquire.mjs")
@@ -484,7 +484,7 @@ def test_book_strict_slice_uses_typed_operations_and_neutral_unknown_codes():
 def test_book_auto_format_handoff_is_finite_and_never_defaults_to_pdf():
     book = source_file("materials/book.mjs")
     acquire = source_file("operations/acquire.mjs")
-    skill = (PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md").read_text(
+    skill = (PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
         encoding="utf-8"
     )
 
@@ -575,7 +575,7 @@ def test_author_collection_uses_strict_operations_and_shared_agent_contracts():
         encoding="utf-8"
     )
     skill = (
-        PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
 
     for key in (
@@ -609,13 +609,13 @@ def test_book_boundary_receipt_does_not_duplicate_manifest_in_input_paths():
     assert "must not\ninclude manifest_path" in extract
 
 
-def test_process_material_reports_any_status_that_is_not_ok():
+def test_collect_material_reports_any_status_that_is_not_ok():
     """The entry skill must enumerate the SUCCESS status, not the failure ones. processBook
     re-raises download-agent's status verbatim, so the failure set grows outside this file:
     `year_mismatch` fell through an `endswith("_failed") or status in (...)` list straight into
     the success report, exactly as `chapters_incomplete` did before 0.47.1. Missing a name there
     means silently reporting a failed run as done."""
-    text = (PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md").read_text(
+    text = (PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
         encoding="utf-8"
     )
 
@@ -873,10 +873,10 @@ eq(positiveInt(-2, 3), 3, '负配额回退')
 """)
 
 
-def test_organise_topic_gates_dead_end_back_to_the_user():
+def test_precise_topic_gates_dead_end_back_to_the_user():
     """Snowball runs dry long before the corpus is useful; the graph can only report that, the
     seeds decision is the user's. Dropping the gate turns a 2-item topic into a silent `ok`."""
-    text = (PLUGIN_ROOT / "skills" / "organise-topic" / "SKILL.md").read_text(
+    text = (PLUGIN_ROOT / "skills" / "precise-topic" / "SKILL.md").read_text(
         encoding="utf-8"
     )
 
@@ -891,15 +891,15 @@ def test_organise_topic_gates_dead_end_back_to_the_user():
 
 def test_public_skills_carry_material_and_topic_post_steps():
     """0.49.0 retired the per-kind process-* skills; the two post-processing contracts they owned
-    must survive in process-material or they silently vanish: process-paper's opt-in translation
+    must survive in collect-material or they silently vanish: process-paper's opt-in translation
     (shared Workflow Translation derivative) and process-author's LOCALISE loop
     over the books it landed (which needs the graph to report WHICH books — counts can't drive
     a loop)."""
-    skill = (PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md").read_text(
+    skill = (PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
         encoding="utf-8"
     )
     topic_skill = (
-        PLUGIN_ROOT / "skills" / "organise-topic" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "precise-topic" / "SKILL.md"
     ).read_text(encoding="utf-8")
     graph = workflow_source()
 
@@ -952,21 +952,34 @@ def test_public_skills_carry_material_and_topic_post_steps():
 
 def test_material_and_topic_have_distinct_public_routing_hints():
     material = (
-        PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
     topic = (
-        PLUGIN_ROOT / "skills" / "organise-topic" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "precise-topic" / "SKILL.md"
     ).read_text(encoding="utf-8")
 
     assert "topic review" not in frontmatter_description(
-        PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     )
-    assert "organise a topic" in frontmatter_description(
-        PLUGIN_ROOT / "skills" / "organise-topic" / "SKILL.md"
+    assert "define and research a precise topic" in frontmatter_description(
+        PLUGIN_ROOT / "skills" / "precise-topic" / "SKILL.md"
     )
     assert 'args.kind not in ("book", "paper", "author", "talk", "translate")' in material
     assert 'follow_reference("references/talk.md")' in material
     assert '{"kind": "topic"' in topic
+
+
+def test_collect_material_normalises_container_title_and_reconciles_only_existing_paper_acquisition():
+    material = (
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert 'args.meta.get("container_title") or args.meta.get("venue")' in material
+    assert 'failure.get("code") == "paper.writer_receipt_mismatch"' in material
+    assert 'resume.get("operation_key") == "paper.reconcile"' in material
+    assert 'exists(f"sources/{key}.pdf")' in material
+    assert "只核验 existing target，不再 fetch" in material
+    assert material.count("result = run_graph(wf_args)") >= 2
 
 
 def test_extract_agent_is_readonly_and_graph_receipt_owns_chapter_inventory():
@@ -1223,12 +1236,12 @@ def test_talk_reference_is_a_single_shared_workflow_ingress():
     这是静态 Skill/Agent 边界检查，不是 native Claude Workflow E2E。
     """
     material_skill = (
-        PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
     skill = (
         PLUGIN_ROOT
         / "skills"
-        / "process-material"
+        / "collect-material"
         / "references"
         / "talk.md"
     ).read_text(encoding="utf-8")
@@ -1245,7 +1258,7 @@ def test_talk_reference_is_a_single_shared_workflow_ingress():
     assert not (PLUGIN_ROOT / "skills" / "process-talk").exists()
     assert "references/talk.md" in material_skill
     assert "meeting" in frontmatter_description(
-        PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     )
     assert "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" in skill
     assert '"kind": "talk"' in skill

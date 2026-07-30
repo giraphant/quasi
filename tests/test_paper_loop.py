@@ -156,6 +156,7 @@ def download_reply(
         "status": status,
         "disposition": disposition if status == "ok" else None,
         "identity_verified": status == "ok",
+        "source": None,
         "attempts": [],
         "doi": "10.1000/example",
     }
@@ -407,9 +408,15 @@ def test_born_digital_runs_explicit_typed_sequence(tmp_path: Path) -> None:
         "byte_for_byte": True,
         "cli_resolved_path_is_observation_only": True,
     }
+    assert download["operation_policy"]["receipt"]["success_source_required"] is True
+    assert download["operation_policy"]["receipt"]["success_source_examples"] == [
+        "existing_file",
+        "doi_cascade",
+    ]
     assert "receipt path must equal request.exact_output byte-for-byte" in (
         download_prompt
     )
+    assert 'source="existing_file" for verified reuse' in download_prompt
     assert download["identity_contract"]["fields"] == [
         "title",
         "authors",
@@ -1305,6 +1312,10 @@ def test_analyse_receipt_matrix_mismatch_is_blocked_unknown(
             "missing-attempts",
             lambda value: value["per_item"][0].pop("attempts"),
         ),
+        (
+            "missing-source",
+            lambda value: value["per_item"][0].pop("source"),
+        ),
     ],
 )
 def test_malformed_download_writer_receipt_is_blocked_unknown(
@@ -1377,6 +1388,7 @@ def test_explicit_download_block_is_unknown_and_not_retried(
         "status",
         "disposition",
         "identity_verified",
+        "source",
         "attempts",
     }
 
@@ -1433,6 +1445,7 @@ def test_download_prompt_shell_argv_neutralises_remote_metadata(
     assert "`eval`、`sh -c`、command substitution" in agent
     assert "绝对/resolved path 只用于证明实际文件" in agent
     assert "`operation_policy.receipt.path_echo`" in agent
+    assert '`source: "existing_file"`' in agent
 
 
 def test_malformed_extract_writer_receipt_is_blocked_unknown(
