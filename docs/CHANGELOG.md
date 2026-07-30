@@ -2,6 +2,9 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.13** (2026-07-30): **材料 Skill 恢复自然语言“处理”路由。**
+  - `collect-material` 的 routing description 现在明确覆盖处理一篇或多篇论文、文章或书籍；用户无需刻意说“采集入库”，原有采集、作者材料、PDF、翻译和录音意图仍保留。
+
 - **0.52.12** (2026-07-30): **Draft Skill 恢复英式拼写。**
   - 公共入口由 `finalize-draft` 修正为 `finalise-draft`，与项目采用的英式拼写和用户术语保持一致；Workflow、Agent 与产物协议均未改变。
 

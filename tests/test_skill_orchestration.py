@@ -961,6 +961,11 @@ def test_material_and_topic_have_distinct_public_routing_hints():
     assert "topic review" not in frontmatter_description(
         PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     )
+    assert "process or collect one or more papers, articles, or books" in (
+        frontmatter_description(
+            PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
+        )
+    )
     assert "define and research a precise topic" in frontmatter_description(
         PLUGIN_ROOT / "skills" / "precise-topic" / "SKILL.md"
     )

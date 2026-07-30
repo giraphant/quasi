@@ -1,6 +1,6 @@
 ---
 name: collect-material
-description: Use when the user wants to search, download, analyse, translate, or transcribe a book, paper, author's representative works, existing PDF, meeting, or lecture recording into structured outputs.
+description: Use when the user wants to process or collect one or more papers, articles, or books; handle an existing PDF; analyse an author's works; translate a PDF; or transcribe a meeting or lecture recording.
 ---
 
 # Collect Material — 材料采集与处理
