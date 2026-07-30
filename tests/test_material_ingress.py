@@ -215,6 +215,58 @@ def test_title_request_runs_recall_search_resolve_before_acquire(
     assert "quasi-search paper" in report["trace"][1]["prompt"]
 
 
+def test_lookup_string_null_sentinels_are_normalised_before_search(
+    tmp_path: Path,
+) -> None:
+    slug = "example-a-safety-paper-2024"
+    key = f"paper:{slug}"
+    recall = lookup_receipt(
+        "material.recall",
+        key,
+        "paper",
+        slug,
+    )
+    recall.update({
+        "vault_slug": "null",
+        "path": "null",
+        "match": None,
+    })
+    responses = {
+        f"{slug}:recall": [recall],
+        f"{slug}:search": [paper_search(paper_query())],
+        f"{slug}:resolve": [
+            lookup_receipt("material.resolve", key, "paper", slug),
+        ],
+        f"{slug}:acquire": [paper_download_failed(slug)],
+    }
+
+    report = run_ingress(
+        tmp_path,
+        {
+            "kind": "paper",
+            "request": {
+                "title": "A Safety Paper",
+                "authors": ["Ada Example"],
+                "year": 2024,
+                "doi": "10.1000/safety",
+            },
+        },
+        responses,
+    )
+
+    assert report["result"]["status"] == "download_failed"
+    normalised = report["result"]["ingress_receipt"]["operations"][0]
+    assert normalised["vault_slug"] is None
+    assert normalised["path"] is None
+    assert normalised["match"] is None
+    assert [call["phase"] for call in report["trace"]] == [
+        "Recall",
+        "Search",
+        "Search",
+        "Acquire",
+    ]
+
+
 def test_verified_identity_resolves_to_existing_canonical_owner(
     tmp_path: Path,
 ) -> None:

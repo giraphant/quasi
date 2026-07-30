@@ -161,6 +161,19 @@ const MATERIAL_IDENTITY_FAILURE_SCHEMA = {
   },
 };
 
+const MATERIAL_VAULT_SLUG_SCHEMA = {
+  type: ["null", "string"],
+  maxLength: 80,
+  pattern: "^[a-z0-9][a-z0-9-]{0,79}$",
+};
+
+const MATERIAL_VAULT_PATH_SCHEMA = {
+  type: ["null", "string"],
+  maxLength: 2048,
+  pattern:
+    "^vault/(?:books/[a-z0-9][a-z0-9-]{0,79}/00-overview\\.md|papers/[a-z0-9][a-z0-9-]{0,79}\\.md)$",
+};
+
 const materialLookupSchema = (key) => ({
   type: "object",
   additionalProperties: false,
@@ -189,8 +202,8 @@ const materialLookupSchema = (key) => ({
     request_key: { type: "string" },
     kind: { type: "string", enum: ["book", "paper"] },
     requested_slug: { type: "string" },
-    vault_slug: { type: ["string", "null"] },
-    path: { type: ["string", "null"] },
+    vault_slug: MATERIAL_VAULT_SLUG_SCHEMA,
+    path: MATERIAL_VAULT_PATH_SCHEMA,
     match: {
       type: ["string", "null"],
       enum: ["slug", "isbn", "doi", "title", null],
@@ -985,7 +998,8 @@ ${delimiter}
 The helper must return exactly one row for the request. Project it to the closed receipt fields
 request_key, kind, requested_slug, vault_slug, path and match without inferring a hit. A helper
 error or a missing, extra, foreign, or malformed row is a known failed receipt. A miss is a
-successful receipt with vault_slug/path/match all null.
+successful receipt with vault_slug/path/match all JSON null. JSON null is the bare token null:
+never emit the strings "null" or "None", and never use an empty string as a null sentinel.
 
 Return only a closed quasi.operation.${operation}.receipt/0.1 object with key="${operation}",
 effect="readonly", attempt=1, status succeeded|failed, and failure=null on success or

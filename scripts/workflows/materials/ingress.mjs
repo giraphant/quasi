@@ -323,6 +323,29 @@ function canonicalPath(kind, slug) {
     : `vault/papers/${slug}.md`;
 }
 
+function normaliseLookupNullSentinels(receipt) {
+  if (
+    !receipt ||
+    typeof receipt !== "object" ||
+    Array.isArray(receipt)
+  )
+    return receipt;
+  const nullSentinel = (value) =>
+    value === null || value === "null";
+  if (
+    nullSentinel(receipt.vault_slug) &&
+    nullSentinel(receipt.path) &&
+    nullSentinel(receipt.match)
+  )
+    return {
+      ...receipt,
+      vault_slug: null,
+      path: null,
+      match: null,
+    };
+  return receipt;
+}
+
 function strictLookup(receipt, key, request) {
   if (
     !exactKeys(receipt, [
@@ -722,15 +745,17 @@ async function runResolvedIngress(
     request.requestedSlug,
     request.query,
   );
-  const recall = await runtime.runOperation(
-    materialRecallPrompt(recallRequest),
-    {
-      phase: "Recall",
-      agentType: "quasi:metadata-agent",
-      label: `${request.requestedSlug}:recall`,
-      schema: MATERIAL_RECALL_SCHEMA,
-    },
-    operationSpec("material.recall"),
+  const recall = normaliseLookupNullSentinels(
+    await runtime.runOperation(
+      materialRecallPrompt(recallRequest),
+      {
+        phase: "Recall",
+        agentType: "quasi:metadata-agent",
+        label: `${request.requestedSlug}:recall`,
+        schema: MATERIAL_RECALL_SCHEMA,
+      },
+      operationSpec("material.recall"),
+    ),
   );
   operations.push(recall);
   if (runtimeUnknown(recall, "material.recall"))
@@ -843,15 +868,17 @@ async function runResolvedIngress(
     picked.slug,
     picked,
   );
-  const resolved = await runtime.runOperation(
-    materialResolvePrompt(resolveRequest),
-    {
-      phase: "Search",
-      agentType: "quasi:metadata-agent",
-      label: `${picked.slug}:resolve`,
-      schema: MATERIAL_RESOLVE_SCHEMA,
-    },
-    operationSpec("material.resolve"),
+  const resolved = normaliseLookupNullSentinels(
+    await runtime.runOperation(
+      materialResolvePrompt(resolveRequest),
+      {
+        phase: "Search",
+        agentType: "quasi:metadata-agent",
+        label: `${picked.slug}:resolve`,
+        schema: MATERIAL_RESOLVE_SCHEMA,
+      },
+      operationSpec("material.resolve"),
+    ),
   );
   operations.push(resolved);
   if (runtimeUnknown(resolved, "material.resolve"))

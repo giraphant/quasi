@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.18** (2026-07-31): **修复材料未命中时 `"null"` 字符串阻断 metadata ingress。**
+  - Claude StructuredOutput 在 `material.recall` 的 nullable string 字段上可能把要求的 JSON `null` 写成字符串 `"null"`。它满足了宽松的 `string|null` schema，却被 Graph 的严格 Recall validator 拒绝，导致批量材料在 Search 前全部 `metadata_failed`。
+  - Recall/Resolve schema 现在优先声明 null、约束 canonical vault path，operation prompt 与 `metadata-agent` 明确要求无引号的 JSON null。Graph 只在 readonly lookup 的三个 miss 字段全部为 null sentinel 时确定性归一化，随后照常执行严格校验；hit、identity 和所有 writer receipt 均不放宽。
+  - 回归直接注入 `vault_slug/path: "null"` 与真正的 `match:null`，确认它们被规范为真正的 null、进入 Search/Resolve/Acquire，并在 ingress receipt 中保存闭合的 typed 结果。
+
 - **0.52.17** (2026-07-31): **修复 Claude Code 拒绝加载过大的统一 Workflow。**
   - 0.52.16 的生成图达到 531,416 bytes，超过 Claude Code 对单个 Workflow 脚本的 524,288-byte 硬上限，导致图在任何节点启动前直接失败。构建器现在只压缩生成 bundle 的空白，不改标识符、字段名或运行逻辑；产物降至约 390 KB，并保留足够的后续增长余量。
   - 构建和测试新增 512 KiB 硬性体积门。以后无论本地构建、`--check`、CI 还是发版，只要统一图重新超过宿主上限就会在发布前明确失败，不再把不可加载的版本交给用户。
