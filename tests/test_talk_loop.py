@@ -491,7 +491,13 @@ def test_live_talk_runs_typed_sequence_and_completes() -> None:
         "talk.analyse",
         "talk.audit.legacy",
     ]
-    assert all(row["phase"] == "Talk" for row in report["trace"])
+    assert [row["phase"] for row in report["trace"]] == [
+        "Recall",
+        "Prepare",
+        "Prepare",
+        "Analyse",
+        "Audit",
+    ]
     analyse_call = report["trace"][3]
     assert analyse_call["agent_type"] == "quasi:analyse-agent"
     request = analyse_call["request"]
@@ -834,7 +840,7 @@ def test_source_entry_routes_talk() -> None:
         entry=True,
     )
     assert report["result"]["status"] == "ok"
-    assert report["phases"] == ["Talk"]
+    assert report["phases"] == ["Recall"]
 
 
 @pytest.mark.parametrize("slug", ["中文讲座-20260730", "Uppercase-talk", "../escape"])

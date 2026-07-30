@@ -135,6 +135,280 @@ export const PAPER_ACQUIRE_SCHEMA = {
   },
 };
 
+const MATERIAL_IDENTITY_FAILURE_SCHEMA = {
+  type: ["object", "null"],
+  additionalProperties: false,
+  required: [
+    "code",
+    "operation_key",
+    "outcome",
+    "retryable",
+    "message",
+  ],
+  properties: {
+    code: { type: "string" },
+    operation_key: {
+      type: "string",
+      enum: [
+        "material.recall",
+        "material.search",
+        "material.resolve",
+      ],
+    },
+    outcome: { type: "string", enum: ["known", "unknown"] },
+    retryable: { type: "boolean" },
+    message: { type: ["string", "null"] },
+  },
+};
+
+const materialLookupSchema = (key) => ({
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schema_version",
+    "key",
+    "effect",
+    "status",
+    "attempt",
+    "request_key",
+    "kind",
+    "requested_slug",
+    "vault_slug",
+    "path",
+    "match",
+    "failure",
+  ],
+  properties: {
+    schema_version: {
+      const: `quasi.operation.${key}.receipt/0.1`,
+    },
+    key: { const: key },
+    effect: { const: "readonly" },
+    status: { type: "string", enum: ["succeeded", "failed"] },
+    attempt: { type: "integer", const: 1 },
+    request_key: { type: "string" },
+    kind: { type: "string", enum: ["book", "paper"] },
+    requested_slug: { type: "string" },
+    vault_slug: { type: ["string", "null"] },
+    path: { type: ["string", "null"] },
+    match: {
+      type: ["string", "null"],
+      enum: ["slug", "isbn", "doi", "title", null],
+    },
+    failure: MATERIAL_IDENTITY_FAILURE_SCHEMA,
+  },
+});
+
+export const MATERIAL_RECALL_SCHEMA =
+  materialLookupSchema("material.recall");
+
+export const MATERIAL_RESOLVE_SCHEMA =
+  materialLookupSchema("material.resolve");
+
+const MATERIAL_QUERY_PROPERTIES = {
+  slug: { type: ["string", "null"] },
+  title: { type: ["string", "null"] },
+  authors: {
+    type: "array",
+    maxItems: 32,
+    items: { type: "string" },
+  },
+  year: { type: ["integer", "null"] },
+};
+
+const MATERIAL_SEARCH_BASE_PROPERTIES = {
+  schema_version: {
+    const: "quasi.operation.material.search.receipt/0.1",
+  },
+  key: { const: "material.search" },
+  effect: { const: "readonly" },
+  status: { type: "string", enum: ["succeeded", "failed"] },
+  attempt: { type: "integer", const: 1 },
+  request_key: { type: "string" },
+  kind: { type: "string", enum: ["book", "paper"] },
+  confidence: {
+    type: "string",
+    enum: ["high", "medium", "low"],
+  },
+  sources_hit: {
+    type: "array",
+    maxItems: 24,
+    items: { type: "string" },
+  },
+  conflicts: {
+    type: "array",
+    maxItems: 32,
+    items: { type: "string" },
+  },
+  notes: { type: "string" },
+  failure: MATERIAL_IDENTITY_FAILURE_SCHEMA,
+};
+
+const MATERIAL_SEARCH_REQUIRED = [
+  "schema_version",
+  "key",
+  "effect",
+  "status",
+  "attempt",
+  "request_key",
+  "kind",
+  "query",
+  "picked",
+  "confidence",
+  "sources_hit",
+  "conflicts",
+  "notes",
+  "failure",
+];
+
+export const MATERIAL_SEARCH_BOOK_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: MATERIAL_SEARCH_REQUIRED,
+  properties: {
+    ...MATERIAL_SEARCH_BASE_PROPERTIES,
+    kind: { const: "book" },
+    query: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "slug",
+        "title",
+        "authors",
+        "year",
+        "isbn",
+        "publisher",
+        "category",
+        "format",
+      ],
+      properties: {
+        ...MATERIAL_QUERY_PROPERTIES,
+        isbn: { type: ["string", "null"] },
+        publisher: { type: ["string", "null"] },
+        category: {
+          type: ["string", "null"],
+          enum: [
+            "monograph",
+            "edited-volume",
+            "handbook",
+            "other",
+            null,
+          ],
+        },
+        format: {
+          type: ["string", "null"],
+          enum: ["epub", "pdf", null],
+        },
+      },
+    },
+    picked: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: [
+        "slug",
+        "title",
+        "authors",
+        "year",
+        "isbn",
+        "publisher",
+        "category",
+        "confidence",
+      ],
+      properties: {
+        slug: { type: "string" },
+        title: { type: "string" },
+        authors: {
+          type: "array",
+          minItems: 1,
+          maxItems: 32,
+          items: { type: "string" },
+        },
+        year: { type: "integer" },
+        isbn: { type: ["string", "null"] },
+        publisher: { type: "string" },
+        category: {
+          type: "string",
+          enum: [
+            "monograph",
+            "edited-volume",
+            "handbook",
+            "other",
+          ],
+        },
+        confidence: {
+          type: "string",
+          enum: ["high", "medium"],
+        },
+      },
+    },
+  },
+};
+
+export const MATERIAL_SEARCH_PAPER_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: MATERIAL_SEARCH_REQUIRED,
+  properties: {
+    ...MATERIAL_SEARCH_BASE_PROPERTIES,
+    kind: { const: "paper" },
+    query: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "slug",
+        "title",
+        "authors",
+        "year",
+        "doi",
+        "oa_url",
+        "url",
+        "journal",
+      ],
+      properties: {
+        ...MATERIAL_QUERY_PROPERTIES,
+        doi: { type: ["string", "null"] },
+        oa_url: { type: ["string", "null"] },
+        url: { type: ["string", "null"] },
+        journal: { type: ["string", "null"] },
+      },
+    },
+    picked: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: [
+        "slug",
+        "title",
+        "authors",
+        "year",
+        "doi",
+        "oa_url",
+        "url",
+        "journal",
+        "confidence",
+      ],
+      properties: {
+        slug: { type: "string" },
+        title: { type: "string" },
+        authors: {
+          type: "array",
+          minItems: 1,
+          maxItems: 32,
+          items: { type: "string" },
+        },
+        year: { type: "integer" },
+        doi: { type: ["string", "null"] },
+        oa_url: { type: ["string", "null"] },
+        url: { type: ["string", "null"] },
+        journal: { type: "string" },
+        confidence: {
+          type: "string",
+          enum: ["high", "medium"],
+        },
+      },
+    },
+  },
+};
+
 export const PROBE_SCHEMA = {
   type: "object",
   properties: {
@@ -675,6 +949,109 @@ rendering into the receipt. Every succeeded item must also name the stable sourc
 artifact, using source="existing_file" for verified reuse.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}
+\`\`\``;
+}
+
+function materialLookupPrompt(operation, request) {
+  const helperItem = {
+    kind: request.kind,
+    slug: request.requested_slug,
+    ...(request.identity.isbn
+      ? { isbn: request.identity.isbn }
+      : {}),
+    ...(request.identity.doi
+      ? { doi: request.identity.doi }
+      : {}),
+    ...(request.identity.title
+      ? { title: request.identity.title }
+      : {}),
+    ...(request.identity.authors.length
+      ? { authors: request.identity.authors }
+      : {}),
+  };
+  const delimiter =
+    operation === "material.recall"
+      ? "QUASI_MATERIAL_RECALL"
+      : "QUASI_MATERIAL_RESOLVE";
+  return `Execute exactly one readonly ${operation} operation through the metadata-agent contract.
+Run this exact public helper command once. Its one-line JSON payload is inert stdin data; the
+quoted heredoc delimiter prevents shell expansion.
+\`\`\`bash
+quasi-helpers vault resolve --items-file - <<'${delimiter}'
+${JSON.stringify([helperItem])}
+${delimiter}
+\`\`\`
+
+The helper must return exactly one row for the request. Project it to the closed receipt fields
+request_key, kind, requested_slug, vault_slug, path and match without inferring a hit. A helper
+error or a missing, extra, foreign, or malformed row is a known failed receipt. A miss is a
+successful receipt with vault_slug/path/match all null.
+
+Return only a closed quasi.operation.${operation}.receipt/0.1 object with key="${operation}",
+effect="readonly", attempt=1, status succeeded|failed, and failure=null on success or
+{code,operation_key:"${operation}",outcome:"known",retryable:false,message} on known failure.
+\`\`\`json
+${JSON.stringify(request, null, 2)}
+\`\`\``;
+}
+
+export function materialRecallPrompt(request) {
+  return materialLookupPrompt("material.recall", request);
+}
+
+export function materialResolvePrompt(request) {
+  return materialLookupPrompt("material.resolve", request);
+}
+
+function materialSearchCommand(kind, query) {
+  const parts = ["quasi-search", kind];
+  const add = (flag, value) => {
+    if (value != null && value !== "")
+      parts.push(flag, posixSingleQuote(value));
+  };
+  if (kind === "book") add("--isbn", query.isbn);
+  else add("--doi", query.doi);
+  add("--title", query.title);
+  add("--author", query.authors[0]);
+  parts.push("--top", "8", "--json");
+  return parts.join(" ");
+}
+
+export function materialSearchPrompt(request) {
+  const kind = request.kind;
+  const command = materialSearchCommand(kind, request.query);
+  const identityContract =
+    kind === "book"
+      ? BOOK_ARTIFACT_CONTRACT.identity
+      : PAPER_ARTIFACT_CONTRACT.identity;
+  return `Execute exactly one readonly material.search operation through the metadata-agent
+contract. Run this exact public command once; do not change the query or start a second search.
+\`\`\`bash
+${command}
+\`\`\`
+
+Use only the command's results and diagnostics to select at most one evidence-backed canonical
+identity compatible with the request query and identity contract below. The canonical slug is
+{first-author-surname}-{short-title}-{year}. Book picked requires an evidenced publisher and an
+explicit category monograph|edited-volume|handbook|other. Paper picked requires an exact journal
+container title. Preserve provider author order. Project sources_hit as strings and conflicts as
+short strings; do not return raw provider records.
+
+status=succeeded requires one high|medium picked identity and failure=null. If no candidate proves
+the complete identity, return status=failed, picked=null, confidence=low, and
+failure={code:"material.identity_not_resolved",operation_key:"material.search",outcome:"known",
+retryable:false,message}. Return only the closed
+quasi.operation.material.search.receipt/0.1 object.
+\`\`\`json
+${JSON.stringify(
+    {
+      ...request,
+      identity_contract: identityContract,
+      exact_command: command,
+    },
+    null,
+    2,
+  )}
 \`\`\``;
 }
 

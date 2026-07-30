@@ -698,7 +698,7 @@ def test_recall_only_happy_path_is_ordered_by_dependencies_not_clock_time(
         f"vault/topics/{TOPIC}/02-outline.md",
     ]
     assert not any(call["type"] == "router" for call in report["trace"])
-    assert report["phases"] == ["Topic"]
+    assert report["phases"] == ["Recall"]
     for call in report["trace"]:
         if call["type"] == "agent":
             assert call["request"]["operation"] == call["route"]

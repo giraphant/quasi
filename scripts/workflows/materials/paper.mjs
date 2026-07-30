@@ -789,9 +789,9 @@ async function extractAndAssess(runtime, state, input, output) {
   const extraction = await runtime.runOperation(
     extractTextOperationPrompt(state.materialKey, input, output),
     {
-      phase: "Paper",
+      phase: "Prepare",
       agentType: "general-purpose",
-      label: `paper.extract-text:${state.slug}`,
+      label: `${state.slug}:extract-text`,
       schema: TEXT_EXTRACT_SCHEMA,
     },
     {
@@ -868,9 +868,9 @@ async function extractAndAssess(runtime, state, input, output) {
   const assessment = await runtime.runOperation(
     readabilityOperationPrompt(state.materialKey, output, extraction),
     {
-      phase: "Paper",
+      phase: "Prepare",
       agentType: "general-purpose",
-      label: `paper.assess:${state.slug}`,
+      label: `${state.slug}:assess-readability`,
       schema: READABILITY_SCHEMA,
     },
     {
@@ -927,9 +927,9 @@ async function analyse(
       diagnostics,
     ),
     {
-      phase: "Paper",
+      phase: "Analyse",
       agentType: "quasi:analyse-agent",
-      label: `paper.analyse:${state.slug}`,
+      label: `${state.slug}:analyse`,
       schema: PAPER_ANALYSE_SCHEMA,
     },
     {
@@ -1037,9 +1037,9 @@ async function audit(runtime, state, pass) {
   const receipt = await runtime.runOperation(
     paperAuditPrompt(state.slug, pass),
     {
-      phase: "Paper",
+      phase: "Audit",
       agentType: "quasi:audit-agent",
-      label: `paper.audit:${state.slug}`,
+      label: `${state.slug}:audit`,
       schema: PAPER_AUDIT_SCHEMA,
     },
     {
@@ -1105,15 +1105,15 @@ async function audit(runtime, state, pass) {
 
 async function processValidatedPaper(runtime, slug, meta) {
   const { log, phase, runOperation } = runtime;
-  phase("Paper");
+  phase("Acquire");
   const state = createPaperState(slug);
 
   const download = await runOperation(
     paperAcquirePrompt(slug, meta),
     {
-      phase: "Paper",
+      phase: "Acquire",
       agentType: "quasi:download-agent",
-      label: `paper.acquire:${slug}`,
+      label: `${slug}:acquire`,
       schema: PAPER_ACQUIRE_SCHEMA,
     },
     {
@@ -1224,9 +1224,9 @@ async function processValidatedPaper(runtime, slug, meta) {
         state.ocrSource,
       ),
       {
-        phase: "Paper",
+        phase: "Prepare",
         agentType: "general-purpose",
-        label: `paper.ocr:${slug}`,
+        label: `${slug}:ocr`,
         schema: DOCUMENT_OCR_SCHEMA,
       },
       {

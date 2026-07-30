@@ -399,6 +399,95 @@ def book_meta(**overrides: Any) -> dict[str, Any]:
     return value
 
 
+def book_ingress_responses(
+    entries: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    recalls: list[dict[str, Any]] = []
+    searches: list[dict[str, Any]] = []
+    resolves: list[dict[str, Any]] = []
+    for entry in entries:
+        slug = entry["slug"]
+        meta = entry["meta"]
+        request_key = f"book:{slug}"
+        query = {
+            "slug": slug,
+            "title": meta["title"],
+            "authors": list(meta["authors"]),
+            "year": meta["year"],
+            "isbn": meta.get("isbn"),
+            "publisher": meta.get("publisher"),
+            "category": meta.get("category"),
+            "format": meta.get("format"),
+        }
+        picked = {
+            "slug": slug,
+            "title": meta["title"],
+            "authors": list(meta["authors"]),
+            "year": meta["year"],
+            "isbn": meta.get("isbn"),
+            "publisher": meta["publisher"],
+            "category": meta.get("category") or "other",
+            "confidence": "high",
+        }
+        resolved_slug = slug
+        decision = entry.get("year_decision")
+        if decision and decision.get("action") == "use-recommended-year":
+            evidence = decision["year_evidence"]
+            resolved_slug = (
+                slug[: -len(str(evidence["slug_year"]))]
+                + str(evidence["recommended_year"])
+            )
+        recalls.append(reply({
+            "schema_version": "quasi.operation.material.recall.receipt/0.1",
+            "key": "material.recall",
+            "effect": "readonly",
+            "status": "succeeded",
+            "attempt": 1,
+            "request_key": request_key,
+            "kind": "book",
+            "requested_slug": slug,
+            "vault_slug": None,
+            "path": None,
+            "match": None,
+            "failure": None,
+        }))
+        searches.append(reply({
+            "schema_version": "quasi.operation.material.search.receipt/0.1",
+            "key": "material.search",
+            "effect": "readonly",
+            "status": "succeeded",
+            "attempt": 1,
+            "request_key": request_key,
+            "kind": "book",
+            "query": query,
+            "picked": picked,
+            "confidence": "high",
+            "sources_hit": ["catalog"],
+            "conflicts": [],
+            "notes": "verified fixture",
+            "failure": None,
+        }))
+        resolves.append(reply({
+            "schema_version": "quasi.operation.material.resolve.receipt/0.1",
+            "key": "material.resolve",
+            "effect": "readonly",
+            "status": "succeeded",
+            "attempt": 1,
+            "request_key": request_key,
+            "kind": "book",
+            "requested_slug": resolved_slug,
+            "vault_slug": None,
+            "path": None,
+            "match": None,
+            "failure": None,
+        }))
+    return {
+        "material.recall": recalls,
+        "material.search": searches,
+        "material.resolve": resolves,
+    }
+
+
 def book_paths(slug: str, *, extension: str = "epub") -> dict[str, str]:
     return {
         "source": f"sources/{slug}.{extension}",
@@ -1091,7 +1180,7 @@ def test_three_chapter_happy_path_has_out_of_order_fanout_barriers(
     )
 
     assert_material_complete(report["result"], slug)
-    assert report["phases"] == ["Book"]
+    assert report["phases"] == ["Acquire"]
     analyses = calls(report, "chapter.analyse")
     assert [call["slot"] for call in analyses] == ["01", "02", "03"]
     assert max(call["start"] for call in analyses) < min(
@@ -1109,8 +1198,8 @@ def test_three_chapter_happy_path_has_out_of_order_fanout_barriers(
     assert synthesis["end"] < audit["start"]
     for call, member in zip(analyses, chapter_members(slug), strict=True):
         request = call["request"]
-        assert call["phase"] == "Book"
-        assert call["label"] == f"analyse-ch{member['slot']}:{slug}"
+        assert call["phase"] == "Analyse"
+        assert call["label"] == f"{slug}:ch{member['slot']}:analyse"
         assert request["material_key"] == f"book:{slug}"
         assert request["operation"] == "chapter.analyse"
         assert request["identity"]["chapter_slot"] == member["slot"]
@@ -1237,17 +1326,19 @@ def test_explicit_accept_current_year_decision_progresses_second_run(
         reply(year_gate_receipt(slug, evidence=evidence)),
         reply(accepted_year_decision_receipt(slug, reordered)),
     ]
+    entry_requests = [
+        {"kind": "book", "slug": slug, "meta": book_meta()},
+        {
+            "kind": "book",
+            "slug": slug,
+            "meta": book_meta(),
+            "year_decision": decision,
+        },
+    ]
+    responses.update(book_ingress_responses(entry_requests))
     report = run_book_entry(
         tmp_path,
-        entry_requests=[
-            {"kind": "book", "slug": slug, "meta": book_meta()},
-            {
-                "kind": "book",
-                "slug": slug,
-                "meta": book_meta(),
-                "year_decision": decision,
-            },
-        ],
+        entry_requests=entry_requests,
         responses=responses,
         bundle=bundle,
     )
@@ -1285,21 +1376,23 @@ def test_use_recommended_year_requires_and_accepts_updated_slug_and_meta(
         reply(year_gate_receipt(old_slug, evidence=evidence)),
         reply(accepted_year_decision_receipt(new_slug, evidence)),
     ]
+    entry_requests = [
+        {
+            "kind": "book",
+            "slug": old_slug,
+            "meta": book_meta(),
+        },
+        {
+            "kind": "book",
+            "slug": old_slug,
+            "meta": book_meta(),
+            "year_decision": decision,
+        },
+    ]
+    responses.update(book_ingress_responses(entry_requests))
     report = run_book_entry(
         tmp_path,
-        entry_requests=[
-            {
-                "kind": "book",
-                "slug": old_slug,
-                "meta": book_meta(),
-            },
-            {
-                "kind": "book",
-                "slug": new_slug,
-                "meta": book_meta(year=2025),
-                "year_decision": decision,
-            },
-        ],
+        entry_requests=entry_requests,
         responses=responses,
     )
 
@@ -1314,7 +1407,7 @@ def test_use_recommended_year_requires_and_accepts_updated_slug_and_meta(
     "decision",
     [
         {
-            "action": "use-recommended-year",
+            "action": "guess",
             "tmp_path": ".quasi/temp/downloads/prior.epub",
             "year_evidence": year_mismatch_evidence(),
         },
@@ -1330,7 +1423,7 @@ def test_use_recommended_year_requires_and_accepts_updated_slug_and_meta(
             "extra": True,
         },
     ],
-    ids=["slug-not-updated", "unsafe-tmp", "extra-key"],
+    ids=["unknown-action", "unsafe-tmp", "extra-key"],
 )
 def test_invalid_year_decision_blocks_before_any_writer(
     tmp_path: Path,
@@ -1349,9 +1442,10 @@ def test_invalid_year_decision_blocks_before_any_writer(
         responses={},
     )
 
-    assert report["result"]["status"] == "blocked"
-    assert assert_book_failure_code(report["result"]) == (
-        "book.year_decision_invalid"
+    assert report["result"]["status"] == "needs_input"
+    assert (
+        report["result"]["ingress_receipt"]["failure"]["code"]
+        == "book.year_decision_invalid"
     )
     assert report["trace"] == []
 
@@ -1368,21 +1462,24 @@ def test_year_decision_rejects_changed_prior_evidence(
         "tmp_path": f".quasi/temp/downloads/{slug}-prior.epub",
         "year_evidence": evidence,
     }
+    entry_requests = [
+        {
+            "kind": "book",
+            "slug": slug,
+            "meta": book_meta(),
+            "year_decision": decision,
+        }
+    ]
+    responses = {
+        "book.acquire": [
+            reply(accepted_year_decision_receipt(slug, changed))
+        ]
+    }
+    responses.update(book_ingress_responses(entry_requests))
     report = run_book_entry(
         tmp_path,
-        entry_requests=[
-            {
-                "kind": "book",
-                "slug": slug,
-                "meta": book_meta(),
-                "year_decision": decision,
-            }
-        ],
-        responses={
-            "book.acquire": [
-                reply(accepted_year_decision_receipt(slug, changed))
-            ]
-        },
+        entry_requests=entry_requests,
+        responses=responses,
     )
 
     assert report["result"]["status"] == "blocked"
@@ -1626,9 +1723,7 @@ def test_known_missing_chapter_refills_only_that_slot_once(
     assert len(calls(report, "chapter.analyse", slot="02")) == 2
     assert len(calls(report, "chapter.analyse", slot="03")) == 1
     refill = one_call(report, "chapter.analyse", slot="02", occurrence=2)
-    assert refill["label"].startswith(
-        ("refill-ch02:", "analyse-ch02:")
-    )
+    assert refill["label"] == f"{slug}:ch02:refill"
     assert (
         max(call["end"] for call in calls(report, "chapter.analyse"))
         < one_call(report, "book.synthesise")["start"]

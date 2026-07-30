@@ -450,6 +450,128 @@ def book_audit_receipt(slug: str) -> dict[str, Any]:
     }
 
 
+def material_ingress_responses(
+    args: dict[str, Any],
+    responses: dict[str, list[dict[str, Any]]],
+) -> dict[str, list[dict[str, Any]]]:
+    kind = args.get("kind")
+    slug = args.get("slug")
+    meta = args.get("meta")
+    if (
+        kind not in {"book", "paper"}
+        or not isinstance(slug, str)
+        or not isinstance(meta, dict)
+    ):
+        return {}
+    request_key = f"{kind}:{slug}"
+
+    def lookup(operation: str) -> dict[str, Any]:
+        return {
+            "schema_version": (
+                f"quasi.operation.{operation}.receipt/0.1"
+            ),
+            "key": operation,
+            "effect": "readonly",
+            "status": "succeeded",
+            "attempt": 1,
+            "request_key": request_key,
+            "kind": kind,
+            "requested_slug": slug,
+            "vault_slug": None,
+            "path": None,
+            "match": None,
+            "failure": None,
+        }
+
+    raw_authors = meta.get("authors", meta.get("author", []))
+    authors = raw_authors if isinstance(raw_authors, list) else [raw_authors]
+    raw_year = meta.get("year")
+    year = (
+        int(raw_year)
+        if isinstance(raw_year, str) and raw_year.isdigit()
+        else raw_year
+    )
+    if kind == "book":
+        query = {
+            "slug": slug,
+            "title": meta.get("title"),
+            "authors": authors,
+            "year": year,
+            "isbn": meta.get("isbn"),
+            "publisher": meta.get("publisher"),
+            "category": meta.get("category"),
+            "format": meta.get("format"),
+        }
+        picked = {
+            "slug": slug,
+            "title": meta.get("title"),
+            "authors": authors,
+            "year": year,
+            "isbn": meta.get("isbn"),
+            "publisher": meta.get("publisher"),
+            "category": meta.get("category"),
+            "confidence": "high",
+        }
+    else:
+        acquire = responses.get(f"{slug}:acquire", [])
+        acquired_item = (
+            acquire[0].get("result", {}).get("per_item", [{}])[0]
+            if acquire
+            else {}
+        )
+        query = {
+            "slug": slug,
+            "title": meta.get("title"),
+            "authors": authors,
+            "year": year,
+            "doi": meta.get("doi"),
+            "oa_url": meta.get("oa_url"),
+            "url": meta.get("url"),
+            "journal": meta.get("journal") or meta.get("venue"),
+        }
+        picked = {
+            "slug": slug,
+            "title": meta.get("title"),
+            "authors": authors,
+            "year": year,
+            "doi": meta.get("doi") or acquired_item.get("doi"),
+            "oa_url": meta.get("oa_url"),
+            "url": meta.get("url"),
+            "journal": (
+                meta.get("journal")
+                or meta.get("venue")
+                or "Journal of Examples"
+            ),
+            "confidence": "high",
+        }
+    return {
+        f"{slug}:recall": [reply(lookup("material.recall"))],
+        f"{slug}:search": [
+            reply(
+                {
+                    "schema_version": (
+                        "quasi.operation.material.search.receipt/0.1"
+                    ),
+                    "key": "material.search",
+                    "effect": "readonly",
+                    "status": "succeeded",
+                    "attempt": 1,
+                    "request_key": request_key,
+                    "kind": kind,
+                    "query": query,
+                    "picked": picked,
+                    "confidence": "high",
+                    "sources_hit": ["fixture"],
+                    "conflicts": [],
+                    "notes": "verified fixture identity",
+                    "failure": None,
+                }
+            )
+        ],
+        f"{slug}:resolve": [reply(lookup("material.resolve"))],
+    }
+
+
 def run_workflow(
     tmp_path: Path,
     *,
@@ -461,12 +583,13 @@ def run_workflow(
     if not node:
         pytest.skip("node not on PATH")
     script = NODE_HARNESS.replace("__RUNNER_URI__", json.dumps(RUNNER.as_uri()))
+    ingress = material_ingress_responses(args, responses)
     config = {
         "plugin_root": str(PLUGIN_ROOT),
         "project_cwd": str(tmp_path),
         "workflow": str(WORKFLOW),
         "args": args,
-        "responses": responses,
+        "responses": {**ingress, **responses},
     }
     proc = subprocess.run(
         [node, "--input-type=module", "-e", script, json.dumps(config)],
@@ -534,7 +657,7 @@ def test_paper_happy_path_uses_download_analyse_audit(tmp_path: Path) -> None:
             },
         },
         responses={
-            f"paper.acquire:{slug}": [
+            f"{slug}:acquire": [
                 reply(
                     paper_download_receipt(
                         slug,
@@ -542,16 +665,16 @@ def test_paper_happy_path_uses_download_analyse_audit(tmp_path: Path) -> None:
                     )
                 )
             ],
-            f"paper.extract-text:{slug}": [
+            f"{slug}:extract-text": [
                 reply(text_extract_receipt(paths["source"], paths["source_text"]))
             ],
-            f"paper.assess:{slug}": [
+            f"{slug}:assess-readability": [
                 reply(readability_receipt(paths["source_text"], "readable"))
             ],
-            f"paper.analyse:{slug}": [
+            f"{slug}:analyse": [
                 reply(paper_analyse_receipt(slug, paths["source_text"]))
             ],
-            f"paper.audit:{slug}": [
+            f"{slug}:audit": [
                 reply(paper_audit_receipt(slug))
             ],
         },
@@ -561,27 +684,39 @@ def test_paper_happy_path_uses_download_analyse_audit(tmp_path: Path) -> None:
     assert report["result"]["status"] == "ok"
     assert report["result"]["material_receipt"]["status"] == "complete"
     assert labels(report) == [
-        f"paper.acquire:{slug}",
-        f"paper.extract-text:{slug}",
-        f"paper.assess:{slug}",
-        f"paper.analyse:{slug}",
-        f"paper.audit:{slug}",
+        f"{slug}:recall",
+        f"{slug}:search",
+        f"{slug}:resolve",
+        f"{slug}:acquire",
+        f"{slug}:extract-text",
+        f"{slug}:assess-readability",
+        f"{slug}:analyse",
+        f"{slug}:audit",
     ]
-    assert all(item["phase"] == "Paper" for item in report["trace"])
+    assert [item["phase"] for item in report["trace"]] == [
+        "Recall",
+        "Search",
+        "Search",
+        "Acquire",
+        "Prepare",
+        "Prepare",
+        "Analyse",
+        "Audit",
+    ]
     assert all(item["schema_fingerprint"] for item in report["trace"])
     assert (
         f'"path": "{paths["canonical"]}"'
-        in call(report, f"paper.analyse:{slug}")["prompt"]
+        in call(report, f"{slug}:analyse")["prompt"]
     )
     assert_before(
         report,
-        f"paper.acquire:{slug}",
-        f"paper.extract-text:{slug}",
+        f"{slug}:acquire",
+        f"{slug}:extract-text",
     )
     assert_before(
-        report, f"paper.assess:{slug}", f"paper.analyse:{slug}"
+        report, f"{slug}:assess-readability", f"{slug}:analyse"
     )
-    assert_before(report, f"paper.analyse:{slug}", f"paper.audit:{slug}")
+    assert_before(report, f"{slug}:analyse", f"{slug}:audit")
 
 
 def test_paper_needs_ocr_then_reanalyses_and_audits(tmp_path: Path) -> None:
@@ -601,22 +736,22 @@ def test_paper_needs_ocr_then_reanalyses_and_audits(tmp_path: Path) -> None:
             },
         },
         responses={
-            f"paper.acquire:{slug}": [
+            f"{slug}:acquire": [
                 reply(paper_download_receipt(slug))
             ],
-            f"paper.extract-text:{slug}": [
+            f"{slug}:extract-text": [
                 reply(text_extract_receipt(paths["source"], paths["source_text"])),
                 reply(text_extract_receipt(paths["ocr"], paths["ocr_text"])),
             ],
-            f"paper.assess:{slug}": [
+            f"{slug}:assess-readability": [
                 reply(readability_receipt(paths["source_text"], "needs_ocr")),
                 reply(readability_receipt(paths["ocr_text"], "readable")),
             ],
-            f"paper.ocr:{slug}": [reply(ocr_receipt(slug))],
-            f"paper.analyse:{slug}": [
+            f"{slug}:ocr": [reply(ocr_receipt(slug))],
+            f"{slug}:analyse": [
                 reply(paper_analyse_receipt(slug, paths["ocr_text"]))
             ],
-            f"paper.audit:{slug}": [
+            f"{slug}:audit": [
                 reply(paper_audit_receipt(slug))
             ],
         },
@@ -625,30 +760,33 @@ def test_paper_needs_ocr_then_reanalyses_and_audits(tmp_path: Path) -> None:
     assert report["result"]["slug"] == slug
     assert report["result"]["status"] == "ok"
     assert labels(report) == [
-        f"paper.acquire:{slug}",
-        f"paper.extract-text:{slug}",
-        f"paper.assess:{slug}",
-        f"paper.ocr:{slug}",
-        f"paper.extract-text:{slug}",
-        f"paper.assess:{slug}",
-        f"paper.analyse:{slug}",
-        f"paper.audit:{slug}",
+        f"{slug}:recall",
+        f"{slug}:search",
+        f"{slug}:resolve",
+        f"{slug}:acquire",
+        f"{slug}:extract-text",
+        f"{slug}:assess-readability",
+        f"{slug}:ocr",
+        f"{slug}:extract-text",
+        f"{slug}:assess-readability",
+        f"{slug}:analyse",
+        f"{slug}:audit",
     ]
-    ocr = call(report, f"paper.ocr:{slug}")
+    ocr = call(report, f"{slug}:ocr")
     assert ocr["agent_type"] == "general-purpose"
     assert (
         f"quasi-extract ocr '{paths['source']}' '{paths['ocr']}' "
         "--no-clobber --json"
         in ocr["prompt"]
     )
-    reanalysis = call(report, f"paper.analyse:{slug}")
+    reanalysis = call(report, f"{slug}:analyse")
     assert f'"path": "{paths["ocr_text"]}"' in reanalysis["prompt"]
     assert (
-        call_occurrence(report, f"paper.assess:{slug}", 1)["end"]
-        < call(report, f"paper.ocr:{slug}")["start"]
+        call_occurrence(report, f"{slug}:assess-readability", 1)["end"]
+        < call(report, f"{slug}:ocr")["start"]
     )
-    assert_before(report, f"paper.ocr:{slug}", f"paper.analyse:{slug}")
-    assert_before(report, f"paper.analyse:{slug}", f"paper.audit:{slug}")
+    assert_before(report, f"{slug}:ocr", f"{slug}:analyse")
+    assert_before(report, f"{slug}:analyse", f"{slug}:audit")
 
 
 def test_paper_download_failure_preserves_actionable_evidence(
@@ -672,7 +810,7 @@ def test_paper_download_failure_preserves_actionable_evidence(
             },
         },
         responses={
-            f"paper.acquire:{slug}": [
+            f"{slug}:acquire": [
                 reply(
                     paper_download_receipt(
                         slug,
@@ -694,9 +832,14 @@ def test_paper_download_failure_preserves_actionable_evidence(
     assert report["result"]["failure_reason"] == "all acquisition routes failed"
     assert report["result"]["attempts"] == attempts
     assert report["result"]["material_receipt"]["status"] == "failed"
-    assert labels(report) == [f"paper.acquire:{slug}"]
+    assert labels(report) == [
+        f"{slug}:recall",
+        f"{slug}:search",
+        f"{slug}:resolve",
+        f"{slug}:acquire",
+    ]
     fingerprint = call(
-        report, f"paper.acquire:{slug}"
+        report, f"{slug}:acquire"
     )["schema_fingerprint"]
     assert "failure_reason" in fingerprint
     assert "attempts" in fingerprint
@@ -725,16 +868,16 @@ def test_paper_audit_escalation_gets_one_repair_then_second_audit(
             },
         },
         responses={
-            f"paper.acquire:{slug}": [
+            f"{slug}:acquire": [
                 reply(paper_download_receipt(slug))
             ],
-            f"paper.extract-text:{slug}": [
+            f"{slug}:extract-text": [
                 reply(text_extract_receipt(paths["source"], paths["source_text"]))
             ],
-            f"paper.assess:{slug}": [
+            f"{slug}:assess-readability": [
                 reply(readability_receipt(paths["source_text"], "readable"))
             ],
-            f"paper.analyse:{slug}": [
+            f"{slug}:analyse": [
                 reply(paper_analyse_receipt(slug, paths["source_text"])),
                 reply(
                     paper_analyse_receipt(
@@ -744,7 +887,7 @@ def test_paper_audit_escalation_gets_one_repair_then_second_audit(
                     )
                 ),
             ],
-            f"paper.audit:{slug}": [
+            f"{slug}:audit": [
                 reply(
                     paper_audit_receipt(
                         slug,
@@ -762,27 +905,30 @@ def test_paper_audit_escalation_gets_one_repair_then_second_audit(
     assert report["result"]["status"] == "ok"
     assert report["result"]["material_receipt"]["disposition"] == "repaired"
     assert labels(report) == [
-        f"paper.acquire:{slug}",
-        f"paper.extract-text:{slug}",
-        f"paper.assess:{slug}",
-        f"paper.analyse:{slug}",
-        f"paper.audit:{slug}",
-        f"paper.analyse:{slug}",
-        f"paper.audit:{slug}",
+        f"{slug}:recall",
+        f"{slug}:search",
+        f"{slug}:resolve",
+        f"{slug}:acquire",
+        f"{slug}:extract-text",
+        f"{slug}:assess-readability",
+        f"{slug}:analyse",
+        f"{slug}:audit",
+        f"{slug}:analyse",
+        f"{slug}:audit",
     ]
-    repair = call_occurrence(report, f"paper.analyse:{slug}", 2)
+    repair = call_occurrence(report, f"{slug}:analyse", 2)
     assert repair["agent_type"] == "quasi:analyse-agent"
     assert repair["schema_fingerprint"] is not None
     assert '"mode": "repair"' in repair["prompt"]
     assert '"overwrite": true' in repair["prompt"]
     assert "required section missing" in repair["prompt"]
     assert (
-        call_occurrence(report, f"paper.audit:{slug}", 1)["end"]
+        call_occurrence(report, f"{slug}:audit", 1)["end"]
         < repair["start"]
     )
     assert (
         repair["end"]
-        < call_occurrence(report, f"paper.audit:{slug}", 2)["start"]
+        < call_occurrence(report, f"{slug}:audit", 2)["start"]
     )
 
 
@@ -798,7 +944,7 @@ def test_book_download_keeps_legacy_year_status_and_temp_evidence(
             "meta": book_meta(),
         },
         responses={
-            f"download:{slug}": [
+            f"{slug}:acquire": [
                 reply(book_download_receipt(slug, status="year_mismatch"))
             ]
         },
@@ -830,7 +976,7 @@ def test_book_download_failure_preserves_reason_and_attempts(
         tmp_path,
         args={"kind": "book", "slug": slug, "meta": book_meta()},
         responses={
-            f"download:{slug}": [
+            f"{slug}:acquire": [
                 reply(
                     book_download_receipt(
                         slug,
@@ -861,33 +1007,33 @@ def test_book_fanout_is_parallel_and_reconciles_before_synthesis(
             "meta": book_meta(),
         },
         responses={
-            f"download:{slug}": [
+            f"{slug}:acquire": [
                 reply(book_download_receipt(slug))
             ],
-            f"extract:{slug}": [reply(book_extract_receipt(slug))],
-            f"book.assess-chapters:{slug}": [
+            f"{slug}:extract": [reply(book_extract_receipt(slug))],
+            f"{slug}:assess-chapters": [
                 reply(book_boundary_receipt(slug))
             ],
-            f"analyse-ch01:{slug}": [
+            f"{slug}:ch01:analyse": [
                 reply(
                     book_analyse_receipt(slug, chapters[0]),
                     delay_ms=120,
                 )
             ],
-            f"analyse-ch02:{slug}": [
+            f"{slug}:ch02:analyse": [
                 reply(
                     book_analyse_receipt(slug, chapters[1]),
                     delay_ms=40,
                 )
             ],
-            f"analyse-ch03:{slug}": [
+            f"{slug}:ch03:analyse": [
                 reply(
                     book_analyse_receipt(slug, chapters[2]),
                     delay_ms=80,
                 )
             ],
-            f"synth:{slug}": [reply(book_synth_receipt(slug))],
-            f"audit:{slug}": [reply(book_audit_receipt(slug))],
+            f"{slug}:synthesise": [reply(book_synth_receipt(slug))],
+            f"{slug}:audit": [reply(book_audit_receipt(slug))],
         },
     )
 
@@ -895,26 +1041,26 @@ def test_book_fanout_is_parallel_and_reconciles_before_synthesis(
     assert report["result"]["status"] == "ok"
     assert report["result"]["year_warning"] is None
     analyse_labels = {
-        f"analyse-ch01:{slug}",
-        f"analyse-ch02:{slug}",
-        f"analyse-ch03:{slug}",
+        f"{slug}:ch01:analyse",
+        f"{slug}:ch02:analyse",
+        f"{slug}:ch03:analyse",
     }
     assert analyse_labels.issubset(set(labels(report)))
     for left, right in (
-        (f"analyse-ch01:{slug}", f"analyse-ch02:{slug}"),
-        (f"analyse-ch01:{slug}", f"analyse-ch03:{slug}"),
-        (f"analyse-ch02:{slug}", f"analyse-ch03:{slug}"),
+        (f"{slug}:ch01:analyse", f"{slug}:ch02:analyse"),
+        (f"{slug}:ch01:analyse", f"{slug}:ch03:analyse"),
+        (f"{slug}:ch02:analyse", f"{slug}:ch03:analyse"),
     ):
         assert overlaps(report, left, right)
-    assert_before(report, f"download:{slug}", f"extract:{slug}")
+    assert_before(report, f"{slug}:acquire", f"{slug}:extract")
     for analyse_label in analyse_labels:
-        assert_before(report, f"extract:{slug}", analyse_label)
-        assert_before(report, analyse_label, f"synth:{slug}")
-    assert_before(report, f"synth:{slug}", f"audit:{slug}")
+        assert_before(report, f"{slug}:extract", analyse_label)
+        assert_before(report, analyse_label, f"{slug}:synthesise")
+    assert_before(report, f"{slug}:synthesise", f"{slug}:audit")
     assert (
-        call(report, f"analyse-ch02:{slug}")["end"]
-        < call(report, f"analyse-ch03:{slug}")["end"]
-        < call(report, f"analyse-ch01:{slug}")["end"]
+        call(report, f"{slug}:ch02:analyse")["end"]
+        < call(report, f"{slug}:ch03:analyse")["end"]
+        < call(report, f"{slug}:ch01:analyse")["end"]
     )
 
 
@@ -954,7 +1100,7 @@ def test_author_deduplicates_two_candidates_resolved_to_one_vault_slug(
             },
         },
         responses={
-            f"discover-books:{name}": [
+            f"{name}:discover-books": [
                 reply(
                     {
                         "schema_version": (
@@ -975,7 +1121,7 @@ def test_author_deduplicates_two_candidates_resolved_to_one_vault_slug(
                     delay_ms=100,
                 )
             ],
-            f"resolve-membership:{name}": [
+            f"{name}:resolve-membership": [
                 reply(
                     {
                         "schema_version": (
@@ -1012,28 +1158,28 @@ def test_author_deduplicates_two_candidates_resolved_to_one_vault_slug(
                     }
                 )
             ],
-            f"download:{canonical}": [
+            f"{canonical}:acquire": [
                 reply(book_download_receipt(canonical))
             ],
-            f"extract:{canonical}": [
+            f"{canonical}:extract": [
                 reply(book_extract_receipt(canonical))
             ],
-            f"book.assess-chapters:{canonical}": [
+            f"{canonical}:assess-chapters": [
                 reply(book_boundary_receipt(canonical))
             ],
             **{
-                f"analyse-ch{chapter['slot']}:{canonical}": [
+                f"{canonical}:ch{chapter['slot']}:analyse": [
                     reply(book_analyse_receipt(canonical, chapter))
                 ]
                 for chapter in chapters
             },
-            f"synth:{canonical}": [
+            f"{canonical}:synthesise": [
                 reply(book_synth_receipt(canonical))
             ],
-            f"audit:{canonical}": [
+            f"{canonical}:audit": [
                 reply(book_audit_receipt(canonical))
             ],
-            f"synthesise-author:{name}": [
+            f"{name}:synthesise": [
                 reply(
                     {
                         "schema_version": (
@@ -1053,7 +1199,7 @@ def test_author_deduplicates_two_candidates_resolved_to_one_vault_slug(
                     }
                 )
             ],
-            f"audit-author:{name}": [
+            f"{name}:audit": [
                 reply(
                     {
                         "schema_version": (
@@ -1082,25 +1228,25 @@ def test_author_deduplicates_two_candidates_resolved_to_one_vault_slug(
     assert result["book_failures"] == 0
     assert result["paper_failures"] == 0
     assert result["collection_receipt"]["status"] == "complete"
-    assert labels(report).count(f"download:{canonical}") == 1
+    assert labels(report).count(f"{canonical}:acquire") == 1
     synth_prompt = call(
-        report, f"synthesise-author:{name}"
+        report, f"{name}:synthesise"
     )["prompt"]
     assert synth_prompt.count(author_input) >= 1
     assert_before(
         report,
-        f"resolve-membership:{name}",
-        f"download:{canonical}",
+        f"{name}:resolve-membership",
+        f"{canonical}:acquire",
     )
     assert_before(
         report,
-        f"audit:{canonical}",
-        f"synthesise-author:{name}",
+        f"{canonical}:audit",
+        f"{name}:synthesise",
     )
     assert_before(
         report,
-        f"synthesise-author:{name}",
-        f"audit-author:{name}",
+        f"{name}:synthesise",
+        f"{name}:audit",
     )
 
 
@@ -1175,18 +1321,20 @@ def test_topic_processes_one_material_and_one_card_on_parallel_tracks(
         "suggested_queries": [],
     }
     topic_audits = {
-        path: [reply({"status": "clean", "escalated": []}, delay_ms=15)]
+        f"{topic}:audit:{Path(path).name}": [
+            reply({"status": "clean", "escalated": [],}, delay_ms=15)
+        ]
         for path in (
-            f"audit:vault/topics/{topic}/00-overview.md",
-            f"audit:vault/topics/{topic}/01-resources.md",
-            f"audit:vault/topics/{topic}/02-outline.md",
-            f"audit:{card_path}",
+            f"vault/topics/{topic}/00-overview.md",
+            f"vault/topics/{topic}/01-resources.md",
+            f"vault/topics/{topic}/02-outline.md",
+            card_path,
         )
     }
     responses = {
-        f"recall:{topic}": [reply({"items": []}, delay_ms=30)],
-        f"steer:{topic}:r0": [reply(first_steer, delay_ms=30)],
-        f"webcard:{card}:{topic}": [
+        f"{topic}:recall": [reply({"items": []}, delay_ms=30)],
+        f"{topic}:steer:r0": [reply(first_steer, delay_ms=30)],
+        f"{topic}:webcard:{card}": [
             reply(
                 {
                     "status": "ok",
@@ -1200,8 +1348,8 @@ def test_topic_processes_one_material_and_one_card_on_parallel_tracks(
                 delay_ms=180,
             )
         ],
-        f"probe-done:{topic}:r1": [reply({"resolved": []}, delay_ms=10)],
-        f"paper.acquire:{paper}": [
+        f"{topic}:probe-done:r1": [reply({"resolved": []}, delay_ms=10)],
+        f"{paper}:acquire": [
             reply(
                 paper_download_receipt(
                     paper,
@@ -1210,7 +1358,7 @@ def test_topic_processes_one_material_and_one_card_on_parallel_tracks(
                 delay_ms=35,
             )
         ],
-        f"paper.extract-text:{paper}": [
+        f"{paper}:extract-text": [
             reply(
                 text_extract_receipt(
                     paper_artifacts["source"], paper_artifacts["source_text"]
@@ -1218,27 +1366,27 @@ def test_topic_processes_one_material_and_one_card_on_parallel_tracks(
                 delay_ms=20,
             )
         ],
-        f"paper.assess:{paper}": [
+        f"{paper}:assess-readability": [
             reply(
                 readability_receipt(paper_artifacts["source_text"], "readable"),
                 delay_ms=20,
             )
         ],
-        f"paper.analyse:{paper}": [
+        f"{paper}:analyse": [
             reply(
                 paper_analyse_receipt(paper, paper_artifacts["source_text"]),
                 delay_ms=35,
             )
         ],
-        f"paper.audit:{paper}": [
+        f"{paper}:audit": [
             reply(
                 paper_audit_receipt(paper),
                 delay_ms=35,
             )
         ],
-        f"probe-cards:{topic}:r1": [reply({"existing": [card]})],
-        f"steer:{topic}:r1": [reply(closing_steer)],
-        f"synth-topic:{topic}": [reply({"status": "success"})],
+        f"{topic}:probe-cards:r1": [reply({"existing": [card]})],
+        f"{topic}:steer:r1": [reply(closing_steer)],
+        f"{topic}:synthesise-topic": [reply({"status": "success"})],
         **topic_audits,
     }
     report = run_workflow(
@@ -1272,49 +1420,51 @@ def test_topic_processes_one_material_and_one_card_on_parallel_tracks(
         "failures": 0,
         "dead_end": True,
     }
-    assert overlaps(report, f"recall:{topic}", f"steer:{topic}:r0")
-    assert_before(report, f"recall:{topic}", f"probe-done:{topic}:r1")
-    assert_before(report, f"steer:{topic}:r0", f"probe-done:{topic}:r1")
+    assert overlaps(report, f"{topic}:recall", f"{topic}:steer:r0")
+    assert_before(report, f"{topic}:recall", f"{topic}:probe-done:r1")
+    assert_before(report, f"{topic}:steer:r0", f"{topic}:probe-done:r1")
 
     material_labels = [
-        f"paper.acquire:{paper}",
-        f"paper.extract-text:{paper}",
-        f"paper.assess:{paper}",
-        f"paper.analyse:{paper}",
-        f"paper.audit:{paper}",
+        f"{paper}:acquire",
+        f"{paper}:extract-text",
+        f"{paper}:assess-readability",
+        f"{paper}:analyse",
+        f"{paper}:audit",
     ]
     assert any(
-        overlaps(report, f"webcard:{card}:{topic}", material_label)
+        overlaps(report, f"{topic}:webcard:{card}", material_label)
         for material_label in material_labels
     )
     assert_before(
         report,
-        f"probe-done:{topic}:r1",
-        f"paper.acquire:{paper}",
+        f"{topic}:probe-done:r1",
+        f"{paper}:acquire",
     )
     assert_before(
         report,
-        f"paper.acquire:{paper}",
-        f"paper.extract-text:{paper}",
+        f"{paper}:acquire",
+        f"{paper}:extract-text",
     )
     assert_before(
-        report, f"paper.assess:{paper}", f"paper.analyse:{paper}"
+        report, f"{paper}:assess-readability", f"{paper}:analyse"
     )
     assert_before(
-        report, f"paper.analyse:{paper}", f"paper.audit:{paper}"
+        report, f"{paper}:analyse", f"{paper}:audit"
     )
-    assert_before(report, f"paper.audit:{paper}", f"steer:{topic}:r1")
-    assert_before(report, f"probe-cards:{topic}:r1", f"steer:{topic}:r1")
-    assert_before(report, f"steer:{topic}:r1", f"synth-topic:{topic}")
+    assert_before(report, f"{paper}:audit", f"{topic}:steer:r1")
+    assert_before(report, f"{topic}:probe-cards:r1", f"{topic}:steer:r1")
+    assert_before(report, f"{topic}:steer:r1", f"{topic}:synthesise-topic")
 
     final_audit_labels = set(topic_audits)
     assert final_audit_labels.issubset(set(labels(report)))
     for audit_label in final_audit_labels:
-        assert_before(report, f"synth-topic:{topic}", audit_label)
+        assert_before(report, f"{topic}:synthesise-topic", audit_label)
     final_audits = [call(report, label) for label in final_audit_labels]
     assert max(item["start"] for item in final_audits) < min(
         item["end"] for item in final_audits
     )
-    spine_prompt = call(report, f"synth-topic:{topic}")["prompt"]
-    assert f'corpus_paths: ["vault/papers/{paper}.md"]' in spine_prompt
-    assert f'card_paths: ["{card_path}"]' in spine_prompt
+    spine_prompt = call(report, f"{topic}:synthesise-topic")["prompt"]
+    assert '"corpus": [' in spine_prompt
+    assert f'"path": "vault/papers/{paper}.md"' in spine_prompt
+    assert '"role": "evidence_card"' in spine_prompt
+    assert f'"path": "{card_path}"' in spine_prompt

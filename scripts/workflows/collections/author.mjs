@@ -1103,7 +1103,7 @@ async function runSynthesis(
       diagnostics,
     ),
     {
-      phase: "Author",
+      phase: "Synthesise",
       agentType: "quasi:synthesis-agent",
       label,
       schema: AUTHOR_SYNTHESISE_SCHEMA,
@@ -1181,7 +1181,7 @@ async function runAudit(runtime, state, pass, label) {
   const receipt = await runtime.runOperation(
     authorAuditLegacyPrompt(state.name, pass),
     {
-      phase: "Author",
+      phase: "Audit",
       agentType: "quasi:audit-agent",
       label,
       schema: AUTHOR_AUDIT_SCHEMA,
@@ -1284,9 +1284,9 @@ async function processAuthorStrict(
           state.maxBooks,
         ),
         {
-          phase: "Author",
+          phase: "Search",
           agentType: "quasi:discovery-agent",
-          label: `discover-books:${name}`,
+          label: `${name}:discover-books`,
           schema: AUTHOR_DISCOVER_BOOKS_SCHEMA,
         },
         {
@@ -1313,9 +1313,9 @@ async function processAuthorStrict(
           state.maxPapers,
         ),
         {
-          phase: "Author",
+          phase: "Search",
           agentType: "quasi:discovery-agent",
-          label: `discover-papers:${name}`,
+          label: `${name}:discover-papers`,
           schema: AUTHOR_DISCOVER_PAPERS_SCHEMA,
         },
         {
@@ -1408,9 +1408,9 @@ async function processAuthorStrict(
       candidates,
     ),
     {
-      phase: "Author",
+      phase: "Recall",
       agentType: "general-purpose",
-      label: `resolve-membership:${name}`,
+      label: `${name}:resolve-membership`,
       schema: AUTHOR_RESOLVE_MEMBERSHIP_SCHEMA,
     },
     {
@@ -1531,7 +1531,7 @@ async function processAuthorStrict(
     inputs,
     initialMode,
     initialDiagnostics,
-    `synthesise-author:${name}`,
+    `${name}:synthesise`,
   );
   if (synthesis.terminal) return synthesis.terminal;
 
@@ -1539,7 +1539,7 @@ async function processAuthorStrict(
     runtime,
     state,
     1,
-    `audit-author:${name}`,
+    `${name}:audit`,
   );
   if (audited.terminal) return audited.terminal;
   if (!audited.clean) {
@@ -1550,14 +1550,14 @@ async function processAuthorStrict(
       inputs,
       "repair",
       audited.escalated,
-      `repair-author:${name}`,
+      `${name}:synthesise-repair`,
     );
     if (repaired.terminal) return repaired.terminal;
     audited = await runAudit(
       runtime,
       state,
       2,
-      `audit2-author:${name}`,
+      `${name}:audit-2`,
     );
     if (audited.terminal) return audited.terminal;
     if (!audited.clean) {
@@ -1598,7 +1598,7 @@ export async function processAuthor(
   name,
   rawMeta,
 ) {
-  runtime.phase("Author");
+  runtime.phase("Search");
   const validation = validateIdentity(name, rawMeta);
   if (!validation.ok)
     return rejectedResult(name, validation);

@@ -1439,9 +1439,9 @@ async function extractAndAssess(runtime, state, input, output) {
   const extraction = await runtime.runOperation(
     extractTextOperationPrompt(state.materialKey, input, output),
     {
-      phase: "Book",
+      phase: "Prepare",
       agentType: "general-purpose",
-      label: `book.extract-text:${state.slug}`,
+      label: `${state.slug}:extract-text`,
       schema: TEXT_EXTRACT_SCHEMA,
     },
     {
@@ -1497,9 +1497,9 @@ async function extractAndAssess(runtime, state, input, output) {
       extraction,
     ),
     {
-      phase: "Book",
+      phase: "Prepare",
       agentType: "general-purpose",
-      label: `book.assess:${state.slug}`,
+      label: `${state.slug}:assess-readability`,
       schema: READABILITY_SCHEMA,
     },
     {
@@ -1541,9 +1541,9 @@ async function runOcr(runtime, state) {
       "book",
     ),
     {
-      phase: "Book",
+      phase: "Prepare",
       agentType: "general-purpose",
-      label: `book.ocr:${state.slug}`,
+      label: `${state.slug}:ocr`,
       schema: BOOK_DOCUMENT_OCR_SCHEMA,
     },
     {
@@ -1617,9 +1617,9 @@ async function runPlan(
       diagnostics,
     ),
     {
-      phase: "Book",
+      phase: "Prepare",
       agentType: "quasi:extract-agent",
-      label: `book.plan:${state.slug}`,
+      label: `${state.slug}:plan-chapters`,
       schema: CHAPTER_PLAN_SCHEMA,
     },
     {
@@ -1667,9 +1667,9 @@ async function runChapterExtract(
       repair,
     }),
     {
-      phase: "Book",
+      phase: "Prepare",
       agentType: "general-purpose",
-      label: `${label}:${state.slug}`,
+      label: `${state.slug}:${label}`,
       schema: CHAPTER_EXTRACT_SCHEMA,
     },
     {
@@ -1752,9 +1752,9 @@ async function assessBoundaries(runtime, state, extraction) {
       },
     ),
     {
-      phase: "Book",
+      phase: "Prepare",
       agentType: "quasi:extract-agent",
-      label: `book.assess-chapters:${state.slug}`,
+      label: `${state.slug}:assess-chapters`,
       schema: CHAPTER_ASSESS_SCHEMA,
     },
     {
@@ -1801,11 +1801,12 @@ async function analyseChapter(
       diagnostics,
     ),
     {
-      phase: "Book",
+      phase: "Analyse",
       agentType: "quasi:analyse-agent",
-      label:
+      label: `${state.slug}:${
         label ||
-        `${mode === "repair" ? "regen" : "analyse"}-ch${chapter.slot}:${state.slug}`,
+        `ch${chapter.slot}:${mode === "repair" ? "repair" : "analyse"}`
+      }`,
       schema: CHAPTER_ANALYSE_SCHEMA,
     },
     {
@@ -1866,9 +1867,11 @@ async function synthesise(
       diagnostics,
     ),
     {
-      phase: "Book",
+      phase: "Synthesise",
       agentType: "quasi:synthesis-agent",
-      label: `${mode === "repair" ? "regen-synth" : "synth"}:${state.slug}`,
+      label: `${state.slug}:${
+        mode === "repair" ? "synthesise-repair" : "synthesise"
+      }`,
       schema: BOOK_SYNTHESISE_SCHEMA,
     },
     {
@@ -1954,9 +1957,9 @@ async function audit(runtime, state, pass, owners) {
   const receipt = await runtime.runOperation(
     bookAuditPrompt(state.slug, pass),
     {
-      phase: "Book",
+      phase: "Audit",
       agentType: "quasi:audit-agent",
-      label: `audit${pass === 1 ? "" : "2"}:${state.slug}`,
+      label: `${state.slug}:audit${pass === 1 ? "" : `-${pass}`}`,
       schema: BOOK_AUDIT_SCHEMA,
     },
     {
@@ -2057,7 +2060,7 @@ function ownerMap(state, chapters) {
 
 async function processValidatedBook(runtime, slug, meta, opts) {
   const { log, parallel, phase, runOperation } = runtime;
-  phase("Book");
+  phase("Acquire");
   const state = createBookState(slug, meta);
 
   const download = await runOperation(
@@ -2068,9 +2071,9 @@ async function processValidatedBook(runtime, slug, meta, opts) {
       opts.yearDecision,
     ),
     {
-      phase: "Book",
+      phase: "Acquire",
       agentType: "quasi:download-agent",
-      label: `download:${slug}`,
+      label: `${slug}:acquire`,
       schema: BOOK_ACQUIRE_SCHEMA,
     },
     {
@@ -2504,7 +2507,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
             chapter,
             "create",
             [],
-            `refill-ch${chapter.slot}:${slug}`,
+            `ch${chapter.slot}:refill`,
           ),
       ),
     );
@@ -2617,7 +2620,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
             chapter,
             "repair",
             diagnostics,
-            `regen-ch${chapter.slot}:${slug}`,
+            `ch${chapter.slot}:repair`,
           ),
       ),
     );

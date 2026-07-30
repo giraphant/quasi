@@ -137,7 +137,7 @@ def test_collect_material_codex_prefers_visible_native_driver():
     ).read_text(encoding="utf-8")
 
     assert "quasi-codex-driver" in skill
-    assert "skills/collect-material/references/codex-native-driver.md" in skill
+    assert "references/codex-native-driver.md" in skill
     assert 'protocol="quasi-codex-driver/1"' in skill
     assert 'fork_turns:"none"' in runtime
     assert "spawn_agent" in runtime and "current thread" in runtime
@@ -147,45 +147,50 @@ def test_collect_material_codex_prefers_visible_native_driver():
     assert "quasi_agent_1" not in runtime
     assert "label plus its id suffix" in runtime
     assert "quasi-codex-runner" in skill, "headless fallback must remain available"
-    assert skill.index("drive_codex_native(") < skill.index(
-        "quasi-codex-runner --script"
+    assert skill.index("drive_codex_native(") < skill.rindex(
+        "quasi-codex-runner"
     )
 
 
-def test_collect_material_title_only_input_requires_metadata_agent():
+def test_collect_material_title_only_input_enters_graph_identity_pipeline():
     skill = (
         PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
     metadata_agent = (PLUGIN_ROOT / "agents" / "metadata-agent.md").read_text(
         encoding="utf-8"
     )
+    ingress = source_file("materials/ingress.mjs")
 
-    assert "title-only metadata resolution" in skill
-    assert 'Agent("quasi:metadata-agent"' in skill
-    assert "quasi_metadata" in skill and 'fork_turns:"none"' in skill
-    assert "metadata_{slug}_{id_suffix}" in skill
-    assert "不得在主进程改用 WebSearch、WebFetch 或 browser" in skill
-    assert skill.index('Agent("quasi:metadata-agent"') < skill.index(
-        "# 该 kind 的主键 + 最终产物路径"
-    )
-    assert "picked.slug" in skill
+    assert "收到 Book/Paper 请求后立即启动图" in skill
+    assert '"request": raw' in skill
+    assert 'Agent("quasi:metadata-agent"' not in skill
+    assert "quasi-helpers vault resolve --items-file" not in skill
+    for operation in (
+        "material.recall",
+        "material.search",
+        "material.resolve",
+    ):
+        assert operation in ingress
+        assert operation in metadata_agent
+    assert 'agentType: "quasi:metadata-agent"' in ingress
     assert "{首列作者姓}-{短题名}-{year}" in metadata_agent
 
 
-def test_collect_material_step_zero_uses_temp_items_file_not_inline_json():
+def test_collect_material_has_no_skill_side_recall_or_inline_metadata_json():
     skill = (
         PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
 
+    acquire = source_file("operations/acquire.mjs")
+
     assert "--items-json" not in skill
-    assert 'resolve_items = [{"kind": args.kind, "slug": key, **ident}]' in skill
-    assert "resolve_items_file = write_temp_json(resolve_items)" in skill
-    assert "--items-file '{resolve_items_file}'" in skill
-    assert "parse_json(Bash(" in skill
-    assert "json([{'kind': args.kind" not in skill
-    assert not re.search(r"\bjson\(", skill), (
-        "caller metadata JSON must never be interpolated into a Bash command"
-    )
+    assert "resolve_items" not in skill
+    assert "rg_fuzzy_recall" not in skill
+    assert "quasi-helpers vault resolve --items-file" not in skill
+    assert "quasi-helpers vault resolve --items-file -" in acquire
+    assert '"QUASI_MATERIAL_RECALL"' in acquire
+    assert '"QUASI_MATERIAL_RESOLVE"' in acquire
+    assert "<<'${delimiter}'" in acquire
 
 
 def test_metadata_agent_book_picked_requires_evidence_backed_identity():
@@ -199,25 +204,17 @@ def test_metadata_agent_book_picked_requires_evidence_backed_identity():
     for field in (
         "slug,title,authors,year,isbn,publisher,category,confidence",
         "`picked:null`",
-        '`confidence:"low"`',
+        "confidence low",
     ):
         assert field in agent
     assert "monograph|edited-volume|handbook|other" in agent
     assert "Publisher 必须有 catalog" in agent
-    assert 'picked_confidence in ("high", "medium")' in skill
-    assert 'if args.kind == "book" and not trusted_picked:' in skill
-    assert (
-        'report("Book metadata 无可靠 picked/publisher evidence；未启动 Workflow")'
-        in skill
-    )
-    assert "args.meta = merge_non_null(args.meta, picked)" in skill
-    assert 'args.meta["confidence"] = "verified"' in skill
-    assert 'args.meta["category"] = args.meta.get("category") or "other"' in skill
-    assert (
-        "Book search 若因 publisher 无证据而返回 `picked=null` / low confidence"
-        in skill
-    )
-    assert 'report("Book publisher 无可靠 metadata evidence；未启动 Workflow")' in skill
+    ingress = source_file("materials/ingress.mjs")
+    assert "validBookPicked" in ingress
+    assert "validText(picked.publisher, 2, 500)" in ingress
+    assert 'confidence: "verified"' in ingress
+    assert '"needs_input"' in ingress
+    assert 'Agent("quasi:metadata-agent"' not in skill
 
 
 def test_collect_material_year_gate_builds_exact_graph_decision_envelope():
@@ -225,31 +222,19 @@ def test_collect_material_year_gate_builds_exact_graph_decision_envelope():
         PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
     graph = source_file("materials/book.mjs")
+    ingress = source_file("materials/ingress.mjs")
 
     assert "decision.slug" not in skill
     assert 'wf_args["batch_accept_year"]' not in skill
-    assert 'prior_tmp_path = result["tmp_path"]' in skill
-    assert 'prior_year_evidence = result["year_evidence"]' in skill
-    assert 'year_options = ["accept-current", "reject"]' in skill
-    assert 'prior_year_evidence.get("verdict") == "MISMATCH"' in skill
-    assert 'year_options.insert(1, "use-recommended-year")' in skill
-    assert "options=tuple(year_options)" in skill
-    assert 'if year_choice == "reject":' in skill
-    assert 'if year_choice == "use-recommended-year":' in skill
-    assert 'prior_year_evidence.get("recommended_year")' in skill
-    assert 'prior_slug.removesuffix(prior_year_suffix) + f"-{recommended_year}"' in skill
-    assert 'wf_args["meta"] = {**prior_meta, "year": recommended_year}' in skill
+    assert 'evidence = result["year_evidence"]' in skill
+    assert "options=allowed_year_actions(evidence)" in skill
+    assert 'if choice == "reject":' in skill
     assert 'wf_args["year_decision"] = {' in skill
-    assert '"action": year_choice' in skill
-    assert '"tmp_path": prior_tmp_path' in skill
-    assert '"year_evidence": prior_year_evidence' in skill
-    gate = skill[
-        skill.index('if result.status in ("year_mismatch", "year_ambiguous"):')
-        : skill.index("# Strict Paper/Book/Author writer")
-    ]
-    assert gate.count('wf_args["slug"] =') == 1
-    assert gate.count('wf_args["meta"] =') == 1
-    assert "accept-current 有意保持 wf_args.slug 与 wf_args.meta" in gate
+    assert '"action": choice' in skill
+    assert '"tmp_path": result["tmp_path"]' in skill
+    assert '"year_evidence": evidence' in skill
+    assert "applyBookYearDecision" in ingress
+    assert 'decision.action !== "use-recommended-year"' in ingress
     assert '"action",\n      "tmp_path",\n      "year_evidence"' in graph
     assert '"accept-current", "use-recommended-year"' in graph
     assert 'decision.year_evidence.verdict !== "MISMATCH"' in graph
@@ -352,9 +337,11 @@ def test_scenario_search_agents_keep_distinct_contracts():
     author_graph = source_file("collections/author.mjs")
     topic_graph = source_file("research/topic-recall.mjs")
 
-    assert "运行一次 `quasi-search book|paper" in metadata
-    assert "追加第二轮搜索" in metadata
-    assert "启动 Kagi rescue" in metadata
+    assert "`quasi-search book|paper ... --json`" in metadata
+    assert "运行 request 给出的单次" in metadata
+    assert "do not change the query or start a second search" in source_file(
+        "operations/acquire.mjs"
+    )
     assert "Author discovery" not in metadata
     assert "Topic per-demand discovery" not in metadata
     assert "localisations.zh" not in metadata
@@ -367,8 +354,11 @@ def test_scenario_search_agents_keep_distinct_contracts():
     assert "localisations.zh.candidates" in localisation
     assert "不包含 canonical Book `picked`" in localisation
     assert "不写 localisation cache" in localisation
-    assert 'Agent("quasi:metadata-agent"' in collect
-    assert 'Agent("quasi:localisation-agent"' in collect
+    assert 'Agent("quasi:metadata-agent"' not in collect
+    assert "localisation-agent" in collect
+    assert 'agentType: "quasi:metadata-agent"' in source_file(
+        "materials/ingress.mjs"
+    )
     assert '"quasi:localisation-agent"' in topic
     assert 'Agent("quasi:discovery-agent"' in draft
     assert 'agentType: "quasi:discovery-agent"' in author_graph
@@ -473,9 +463,12 @@ def test_book_ingress_requires_publisher_enrichment_even_with_isbn():
     metadata = (PLUGIN_ROOT / "agents" / "metadata-agent.md").read_text(
         encoding="utf-8"
     )
+    ingress = source_file("materials/ingress.mjs")
 
-    assert 'args.kind == "book" and not args.meta.get("publisher")' in skill
-    assert 'report("Book publisher 无可靠 metadata evidence；未启动 Workflow")' in skill
+    assert "收到 Book/Paper 请求后立即启动图" in skill
+    assert "validBookPicked" in ingress
+    assert "validText(picked.publisher, 2, 500)" in ingress
+    assert "material.identity_not_resolved" in acquire
     assert "publisher: { type: \"string\" }" in acquire
     assert "Publisher 必须有 catalog" in metadata
     assert "`picked:null`" in metadata
@@ -540,8 +533,12 @@ def test_book_auto_format_handoff_is_finite_and_never_defaults_to_pdf():
     assert "format_preference: formats" in acquire
     assert "item.format === format && item.path === path" in book
     assert 'multiple: "blocked"' in acquire
-    assert "format 缺失保持 null/auto" in skill
-    assert 'args.meta["format"] = "pdf"' not in skill
+    assert "可带 `authors/year/publisher/category/format`" in skill
+    assert 'request.query.format' in source_file("materials/ingress.mjs")
+    assert '["epub", "pdf"].includes(format)' in source_file(
+        "materials/ingress.mjs"
+    )
+    assert '["format"] = "pdf"' not in skill
 
 
 def test_book_unknown_resume_never_points_back_at_writer():
@@ -611,6 +608,7 @@ def test_material_and_author_operation_schemas_are_single_top_level_objects():
 
 def test_author_collection_uses_strict_operations_and_shared_agent_contracts():
     author = source_file("collections/author.mjs")
+    synthesise_operation = source_file("operations/synthesise.mjs")
     discovery = (PLUGIN_ROOT / "agents" / "discovery-agent.md").read_text(
         encoding="utf-8"
     )
@@ -639,11 +637,14 @@ def test_author_collection_uses_strict_operations_and_shared_agent_contracts():
     assert "author.discover-books" in discovery
     assert "author.discover-papers" in discovery
     assert 'agentType: "quasi:discovery-agent"' in author
-    assert "author.synthesise" in synthesis
+    assert "author.synthesise" in synthesise_operation
+    assert "operation_instructions" in synthesise_operation
+    assert "学术综合 writer" in synthesis
     assert "通用 audit transaction" in audit
-    assert "Book chapter Read" in synthesis
+    assert "读取 Book chapter 目录" in synthesis
     assert 'result.status == "synth_failed"' not in skill
-    assert "author.reconcile" in skill
+    assert "collection_receipt" in skill
+    assert "failure" in skill and "resume" in skill
 
 
 def test_book_boundary_receipt_does_not_duplicate_manifest_in_input_paths():
@@ -794,7 +795,7 @@ def test_orchestrate_topic_steers_by_outline():
     assert "02-outline.md" in graph, "outline 路径由图指定"
     assert "topicSearchPrompt" not in graph, "topic 首搜已被 steer 种子轮吞掉"
     assert "snowballPrompt" not in graph, "平面滚雪球已被 steer 吞掉"
-    assert "steer:${slug}:r0" in graph and "steer:${slug}:r${round}" in graph, (
+    assert "${slug}:steer:r0" in graph and "${slug}:steer:r${round}" in graph, (
         "种子轮与滚动轮 label 可区分"
     )
     assert "STEER_SCHEMA" in graph, "掌舵回执必须有 schema,散文读不到字段"
@@ -816,8 +817,9 @@ def test_orchestrate_topic_steers_by_outline():
     ), (
         "子问题回执必须带全量两张表"
     )
-    assert "page: dossier" in graph and "page: spine" in graph, "synth 分页派发"
-    assert "synth-dossier" in body and "synth-topic:${slug}" in body
+    assert "topic.synthesise.dossier" in graph
+    assert "topic.synthesise.spine" in graph, "synth 分页派发"
+    assert "synthesise-dossier" in body and "${slug}:synthesise-topic" in body
     assert "dirty" in body, "只重写脏专章"
     assert "saturated" in body, "掌舵可在轮数用尽前收口"
     assert "subq" in graph and "role" in graph, "候选带子问题与角色标签"
@@ -891,7 +893,9 @@ def test_orchestrate_topic_runs_the_webcard_channel_on_its_own_track():
         r"(?:export\s+)?const cardPath = \(topicSlug, cardSlug\) =>", graph
     )
     assert "cards/${cardSlug}.md" in graph
-    assert "card_paths:" in graph, "两种 synth 页都要收到卡通道"
+    assert graph.count('role: "evidence_card"') >= 2, (
+        "两种 legacy synth 页都要收到结构化卡通道"
+    )
     assert "new_cards:" in graph, "掌舵要收到本轮新卡,登记进 outline 的 cards"
 
 
@@ -910,7 +914,12 @@ def test_topic_caps_are_positive_and_audit_only_touches_current_outputs():
     assert "const auditPaths =" in body and "path: vault/topics/${slug}`" not in body, (
         "增量跑只审本轮写过的 spine/outline/dossier/card"
     )
-    for owner in ("regen-outline:", "regen-dossier:", "regen-card:", "regen-topic:"):
+    for owner in (
+        "repair-outline",
+        "repair-dossier",
+        "repair-card",
+        "repair-topic",
+    ):
         assert owner in body, f"audit escalation 必须回到对应 writer: {owner}"
 
     run_card_helpers("""
@@ -961,7 +970,7 @@ def test_public_skills_carry_material_and_topic_post_steps():
     assert 'result.get("book_slugs")' in topic_skill, (
         "the topic LOCALISE loop must read the graph's book list"
     )
-    assert 'wf_args["translate"] = True' in skill, (
+    assert '"translate",' in skill and 'wf_args[field] = request[field]' in skill, (
         "paper translation intent must enter the same shared Workflow run"
     )
     assert '"kind": "translate"' in skill, (
@@ -1016,26 +1025,25 @@ def test_material_and_topic_have_distinct_public_routing_hints():
     assert "define and research a precise topic" in frontmatter_description(
         PLUGIN_ROOT / "skills" / "precise-topic" / "SKILL.md"
     )
-    assert 'args.kind not in ("book", "paper", "author", "talk", "translate")' in material
+    assert 'request.kind not in ("book", "paper", "author", "talk", "translate")' in material
     assert 'follow_reference("references/talk.md")' in material
     assert '{"kind": "topic"' in topic
 
 
-def test_collect_material_normalises_container_title_and_reconciles_only_existing_acquisition():
+def test_graph_normalises_container_title_and_skill_never_replays_acquisition():
     material = (
         PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
+    ingress = source_file("materials/ingress.mjs")
 
-    assert 'args.meta.get("container_title") or args.meta.get("venue")' in material
-    assert 'failure.get("code") == "paper.writer_receipt_mismatch"' in material
-    assert 'resume.get("operation_key") == "paper.reconcile"' in material
-    assert 'exists(f"sources/{key}.pdf")' in material
-    assert 'failure.get("code") == "book.writer_receipt_mismatch"' in material
-    assert 'resume.get("operation_key") == "book.reconcile"' in material
-    assert 'f"sources/{key}.epub"' in material
-    assert "len(book_source_paths) == 1" in material
-    assert "只核验 existing target，不再 fetch" in material
-    assert material.count("result = run_graph(wf_args)") >= 2
+    assert "nested.journal || nested.venue" in ingress
+    assert "container title" in (
+        PLUGIN_ROOT / "agents" / "metadata-agent.md"
+    ).read_text(encoding="utf-8")
+    assert "writer_receipt_mismatch" not in material
+    assert "唯一 exact source 已存在" not in material
+    assert "Writer 的 null、timeout、cancel" in material
+    assert "都不自动重投" in material
 
 
 def test_extract_agent_is_readonly_and_graph_receipt_owns_chapter_inventory():
@@ -1065,13 +1073,24 @@ def test_book_graph_consumes_cli_manifest_filenames_without_reinventing_them():
 def test_synthesis_agent_consumes_only_graph_supplied_members():
     text = (PLUGIN_ROOT / "agents" / "synthesis-agent.md").read_text(encoding="utf-8")
 
-    assert "单产物综合 worker" in text
-    assert "有序、互异" in text
+    assert "学术综合 writer" in text
+    assert "完整、有序、互异" in text
     assert "禁止 Glob 发现成员" in text
     assert "目录扫描" in text
-    assert "Book chapter Read" in text
+    assert "读取 Book chapter 目录" in text
+    assert "tools: Read, Write" in text
+    assert len(text.splitlines()) <= 70
     assert "mode: book" not in text
     assert "mode: author" not in text
+    assert "page: spine" not in text
+    assert "SYNTHESIS_RESULT" not in text
+    for operation in (
+        "book.synthesise",
+        "author.synthesise",
+        "topic.synthesise.overview",
+        "topic.synthesise.resources",
+    ):
+        assert operation not in text
 
 
 def test_orchestrate_agents_carry_explicit_phase_and_distinguishable_labels():
@@ -1096,11 +1115,25 @@ def test_orchestrate_agents_carry_explicit_phase_and_distinguishable_labels():
     assert len(re.findall(r"phase:\s*['\"]", body)) >= 30, (
         "opts.phase belongs on every call site, not a sample"
     )
-    assert "`${mode === \"repair\" ? \"regen\" : \"analyse\"}-ch${chapter.slot}:${state.slug}`" in text, (
-        "the chapter slot must survive truncation"
-    )
-    assert "`refill-ch${chapter.slot}:${slug}`" in text
-    assert '"regen-synth"' in text
+    assert (
+        '`ch${chapter.slot}:${mode === "repair" ? "repair" : "analyse"}`'
+        in text
+    ), "the material slug and chapter slot must survive truncation"
+    phases = set(re.findall(r"phase:\s*['\"]([^'\"]+)['\"]", body))
+    assert phases <= {
+        "Recall",
+        "Search",
+        "Acquire",
+        "Prepare",
+        "Analyse",
+        "Synthesise",
+        "Audit",
+    }
+    assert not phases.intersection(
+        {"Paper", "Book", "Author", "Talk", "Topic", "Translation"}
+    ), "phase names describe progress, never router branches"
+    assert "`ch${chapter.slot}:refill`" in text
+    assert '"synthesise-repair"' in text
 
 
 def test_orchestrate_retries_every_receipt_reading_agent():
@@ -1160,20 +1193,21 @@ def test_synthesis_topic_mode_is_outline_pinned_and_paged():
     """54 条平铺语料整篇重织是 0.49.x 综述'越滚越乱'的一半病根(另一半在采集)。§T 拆页:
     dossier 每页只读本聚类语料(读预算结构性受控),spine 恒薄且聚类结构照抄 outline,
     不再每次即兴。outline 页本身由 steer-agent 写,synth 不碰。"""
-    synth = (PLUGIN_ROOT / "agents" / "synthesis-agent.md").read_text(encoding="utf-8")
+    synth = source_file("operations/synthesise.mjs")
 
-    assert "page: spine" in synth and "page: dossier" in synth
-    assert "kind: dossier" in synth
-    assert "kind(overview|resources|dossier)" in synth, (
+    assert "topic.synthesise.spine" in synth
+    assert "topic.synthesise.dossier" in synth
+    assert '"dossier"' in synth
+    assert 'enum: ["overview", "resources", "dossier"]' in synth, (
         "outline 不在 synth 的可写 kind 里"
     )
-    assert "inline_clusters" in synth and "dossier_pages" in synth
-    assert "照抄" in synth, "聚类 id/标题/顺序来自 outline,不许重排"
+    assert "inline_clusters" in synth and "dossiers" in synth
+    assert "Follow outline subquestion order exactly" in synth
     assert "子问题地图" in synth, "00 新模板围绕子问题"
     # 卡是一手证据不是同行评议结论;两页都收 card_paths,但 synth 永远不写 cards/。
-    assert synth.count("card_paths") >= 2, "dossier 与 spine 两页都要收卡通道"
-    assert "kind: card 归 webcard-agent" in synth
-    assert "永远不写" in synth
+    assert synth.count("evidence_card") >= 2, "dossier 与 spine 两页都要收卡通道"
+    assert "not peer-reviewed analyses" in synth
+    assert "Do not write the outline, cards, spine pages" in synth
 
 
 def test_pending_cards_requires_stable_slugs_and_applies_the_cap_early():

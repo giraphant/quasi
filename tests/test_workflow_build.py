@@ -36,6 +36,7 @@ def test_workflow_source_tree_is_minimal_and_complete() -> None:
         "derivatives/translation.mjs",
         "materials/book.mjs",
         "materials/dispatch.mjs",
+        "materials/ingress.mjs",
         "materials/paper.mjs",
         "materials/talk.mjs",
         "operations/acquire.mjs",
@@ -57,6 +58,36 @@ def test_workflow_source_tree_is_minimal_and_complete() -> None:
         for path in (PLUGIN_ROOT / "scripts/workflows").rglob("*.mjs")
     }
     assert actual == expected
+
+
+def test_workflow_meta_describes_the_common_lifecycle_not_every_router_branch() -> None:
+    result = run_node(
+        f"""
+import {{ workflowMeta }} from {json.dumps(ENTRY.as_uri())}
+console.log(JSON.stringify(workflowMeta))
+"""
+    )
+
+    assert result["description"] == (
+        "Moves academic materials through a shared processing pipeline"
+    )
+    assert result["phases"] == [
+        {"title": "Recall"},
+        {"title": "Search"},
+        {"title": "Acquire"},
+        {"title": "Prepare"},
+        {"title": "Analyse"},
+        {"title": "Synthesise"},
+        {"title": "Audit"},
+    ]
+    assert not {
+        "Book",
+        "Paper",
+        "Talk",
+        "Translation",
+        "Author",
+        "Topic",
+    }.intersection(phase["title"] for phase in result["phases"])
 
 
 def test_operation_attempt_schemas_explicitly_require_integer_one() -> None:
@@ -181,6 +212,72 @@ function harness() {{
         agentType: options.agentType,
         schema: options.schema,
       }})
+      if (options.label === 'parity-paper:recall')
+        return {{
+          schema_version: 'quasi.operation.material.recall.receipt/0.1',
+          key: 'material.recall',
+          effect: 'readonly',
+          status: 'succeeded',
+          attempt: 1,
+          request_key: 'paper:parity-paper',
+          kind: 'paper',
+          requested_slug: 'parity-paper',
+          vault_slug: null,
+          path: null,
+          match: null,
+          failure: null,
+        }}
+      if (options.label === 'parity-paper:search')
+        return {{
+          schema_version: 'quasi.operation.material.search.receipt/0.1',
+          key: 'material.search',
+          effect: 'readonly',
+          status: 'succeeded',
+          attempt: 1,
+          request_key: 'paper:parity-paper',
+          kind: 'paper',
+          query: {{
+            slug: 'parity-paper',
+            title: 'Parity Paper',
+            authors: ['P. Arity'],
+            year: 2024,
+            doi: '10.1000/parity',
+            oa_url: null,
+            url: null,
+            journal: 'Parity Review',
+          }},
+          picked: {{
+            slug: 'parity-paper',
+            title: 'Parity Paper',
+            authors: ['P. Arity'],
+            year: 2024,
+            doi: '10.1000/parity',
+            oa_url: null,
+            url: null,
+            journal: 'Parity Review',
+            confidence: 'high',
+          }},
+          confidence: 'high',
+          sources_hit: ['crossref'],
+          conflicts: [],
+          notes: 'verified fixture',
+          failure: null,
+        }}
+      if (options.label === 'parity-paper:resolve')
+        return {{
+          schema_version: 'quasi.operation.material.resolve.receipt/0.1',
+          key: 'material.resolve',
+          effect: 'readonly',
+          status: 'succeeded',
+          attempt: 1,
+          request_key: 'paper:parity-paper',
+          kind: 'paper',
+          requested_slug: 'parity-paper',
+          vault_slug: null,
+          path: null,
+          match: null,
+          failure: null,
+        }}
       return {{
         acquired: 0,
         failed: 1,
@@ -258,6 +355,71 @@ const calls = []
 const primitives = {{
   agent: async (_prompt, options) => {{
     calls.push({{ label: options.label }})
+    if (options.label === 'legacy-book:recall')
+      return {{
+        schema_version: 'quasi.operation.material.recall.receipt/0.1',
+        key: 'material.recall',
+        effect: 'readonly',
+        status: 'succeeded',
+        attempt: 1,
+        request_key: 'book:legacy-book',
+        kind: 'book',
+        requested_slug: 'legacy-book',
+        vault_slug: null,
+        path: null,
+        match: null,
+        failure: null,
+      }}
+    if (options.label === 'legacy-book:search')
+      return {{
+        schema_version: 'quasi.operation.material.search.receipt/0.1',
+        key: 'material.search',
+        effect: 'readonly',
+        status: 'succeeded',
+        attempt: 1,
+        request_key: 'book:legacy-book',
+        kind: 'book',
+        query: {{
+          slug: 'legacy-book',
+          title: 'Legacy Book',
+          authors: ['A. Author'],
+          year: 2020,
+          isbn: null,
+          publisher: 'Legacy Academic Press',
+          category: 'monograph',
+          format: 'epub',
+        }},
+        picked: {{
+          slug: 'legacy-book',
+          title: 'Legacy Book',
+          authors: ['A. Author'],
+          year: 2020,
+          isbn: null,
+          publisher: 'Legacy Academic Press',
+          category: 'monograph',
+          confidence: 'high',
+        }},
+        confidence: 'high',
+        sources_hit: ['catalog'],
+        conflicts: [],
+        notes: 'verified fixture',
+        failure: null,
+      }}
+    if (options.label === 'legacy-book:resolve')
+      return {{
+        schema_version: 'quasi.operation.material.resolve.receipt/0.1',
+        key: 'material.resolve',
+        effect: 'readonly',
+        status: 'succeeded',
+        attempt: 1,
+        request_key: 'book:legacy-book',
+        kind: 'book',
+        requested_slug: 'legacy-book',
+        vault_slug: null,
+        path: null,
+        match: null,
+        failure: null,
+      }}
     return {{
       acquired: 0,
       failed: 1,
@@ -309,7 +471,12 @@ console.log(JSON.stringify({{ value, calls }}))
             }
         ],
     }
-    assert result["calls"] == [{"label": "download:legacy-book"}]
+    assert result["calls"] == [
+        {"label": "legacy-book:recall"},
+        {"label": "legacy-book:search"},
+        {"label": "legacy-book:resolve"},
+        {"label": "legacy-book:acquire"},
+    ]
 
 
 def test_esbuild_is_exactly_pinned_and_dev_only() -> None:

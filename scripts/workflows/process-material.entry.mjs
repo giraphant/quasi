@@ -13,14 +13,15 @@ import { createRuntime } from "./runtime.mjs";
 export const workflowMeta = {
   name: "process-material",
   description:
-    "Unified acquisition→analysis graph: router(kind) → book | paper | talk | translate | author | topic",
+    "Moves academic materials through a shared processing pipeline",
   phases: [
-    { title: "Book" },
-    { title: "Paper" },
-    { title: "Talk" },
-    { title: "Translation" },
-    { title: "Author" },
-    { title: "Topic" },
+    { title: "Recall" },
+    { title: "Search" },
+    { title: "Acquire" },
+    { title: "Prepare" },
+    { title: "Analyse" },
+    { title: "Synthesise" },
+    { title: "Audit" },
   ],
 };
 
@@ -34,7 +35,10 @@ export async function run(primitives, inputArgs) {
     processTalk: (slug, meta) =>
       processTalk(runtime, slug, meta),
   };
-  const dispatchMaterial = createMaterialDispatch(materialProcessors);
+  const dispatchMaterial = createMaterialDispatch(
+    runtime,
+    materialProcessors,
+  );
 
   async function router(kind, args, opts = {}) {
     switch (kind) {
@@ -78,11 +82,15 @@ export async function run(primitives, inputArgs) {
     throw new Error(
       "process-material: 需要 args.kind(book|paper|talk|translate|author|topic)",
     );
-  const entryOpts =
-    args.kind === "book" &&
+  const entryOpts = {
+    ...(["book", "paper"].includes(args.kind)
+      ? { resolveIdentity: true }
+      : {}),
+    ...(args.kind === "book" &&
     Object.prototype.hasOwnProperty.call(args, "year_decision")
       ? { yearDecision: args.year_decision }
-      : {};
+      : {}),
+  };
   let result = await router(args.kind, args, entryOpts);
   if (
     args.kind === "paper" &&
@@ -91,13 +99,14 @@ export async function run(primitives, inputArgs) {
     result.status === "ok"
   ) {
     const receipt = result.material_receipt;
+    const resolvedSlug = result.slug;
     const sources =
       receipt &&
       receipt.schema_version ===
         "quasi.material-loop.receipt/0.1" &&
-      receipt.material_key === `paper:${args.slug}` &&
+      receipt.material_key === `paper:${resolvedSlug}` &&
       receipt.kind === "paper" &&
-      receipt.id === args.slug &&
+      receipt.id === resolvedSlug &&
       receipt.status === "complete" &&
       Array.isArray(receipt.artifacts)
         ? receipt.artifacts.filter(
@@ -105,7 +114,7 @@ export async function run(primitives, inputArgs) {
               artifact &&
               artifact.role === "source" &&
               artifact.exists === true &&
-              artifact.path === `sources/${args.slug}.pdf`,
+              artifact.path === `sources/${resolvedSlug}.pdf`,
           )
         : [];
     const translationMeta = {
@@ -122,11 +131,11 @@ export async function run(primitives, inputArgs) {
       sources.length === 1
         ? await processTranslation(
             runtime,
-            args.slug,
+            resolvedSlug,
             translationMeta,
           )
         : translationDependencyFailure(
-            args.slug,
+            resolvedSlug,
             translationMeta,
             "translation.paper_source_missing",
             "Paper MaterialReceipt did not contain one exact source artifact",

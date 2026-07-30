@@ -1343,7 +1343,7 @@ async function runSteer(
       diagnostics,
     }),
     {
-      phase: "Topic",
+      phase: "Search",
       agentType: "quasi:steer-agent",
       label,
       schema: TOPIC_STEER_OPERATION_SCHEMA,
@@ -1412,7 +1412,7 @@ async function runSynthesis(
   const receipt = await runtime.runOperation(
     prompt,
     {
-      phase: "Topic",
+      phase: "Synthesise",
       agentType: "quasi:synthesis-agent",
       label,
       schema: overview
@@ -1457,9 +1457,9 @@ async function runAudit(runtime, state, target, pass) {
   const receipt = await runtime.runOperation(
     topicAuditLegacyPrompt(state.researchKey, target, pass),
     {
-      phase: "Topic",
+      phase: "Audit",
       agentType: "quasi:audit-agent",
-      label: `audit-topic:${pass}:${target}`,
+      label: `${state.slug}:audit-${pass}:${target.split("/").pop()}`,
       schema: TOPIC_AUDIT_SCHEMA,
     },
     operationOptions(
@@ -1552,9 +1552,9 @@ async function runMaterialRound(
               demand,
             ),
         {
-          phase: "Topic",
+          phase: "Search",
           agentType: "quasi:discovery-agent",
-          label: `discover:${demandId}:${state.slug}`,
+          label: `${state.slug}:discover:${demandId}`,
           schema: book
             ? TOPIC_DISCOVER_BOOK_SCHEMA
             : TOPIC_DISCOVER_PAPER_SCHEMA,
@@ -1612,9 +1612,9 @@ async function runMaterialRound(
   const membership = await runtime.runOperation(
     topicResolveMembershipPrompt(state.researchKey, requests),
     {
-      phase: "Topic",
+      phase: "Recall",
       agentType: "general-purpose",
-      label: `resolve-discovered:${state.slug}:r1`,
+      label: `${state.slug}:resolve-discovered:r1`,
       schema: TOPIC_RESOLVE_MEMBERSHIP_SCHEMA,
     },
     operationOptions(
@@ -1736,9 +1736,9 @@ async function processStrict(runtime, router, slug, meta) {
           state.maxItems,
         ),
         {
-          phase: "Topic",
+          phase: "Recall",
           agentType: "general-purpose",
-          label: `recall:${slug}`,
+          label: `${slug}:recall`,
           schema: TOPIC_RECALL_SCHEMA,
         },
         operationOptions("topic.recall", "readonly", []),
@@ -1751,7 +1751,7 @@ async function processStrict(runtime, router, slug, meta) {
         [],
         "create",
         [],
-        `steer:${slug}:r0`,
+        `${slug}:steer:r0`,
       ),
   ]);
   state.operations.unshift(recall);
@@ -1814,9 +1814,9 @@ async function processStrict(runtime, router, slug, meta) {
     const membership = await runtime.runOperation(
       topicResolveMembershipPrompt(state.researchKey, requests),
       {
-        phase: "Topic",
+        phase: "Recall",
         agentType: "general-purpose",
-        label: `resolve-membership:${slug}`,
+        label: `${slug}:resolve-membership`,
         schema: TOPIC_RESOLVE_MEMBERSHIP_SCHEMA,
       },
       operationOptions(
@@ -1890,8 +1890,8 @@ async function processStrict(runtime, router, slug, meta) {
       "refresh",
       [],
       meta.maxRounds === 0
-        ? `steer:${slug}:r1-close`
-        : `steer:${slug}:r1-plan`,
+        ? `${slug}:steer:r1-close`
+        : `${slug}:steer:r1-plan`,
     );
     if (planningSteer.terminal) return planningSteer.terminal;
   }
@@ -1911,7 +1911,7 @@ async function processStrict(runtime, router, slug, meta) {
         state.members,
         "refresh",
         [],
-        `steer:${slug}:r1-close`,
+        `${slug}:steer:r1-close`,
       );
       if (closingSteer.terminal) return closingSteer.terminal;
     }
@@ -1958,7 +1958,7 @@ async function processStrict(runtime, router, slug, meta) {
         "overview",
         "create",
         [],
-        `synth-overview:${slug}`,
+        `${slug}:synthesise-overview`,
       ),
     () =>
       runSynthesis(
@@ -1967,7 +1967,7 @@ async function processStrict(runtime, router, slug, meta) {
         "resources",
         "create",
         [],
-        `synth-resources:${slug}`,
+        `${slug}:synthesise-resources`,
       ),
   ]);
   const synthTerminal = synthResults.find(
@@ -2013,7 +2013,7 @@ async function processStrict(runtime, router, slug, meta) {
             state.members,
             "repair",
             result.diagnostics,
-            `repair-outline:${slug}`,
+            `${slug}:repair-outline`,
           );
         return runSynthesis(
           runtime,
@@ -2021,7 +2021,7 @@ async function processStrict(runtime, router, slug, meta) {
           producer,
           "repair",
           result.diagnostics,
-          `repair-${producer}:${slug}`,
+          `${slug}:repair-${producer}`,
         );
       }),
     );
@@ -2098,7 +2098,7 @@ export async function processTopicStrict(
   slug,
   rawMeta,
 ) {
-  runtime.phase("Topic");
+  runtime.phase("Recall");
   const validation = validateIdentity(slug, rawMeta);
   if (!validation.ok)
     return rejectedResult(slug, validation);

@@ -459,7 +459,81 @@ export const topicOverviewSynthesisePrompt =
 export const topicResourcesSynthesisePrompt =
   topicResourcesSynthesiseOperationPrompt;
 
-export function topicDossierSynthPrompt(slug, desc, subquestion, cards) {
+const LEGACY_TOPIC_FRONTMATTER_CONTRACT = {
+  additionalProperties: false,
+  required: ["type", "title", "kind"],
+  properties: {
+    type: { const: "topic" },
+    title: { type: "string", minLength: 2, maxLength: 280 },
+    kind: {
+      type: "string",
+      enum: ["overview", "resources", "dossier"],
+    },
+  },
+};
+
+const LEGACY_TOPIC_DOSSIER_ARTIFACT_CONTRACT = {
+  frontmatter: LEGACY_TOPIC_FRONTMATTER_CONTRACT,
+  h1: "Use identity.subquestion exactly",
+  section_order: [
+    "问题与现状",
+    "证据综述",
+    "证据档案",
+    "缺口与下一步",
+  ],
+  sections: {
+    问题与现状: "State the exact subquestion and current evidence boundary.",
+    证据综述:
+      "Synthesize only analysis_inputs and wikilink their exact canonical paths.",
+    证据档案:
+      "When card_inputs is non-empty, report each card separately with its evidence level and uncertainty.",
+    缺口与下一步:
+      "State only gaps supported by the supplied analyses and cards.",
+  },
+};
+
+const LEGACY_TOPIC_SPINE_ARTIFACT_CONTRACT = {
+  frontmatter: LEGACY_TOPIC_FRONTMATTER_CONTRACT,
+  overview: {
+    kind: "overview",
+    h1: "Use identity.topic exactly",
+    section_order: [
+      "总体趋势",
+      "子问题地图",
+      "缺口总览",
+      "对研究的启示",
+    ],
+  },
+  resources: {
+    kind: "resources",
+    h1: "Use identity.topic exactly",
+    grouping: "Follow outline subquestion order exactly",
+    separate_channels: ["academic_materials", "evidence_cards"],
+    final_sections: ["推荐追踪的专著", "未归类"],
+  },
+};
+
+function legacyTopicDiagnostics(outputPaths, reasons) {
+  const supplied =
+    Array.isArray(reasons) && reasons.length
+      ? reasons
+      : ["refresh the cumulative Topic product from the supplied corpus"];
+  return outputPaths.flatMap((path) =>
+    supplied.map((reason) => ({
+      path,
+      kind: "topic_refresh",
+      reason,
+    })),
+  );
+}
+
+export function topicDossierSynthPrompt(
+  slug,
+  desc,
+  subquestion,
+  cards,
+  diagnostics = [],
+) {
   const mine = [
     ...new Set([
       ...(subquestion.cards || []),
@@ -468,19 +542,64 @@ export function topicDossierSynthPrompt(slug, desc, subquestion, cards) {
         .map((card) => card.card_slug),
     ]),
   ];
-  return `mode: topic
-page: dossier
-topic: ${desc}
-subq_id: ${subquestion.id}
-subq_question: ${subquestion.question || subquestion.id}
-analysis_paths: ${JSON.stringify((subquestion.items || []).map(itemPath))}
-items: ${JSON.stringify(subquestion.items || [])}
-card_paths: ${JSON.stringify(mine.map((card) => cardPath(slug, card)))}
-output_path: vault/topics/${slug}/${subquestion.page}
-overwrite: true`;
+  const outputPath = `vault/topics/${slug}/${subquestion.page}`;
+  const analysisInputs = (subquestion.items || []).map((item) => ({
+    kind: item.kind,
+    slug: item.slug,
+    role: item.role || null,
+    path: itemPath(item),
+  }));
+  const cardInputs = mine.map((card) => ({
+    role: "evidence_card",
+    path: cardPath(slug, card),
+  }));
+  const request = {
+    schema_version:
+      "quasi.operation.topic.synthesise.dossier.request/legacy",
+    operation: "topic.synthesise.dossier",
+    research_key: `topic:${slug}`,
+    identity: {
+      topic: desc,
+      subquestion_id: subquestion.id,
+      subquestion: subquestion.question || subquestion.id,
+    },
+    inputs: {
+      analyses: analysisInputs,
+      cards: cardInputs,
+    },
+    outputs: [{ role: "dossier", path: outputPath }],
+    mode: "repair",
+    overwrite: true,
+    repair_diagnostics: legacyTopicDiagnostics(
+      [outputPath],
+      diagnostics,
+    ),
+    artifact_contract: LEGACY_TOPIC_DOSSIER_ARTIFACT_CONTRACT,
+    operation_instructions: [
+      "Read every analysis input in order; these are the complete academic materials for this subquestion.",
+      "Evidence cards are a separate primary-evidence channel, not peer-reviewed analyses; preserve single-source and disputed qualifications.",
+      "Do not write the outline, cards, spine pages, or any path other than outputs[0].path.",
+      "Return status=success only after the exact output write is confirmed; inputs_analyzed counts analysis inputs, not cards.",
+    ],
+    receipt_contract: {
+      status: ["success", "error"],
+      fields: ["status", "inputs_analyzed", "output"],
+    },
+  };
+  return `Execute exactly one legacy Topic dossier synthesis operation from this
+self-contained request. Follow artifact_contract and operation_instructions; do not
+reinterpret it as another synthesis mode.
+${JSON.stringify(request, null, 2)}`;
 }
 
-export function topicSpineSynthPrompt(slug, desc, ok, subquestions, cards) {
+export function topicSpineSynthPrompt(
+  slug,
+  desc,
+  ok,
+  subquestions,
+  cards,
+  diagnostics = [],
+) {
   const graduated = subquestions
     .filter((subquestion) => subquestion.dossier && subquestion.page)
     .map((subquestion) => ({
@@ -501,16 +620,61 @@ export function topicSpineSynthPrompt(slug, desc, ok, subquestions, cards) {
       ...(cards || []).map((card) => card.card_slug),
     ]),
   ];
-  return `mode: topic
-page: spine
-source_name: ${desc}
-topic: ${desc}
-outline_path: vault/topics/${slug}/02-outline.md
-corpus_paths: ${JSON.stringify(ok.map(itemPath))}
-card_paths: ${JSON.stringify(allCards.map((card) => cardPath(slug, card)))}
-dossier_pages: ${JSON.stringify(graduated)}
-inline_clusters: ${JSON.stringify(inline)}
-output_path: vault/topics/${slug}/00-overview.md
-reading_list_path: vault/topics/${slug}/01-resources.md
-overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-op 会让综述停在旧版本。`;
+  const overviewPath = `vault/topics/${slug}/00-overview.md`;
+  const resourcesPath = `vault/topics/${slug}/01-resources.md`;
+  const request = {
+    schema_version:
+      "quasi.operation.topic.synthesise.spine.request/legacy",
+    operation: "topic.synthesise.spine",
+    research_key: `topic:${slug}`,
+    identity: { topic: desc },
+    inputs: {
+      outline: {
+        role: "outline",
+        path: `vault/topics/${slug}/02-outline.md`,
+      },
+      corpus: ok.map((item) => ({
+        kind: item.kind,
+        slug: item.slug,
+        path: itemPath(item),
+      })),
+      cards: allCards.map((card) => ({
+        role: "evidence_card",
+        path: cardPath(slug, card),
+      })),
+      dossiers: graduated,
+      inline_clusters: inline,
+    },
+    outputs: [
+      { role: "overview", path: overviewPath },
+      { role: "resources", path: resourcesPath },
+    ],
+    mode: "repair",
+    overwrite: true,
+    repair_diagnostics: legacyTopicDiagnostics(
+      [overviewPath, resourcesPath],
+      diagnostics,
+    ),
+    artifact_contract: LEGACY_TOPIC_SPINE_ARTIFACT_CONTRACT,
+    operation_instructions: [
+      "Read the exact outline first and preserve its subquestion ids, titles, and order.",
+      "Use supplied dossier pages as compressed completed subquestions and inline_clusters as the only unsynthesized corpus groups.",
+      "Keep evidence cards in their own resources sublists; never present a card as an academic analysis.",
+      "List every supplied corpus or card path under its registered subquestion or the final 未归类 section; do not silently drop members.",
+      "Write only the two exact outputs. Return status=success only after both writes are confirmed; inputs_analyzed counts academic corpus inputs.",
+    ],
+    receipt_contract: {
+      status: ["success", "error"],
+      fields: [
+        "status",
+        "inputs_analyzed",
+        "output",
+        "reading_list",
+      ],
+    },
+  };
+  return `Execute exactly one legacy Topic spine synthesis operation from this
+self-contained request. Follow artifact_contract and operation_instructions; do not
+reinterpret it as another synthesis mode.
+${JSON.stringify(request, null, 2)}`;
 }

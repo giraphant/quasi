@@ -760,7 +760,7 @@ def test_discoveries_overlap_and_resolver_waits_for_both(
     assert book_search["start"] < paper_search["end"]
     assert paper_search["start"] < book_search["end"]
     assert resolver["start"] > max(book_search["end"], paper_search["end"])
-    assert report["phases"] == ["Author"]
+    assert report["phases"] == ["Search"]
 
 
 def test_resolver_correlates_slug_drift_dedupes_and_preserves_order(

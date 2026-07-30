@@ -3,25 +3,28 @@
 
 export const meta = {
   "name": "process-material",
-  "description": "Unified acquisition→analysis graph: router(kind) → book | paper | talk | translate | author | topic",
+  "description": "Moves academic materials through a shared processing pipeline",
   "phases": [
     {
-      "title": "Book"
+      "title": "Recall"
     },
     {
-      "title": "Paper"
+      "title": "Search"
     },
     {
-      "title": "Talk"
+      "title": "Acquire"
     },
     {
-      "title": "Translation"
+      "title": "Prepare"
     },
     {
-      "title": "Author"
+      "title": "Analyse"
     },
     {
-      "title": "Topic"
+      "title": "Synthesise"
+    },
+    {
+      "title": "Audit"
     }
   ]
 }
@@ -2298,6 +2301,269 @@ well-formed command status "failed", nonzero exit, or explicitly reported absent
       }
     }
   };
+  var MATERIAL_IDENTITY_FAILURE_SCHEMA = {
+    type: ["object", "null"],
+    additionalProperties: false,
+    required: [
+      "code",
+      "operation_key",
+      "outcome",
+      "retryable",
+      "message"
+    ],
+    properties: {
+      code: { type: "string" },
+      operation_key: {
+        type: "string",
+        enum: [
+          "material.recall",
+          "material.search",
+          "material.resolve"
+        ]
+      },
+      outcome: { type: "string", enum: ["known", "unknown"] },
+      retryable: { type: "boolean" },
+      message: { type: ["string", "null"] }
+    }
+  };
+  var materialLookupSchema = (key) => ({
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "schema_version",
+      "key",
+      "effect",
+      "status",
+      "attempt",
+      "request_key",
+      "kind",
+      "requested_slug",
+      "vault_slug",
+      "path",
+      "match",
+      "failure"
+    ],
+    properties: {
+      schema_version: {
+        const: `quasi.operation.${key}.receipt/0.1`
+      },
+      key: { const: key },
+      effect: { const: "readonly" },
+      status: { type: "string", enum: ["succeeded", "failed"] },
+      attempt: { type: "integer", const: 1 },
+      request_key: { type: "string" },
+      kind: { type: "string", enum: ["book", "paper"] },
+      requested_slug: { type: "string" },
+      vault_slug: { type: ["string", "null"] },
+      path: { type: ["string", "null"] },
+      match: {
+        type: ["string", "null"],
+        enum: ["slug", "isbn", "doi", "title", null]
+      },
+      failure: MATERIAL_IDENTITY_FAILURE_SCHEMA
+    }
+  });
+  var MATERIAL_RECALL_SCHEMA = materialLookupSchema("material.recall");
+  var MATERIAL_RESOLVE_SCHEMA = materialLookupSchema("material.resolve");
+  var MATERIAL_QUERY_PROPERTIES = {
+    slug: { type: ["string", "null"] },
+    title: { type: ["string", "null"] },
+    authors: {
+      type: "array",
+      maxItems: 32,
+      items: { type: "string" }
+    },
+    year: { type: ["integer", "null"] }
+  };
+  var MATERIAL_SEARCH_BASE_PROPERTIES = {
+    schema_version: {
+      const: "quasi.operation.material.search.receipt/0.1"
+    },
+    key: { const: "material.search" },
+    effect: { const: "readonly" },
+    status: { type: "string", enum: ["succeeded", "failed"] },
+    attempt: { type: "integer", const: 1 },
+    request_key: { type: "string" },
+    kind: { type: "string", enum: ["book", "paper"] },
+    confidence: {
+      type: "string",
+      enum: ["high", "medium", "low"]
+    },
+    sources_hit: {
+      type: "array",
+      maxItems: 24,
+      items: { type: "string" }
+    },
+    conflicts: {
+      type: "array",
+      maxItems: 32,
+      items: { type: "string" }
+    },
+    notes: { type: "string" },
+    failure: MATERIAL_IDENTITY_FAILURE_SCHEMA
+  };
+  var MATERIAL_SEARCH_REQUIRED = [
+    "schema_version",
+    "key",
+    "effect",
+    "status",
+    "attempt",
+    "request_key",
+    "kind",
+    "query",
+    "picked",
+    "confidence",
+    "sources_hit",
+    "conflicts",
+    "notes",
+    "failure"
+  ];
+  var MATERIAL_SEARCH_BOOK_SCHEMA = {
+    type: "object",
+    additionalProperties: false,
+    required: MATERIAL_SEARCH_REQUIRED,
+    properties: {
+      ...MATERIAL_SEARCH_BASE_PROPERTIES,
+      kind: { const: "book" },
+      query: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "slug",
+          "title",
+          "authors",
+          "year",
+          "isbn",
+          "publisher",
+          "category",
+          "format"
+        ],
+        properties: {
+          ...MATERIAL_QUERY_PROPERTIES,
+          isbn: { type: ["string", "null"] },
+          publisher: { type: ["string", "null"] },
+          category: {
+            type: ["string", "null"],
+            enum: [
+              "monograph",
+              "edited-volume",
+              "handbook",
+              "other",
+              null
+            ]
+          },
+          format: {
+            type: ["string", "null"],
+            enum: ["epub", "pdf", null]
+          }
+        }
+      },
+      picked: {
+        type: ["object", "null"],
+        additionalProperties: false,
+        required: [
+          "slug",
+          "title",
+          "authors",
+          "year",
+          "isbn",
+          "publisher",
+          "category",
+          "confidence"
+        ],
+        properties: {
+          slug: { type: "string" },
+          title: { type: "string" },
+          authors: {
+            type: "array",
+            minItems: 1,
+            maxItems: 32,
+            items: { type: "string" }
+          },
+          year: { type: "integer" },
+          isbn: { type: ["string", "null"] },
+          publisher: { type: "string" },
+          category: {
+            type: "string",
+            enum: [
+              "monograph",
+              "edited-volume",
+              "handbook",
+              "other"
+            ]
+          },
+          confidence: {
+            type: "string",
+            enum: ["high", "medium"]
+          }
+        }
+      }
+    }
+  };
+  var MATERIAL_SEARCH_PAPER_SCHEMA = {
+    type: "object",
+    additionalProperties: false,
+    required: MATERIAL_SEARCH_REQUIRED,
+    properties: {
+      ...MATERIAL_SEARCH_BASE_PROPERTIES,
+      kind: { const: "paper" },
+      query: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "slug",
+          "title",
+          "authors",
+          "year",
+          "doi",
+          "oa_url",
+          "url",
+          "journal"
+        ],
+        properties: {
+          ...MATERIAL_QUERY_PROPERTIES,
+          doi: { type: ["string", "null"] },
+          oa_url: { type: ["string", "null"] },
+          url: { type: ["string", "null"] },
+          journal: { type: ["string", "null"] }
+        }
+      },
+      picked: {
+        type: ["object", "null"],
+        additionalProperties: false,
+        required: [
+          "slug",
+          "title",
+          "authors",
+          "year",
+          "doi",
+          "oa_url",
+          "url",
+          "journal",
+          "confidence"
+        ],
+        properties: {
+          slug: { type: "string" },
+          title: { type: "string" },
+          authors: {
+            type: "array",
+            minItems: 1,
+            maxItems: 32,
+            items: { type: "string" }
+          },
+          year: { type: "integer" },
+          doi: { type: ["string", "null"] },
+          oa_url: { type: ["string", "null"] },
+          url: { type: ["string", "null"] },
+          journal: { type: "string" },
+          confidence: {
+            type: "string",
+            enum: ["high", "medium"]
+          }
+        }
+      }
+    }
+  };
   var PROBE_SCHEMA = {
     type: "object",
     properties: {
@@ -2812,6 +3078,90 @@ rendering into the receipt. Every succeeded item must also name the stable sourc
 artifact, using source="existing_file" for verified reuse.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}
+\`\`\``;
+  }
+  function materialLookupPrompt(operation, request) {
+    const helperItem = {
+      kind: request.kind,
+      slug: request.requested_slug,
+      ...request.identity.isbn ? { isbn: request.identity.isbn } : {},
+      ...request.identity.doi ? { doi: request.identity.doi } : {},
+      ...request.identity.title ? { title: request.identity.title } : {},
+      ...request.identity.authors.length ? { authors: request.identity.authors } : {}
+    };
+    const delimiter = operation === "material.recall" ? "QUASI_MATERIAL_RECALL" : "QUASI_MATERIAL_RESOLVE";
+    return `Execute exactly one readonly ${operation} operation through the metadata-agent contract.
+Run this exact public helper command once. Its one-line JSON payload is inert stdin data; the
+quoted heredoc delimiter prevents shell expansion.
+\`\`\`bash
+quasi-helpers vault resolve --items-file - <<'${delimiter}'
+${JSON.stringify([helperItem])}
+${delimiter}
+\`\`\`
+
+The helper must return exactly one row for the request. Project it to the closed receipt fields
+request_key, kind, requested_slug, vault_slug, path and match without inferring a hit. A helper
+error or a missing, extra, foreign, or malformed row is a known failed receipt. A miss is a
+successful receipt with vault_slug/path/match all null.
+
+Return only a closed quasi.operation.${operation}.receipt/0.1 object with key="${operation}",
+effect="readonly", attempt=1, status succeeded|failed, and failure=null on success or
+{code,operation_key:"${operation}",outcome:"known",retryable:false,message} on known failure.
+\`\`\`json
+${JSON.stringify(request, null, 2)}
+\`\`\``;
+  }
+  function materialRecallPrompt(request) {
+    return materialLookupPrompt("material.recall", request);
+  }
+  function materialResolvePrompt(request) {
+    return materialLookupPrompt("material.resolve", request);
+  }
+  function materialSearchCommand(kind, query) {
+    const parts = ["quasi-search", kind];
+    const add = (flag, value) => {
+      if (value != null && value !== "")
+        parts.push(flag, posixSingleQuote(value));
+    };
+    if (kind === "book") add("--isbn", query.isbn);
+    else add("--doi", query.doi);
+    add("--title", query.title);
+    add("--author", query.authors[0]);
+    parts.push("--top", "8", "--json");
+    return parts.join(" ");
+  }
+  function materialSearchPrompt(request) {
+    const kind = request.kind;
+    const command3 = materialSearchCommand(kind, request.query);
+    const identityContract = kind === "book" ? BOOK_ARTIFACT_CONTRACT.identity : PAPER_ARTIFACT_CONTRACT.identity;
+    return `Execute exactly one readonly material.search operation through the metadata-agent
+contract. Run this exact public command once; do not change the query or start a second search.
+\`\`\`bash
+${command3}
+\`\`\`
+
+Use only the command's results and diagnostics to select at most one evidence-backed canonical
+identity compatible with the request query and identity contract below. The canonical slug is
+{first-author-surname}-{short-title}-{year}. Book picked requires an evidenced publisher and an
+explicit category monograph|edited-volume|handbook|other. Paper picked requires an exact journal
+container title. Preserve provider author order. Project sources_hit as strings and conflicts as
+short strings; do not return raw provider records.
+
+status=succeeded requires one high|medium picked identity and failure=null. If no candidate proves
+the complete identity, return status=failed, picked=null, confidence=low, and
+failure={code:"material.identity_not_resolved",operation_key:"material.search",outcome:"known",
+retryable:false,message}. Return only the closed
+quasi.operation.material.search.receipt/0.1 object.
+\`\`\`json
+${JSON.stringify(
+      {
+        ...request,
+        identity_contract: identityContract,
+        exact_command: command3
+      },
+      null,
+      2
+    )}
 \`\`\``;
   }
   function existsProbePrompt(books, papers) {
@@ -4249,25 +4599,120 @@ ${JSON.stringify(request, null, 2)}`;
       outputRole: "resources"
     });
   }
-  function topicDossierSynthPrompt(slug, desc, subquestion, cards) {
+  var LEGACY_TOPIC_FRONTMATTER_CONTRACT = {
+    additionalProperties: false,
+    required: ["type", "title", "kind"],
+    properties: {
+      type: { const: "topic" },
+      title: { type: "string", minLength: 2, maxLength: 280 },
+      kind: {
+        type: "string",
+        enum: ["overview", "resources", "dossier"]
+      }
+    }
+  };
+  var LEGACY_TOPIC_DOSSIER_ARTIFACT_CONTRACT = {
+    frontmatter: LEGACY_TOPIC_FRONTMATTER_CONTRACT,
+    h1: "Use identity.subquestion exactly",
+    section_order: [
+      "问题与现状",
+      "证据综述",
+      "证据档案",
+      "缺口与下一步"
+    ],
+    sections: {
+      问题与现状: "State the exact subquestion and current evidence boundary.",
+      证据综述: "Synthesize only analysis_inputs and wikilink their exact canonical paths.",
+      证据档案: "When card_inputs is non-empty, report each card separately with its evidence level and uncertainty.",
+      缺口与下一步: "State only gaps supported by the supplied analyses and cards."
+    }
+  };
+  var LEGACY_TOPIC_SPINE_ARTIFACT_CONTRACT = {
+    frontmatter: LEGACY_TOPIC_FRONTMATTER_CONTRACT,
+    overview: {
+      kind: "overview",
+      h1: "Use identity.topic exactly",
+      section_order: [
+        "总体趋势",
+        "子问题地图",
+        "缺口总览",
+        "对研究的启示"
+      ]
+    },
+    resources: {
+      kind: "resources",
+      h1: "Use identity.topic exactly",
+      grouping: "Follow outline subquestion order exactly",
+      separate_channels: ["academic_materials", "evidence_cards"],
+      final_sections: ["推荐追踪的专著", "未归类"]
+    }
+  };
+  function legacyTopicDiagnostics(outputPaths, reasons) {
+    const supplied = Array.isArray(reasons) && reasons.length ? reasons : ["refresh the cumulative Topic product from the supplied corpus"];
+    return outputPaths.flatMap(
+      (path) => supplied.map((reason) => ({
+        path,
+        kind: "topic_refresh",
+        reason
+      }))
+    );
+  }
+  function topicDossierSynthPrompt(slug, desc, subquestion, cards, diagnostics = []) {
     const mine = [
       .../* @__PURE__ */ new Set([
         ...subquestion.cards || [],
         ...(cards || []).filter((card) => card.subq === subquestion.id).map((card) => card.card_slug)
       ])
     ];
-    return `mode: topic
-page: dossier
-topic: ${desc}
-subq_id: ${subquestion.id}
-subq_question: ${subquestion.question || subquestion.id}
-analysis_paths: ${JSON.stringify((subquestion.items || []).map(itemPath))}
-items: ${JSON.stringify(subquestion.items || [])}
-card_paths: ${JSON.stringify(mine.map((card) => cardPath(slug, card)))}
-output_path: vault/topics/${slug}/${subquestion.page}
-overwrite: true`;
+    const outputPath = `vault/topics/${slug}/${subquestion.page}`;
+    const analysisInputs2 = (subquestion.items || []).map((item) => ({
+      kind: item.kind,
+      slug: item.slug,
+      role: item.role || null,
+      path: itemPath(item)
+    }));
+    const cardInputs = mine.map((card) => ({
+      role: "evidence_card",
+      path: cardPath(slug, card)
+    }));
+    const request = {
+      schema_version: "quasi.operation.topic.synthesise.dossier.request/legacy",
+      operation: "topic.synthesise.dossier",
+      research_key: `topic:${slug}`,
+      identity: {
+        topic: desc,
+        subquestion_id: subquestion.id,
+        subquestion: subquestion.question || subquestion.id
+      },
+      inputs: {
+        analyses: analysisInputs2,
+        cards: cardInputs
+      },
+      outputs: [{ role: "dossier", path: outputPath }],
+      mode: "repair",
+      overwrite: true,
+      repair_diagnostics: legacyTopicDiagnostics(
+        [outputPath],
+        diagnostics
+      ),
+      artifact_contract: LEGACY_TOPIC_DOSSIER_ARTIFACT_CONTRACT,
+      operation_instructions: [
+        "Read every analysis input in order; these are the complete academic materials for this subquestion.",
+        "Evidence cards are a separate primary-evidence channel, not peer-reviewed analyses; preserve single-source and disputed qualifications.",
+        "Do not write the outline, cards, spine pages, or any path other than outputs[0].path.",
+        "Return status=success only after the exact output write is confirmed; inputs_analyzed counts analysis inputs, not cards."
+      ],
+      receipt_contract: {
+        status: ["success", "error"],
+        fields: ["status", "inputs_analyzed", "output"]
+      }
+    };
+    return `Execute exactly one legacy Topic dossier synthesis operation from this
+self-contained request. Follow artifact_contract and operation_instructions; do not
+reinterpret it as another synthesis mode.
+${JSON.stringify(request, null, 2)}`;
   }
-  function topicSpineSynthPrompt(slug, desc, ok, subquestions, cards) {
+  function topicSpineSynthPrompt(slug, desc, ok, subquestions, cards, diagnostics = []) {
     const graduated = subquestions.filter((subquestion) => subquestion.dossier && subquestion.page).map((subquestion) => ({
       id: subquestion.id,
       page: `vault/topics/${slug}/${subquestion.page}`
@@ -4284,18 +4729,62 @@ overwrite: true`;
         ...(cards || []).map((card) => card.card_slug)
       ])
     ];
-    return `mode: topic
-page: spine
-source_name: ${desc}
-topic: ${desc}
-outline_path: vault/topics/${slug}/02-outline.md
-corpus_paths: ${JSON.stringify(ok.map(itemPath))}
-card_paths: ${JSON.stringify(allCards.map((card) => cardPath(slug, card)))}
-dossier_pages: ${JSON.stringify(graduated)}
-inline_clusters: ${JSON.stringify(inline)}
-output_path: vault/topics/${slug}/00-overview.md
-reading_list_path: vault/topics/${slug}/01-resources.md
-overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-op 会让综述停在旧版本。`;
+    const overviewPath = `vault/topics/${slug}/00-overview.md`;
+    const resourcesPath = `vault/topics/${slug}/01-resources.md`;
+    const request = {
+      schema_version: "quasi.operation.topic.synthesise.spine.request/legacy",
+      operation: "topic.synthesise.spine",
+      research_key: `topic:${slug}`,
+      identity: { topic: desc },
+      inputs: {
+        outline: {
+          role: "outline",
+          path: `vault/topics/${slug}/02-outline.md`
+        },
+        corpus: ok.map((item) => ({
+          kind: item.kind,
+          slug: item.slug,
+          path: itemPath(item)
+        })),
+        cards: allCards.map((card) => ({
+          role: "evidence_card",
+          path: cardPath(slug, card)
+        })),
+        dossiers: graduated,
+        inline_clusters: inline
+      },
+      outputs: [
+        { role: "overview", path: overviewPath },
+        { role: "resources", path: resourcesPath }
+      ],
+      mode: "repair",
+      overwrite: true,
+      repair_diagnostics: legacyTopicDiagnostics(
+        [overviewPath, resourcesPath],
+        diagnostics
+      ),
+      artifact_contract: LEGACY_TOPIC_SPINE_ARTIFACT_CONTRACT,
+      operation_instructions: [
+        "Read the exact outline first and preserve its subquestion ids, titles, and order.",
+        "Use supplied dossier pages as compressed completed subquestions and inline_clusters as the only unsynthesized corpus groups.",
+        "Keep evidence cards in their own resources sublists; never present a card as an academic analysis.",
+        "List every supplied corpus or card path under its registered subquestion or the final 未归类 section; do not silently drop members.",
+        "Write only the two exact outputs. Return status=success only after both writes are confirmed; inputs_analyzed counts academic corpus inputs."
+      ],
+      receipt_contract: {
+        status: ["success", "error"],
+        fields: [
+          "status",
+          "inputs_analyzed",
+          "output",
+          "reading_list"
+        ]
+      }
+    };
+    return `Execute exactly one legacy Topic spine synthesis operation from this
+self-contained request. Follow artifact_contract and operation_instructions; do not
+reinterpret it as another synthesis mode.
+${JSON.stringify(request, null, 2)}`;
   }
 
   // scripts/workflows/collections/author.mjs
@@ -4954,7 +5443,7 @@ overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-o
         diagnostics
       ),
       {
-        phase: "Author",
+        phase: "Synthesise",
         agentType: "quasi:synthesis-agent",
         label,
         schema: AUTHOR_SYNTHESISE_SCHEMA
@@ -5028,7 +5517,7 @@ overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-o
     const receipt2 = await runtime.runOperation(
       authorAuditLegacyPrompt(state.name, pass),
       {
-        phase: "Author",
+        phase: "Audit",
         agentType: "quasi:audit-agent",
         label,
         schema: AUTHOR_AUDIT_SCHEMA
@@ -5124,9 +5613,9 @@ overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-o
             state.maxBooks
           ),
           {
-            phase: "Author",
+            phase: "Search",
             agentType: "quasi:discovery-agent",
-            label: `discover-books:${name}`,
+            label: `${name}:discover-books`,
             schema: AUTHOR_DISCOVER_BOOKS_SCHEMA
           },
           {
@@ -5150,9 +5639,9 @@ overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-o
             state.maxPapers
           ),
           {
-            phase: "Author",
+            phase: "Search",
             agentType: "quasi:discovery-agent",
-            label: `discover-papers:${name}`,
+            label: `${name}:discover-papers`,
             schema: AUTHOR_DISCOVER_PAPERS_SCHEMA
           },
           {
@@ -5226,9 +5715,9 @@ overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-o
         candidates
       ),
       {
-        phase: "Author",
+        phase: "Recall",
         agentType: "general-purpose",
-        label: `resolve-membership:${name}`,
+        label: `${name}:resolve-membership`,
         schema: AUTHOR_RESOLVE_MEMBERSHIP_SCHEMA
       },
       {
@@ -5340,14 +5829,14 @@ overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-o
       inputs,
       initialMode,
       initialDiagnostics,
-      `synthesise-author:${name}`
+      `${name}:synthesise`
     );
     if (synthesis.terminal) return synthesis.terminal;
     let audited = await runAudit(
       runtime,
       state,
       1,
-      `audit-author:${name}`
+      `${name}:audit`
     );
     if (audited.terminal) return audited.terminal;
     if (!audited.clean) {
@@ -5358,14 +5847,14 @@ overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-o
         inputs,
         "repair",
         audited.escalated,
-        `repair-author:${name}`
+        `${name}:synthesise-repair`
       );
       if (repaired.terminal) return repaired.terminal;
       audited = await runAudit(
         runtime,
         state,
         2,
-        `audit2-author:${name}`
+        `${name}:audit-2`
       );
       if (audited.terminal) return audited.terminal;
       if (!audited.clean) {
@@ -5397,7 +5886,7 @@ overwrite: true   # 主题页总是重生成:每滚一轮语料都会扩张,no-o
     );
   }
   async function processAuthor(runtime, materials, name, rawMeta) {
-    runtime.phase("Author");
+    runtime.phase("Search");
     const validation = validateIdentity(name, rawMeta);
     if (!validation.ok)
       return rejectedResult(name, validation);
@@ -6542,9 +7031,9 @@ ${JSON.stringify(request, null, 2)}`;
     const receipt2 = await runtime.runOperation(
       translationReconcilePrompt(state, mode),
       {
-        phase: "Translation",
+        phase: mode === "initial" ? "Recall" : mode === "final" ? "Audit" : "Prepare",
         agentType: "quasi:translate-agent",
-        label: `translation.reconcile-${mode}:${state.slug}`,
+        label: `${state.slug}:reconcile-${mode}`,
         schema: TRANSLATION_RECONCILE_SCHEMA
       },
       {
@@ -6659,9 +7148,9 @@ ${JSON.stringify(request, null, 2)}`;
     const receipt2 = await runtime.runOperation(
       translationRunPrompt(state, inputPath, attempt),
       {
-        phase: "Translation",
+        phase: "Prepare",
         agentType: "quasi:translate-agent",
-        label: `translation.run-${attempt}:${state.slug}`,
+        label: `${state.slug}:translate-${attempt}`,
         schema: TRANSLATION_RUN_SCHEMA
       },
       {
@@ -6755,9 +7244,9 @@ ${JSON.stringify(request, null, 2)}`;
     const receipt2 = await runtime.runOperation(
       translationReocrPrompt(state),
       {
-        phase: "Translation",
+        phase: "Prepare",
         agentType: "quasi:translate-agent",
-        label: `translation.reocr:${state.slug}`,
+        label: `${state.slug}:reocr`,
         schema: TRANSLATION_REOCR_SCHEMA
       },
       {
@@ -6865,7 +7354,7 @@ ${JSON.stringify(request, null, 2)}`;
     return { succeeded: true };
   }
   async function processStrict(runtime, state) {
-    runtime.phase("Translation");
+    runtime.phase("Recall");
     const observed = await reconcile(runtime, state, "initial");
     if (observed.terminal) return observed.terminal;
     if (observed.reused) {
@@ -6957,26 +7446,680 @@ ${JSON.stringify(request, null, 2)}`;
     );
   }
 
+  // scripts/workflows/materials/ingress.mjs
+  var INGRESS_RECEIPT_VERSION = "quasi.material-ingress.receipt/0.1";
+  var SLUG2 = /^[a-z0-9][a-z0-9-]{0,79}$/;
+  var BOOK_TEMP_PATH = /^\.quasi\/temp\/downloads\/[A-Za-z0-9][A-Za-z0-9._-]{0,220}\.(?:epub|pdf)$/;
+  var CONTROL_CHARS3 = /[\u0000-\u001f\u007f-\u009f]/;
+  var CATEGORIES2 = /* @__PURE__ */ new Set([
+    "monograph",
+    "edited-volume",
+    "handbook",
+    "other"
+  ]);
+  var exactKeys3 = (value, keys) => !!(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(
+    (key) => Object.prototype.hasOwnProperty.call(value, key)
+  ));
+  var validText3 = (value, min, max) => typeof value === "string" && value === value.trim() && value.length >= min && value.length <= max && !CONTROL_CHARS3.test(value);
+  var optionalText2 = (value, max) => value === null || validText3(value, 1, max);
+  function sameClosedValue(left, right) {
+    if (Array.isArray(left) || Array.isArray(right))
+      return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every(
+        (value, index) => sameClosedValue(value, right[index])
+      );
+    if (left && right && typeof left === "object" && typeof right === "object") {
+      const leftKeys = Object.keys(left);
+      const rightKeys = Object.keys(right);
+      return leftKeys.length === rightKeys.length && leftKeys.every(
+        (key) => Object.prototype.hasOwnProperty.call(right, key) && sameClosedValue(left[key], right[key])
+      );
+    }
+    return Object.is(left, right);
+  }
+  function cleanText(value) {
+    if (value == null || value === "") return null;
+    if (typeof value !== "string") return void 0;
+    const cleaned = value.trim();
+    return cleaned && !CONTROL_CHARS3.test(cleaned) ? cleaned : void 0;
+  }
+  function cleanAuthors(raw) {
+    if (raw == null || raw === "") return [];
+    const values = Array.isArray(raw) ? raw : [raw];
+    if (values.length > 32) return null;
+    const authors = values.map(cleanText);
+    return authors.every(
+      (author) => author !== void 0 && author !== null && author.length <= 200
+    ) ? authors : null;
+  }
+  function cleanYear(raw) {
+    if (raw == null || raw === "") return null;
+    const value = typeof raw === "string" && /^\d{4}$/.test(raw.trim()) ? Number(raw.trim()) : raw;
+    return Number.isInteger(value) && value >= 1500 && value <= 2030 ? value : void 0;
+  }
+  function slugPart(value) {
+    return String(value || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  }
+  function provisionalSlug(kind, query) {
+    if (query.slug) return query.slug;
+    const author = query.authors.length ? query.authors[0].split(/\s+/).at(-1) : null;
+    const seed = (query.title ? [author, query.title, query.year] : [kind, kind === "book" ? query.isbn : query.doi]).filter((value) => value != null).join(" ");
+    const candidate = slugPart(seed).slice(0, 80).replace(/-+$/g, "");
+    return SLUG2.test(candidate) ? candidate : `${kind}-request`;
+  }
+  function invalidRequest(kind, message) {
+    return {
+      ok: false,
+      kind,
+      message
+    };
+  }
+  function normaliseRequest(kind, args) {
+    if (!["book", "paper"].includes(kind))
+      return invalidRequest(kind, "kind must be book or paper");
+    const nested = args && args.request && typeof args.request === "object" && !Array.isArray(args.request) ? args.request : args && args.meta && typeof args.meta === "object" && !Array.isArray(args.meta) ? args.meta : args;
+    if (!nested || typeof nested !== "object" || Array.isArray(nested))
+      return invalidRequest(kind, "material request must be an object");
+    const rawSlug = args && Object.prototype.hasOwnProperty.call(args, "slug") ? args.slug : nested.slug;
+    const slug = rawSlug == null || rawSlug === "" ? null : cleanText(rawSlug);
+    if (slug === void 0 || slug !== null && !SLUG2.test(slug))
+      return invalidRequest(kind, "supplied slug is not canonical");
+    const title = cleanText(nested.title);
+    const authors = cleanAuthors(
+      nested.authors == null ? nested.author : nested.authors
+    );
+    const year = cleanYear(nested.year);
+    if (title === void 0 || title !== null && title.length > 500 || authors === null || year === void 0)
+      return invalidRequest(
+        kind,
+        "title, authors, or year is malformed"
+      );
+    if (kind === "book") {
+      const isbn = cleanText(nested.isbn);
+      const publisher = cleanText(nested.publisher);
+      const category = nested.category == null || nested.category === "" ? null : cleanText(nested.category);
+      const format = nested.format == null || nested.format === "" ? null : cleanText(nested.format);
+      if (isbn === void 0 || isbn !== null && isbn.length > 100 || publisher === void 0 || publisher !== null && publisher.length > 500 || category === void 0 || category !== null && !CATEGORIES2.has(category) || format === void 0 || format !== null && !["epub", "pdf"].includes(format) || !title && !isbn)
+        return invalidRequest(
+          kind,
+          "Book request needs a valid title or ISBN and bounded hints"
+        );
+      const query2 = {
+        slug,
+        title,
+        authors,
+        year,
+        isbn,
+        publisher,
+        category,
+        format
+      };
+      const requestedSlug2 = provisionalSlug(kind, query2);
+      return {
+        ok: true,
+        kind,
+        query: query2,
+        requestedSlug: requestedSlug2,
+        requestKey: `${kind}:${requestedSlug2}`
+      };
+    }
+    const doi = cleanText(nested.doi);
+    const oaUrl = cleanText(nested.oa_url);
+    const url = cleanText(nested.url);
+    const journal = cleanText(nested.journal || nested.venue);
+    if (doi === void 0 || doi !== null && doi.length > 300 || oaUrl === void 0 || oaUrl !== null && oaUrl.length > 2048 || url === void 0 || url !== null && url.length > 2048 || journal === void 0 || journal !== null && journal.length > 500 || !title && !doi)
+      return invalidRequest(
+        kind,
+        "Paper request needs a valid title or DOI and bounded hints"
+      );
+    const query = {
+      slug,
+      title,
+      authors,
+      year,
+      doi,
+      oa_url: oaUrl,
+      url,
+      journal
+    };
+    const requestedSlug = provisionalSlug(kind, query);
+    return {
+      ok: true,
+      kind,
+      query,
+      requestedSlug,
+      requestKey: `${kind}:${requestedSlug}`
+    };
+  }
+  function operationFailure3(code, operationKey, outcome, message) {
+    return {
+      code,
+      operation_key: operationKey,
+      outcome,
+      retryable: false,
+      message
+    };
+  }
+  function validFailure3(failure, key) {
+    return !!(exactKeys3(failure, [
+      "code",
+      "operation_key",
+      "outcome",
+      "retryable",
+      "message"
+    ]) && validText3(failure.code, 1, 200) && failure.operation_key === key && ["known", "unknown"].includes(failure.outcome) && failure.retryable === false && optionalText2(failure.message, 4e3));
+  }
+  function runtimeUnknown3(receipt2, key) {
+    return !!(receipt2 && receipt2.schema_version === "quasi.operation.runtime.receipt/0.1" && receipt2.key === key && receipt2.effect === "readonly" && receipt2.status === "failed" && receipt2.failure && receipt2.failure.operation_key === key && receipt2.failure.outcome === "unknown");
+  }
+  function canonicalPath2(kind, slug) {
+    return kind === "book" ? `vault/books/${slug}/00-overview.md` : `vault/papers/${slug}.md`;
+  }
+  function strictLookup(receipt2, key, request) {
+    if (!exactKeys3(receipt2, [
+      "schema_version",
+      "key",
+      "effect",
+      "status",
+      "attempt",
+      "request_key",
+      "kind",
+      "requested_slug",
+      "vault_slug",
+      "path",
+      "match",
+      "failure"
+    ]) || receipt2.schema_version !== `quasi.operation.${key}.receipt/0.1` || receipt2.key !== key || receipt2.effect !== "readonly" || receipt2.attempt !== 1 || receipt2.request_key !== request.request_key || receipt2.kind !== request.kind || receipt2.requested_slug !== request.requested_slug || !["succeeded", "failed"].includes(receipt2.status))
+      return false;
+    if (receipt2.status === "failed")
+      return receipt2.vault_slug === null && receipt2.path === null && receipt2.match === null && validFailure3(receipt2.failure, key) && receipt2.failure.outcome === "known";
+    if (receipt2.failure !== null) return false;
+    if (receipt2.vault_slug === null)
+      return receipt2.path === null && receipt2.match === null;
+    const allowedMatches = request.kind === "book" ? ["slug", "isbn", "title"] : ["slug", "doi", "title"];
+    return SLUG2.test(receipt2.vault_slug) && receipt2.path === canonicalPath2(request.kind, receipt2.vault_slug) && allowedMatches.includes(receipt2.match);
+  }
+  function validBookPicked(picked) {
+    return !!(exactKeys3(picked, [
+      "slug",
+      "title",
+      "authors",
+      "year",
+      "isbn",
+      "publisher",
+      "category",
+      "confidence"
+    ]) && SLUG2.test(picked.slug) && validText3(picked.title, 1, 500) && Array.isArray(picked.authors) && picked.authors.length >= 1 && picked.authors.length <= 32 && picked.authors.every(
+      (author) => validText3(author, 1, 200)
+    ) && Number.isInteger(picked.year) && picked.year >= 1500 && picked.year <= 2030 && optionalText2(picked.isbn, 100) && validText3(picked.publisher, 2, 500) && CATEGORIES2.has(picked.category) && ["high", "medium"].includes(picked.confidence));
+  }
+  function validPaperPicked(picked) {
+    return !!(exactKeys3(picked, [
+      "slug",
+      "title",
+      "authors",
+      "year",
+      "doi",
+      "oa_url",
+      "url",
+      "journal",
+      "confidence"
+    ]) && SLUG2.test(picked.slug) && validText3(picked.title, 1, 500) && Array.isArray(picked.authors) && picked.authors.length >= 1 && picked.authors.length <= 32 && picked.authors.every(
+      (author) => validText3(author, 1, 200)
+    ) && Number.isInteger(picked.year) && picked.year >= 1500 && picked.year <= 2030 && optionalText2(picked.doi, 300) && optionalText2(picked.oa_url, 2048) && optionalText2(picked.url, 2048) && validText3(picked.journal, 1, 500) && ["high", "medium"].includes(picked.confidence));
+  }
+  function strictSearch(receipt2, request) {
+    if (!exactKeys3(receipt2, [
+      "schema_version",
+      "key",
+      "effect",
+      "status",
+      "attempt",
+      "request_key",
+      "kind",
+      "query",
+      "picked",
+      "confidence",
+      "sources_hit",
+      "conflicts",
+      "notes",
+      "failure"
+    ]) || receipt2.schema_version !== "quasi.operation.material.search.receipt/0.1" || receipt2.key !== "material.search" || receipt2.effect !== "readonly" || receipt2.attempt !== 1 || receipt2.request_key !== request.requestKey || receipt2.kind !== request.kind || !sameClosedValue(receipt2.query, request.query) || !Array.isArray(receipt2.sources_hit) || receipt2.sources_hit.length > 24 || receipt2.sources_hit.some(
+      (source) => !validText3(source, 1, 200)
+    ) || !Array.isArray(receipt2.conflicts) || receipt2.conflicts.length > 32 || receipt2.conflicts.some(
+      (conflict) => !validText3(conflict, 1, 1e3)
+    ) || !validText3(receipt2.notes, 0, 4e3))
+      return false;
+    if (receipt2.status === "succeeded")
+      return receipt2.failure === null && ["high", "medium"].includes(receipt2.confidence) && receipt2.picked && receipt2.picked.confidence === receipt2.confidence && (request.kind === "book" ? validBookPicked(receipt2.picked) : validPaperPicked(receipt2.picked));
+    return receipt2.status === "failed" && receipt2.picked === null && receipt2.confidence === "low" && validFailure3(receipt2.failure, "material.search") && receipt2.failure.outcome === "known";
+  }
+  function lookupRequest(key, requestKey, kind, requestedSlug, identity) {
+    return {
+      schema_version: `quasi.operation.${key}.request/0.1`,
+      operation: key,
+      effect: "readonly",
+      request_key: requestKey,
+      kind,
+      requested_slug: requestedSlug,
+      identity: {
+        title: identity.title,
+        authors: [...identity.authors],
+        isbn: kind === "book" ? identity.isbn : null,
+        doi: kind === "paper" ? identity.doi : null
+      }
+    };
+  }
+  function operationSpec(key) {
+    return {
+      key,
+      effect: "readonly",
+      retry: "safe",
+      artifactRoles: [],
+      replay: "safe",
+      unknownFailureCode: "material.readonly_outcome_unknown"
+    };
+  }
+  function ingressReceipt(request, operations, {
+    status,
+    stage,
+    identity = null,
+    failure = null
+  }) {
+    return {
+      schema_version: INGRESS_RECEIPT_VERSION,
+      request_key: request.requestKey,
+      kind: request.kind,
+      status,
+      stage,
+      request: request.query,
+      operations,
+      identity,
+      failure,
+      resume: status === "blocked" ? { operation_key: "material.recall" } : status === "needs_input" ? { operation_key: "material.user-gate" } : null
+    };
+  }
+  function terminal3(request, operations, publicStatus, stage, failure) {
+    const status = publicStatus === "needs_input" ? "needs_input" : publicStatus === "blocked" ? "blocked" : "failed";
+    return {
+      kind: request.kind,
+      slug: null,
+      status: publicStatus,
+      ingress_receipt: ingressReceipt(request, operations, {
+        status,
+        stage,
+        failure
+      })
+    };
+  }
+  function invalidTerminal(kind, args, message) {
+    const fallback = {
+      kind,
+      query: null,
+      requestedSlug: null,
+      requestKey: `${kind}:invalid-request`
+    };
+    return terminal3(
+      fallback,
+      [],
+      "needs_input",
+      "recall",
+      operationFailure3(
+        "material.request_invalid",
+        "material.recall",
+        "known",
+        message
+      )
+    );
+  }
+  function unknownTerminal(request, operations, stage, key) {
+    return terminal3(
+      request,
+      operations,
+      "blocked",
+      stage,
+      operationFailure3(
+        "material.readonly_outcome_unknown",
+        key,
+        "unknown",
+        `${key} did not return after its bounded readonly retry`
+      )
+    );
+  }
+  function resolvedMeta(request, picked) {
+    return request.kind === "book" ? {
+      title: picked.title,
+      authors: [...picked.authors],
+      year: picked.year,
+      isbn: picked.isbn,
+      publisher: picked.publisher,
+      category: picked.category,
+      format: request.query.format,
+      confidence: "verified"
+    } : {
+      title: picked.title,
+      authors: [...picked.authors],
+      year: picked.year,
+      doi: picked.doi,
+      oa_url: picked.oa_url,
+      url: picked.url,
+      journal: picked.journal,
+      confidence: "verified"
+    };
+  }
+  function applyBookYearDecision(picked, decision) {
+    if (!decision || decision.action !== "use-recommended-year")
+      return { ok: true, picked };
+    const evidence = decision.year_evidence;
+    if (!evidence || evidence.verdict !== "MISMATCH" || !Number.isInteger(evidence.slug_year) || !Number.isInteger(evidence.recommended_year) || evidence.recommended_year === evidence.slug_year || picked.year !== evidence.slug_year || !picked.slug.endsWith(`-${evidence.slug_year}`))
+      return {
+        ok: false,
+        message: "year_decision does not match the identity returned by Search"
+      };
+    return {
+      ok: true,
+      picked: {
+        ...picked,
+        year: evidence.recommended_year,
+        slug: picked.slug.slice(
+          0,
+          -String(evidence.slug_year).length
+        ) + String(evidence.recommended_year)
+      }
+    };
+  }
+  function validYearDecisionEnvelope(decision) {
+    if (decision == null) return true;
+    if (!exactKeys3(decision, [
+      "action",
+      "tmp_path",
+      "year_evidence"
+    ]) || !["accept-current", "use-recommended-year"].includes(
+      decision.action
+    ) || typeof decision.tmp_path !== "string" || !BOOK_TEMP_PATH.test(decision.tmp_path))
+      return false;
+    const evidence = decision.year_evidence;
+    return !!(exactKeys3(evidence, [
+      "slug_year",
+      "source_years",
+      "pdf_signals",
+      "recommended_year",
+      "recommendation_reason",
+      "verdict"
+    ]) && Number.isInteger(evidence.slug_year) && evidence.source_years && typeof evidence.source_years === "object" && !Array.isArray(evidence.source_years) && exactKeys3(evidence.pdf_signals, [
+      "first_published",
+      "copyright_year",
+      "original_year",
+      "other_years"
+    ]) && Array.isArray(evidence.pdf_signals.other_years) && (evidence.recommended_year === null || Number.isInteger(evidence.recommended_year)) && validText3(evidence.recommendation_reason, 1, 4e3) && ["MISMATCH", "AMBIGUOUS"].includes(evidence.verdict));
+  }
+  async function runResolvedIngress(runtime, request, next, options) {
+    const operations = [];
+    runtime.phase("Recall");
+    const recallRequest = lookupRequest(
+      "material.recall",
+      request.requestKey,
+      request.kind,
+      request.requestedSlug,
+      request.query
+    );
+    const recall = await runtime.runOperation(
+      materialRecallPrompt(recallRequest),
+      {
+        phase: "Recall",
+        agentType: "quasi:metadata-agent",
+        label: `${request.requestedSlug}:recall`,
+        schema: MATERIAL_RECALL_SCHEMA
+      },
+      operationSpec("material.recall")
+    );
+    operations.push(recall);
+    if (runtimeUnknown3(recall, "material.recall"))
+      return unknownTerminal(
+        request,
+        operations,
+        "recall",
+        "material.recall"
+      );
+    if (!strictLookup(recall, "material.recall", recallRequest))
+      return terminal3(
+        request,
+        operations,
+        "metadata_failed",
+        "recall",
+        operationFailure3(
+          "material.recall_receipt_invalid",
+          "material.recall",
+          "known",
+          "Recall did not return the exact readonly contract"
+        )
+      );
+    if (recall.status === "failed")
+      return terminal3(
+        request,
+        operations,
+        "metadata_failed",
+        "recall",
+        recall.failure
+      );
+    runtime.phase("Search");
+    const searchRequest = {
+      schema_version: "quasi.operation.material.search.request/0.1",
+      operation: "material.search",
+      effect: "readonly",
+      request_key: request.requestKey,
+      kind: request.kind,
+      query: request.query
+    };
+    const search = await runtime.runOperation(
+      materialSearchPrompt(searchRequest),
+      {
+        phase: "Search",
+        agentType: "quasi:metadata-agent",
+        label: `${request.requestedSlug}:search`,
+        schema: request.kind === "book" ? MATERIAL_SEARCH_BOOK_SCHEMA : MATERIAL_SEARCH_PAPER_SCHEMA
+      },
+      operationSpec("material.search")
+    );
+    operations.push(search);
+    if (runtimeUnknown3(search, "material.search"))
+      return unknownTerminal(
+        request,
+        operations,
+        "search",
+        "material.search"
+      );
+    if (!strictSearch(search, request))
+      return terminal3(
+        request,
+        operations,
+        "metadata_failed",
+        "search",
+        operationFailure3(
+          "material.search_receipt_invalid",
+          "material.search",
+          "known",
+          "Search did not return the exact identity contract"
+        )
+      );
+    if (search.status === "failed")
+      return terminal3(
+        request,
+        operations,
+        "needs_input",
+        "search",
+        search.failure
+      );
+    const yearAdjusted = request.kind === "book" ? applyBookYearDecision(
+      search.picked,
+      options.yearDecision
+    ) : { ok: true, picked: search.picked };
+    if (!yearAdjusted.ok)
+      return terminal3(
+        request,
+        operations,
+        "needs_input",
+        "search",
+        operationFailure3(
+          "book.year_decision_invalid",
+          "material.search",
+          "known",
+          yearAdjusted.message
+        )
+      );
+    const picked = yearAdjusted.picked;
+    const resolveRequest = lookupRequest(
+      "material.resolve",
+      request.requestKey,
+      request.kind,
+      picked.slug,
+      picked
+    );
+    const resolved = await runtime.runOperation(
+      materialResolvePrompt(resolveRequest),
+      {
+        phase: "Search",
+        agentType: "quasi:metadata-agent",
+        label: `${picked.slug}:resolve`,
+        schema: MATERIAL_RESOLVE_SCHEMA
+      },
+      operationSpec("material.resolve")
+    );
+    operations.push(resolved);
+    if (runtimeUnknown3(resolved, "material.resolve"))
+      return unknownTerminal(
+        request,
+        operations,
+        "resolve",
+        "material.resolve"
+      );
+    if (!strictLookup(resolved, "material.resolve", resolveRequest))
+      return terminal3(
+        request,
+        operations,
+        "metadata_failed",
+        "resolve",
+        operationFailure3(
+          "material.resolve_receipt_invalid",
+          "material.resolve",
+          "known",
+          "Canonical resolve did not return the exact readonly contract"
+        )
+      );
+    if (resolved.status === "failed")
+      return terminal3(
+        request,
+        operations,
+        "metadata_failed",
+        "resolve",
+        resolved.failure
+      );
+    if (recall.vault_slug !== null && resolved.vault_slug !== recall.vault_slug)
+      return terminal3(
+        request,
+        operations,
+        "needs_input",
+        "resolve",
+        operationFailure3(
+          "material.recall_identity_conflict",
+          "material.resolve",
+          "known",
+          "Raw recall and verified metadata resolve to different local works"
+        )
+      );
+    const slug = resolved.vault_slug || picked.slug;
+    const meta = resolvedMeta(request, picked);
+    const identity = { slug, meta };
+    const lower = await next(slug, meta);
+    return {
+      ...lower,
+      ingress_receipt: ingressReceipt(request, operations, {
+        status: "resolved",
+        stage: "resolve",
+        identity
+      })
+    };
+  }
+  function processMaterialIngress(runtime, kind, args, next, options = {}) {
+    const request = normaliseRequest(kind, args);
+    if (!request.ok)
+      return Promise.resolve(
+        invalidTerminal(kind, args, request.message)
+      );
+    if (kind === "book" && !validYearDecisionEnvelope(options.yearDecision))
+      return Promise.resolve(
+        terminal3(
+          request,
+          [],
+          "needs_input",
+          "recall",
+          operationFailure3(
+            "book.year_decision_invalid",
+            "material.recall",
+            "known",
+            "year_decision is not one exact prior Book gate"
+          )
+        )
+      );
+    const identity = JSON.stringify({
+      query: request.query,
+      year_decision: options.yearDecision || null
+    });
+    return runtime.coalesce(
+      `material-ingress:${request.requestKey}`,
+      identity,
+      () => runResolvedIngress(runtime, request, next, options),
+      () => terminal3(
+        request,
+        [],
+        "needs_input",
+        "recall",
+        operationFailure3(
+          "material.request_identity_conflict",
+          "material.recall",
+          "known",
+          "same-run raw requests share one request key but disagree"
+        )
+      )
+    );
+  }
+
   // scripts/workflows/materials/dispatch.mjs
-  function createMaterialDispatch(runtime) {
+  function createMaterialDispatch(runtime, processors) {
     return async function dispatchMaterial(kind, args, opts = {}) {
       switch (kind) {
-        case "book":
-          return runtime.processBook(
+        case "book": {
+          const bookOpts = {
+            batchYear: opts.batchYear === true,
+            yearDecision: Object.prototype.hasOwnProperty.call(
+              opts,
+              "yearDecision"
+            ) ? opts.yearDecision : null
+          };
+          if (opts.resolveIdentity === true)
+            return processMaterialIngress(
+              runtime,
+              kind,
+              args,
+              (slug, meta) => processors.processBook(slug, meta, bookOpts),
+              bookOpts
+            );
+          return processors.processBook(
             args.slug,
             args.meta || args,
-            {
-              batchYear: opts.batchYear === true,
-              yearDecision: Object.prototype.hasOwnProperty.call(
-                opts,
-                "yearDecision"
-              ) ? opts.yearDecision : null
-            }
+            bookOpts
           );
+        }
         case "paper":
-          return runtime.processPaper(args.slug, args.meta || args);
+          if (opts.resolveIdentity === true)
+            return processMaterialIngress(
+              runtime,
+              kind,
+              args,
+              processors.processPaper
+            );
+          return processors.processPaper(args.slug, args.meta || args);
         case "talk":
-          return runtime.processTalk(args.slug, args.meta || args);
+          return processors.processTalk(args.slug, args.meta || args);
         default:
           throw new Error(`process-material: 未知 material kind "${kind}"`);
       }
@@ -7302,41 +8445,41 @@ ${JSON.stringify(request, null, 2)}`;
   var MATERIAL_RECEIPT_VERSION2 = "quasi.material-loop.receipt/0.1";
   var BOOK_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
   var CHAPTER_SLOT = /^\d{2,3}[a-z]{0,2}$/;
-  var BOOK_TEMP_PATH = /^\.quasi\/temp\/downloads\/[A-Za-z0-9][A-Za-z0-9._-]{0,220}\.(?:epub|pdf)$/;
-  var CONTROL_CHARS3 = /[\u0000-\u001f\u007f-\u009f]/;
-  var CATEGORIES2 = /* @__PURE__ */ new Set([
+  var BOOK_TEMP_PATH2 = /^\.quasi\/temp\/downloads\/[A-Za-z0-9][A-Za-z0-9._-]{0,220}\.(?:epub|pdf)$/;
+  var CONTROL_CHARS4 = /[\u0000-\u001f\u007f-\u009f]/;
+  var CATEGORIES3 = /* @__PURE__ */ new Set([
     "monograph",
     "edited-volume",
     "handbook",
     "other"
   ]);
-  var exactKeys3 = (value, keys) => !!(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(
+  var exactKeys4 = (value, keys) => !!(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(
     (key) => Object.prototype.hasOwnProperty.call(value, key)
   ));
-  function sameClosedValue(left, right) {
+  function sameClosedValue2(left, right) {
     if (Array.isArray(left) || Array.isArray(right))
       return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every(
-        (value, index) => sameClosedValue(value, right[index])
+        (value, index) => sameClosedValue2(value, right[index])
       );
     if (left && right && typeof left === "object" && typeof right === "object") {
       const leftKeys = Object.keys(left);
       const rightKeys = Object.keys(right);
       return leftKeys.length === rightKeys.length && leftKeys.every(
-        (key) => Object.prototype.hasOwnProperty.call(right, key) && sameClosedValue(left[key], right[key])
+        (key) => Object.prototype.hasOwnProperty.call(right, key) && sameClosedValue2(left[key], right[key])
       );
     }
     return Object.is(left, right);
   }
-  var validText3 = (value, min, max) => typeof value === "string" && value === value.trim() && value.length >= min && value.length <= max && !CONTROL_CHARS3.test(value);
-  var optionalText2 = (value, max) => value == null || value === "" || validText3(value, 1, max);
-  var operationFailure3 = (code, operationKey, outcome = "known", retryable = false, message = null) => ({
+  var validText4 = (value, min, max) => typeof value === "string" && value === value.trim() && value.length >= min && value.length <= max && !CONTROL_CHARS4.test(value);
+  var optionalText3 = (value, max) => value == null || value === "" || validText4(value, 1, max);
+  var operationFailure4 = (code, operationKey, outcome = "known", retryable = false, message = null) => ({
     code,
     operation_key: operationKey,
     outcome,
     retryable,
     ...message ? { message } : {}
   });
-  function validFailure3(failure, operationKey, { retryable = null, allowMessage = true } = {}) {
+  function validFailure4(failure, operationKey, { retryable = null, allowMessage = true } = {}) {
     if (!failure || typeof failure !== "object" || Array.isArray(failure))
       return false;
     const allowed = [
@@ -7349,10 +8492,10 @@ ${JSON.stringify(request, null, 2)}`;
     const keys = Object.keys(failure);
     return ["code", "operation_key", "outcome", "retryable"].every(
       (key) => keys.includes(key)
-    ) && keys.every((key) => allowed.includes(key)) && validText3(failure.code, 1, 200) && failure.operation_key === operationKey && ["known", "unknown"].includes(failure.outcome) && typeof failure.retryable === "boolean" && (retryable === null || failure.retryable === retryable) && (failure.message === void 0 || validText3(failure.message, 1, 4e3));
+    ) && keys.every((key) => allowed.includes(key)) && validText4(failure.code, 1, 200) && failure.operation_key === operationKey && ["known", "unknown"].includes(failure.outcome) && typeof failure.retryable === "boolean" && (retryable === null || failure.retryable === retryable) && (failure.message === void 0 || validText4(failure.message, 1, 4e3));
   }
   var exactRoles = (receipt2, roles) => Array.isArray(receipt2 && receipt2.artifact_roles) && receipt2.artifact_roles.length === roles.length && roles.every((role, index) => receipt2.artifact_roles[index] === role);
-  var runtimeUnknown3 = (receipt2) => !!(receipt2 && receipt2.schema_version === "quasi.operation.runtime.receipt/0.1" && receipt2.status === "blocked" && receipt2.failure && receipt2.failure.outcome === "unknown");
+  var runtimeUnknown4 = (receipt2) => !!(receipt2 && receipt2.schema_version === "quasi.operation.runtime.receipt/0.1" && receipt2.status === "blocked" && receipt2.failure && receipt2.failure.outcome === "unknown");
   function validateBookIdentity(slug, meta) {
     if (typeof slug !== "string" || !BOOK_SLUG.test(slug))
       return {
@@ -7368,14 +8511,14 @@ ${JSON.stringify(request, null, 2)}`;
         message: "book metadata must be an object",
         canonicalSlug: slug
       };
-    if (!validText3(meta.title, 1, 500))
+    if (!validText4(meta.title, 1, 500))
       return {
         ok: false,
         code: "book.identity_invalid",
         message: "title is missing or invalid",
         canonicalSlug: slug
       };
-    if (!Array.isArray(meta.authors) || meta.authors.length < 1 || meta.authors.length > 32 || meta.authors.some((author) => !validText3(author, 1, 200)))
+    if (!Array.isArray(meta.authors) || meta.authors.length < 1 || meta.authors.length > 32 || meta.authors.some((author) => !validText4(author, 1, 200)))
       return {
         ok: false,
         code: "book.identity_invalid",
@@ -7389,7 +8532,7 @@ ${JSON.stringify(request, null, 2)}`;
         message: "year must be an integer in the supported range",
         canonicalSlug: slug
       };
-    if (!validText3(meta.publisher, 2, 500))
+    if (!validText4(meta.publisher, 2, 500))
       return {
         ok: false,
         code: "book.identity_invalid",
@@ -7397,14 +8540,14 @@ ${JSON.stringify(request, null, 2)}`;
         canonicalSlug: slug
       };
     const category = meta.category || "other";
-    if (!CATEGORIES2.has(category))
+    if (!CATEGORIES3.has(category))
       return {
         ok: false,
         code: "book.identity_invalid",
         message: "category is invalid",
         canonicalSlug: slug
       };
-    if (!optionalText2(meta.isbn, 100) || meta.format != null && !["pdf", "epub"].includes(meta.format) || meta.confidence !== void 0 && !["provided", "verified"].includes(meta.confidence))
+    if (!optionalText3(meta.isbn, 100) || meta.format != null && !["pdf", "epub"].includes(meta.format) || meta.confidence !== void 0 && !["provided", "verified"].includes(meta.confidence))
       return {
         ok: false,
         code: "book.identity_invalid",
@@ -7495,13 +8638,13 @@ ${JSON.stringify(request, null, 2)}`;
     };
   }
   function result(state, publicStatus, stage, extra = {}, failure = null, terminalOverride = null) {
-    const terminal5 = terminalOverride || (publicStatus === "ok" ? "complete" : publicStatus === "blocked" || publicStatus === "year_mismatch" || publicStatus === "year_ambiguous" ? "blocked" : "failed");
+    const terminal6 = terminalOverride || (publicStatus === "ok" ? "complete" : publicStatus === "blocked" || publicStatus === "year_mismatch" || publicStatus === "year_ambiguous" ? "blocked" : "failed");
     return {
       slug: state.slug,
       status: publicStatus,
       ...extra,
       material_receipt: materialReceipt(state, {
-        status: terminal5,
+        status: terminal6,
         stage,
         failure
       })
@@ -7509,7 +8652,7 @@ ${JSON.stringify(request, null, 2)}`;
   }
   function rejectedBookResult(slug, validation, code = null) {
     const canonical = typeof slug === "string" && BOOK_SLUG.test(slug);
-    const failure = operationFailure3(
+    const failure = operationFailure4(
       code || validation.code,
       "book.identity",
       "known",
@@ -7537,7 +8680,7 @@ ${JSON.stringify(request, null, 2)}`;
     };
   }
   function blocked(state, stage, operationKey, receipt2 = null) {
-    const failure = receipt2 && receipt2.failure || operationFailure3(
+    const failure = receipt2 && receipt2.failure || operationFailure4(
       "material.writer_outcome_unknown",
       operationKey,
       "unknown"
@@ -7550,7 +8693,7 @@ ${JSON.stringify(request, null, 2)}`;
       "blocked",
       stage,
       {},
-      operationFailure3(
+      operationFailure4(
         "book.writer_receipt_mismatch",
         operationKey,
         "unknown",
@@ -7560,11 +8703,11 @@ ${JSON.stringify(request, null, 2)}`;
     );
   }
   function strictAttempt(attempt) {
-    return exactKeys3(attempt, ["source", "status", "error"]) && validText3(attempt.source, 1, 200) && validText3(attempt.status, 1, 200) && (attempt.error === null || validText3(attempt.error, 1, 4e3));
+    return exactKeys4(attempt, ["source", "status", "error"]) && validText4(attempt.source, 1, 200) && validText4(attempt.status, 1, 200) && (attempt.error === null || validText4(attempt.error, 1, 4e3));
   }
   var nullableYear = (value) => value === null || Number.isInteger(value) && value >= 1e3 && value <= 2500;
   function strictYearEvidence(evidence, expectedYear) {
-    if (!exactKeys3(evidence, [
+    if (!exactKeys4(evidence, [
       "slug_year",
       "source_years",
       "pdf_signals",
@@ -7572,15 +8715,15 @@ ${JSON.stringify(request, null, 2)}`;
       "recommendation_reason",
       "verdict"
     ]) || evidence.slug_year !== expectedYear || !evidence.source_years || typeof evidence.source_years !== "object" || Array.isArray(evidence.source_years) || Object.keys(evidence.source_years).length > 64 || Object.entries(evidence.source_years).some(
-      ([source, year]) => !validText3(source, 1, 200) || !nullableYear(year) || year === null
-    ) || !exactKeys3(evidence.pdf_signals, [
+      ([source, year]) => !validText4(source, 1, 200) || !nullableYear(year) || year === null
+    ) || !exactKeys4(evidence.pdf_signals, [
       "first_published",
       "copyright_year",
       "original_year",
       "other_years"
     ]) || !nullableYear(evidence.pdf_signals.first_published) || !nullableYear(evidence.pdf_signals.copyright_year) || !nullableYear(evidence.pdf_signals.original_year) || !Array.isArray(evidence.pdf_signals.other_years) || evidence.pdf_signals.other_years.length > 64 || evidence.pdf_signals.other_years.some(
       (year) => !nullableYear(year) || year === null
-    ) || !nullableYear(evidence.recommended_year) || !validText3(evidence.recommendation_reason, 1, 4e3) || !["MATCH", "MISMATCH", "AMBIGUOUS"].includes(evidence.verdict))
+    ) || !nullableYear(evidence.recommended_year) || !validText4(evidence.recommendation_reason, 1, 4e3) || !["MATCH", "MISMATCH", "AMBIGUOUS"].includes(evidence.verdict))
       return false;
     if (evidence.verdict === "MATCH") {
       const support = [
@@ -7597,13 +8740,13 @@ ${JSON.stringify(request, null, 2)}`;
   }
   function validateYearDecision(decision, slug, meta) {
     if (decision == null) return { ok: true, value: null };
-    if (!exactKeys3(decision, [
+    if (!exactKeys4(decision, [
       "action",
       "tmp_path",
       "year_evidence"
     ]) || !["accept-current", "use-recommended-year"].includes(
       decision.action
-    ) || typeof decision.tmp_path !== "string" || !BOOK_TEMP_PATH.test(decision.tmp_path) || !strictYearEvidence(
+    ) || typeof decision.tmp_path !== "string" || !BOOK_TEMP_PATH2.test(decision.tmp_path) || !strictYearEvidence(
       decision.year_evidence,
       decision.year_evidence && decision.year_evidence.slug_year
     ) || !["MISMATCH", "AMBIGUOUS"].includes(
@@ -7629,7 +8772,7 @@ ${JSON.stringify(request, null, 2)}`;
     return { ok: true, value: decision };
   }
   function strictBookDownloadReceipt(receipt2, slug, allowedSources, expectedYear, batchAcceptYear, yearDecision) {
-    if (!exactKeys3(receipt2, ["acquired", "failed", "per_item"]) || !Number.isInteger(receipt2.acquired) || receipt2.acquired < 0 || !Number.isInteger(receipt2.failed) || receipt2.failed < 0 || !Array.isArray(receipt2.per_item) || receipt2.per_item.length !== 1)
+    if (!exactKeys4(receipt2, ["acquired", "failed", "per_item"]) || !Number.isInteger(receipt2.acquired) || receipt2.acquired < 0 || !Number.isInteger(receipt2.failed) || receipt2.failed < 0 || !Array.isArray(receipt2.per_item) || receipt2.per_item.length !== 1)
       return false;
     const item = receipt2.per_item[0];
     const required = [
@@ -7659,15 +8802,15 @@ ${JSON.stringify(request, null, 2)}`;
       "year_ambiguous",
       "download_failed",
       "blocked"
-    ].includes(item.status) || ![null, "created", "reused"].includes(item.disposition) || typeof item.identity_verified !== "boolean" || !["epub", "pdf", null].includes(item.format) || !Array.isArray(item.attempts) || item.attempts.some((attempt) => !strictAttempt(attempt)) || item.isbn !== void 0 && item.isbn !== null && !validText3(item.isbn, 1, 100) || item.verdict_note !== void 0 && !validText3(item.verdict_note, 1, 4e3))
+    ].includes(item.status) || ![null, "created", "reused"].includes(item.disposition) || typeof item.identity_verified !== "boolean" || !["epub", "pdf", null].includes(item.format) || !Array.isArray(item.attempts) || item.attempts.some((attempt) => !strictAttempt(attempt)) || item.isbn !== void 0 && item.isbn !== null && !validText4(item.isbn, 1, 100) || item.verdict_note !== void 0 && !validText4(item.verdict_note, 1, 4e3))
       return false;
     if (item.status === "ok")
       return receipt2.acquired === 1 && receipt2.failed === 0 && ["created", "reused"].includes(item.disposition) && (!yearDecision || item.disposition === "created" && item.attempts.length > 0) && item.identity_verified === true && allowedSources.some(
         ({ format, path }) => item.format === format && item.path === path
-      ) && validText3(item.source, 1, 200) && item.tmp_path === void 0 && item.failure_reason === void 0 && (yearDecision ? strictYearEvidence(
+      ) && validText4(item.source, 1, 200) && item.tmp_path === void 0 && item.failure_reason === void 0 && (yearDecision ? strictYearEvidence(
         item.year_evidence,
         yearDecision.year_evidence.slug_year
-      ) && sameClosedValue(
+      ) && sameClosedValue2(
         item.year_evidence,
         yearDecision.year_evidence
       ) : strictYearEvidence(
@@ -7675,10 +8818,10 @@ ${JSON.stringify(request, null, 2)}`;
         expectedYear
       ) && (item.year_evidence.verdict === "MATCH" || batchAcceptYear === true));
     if (item.status === "year_mismatch" || item.status === "year_ambiguous")
-      return receipt2.acquired === 0 && receipt2.failed === 1 && item.disposition === null && item.identity_verified === true && item.format === null && item.path === void 0 && item.source === void 0 && item.failure_reason === void 0 && typeof item.tmp_path === "string" && BOOK_TEMP_PATH.test(item.tmp_path) && allowedSources.some(
+      return receipt2.acquired === 0 && receipt2.failed === 1 && item.disposition === null && item.identity_verified === true && item.format === null && item.path === void 0 && item.source === void 0 && item.failure_reason === void 0 && typeof item.tmp_path === "string" && BOOK_TEMP_PATH2.test(item.tmp_path) && allowedSources.some(
         ({ format }) => item.tmp_path.endsWith(`.${format}`)
       ) && strictYearEvidence(item.year_evidence, expectedYear) && item.year_evidence.verdict === (item.status === "year_mismatch" ? "MISMATCH" : "AMBIGUOUS");
-    if (item.disposition !== null || item.identity_verified !== false || item.format !== null || item.path !== void 0 || item.tmp_path !== void 0 || item.source !== void 0 || item.isbn !== void 0 || item.verdict_note !== void 0 || item.year_evidence !== void 0 || !validText3(item.failure_reason, 1, 4e3))
+    if (item.disposition !== null || item.identity_verified !== false || item.format !== null || item.path !== void 0 || item.tmp_path !== void 0 || item.source !== void 0 || item.isbn !== void 0 || item.verdict_note !== void 0 || item.year_evidence !== void 0 || !validText4(item.failure_reason, 1, 4e3))
       return false;
     if (item.status === "download_failed")
       return receipt2.acquired === 0 && receipt2.failed === 1 && item.attempts.length > 0;
@@ -7704,7 +8847,7 @@ ${JSON.stringify(request, null, 2)}`;
       year_evidence: item.year_evidence || null,
       failure_reason: item.failure_reason || item.verdict_note || null,
       attempts: item.attempts,
-      failure: succeeded ? null : operationFailure3(
+      failure: succeeded ? null : operationFailure4(
         `book.${item.status}`,
         "book.acquire",
         unknown ? "unknown" : "known"
@@ -7730,18 +8873,18 @@ ${JSON.stringify(request, null, 2)}`;
       "text_pages",
       "failure"
     ];
-    if (!exactKeys3(receipt2, keys) || receipt2.schema_version !== "quasi.operation.document.extract-text.receipt/0.1" || receipt2.key !== "document.extract-text" || receipt2.effect !== "writer" || receipt2.attempt !== 1 || receipt2.input_path !== input || receipt2.output_path !== output || !exactRoles(receipt2, ["normalized_text"]) || !["succeeded", "failed", "blocked"].includes(receipt2.status) || !["exit", "size", "chars", "non_whitespace_chars", "pages", "text_pages"].every(
+    if (!exactKeys4(receipt2, keys) || receipt2.schema_version !== "quasi.operation.document.extract-text.receipt/0.1" || receipt2.key !== "document.extract-text" || receipt2.effect !== "writer" || receipt2.attempt !== 1 || receipt2.input_path !== input || receipt2.output_path !== output || !exactRoles(receipt2, ["normalized_text"]) || !["succeeded", "failed", "blocked"].includes(receipt2.status) || !["exit", "size", "chars", "non_whitespace_chars", "pages", "text_pages"].every(
       (key) => Number.isInteger(receipt2[key]) && (key === "exit" || receipt2[key] >= 0)
     ) || typeof receipt2.exists !== "boolean")
       return false;
     if (receipt2.status === "succeeded")
       return receipt2.failure === null && receipt2.exit === 0 && receipt2.exists === true;
-    return validFailure3(receipt2.failure, "document.extract-text", {
+    return validFailure4(receipt2.failure, "document.extract-text", {
       retryable: false
     }) && receipt2.failure.outcome === (receipt2.status === "failed" ? "known" : "unknown");
   }
   function strictReadability(receipt2, input) {
-    if (!exactKeys3(receipt2, [
+    if (!exactKeys4(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -7753,21 +8896,21 @@ ${JSON.stringify(request, null, 2)}`;
       "diagnostics",
       "failure"
     ]) || receipt2.schema_version !== "quasi.operation.document.assess-readability.receipt/0.1" || receipt2.key !== "document.assess-readability" || receipt2.effect !== "readonly" || receipt2.attempt !== 1 || receipt2.input_path !== input || !exactRoles(receipt2, ["normalized_text"]) || !["succeeded", "failed", "blocked"].includes(receipt2.status) || !Array.isArray(receipt2.diagnostics) || receipt2.diagnostics.some(
-      (diagnostic) => !validText3(diagnostic, 1, 4e3)
+      (diagnostic) => !validText4(diagnostic, 1, 4e3)
     ))
       return false;
     if (receipt2.status === "succeeded")
       return receipt2.failure === null && ["readable", "needs_ocr", "invalid_source"].includes(
         receipt2.signal
       );
-    return receipt2.signal === null && validFailure3(
+    return receipt2.signal === null && validFailure4(
       receipt2.failure,
       "document.assess-readability",
       { retryable: true }
     ) && receipt2.failure.outcome === (receipt2.status === "failed" ? "known" : "unknown");
   }
   function strictOcr(receipt2, input, output) {
-    if (!exactKeys3(receipt2, [
+    if (!exactKeys4(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -7784,7 +8927,7 @@ ${JSON.stringify(request, null, 2)}`;
       return false;
     if (receipt2.status === "succeeded")
       return receipt2.failure === null && receipt2.exit === 0 && receipt2.exists === true && receipt2.size > 0;
-    if (!validFailure3(receipt2.failure, "document.ocr", {
+    if (!validFailure4(receipt2.failure, "document.ocr", {
       retryable: false
     }))
       return false;
@@ -7796,7 +8939,7 @@ ${JSON.stringify(request, null, 2)}`;
     return receipt2.failure.code === "output_exists_requires_reconcile" && receipt2.exit === 0 && receipt2.exists === true && receipt2.size > 0;
   }
   function strictPlan(receipt2, input, normalized) {
-    if (!exactKeys3(receipt2, [
+    if (!exactKeys4(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -7810,7 +8953,7 @@ ${JSON.stringify(request, null, 2)}`;
       "diagnostics",
       "failure"
     ]) || receipt2.schema_version !== "quasi.operation.chapter.plan.receipt/0.1" || receipt2.key !== "chapter.plan" || receipt2.effect !== "readonly" || receipt2.attempt !== 1 || receipt2.input_path !== input || receipt2.normalized_path !== normalized || !exactRoles(receipt2, ["chapter_plan"]) || !["succeeded", "failed", "blocked"].includes(receipt2.status) || !Array.isArray(receipt2.chapters) || receipt2.chapters.length > 150 || !Array.isArray(receipt2.diagnostics) || receipt2.diagnostics.some(
-      (diagnostic) => !validText3(diagnostic, 1, 4e3)
+      (diagnostic) => !validText4(diagnostic, 1, 4e3)
     ))
       return false;
     if (receipt2.status === "succeeded") {
@@ -7820,19 +8963,19 @@ ${JSON.stringify(request, null, 2)}`;
       if (!receipt2.chapters.length) return false;
       let lastEnd = 0;
       return receipt2.chapters.every((chapter) => {
-        if (!exactKeys3(chapter, ["title", "start", "end"]) || !validText3(chapter.title, 1, 500) || !Number.isInteger(chapter.start) || !Number.isInteger(chapter.end) || chapter.start < 1 || chapter.end < chapter.start || chapter.start <= lastEnd)
+        if (!exactKeys4(chapter, ["title", "start", "end"]) || !validText4(chapter.title, 1, 500) || !Number.isInteger(chapter.start) || !Number.isInteger(chapter.end) || chapter.start < 1 || chapter.end < chapter.start || chapter.start <= lastEnd)
           return false;
         lastEnd = chapter.end;
         return true;
       });
     }
-    return receipt2.mode === null && receipt2.chapters.length === 0 && validFailure3(receipt2.failure, "chapter.plan", {
+    return receipt2.mode === null && receipt2.chapters.length === 0 && validFailure4(receipt2.failure, "chapter.plan", {
       retryable: true
     }) && receipt2.failure.outcome === (receipt2.status === "failed" ? "known" : "unknown");
   }
   function validChapterRef(chapter) {
-    const filenameIsSafe = validText3(chapter?.filename, 1, 128) && chapter.filename.startsWith(`${chapter.slot}_`) && chapter.filename.endsWith(".txt") && !chapter.filename.includes("/") && !chapter.filename.includes("\\") && !chapter.filename.includes("..");
-    if (!exactKeys3(chapter, [
+    const filenameIsSafe = validText4(chapter?.filename, 1, 128) && chapter.filename.startsWith(`${chapter.slot}_`) && chapter.filename.endsWith(".txt") && !chapter.filename.includes("/") && !chapter.filename.includes("\\") && !chapter.filename.includes("..");
+    if (!exactKeys4(chapter, [
       "slot",
       "title",
       "filename",
@@ -7840,7 +8983,7 @@ ${JSON.stringify(request, null, 2)}`;
       "word_count",
       "start_page",
       "end_page"
-    ]) || !CHAPTER_SLOT.test(chapter.slot) || !BOOK_SLUG.test(chapter.slug) || !filenameIsSafe || !validText3(chapter.title, 1, 500) || !Number.isInteger(chapter.word_count) || chapter.word_count < 0)
+    ]) || !CHAPTER_SLOT.test(chapter.slot) || !BOOK_SLUG.test(chapter.slug) || !filenameIsSafe || !validText4(chapter.title, 1, 500) || !Number.isInteger(chapter.word_count) || chapter.word_count < 0)
       return false;
     const noPages = chapter.start_page === null && chapter.end_page === null;
     const startOnly = Number.isInteger(chapter.start_page) && chapter.start_page >= 1 && chapter.end_page === null;
@@ -7863,7 +9006,7 @@ ${JSON.stringify(request, null, 2)}`;
     });
   }
   function strictChapterExtract(receipt2, state, input, expectedMode) {
-    if (!exactKeys3(receipt2, [
+    if (!exactKeys4(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -7891,13 +9034,13 @@ ${JSON.stringify(request, null, 2)}`;
       "normalized_chapter"
     ]) || receipt2.mode !== expectedMode || !["succeeded", "failed", "blocked"].includes(receipt2.status) || !["created", "reused", "replaced", "repaired", null].includes(
       receipt2.disposition
-    ) || !Number.isInteger(receipt2.exit) || typeof receipt2.manifest_exists !== "boolean" || receipt2.request_fingerprint !== null && !validText3(receipt2.request_fingerprint, 1, 512) || receipt2.manifest_fingerprint !== null && !validText3(receipt2.manifest_fingerprint, 1, 512) || !Number.isInteger(receipt2.chapter_count) || receipt2.chapter_count < 0 || !Array.isArray(receipt2.chapters) || !Array.isArray(receipt2.skipped) || !Array.isArray(receipt2.removed_files) || receipt2.removed_files.some(
-      (path) => !validText3(path, 1, 2048)
-    ) || !exactKeys3(receipt2.limit, ["max_chapters", "exceeded"]) || !Number.isInteger(receipt2.limit.max_chapters) || receipt2.limit.max_chapters < 1 || typeof receipt2.limit.exceeded !== "boolean" || typeof receipt2.previous_manifest_preserved !== "boolean")
+    ) || !Number.isInteger(receipt2.exit) || typeof receipt2.manifest_exists !== "boolean" || receipt2.request_fingerprint !== null && !validText4(receipt2.request_fingerprint, 1, 512) || receipt2.manifest_fingerprint !== null && !validText4(receipt2.manifest_fingerprint, 1, 512) || !Number.isInteger(receipt2.chapter_count) || receipt2.chapter_count < 0 || !Array.isArray(receipt2.chapters) || !Array.isArray(receipt2.skipped) || !Array.isArray(receipt2.removed_files) || receipt2.removed_files.some(
+      (path) => !validText4(path, 1, 2048)
+    ) || !exactKeys4(receipt2.limit, ["max_chapters", "exceeded"]) || !Number.isInteger(receipt2.limit.max_chapters) || receipt2.limit.max_chapters < 1 || typeof receipt2.limit.exceeded !== "boolean" || typeof receipt2.previous_manifest_preserved !== "boolean")
       return false;
     if (receipt2.status === "succeeded")
       return receipt2.failure === null && receipt2.exit === 0 && receipt2.manifest_exists === true && receipt2.chapter_count === receipt2.chapters.length && (receipt2.chapter_count === 0 || uniqueChapters(receipt2.chapters)) && receipt2.request_fingerprint !== null && receipt2.manifest_fingerprint !== null && receipt2.disposition !== null;
-    return receipt2.chapter_count === receipt2.chapters.length && validFailure3(receipt2.failure, "chapter.extract", {
+    return receipt2.chapter_count === receipt2.chapters.length && validFailure4(receipt2.failure, "chapter.extract", {
       retryable: false
     }) && receipt2.failure.outcome === (receipt2.status === "failed" ? "known" : "unknown");
   }
@@ -7908,7 +9051,7 @@ ${JSON.stringify(request, null, 2)}`;
       (chapter) => chapterInputPath(state, chapter)
     );
     const allowedPaths = /* @__PURE__ */ new Set([state.manifest, ...inputPaths]);
-    if (!exactKeys3(receipt2, [
+    if (!exactKeys4(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -7926,7 +9069,7 @@ ${JSON.stringify(request, null, 2)}`;
     ]) || !["succeeded", "failed", "blocked"].includes(receipt2.status) || !Array.isArray(receipt2.diagnostics))
       return false;
     const validDiagnostic2 = (diagnostic) => {
-      if (!exactKeys3(diagnostic, [
+      if (!exactKeys4(diagnostic, [
         "path",
         "kind",
         "reason",
@@ -7934,7 +9077,7 @@ ${JSON.stringify(request, null, 2)}`;
         "title",
         "start_page",
         "end_page"
-      ]) || !allowedPaths.has(diagnostic.path) || !validText3(diagnostic.kind, 1, 200) || !validText3(diagnostic.reason, 1, 4e3) || diagnostic.slot !== null && !CHAPTER_SLOT.test(diagnostic.slot) || diagnostic.title !== null && !validText3(diagnostic.title, 1, 500))
+      ]) || !allowedPaths.has(diagnostic.path) || !validText4(diagnostic.kind, 1, 200) || !validText4(diagnostic.reason, 1, 4e3) || diagnostic.slot !== null && !CHAPTER_SLOT.test(diagnostic.slot) || diagnostic.title !== null && !validText4(diagnostic.title, 1, 500))
         return false;
       const noPages = diagnostic.start_page === null && diagnostic.end_page === null;
       const pages = Number.isInteger(diagnostic.start_page) && Number.isInteger(diagnostic.end_page) && diagnostic.start_page >= 1 && diagnostic.end_page >= diagnostic.start_page;
@@ -7960,12 +9103,12 @@ ${JSON.stringify(request, null, 2)}`;
         const chapter = chapters.find(
           (candidate) => diagnostic.path === chapterInputPath(state, candidate)
         );
-        const valid = chapter && diagnostic.slot === chapter.slot && validText3(diagnostic.title, 1, 500) && Number.isInteger(diagnostic.start_page) && Number.isInteger(diagnostic.end_page) && !targets.has(diagnostic.path);
+        const valid = chapter && diagnostic.slot === chapter.slot && validText4(diagnostic.title, 1, 500) && Number.isInteger(diagnostic.start_page) && Number.isInteger(diagnostic.end_page) && !targets.has(diagnostic.path);
         targets.add(diagnostic.path);
         return valid;
       });
     }
-    return receipt2.signal === null && validFailure3(
+    return receipt2.signal === null && validFailure4(
       receipt2.failure,
       "chapter.assess-boundaries",
       { retryable: true }
@@ -7974,7 +9117,7 @@ ${JSON.stringify(request, null, 2)}`;
   function strictChapterAnalyse(receipt2, state, chapter, mode) {
     const input = chapterInputPath(state, chapter);
     const output = chapterOutputPath(state, chapter);
-    if (!exactKeys3(receipt2, [
+    if (!exactKeys4(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -7996,7 +9139,7 @@ ${JSON.stringify(request, null, 2)}`;
         return mode === "repair" && receipt2.write_state === "not_written";
       return receipt2.action === mode && receipt2.write_state === "written";
     }
-    if (!validFailure3(receipt2.failure, "chapter.analyse"))
+    if (!validFailure4(receipt2.failure, "chapter.analyse"))
       return false;
     if (receipt2.status === "failed")
       return receipt2.failure.outcome === "known" && receipt2.action === mode && receipt2.write_state === "not_written";
@@ -8008,7 +9151,7 @@ ${JSON.stringify(request, null, 2)}`;
     return receipt2.status === "succeeded" || mode === "create" && receipt2.status === "blocked" && receipt2.action === "reconciled" && receipt2.failure.code === "output_exists_requires_reconcile";
   }
   function strictSynthesis2(receipt2, state, inputPaths, mode) {
-    if (!exactKeys3(receipt2, [
+    if (!exactKeys4(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -8027,7 +9170,7 @@ ${JSON.stringify(request, null, 2)}`;
         return false;
       return mode === "create" ? receipt2.action === "create" : ["repair", "reconciled"].includes(receipt2.action);
     }
-    if (!validFailure3(receipt2.failure, "book.synthesise", {
+    if (!validFailure4(receipt2.failure, "book.synthesise", {
       retryable: false
     }))
       return false;
@@ -8039,7 +9182,7 @@ ${JSON.stringify(request, null, 2)}`;
     return receipt2.action === mode && receipt2.failure.code !== "output_exists_requires_reconcile";
   }
   function strictAudit2(receipt2, state) {
-    if (!exactKeys3(receipt2, [
+    if (!exactKeys4(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -8050,9 +9193,9 @@ ${JSON.stringify(request, null, 2)}`;
       "escalated",
       "mutated_paths"
     ]) || receipt2.schema_version !== "quasi.operation.book.audit.receipt/0.1" || receipt2.key !== "book.audit" || receipt2.effect !== "writer" || receipt2.attempt !== 1 || receipt2.target_path !== `vault/books/${state.slug}` || !["clean", "partial", "error"].includes(receipt2.status) || !Number.isInteger(receipt2.remaining_violations) || receipt2.remaining_violations < 0 || !Array.isArray(receipt2.escalated) || !Array.isArray(receipt2.mutated_paths) || new Set(receipt2.mutated_paths).size !== receipt2.mutated_paths.length || receipt2.mutated_paths.some(
-      (path) => !validText3(path, 1, 2048)
+      (path) => !validText4(path, 1, 2048)
     ) || receipt2.escalated.some(
-      (diagnostic) => !exactKeys3(diagnostic, ["path", "kind", "reason"]) || !validText3(diagnostic.path, 1, 2048) || !validText3(diagnostic.kind, 1, 200) || !validText3(diagnostic.reason, 1, 4e3)
+      (diagnostic) => !exactKeys4(diagnostic, ["path", "kind", "reason"]) || !validText4(diagnostic.path, 1, 2048) || !validText4(diagnostic.kind, 1, 200) || !validText4(diagnostic.reason, 1, 4e3)
     ))
       return false;
     if (receipt2.status === "clean")
@@ -8065,9 +9208,9 @@ ${JSON.stringify(request, null, 2)}`;
     const extraction = await runtime.runOperation(
       extractTextOperationPrompt(state.materialKey, input, output),
       {
-        phase: "Book",
+        phase: "Prepare",
         agentType: "general-purpose",
-        label: `book.extract-text:${state.slug}`,
+        label: `${state.slug}:extract-text`,
         schema: TEXT_EXTRACT_SCHEMA
       },
       {
@@ -8080,7 +9223,7 @@ ${JSON.stringify(request, null, 2)}`;
       }
     );
     state.operations.push(extraction);
-    if (runtimeUnknown3(extraction))
+    if (runtimeUnknown4(extraction))
       return {
         terminal: blocked(
           state,
@@ -8122,9 +9265,9 @@ ${JSON.stringify(request, null, 2)}`;
         extraction
       ),
       {
-        phase: "Book",
+        phase: "Prepare",
         agentType: "general-purpose",
-        label: `book.assess:${state.slug}`,
+        label: `${state.slug}:assess-readability`,
         schema: READABILITY_SCHEMA
       },
       {
@@ -8139,7 +9282,7 @@ ${JSON.stringify(request, null, 2)}`;
     state.operations.push(assessment);
     if (!strictReadability(assessment, output))
       return {
-        failure: assessment && assessment.failure && assessment.failure.outcome === "unknown" && assessment.failure || operationFailure3(
+        failure: assessment && assessment.failure && assessment.failure.outcome === "unknown" && assessment.failure || operationFailure4(
           "document.assess_readability_failed",
           "document.assess-readability"
         )
@@ -8159,9 +9302,9 @@ ${JSON.stringify(request, null, 2)}`;
         "book"
       ),
       {
-        phase: "Book",
+        phase: "Prepare",
         agentType: "general-purpose",
-        label: `book.ocr:${state.slug}`,
+        label: `${state.slug}:ocr`,
         schema: BOOK_DOCUMENT_OCR_SCHEMA
       },
       {
@@ -8174,7 +9317,7 @@ ${JSON.stringify(request, null, 2)}`;
       }
     );
     state.operations.push(receipt2);
-    if (runtimeUnknown3(receipt2))
+    if (runtimeUnknown4(receipt2))
       return {
         terminal: blocked(
           state,
@@ -8221,9 +9364,9 @@ ${JSON.stringify(request, null, 2)}`;
         diagnostics
       ),
       {
-        phase: "Book",
+        phase: "Prepare",
         agentType: "quasi:extract-agent",
-        label: `book.plan:${state.slug}`,
+        label: `${state.slug}:plan-chapters`,
         schema: CHAPTER_PLAN_SCHEMA
       },
       {
@@ -8238,7 +9381,7 @@ ${JSON.stringify(request, null, 2)}`;
     state.operations.push(receipt2);
     if (!strictPlan(receipt2, input, normalized))
       return {
-        failure: operationFailure3(
+        failure: operationFailure4(
           "chapter.plan_receipt_invalid",
           "chapter.plan"
         )
@@ -8266,9 +9409,9 @@ ${JSON.stringify(request, null, 2)}`;
         repair
       }),
       {
-        phase: "Book",
+        phase: "Prepare",
         agentType: "general-purpose",
-        label: `${label}:${state.slug}`,
+        label: `${state.slug}:${label}`,
         schema: CHAPTER_EXTRACT_SCHEMA
       },
       {
@@ -8284,7 +9427,7 @@ ${JSON.stringify(request, null, 2)}`;
       }
     );
     state.operations.push(receipt2);
-    if (runtimeUnknown3(receipt2))
+    if (runtimeUnknown4(receipt2))
       return {
         terminal: blocked(
           state,
@@ -8349,9 +9492,9 @@ ${JSON.stringify(request, null, 2)}`;
         }
       ),
       {
-        phase: "Book",
+        phase: "Prepare",
         agentType: "quasi:extract-agent",
-        label: `book.assess-chapters:${state.slug}`,
+        label: `${state.slug}:assess-chapters`,
         schema: CHAPTER_ASSESS_SCHEMA
       },
       {
@@ -8369,7 +9512,7 @@ ${JSON.stringify(request, null, 2)}`;
     state.operations.push(receipt2);
     if (!strictBoundaryAssessment(receipt2, state, extraction.chapters))
       return {
-        failure: operationFailure3(
+        failure: operationFailure4(
           "chapter.assessment_receipt_invalid",
           "chapter.assess-boundaries"
         )
@@ -8390,9 +9533,9 @@ ${JSON.stringify(request, null, 2)}`;
         diagnostics
       ),
       {
-        phase: "Book",
+        phase: "Analyse",
         agentType: "quasi:analyse-agent",
-        label: label || `${mode === "repair" ? "regen" : "analyse"}-ch${chapter.slot}:${state.slug}`,
+        label: `${state.slug}:${label || `ch${chapter.slot}:${mode === "repair" ? "repair" : "analyse"}`}`,
         schema: CHAPTER_ANALYSE_SCHEMA
       },
       {
@@ -8405,7 +9548,7 @@ ${JSON.stringify(request, null, 2)}`;
       }
     );
     state.operations.push(receipt2);
-    if (runtimeUnknown3(receipt2))
+    if (runtimeUnknown4(receipt2))
       return {
         terminal: blocked(
           state,
@@ -8443,9 +9586,9 @@ ${JSON.stringify(request, null, 2)}`;
         diagnostics
       ),
       {
-        phase: "Book",
+        phase: "Synthesise",
         agentType: "quasi:synthesis-agent",
-        label: `${mode === "repair" ? "regen-synth" : "synth"}:${state.slug}`,
+        label: `${state.slug}:${mode === "repair" ? "synthesise-repair" : "synthesise"}`,
         schema: BOOK_SYNTHESISE_SCHEMA
       },
       {
@@ -8458,7 +9601,7 @@ ${JSON.stringify(request, null, 2)}`;
       }
     );
     state.operations.push(receipt2);
-    if (runtimeUnknown3(receipt2))
+    if (runtimeUnknown4(receipt2))
       return {
         terminal: blocked(
           state,
@@ -8522,9 +9665,9 @@ ${JSON.stringify(request, null, 2)}`;
     const receipt2 = await runtime.runOperation(
       bookAuditPrompt(state.slug, pass),
       {
-        phase: "Book",
+        phase: "Audit",
         agentType: "quasi:audit-agent",
-        label: `audit${pass === 1 ? "" : "2"}:${state.slug}`,
+        label: `${state.slug}:audit${pass === 1 ? "" : `-${pass}`}`,
         schema: BOOK_AUDIT_SCHEMA
       },
       {
@@ -8537,7 +9680,7 @@ ${JSON.stringify(request, null, 2)}`;
       }
     );
     state.operations.push(receipt2);
-    if (runtimeUnknown3(receipt2))
+    if (runtimeUnknown4(receipt2))
       return {
         terminal: blocked(
           state,
@@ -8577,7 +9720,7 @@ ${JSON.stringify(request, null, 2)}`;
               }
             ]
           },
-          operationFailure3(
+          operationFailure4(
             "book.repair_owner_unknown",
             "book.audit"
           )
@@ -8590,7 +9733,7 @@ ${JSON.stringify(request, null, 2)}`;
           "audit_escalated",
           "audit",
           { escalated: receipt2.escalated },
-          operationFailure3(
+          operationFailure4(
             "book.audit_failed",
             "book.audit"
           )
@@ -8617,7 +9760,7 @@ ${JSON.stringify(request, null, 2)}`;
   }
   async function processValidatedBook(runtime, slug, meta, opts) {
     const { log, parallel, phase, runOperation } = runtime;
-    phase("Book");
+    phase("Acquire");
     const state = createBookState(slug, meta);
     const download = await runOperation(
       bookAcquirePrompt(
@@ -8627,9 +9770,9 @@ ${JSON.stringify(request, null, 2)}`;
         opts.yearDecision
       ),
       {
-        phase: "Book",
+        phase: "Acquire",
         agentType: "quasi:download-agent",
-        label: `download:${slug}`,
+        label: `${slug}:acquire`,
         schema: BOOK_ACQUIRE_SCHEMA
       },
       {
@@ -8641,7 +9784,7 @@ ${JSON.stringify(request, null, 2)}`;
         unknownFailureCode: "material.writer_outcome_unknown"
       }
     );
-    if (runtimeUnknown3(download)) {
+    if (runtimeUnknown4(download)) {
       state.operations.push(download);
       return blocked(
         state,
@@ -8735,7 +9878,7 @@ ${JSON.stringify(request, null, 2)}`;
           "extract_failed",
           "assess-readability",
           { problems: ["book.invalid_source"] },
-          operationFailure3(
+          operationFailure4(
             "book.invalid_source",
             "document.assess-readability"
           )
@@ -8769,7 +9912,7 @@ ${JSON.stringify(request, null, 2)}`;
                 normalized.failure ? normalized.failure.code : "book.ocr_insufficient"
               ]
             },
-            normalized.failure || operationFailure3(
+            normalized.failure || operationFailure4(
               "book.ocr_insufficient",
               "document.assess-readability"
             )
@@ -8817,7 +9960,7 @@ ${JSON.stringify(request, null, 2)}`;
         "no_chapters",
         "chapter-extract",
         { problems: ["book.no_chapters"] },
-        operationFailure3("book.no_chapters", "chapter.extract")
+        operationFailure4("book.no_chapters", "chapter.extract")
       );
     let assessed = await assessBoundaries(runtime, state, extraction);
     if (assessed.failure)
@@ -8836,7 +9979,7 @@ ${JSON.stringify(request, null, 2)}`;
           "extract_failed",
           "chapter-assess",
           { problems: boundary.diagnostics },
-          operationFailure3(
+          operationFailure4(
             boundary.signal === "needs_ocr" ? "book.ocr_insufficient" : "book.invalid_source",
             "chapter.assess-boundaries"
           )
@@ -8847,7 +9990,7 @@ ${JSON.stringify(request, null, 2)}`;
           "extract_failed",
           "chapter-recovery",
           { problems: boundary.diagnostics },
-          operationFailure3(
+          operationFailure4(
             "book.chapter_recovery_exhausted",
             "chapter.assess-boundaries"
           )
@@ -8882,7 +10025,7 @@ ${JSON.stringify(request, null, 2)}`;
                 normalized.failure ? normalized.failure.code : "book.ocr_insufficient"
               ]
             },
-            normalized.failure || operationFailure3(
+            normalized.failure || operationFailure4(
               "book.ocr_insufficient",
               "document.assess-readability"
             )
@@ -8952,7 +10095,7 @@ ${JSON.stringify(request, null, 2)}`;
           "extract_failed",
           "chapter-assess",
           { problems: boundary.diagnostics },
-          operationFailure3(
+          operationFailure4(
             "book.chapter_assessment_failed",
             "chapter.assess-boundaries"
           )
@@ -8974,7 +10117,7 @@ ${JSON.stringify(request, null, 2)}`;
           "extract_failed",
           "chapter-recovery",
           { problems: boundary.diagnostics },
-          operationFailure3(
+          operationFailure4(
             "book.chapter_recovery_exhausted",
             "chapter.assess-boundaries"
           )
@@ -9011,7 +10154,7 @@ ${JSON.stringify(request, null, 2)}`;
             chapter,
             "create",
             [],
-            `refill-ch${chapter.slot}:${slug}`
+            `ch${chapter.slot}:refill`
           )
         )
       );
@@ -9047,7 +10190,7 @@ ${JSON.stringify(request, null, 2)}`;
           present_slots: [...state.chapterInventory.present_slots],
           missing_slots: [...state.chapterInventory.missing_slots]
         },
-        operationFailure3(
+        operationFailure4(
           "book.chapters_incomplete",
           "book.join"
         )
@@ -9105,7 +10248,7 @@ ${JSON.stringify(request, null, 2)}`;
             chapter,
             "repair",
             diagnostics,
-            `regen-ch${chapter.slot}:${slug}`
+            `ch${chapter.slot}:repair`
           )
         )
       );
@@ -9180,7 +10323,7 @@ ${JSON.stringify(request, null, 2)}`;
         "audit_escalated",
         "audit",
         { escalated: exhaustedDiagnostics },
-        operationFailure3(
+        operationFailure4(
           "book.repair_exhausted",
           "book.audit"
         )
@@ -9237,8 +10380,8 @@ ${JSON.stringify(request, null, 2)}`;
     analyse: "quasi.operation.paper.analyse.receipt/0.1"
   };
   var PAPER_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
-  var CONTROL_CHARS4 = /[\u0000-\u001f\u007f-\u009f]/;
-  var exactKeys4 = (value, keys) => !!(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(
+  var CONTROL_CHARS5 = /[\u0000-\u001f\u007f-\u009f]/;
+  var exactKeys5 = (value, keys) => !!(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(
     (key) => Object.prototype.hasOwnProperty.call(value, key)
   ));
   var validOperationFailure = (failure, operationKey, retryable, allowMessage = false) => {
@@ -9256,10 +10399,10 @@ ${JSON.stringify(request, null, 2)}`;
       (key) => keys.includes(key)
     ) || keys.some((key) => !allowed.includes(key)))
       return false;
-    return validText4(failure.code, 1, 200) && failure.operation_key === operationKey && ["known", "unknown"].includes(failure.outcome) && failure.retryable === retryable && (failure.message === void 0 || validText4(failure.message, 1, 4e3));
+    return validText5(failure.code, 1, 200) && failure.operation_key === operationKey && ["known", "unknown"].includes(failure.outcome) && failure.retryable === retryable && (failure.message === void 0 || validText5(failure.message, 1, 4e3));
   };
-  var validText4 = (value, min, max) => typeof value === "string" && value === value.trim() && value.length >= min && value.length <= max && !CONTROL_CHARS4.test(value);
-  var optionalText3 = (value, max) => value == null || value === "" || validText4(value, 1, max);
+  var validText5 = (value, min, max) => typeof value === "string" && value === value.trim() && value.length >= min && value.length <= max && !CONTROL_CHARS5.test(value);
+  var optionalText4 = (value, max) => value == null || value === "" || validText5(value, 1, max);
   function validatePaperIdentity(slug, meta) {
     if (typeof slug !== "string" || !PAPER_SLUG.test(slug))
       return {
@@ -9275,14 +10418,14 @@ ${JSON.stringify(request, null, 2)}`;
         message: "paper metadata must be an object",
         canonicalSlug: slug
       };
-    if (!validText4(meta.title, 1, 500))
+    if (!validText5(meta.title, 1, 500))
       return {
         ok: false,
         code: "paper.identity_invalid",
         message: "title is missing or invalid",
         canonicalSlug: slug
       };
-    if (!Array.isArray(meta.authors) || meta.authors.length < 1 || meta.authors.length > 32 || meta.authors.some((author) => !validText4(author, 1, 200)))
+    if (!Array.isArray(meta.authors) || meta.authors.length < 1 || meta.authors.length > 32 || meta.authors.some((author) => !validText5(author, 1, 200)))
       return {
         ok: false,
         code: "paper.identity_invalid",
@@ -9296,14 +10439,14 @@ ${JSON.stringify(request, null, 2)}`;
         message: "year must be an integer in the supported range",
         canonicalSlug: slug
       };
-    if (!validText4(meta.journal, 1, 500))
+    if (!validText5(meta.journal, 1, 500))
       return {
         ok: false,
         code: "paper.identity_invalid",
         message: "journal is missing or invalid",
         canonicalSlug: slug
       };
-    if (!optionalText3(meta.doi, 300) || !optionalText3(meta.oa_url, 2048) || !optionalText3(meta.url, 2048) || meta.confidence !== void 0 && !["provided", "verified"].includes(meta.confidence))
+    if (!optionalText4(meta.doi, 300) || !optionalText4(meta.oa_url, 2048) || !optionalText4(meta.url, 2048) || meta.confidence !== void 0 && !["provided", "verified"].includes(meta.confidence))
       return {
         ok: false,
         code: "paper.identity_invalid",
@@ -9333,7 +10476,7 @@ ${JSON.stringify(request, null, 2)}`;
       })
     };
   }
-  var operationFailure4 = (code, operationKey, outcome = "known", message = null) => ({
+  var operationFailure5 = (code, operationKey, outcome = "known", message = null) => ({
     code,
     operation_key: operationKey,
     outcome,
@@ -9353,7 +10496,7 @@ ${JSON.stringify(request, null, 2)}`;
     return !!(receipt2 && receipt2.schema_version === version && receipt2.key === key && receipt2.effect === effect && receipt2.attempt === 1 && receipt2.input_path === input && (output === void 0 || receipt2.output_path === output) && hasExactRole(receipt2, role));
   }
   function strictAnalyseReceipt(receipt2, mode) {
-    if (!exactKeys4(receipt2, [
+    if (!exactKeys5(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -9391,7 +10534,7 @@ ${JSON.stringify(request, null, 2)}`;
     return receipt2.action === mode;
   }
   function strictOcrReceipt(receipt2) {
-    if (!exactKeys4(receipt2, [
+    if (!exactKeys5(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -9423,7 +10566,7 @@ ${JSON.stringify(request, null, 2)}`;
     return receipt2.failure.code === "output_exists_requires_reconcile" && receipt2.exit === 0 && receipt2.exists === true && receipt2.size > 0;
   }
   function strictExtractReceipt(receipt2) {
-    if (!exactKeys4(receipt2, [
+    if (!exactKeys5(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -9456,7 +10599,7 @@ ${JSON.stringify(request, null, 2)}`;
     return receipt2.status === "failed" ? receipt2.failure.outcome === "known" : receipt2.failure.outcome === "unknown";
   }
   function strictReadabilityReceipt(receipt2) {
-    if (!exactKeys4(receipt2, [
+    if (!exactKeys5(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -9468,7 +10611,7 @@ ${JSON.stringify(request, null, 2)}`;
       "diagnostics",
       "failure"
     ]) || receipt2.schema_version !== OPERATION_RECEIPT_VERSION.assess || receipt2.key !== "document.assess-readability" || receipt2.effect !== "readonly" || receipt2.attempt !== 1 || !hasExactRole(receipt2, "normalized_text") || !["succeeded", "failed", "blocked"].includes(receipt2.status) || !Array.isArray(receipt2.diagnostics) || receipt2.diagnostics.some(
-      (diagnostic) => !validText4(diagnostic, 1, 4e3)
+      (diagnostic) => !validText5(diagnostic, 1, 4e3)
     ))
       return false;
     if (receipt2.status === "succeeded")
@@ -9485,7 +10628,7 @@ ${JSON.stringify(request, null, 2)}`;
     return receipt2.status === "failed" ? receipt2.failure.outcome === "known" : receipt2.failure.outcome === "unknown";
   }
   function strictAuditReceipt(receipt2) {
-    if (!exactKeys4(receipt2, [
+    if (!exactKeys5(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -9495,7 +10638,7 @@ ${JSON.stringify(request, null, 2)}`;
       "remaining_violations",
       "escalated"
     ]) || receipt2.schema_version !== "quasi.operation.paper.audit.agent-receipt/0.1" || receipt2.key !== "paper.audit" || receipt2.effect !== "writer" || receipt2.attempt !== 1 || !["clean", "partial", "error"].includes(receipt2.status) || !Number.isInteger(receipt2.remaining_violations) || receipt2.remaining_violations < 0 || !Array.isArray(receipt2.escalated) || receipt2.escalated.some(
-      (diagnostic) => !exactKeys4(diagnostic, ["path", "kind", "reason"]) || !validText4(diagnostic.path, 1, 2048) || !validText4(diagnostic.kind, 1, 200) || !validText4(diagnostic.reason, 1, 4e3)
+      (diagnostic) => !exactKeys5(diagnostic, ["path", "kind", "reason"]) || !validText5(diagnostic.path, 1, 2048) || !validText5(diagnostic.kind, 1, 200) || !validText5(diagnostic.reason, 1, 4e3)
     ))
       return false;
     if (receipt2.status === "clean")
@@ -9518,7 +10661,7 @@ ${JSON.stringify(request, null, 2)}`;
       artifact_roles: ["canonical"],
       signal: clean ? "clean" : "escalated",
       pass,
-      failure: receipt2.status === "error" ? operationFailure4(
+      failure: receipt2.status === "error" ? operationFailure5(
         "paper.audit_failed",
         "paper.audit"
       ) : null
@@ -9541,7 +10684,7 @@ ${JSON.stringify(request, null, 2)}`;
       source: item && item.source || null,
       failure_reason: item && (item.failure_reason || item.verdict_note) || null,
       attempts: item && Array.isArray(item.attempts) ? item.attempts : [],
-      failure: succeeded ? null : operationFailure4(
+      failure: succeeded ? null : operationFailure5(
         `paper.${item && item.status || "download_failed"}`,
         "paper.acquire",
         blockedOutcome ? "unknown" : "known"
@@ -9549,10 +10692,10 @@ ${JSON.stringify(request, null, 2)}`;
     };
   }
   function strictDownloadAttempt(attempt) {
-    return !!(exactKeys4(attempt, ["source", "status", "error"]) && validText4(attempt.source, 1, 200) && validText4(attempt.status, 1, 200) && (attempt.error === null || validText4(attempt.error, 1, 4e3)));
+    return !!(exactKeys5(attempt, ["source", "status", "error"]) && validText5(attempt.source, 1, 200) && validText5(attempt.status, 1, 200) && (attempt.error === null || validText5(attempt.error, 1, 4e3)));
   }
   function strictPaperDownloadReceipt(receipt2, slug, output) {
-    if (!exactKeys4(receipt2, ["acquired", "failed", "per_item"]) || !Number.isInteger(receipt2.acquired) || receipt2.acquired < 0 || !Number.isInteger(receipt2.failed) || receipt2.failed < 0 || !Array.isArray(receipt2.per_item) || receipt2.per_item.length !== 1)
+    if (!exactKeys5(receipt2, ["acquired", "failed", "per_item"]) || !Number.isInteger(receipt2.acquired) || receipt2.acquired < 0 || !Number.isInteger(receipt2.failed) || receipt2.failed < 0 || !Array.isArray(receipt2.per_item) || receipt2.per_item.length !== 1)
       return false;
     const item = receipt2.per_item[0];
     const required = [
@@ -9574,11 +10717,11 @@ ${JSON.stringify(request, null, 2)}`;
     ];
     if (!item || typeof item !== "object" || Array.isArray(item) || !required.every(
       (key) => Object.prototype.hasOwnProperty.call(item, key)
-    ) || Object.keys(item).some((key) => !allowed.includes(key)) || item.kind !== "paper" || item.slug !== slug || !["ok", "download_failed", "blocked"].includes(item.status) || ![null, "created", "reused"].includes(item.disposition) || typeof item.identity_verified !== "boolean" || !Array.isArray(item.attempts) || item.attempts.some((attempt) => !strictDownloadAttempt(attempt)) || item.doi !== void 0 && item.doi !== null && !validText4(item.doi, 1, 300) || item.verdict_note !== void 0 && !validText4(item.verdict_note, 1, 4e3))
+    ) || Object.keys(item).some((key) => !allowed.includes(key)) || item.kind !== "paper" || item.slug !== slug || !["ok", "download_failed", "blocked"].includes(item.status) || ![null, "created", "reused"].includes(item.disposition) || typeof item.identity_verified !== "boolean" || !Array.isArray(item.attempts) || item.attempts.some((attempt) => !strictDownloadAttempt(attempt)) || item.doi !== void 0 && item.doi !== null && !validText5(item.doi, 1, 300) || item.verdict_note !== void 0 && !validText5(item.verdict_note, 1, 4e3))
       return false;
     if (item.status === "ok")
-      return receipt2.acquired === 1 && receipt2.failed === 0 && ["created", "reused"].includes(item.disposition) && item.identity_verified === true && item.path === output && validText4(item.source, 1, 200) && item.failure_reason === void 0;
-    if (item.disposition !== null || item.identity_verified !== false || item.path !== void 0 || !(item.source === null || validText4(item.source, 1, 200)) || !validText4(item.failure_reason, 1, 4e3))
+      return receipt2.acquired === 1 && receipt2.failed === 0 && ["created", "reused"].includes(item.disposition) && item.identity_verified === true && item.path === output && validText5(item.source, 1, 200) && item.failure_reason === void 0;
+    if (item.disposition !== null || item.identity_verified !== false || item.path !== void 0 || !(item.source === null || validText5(item.source, 1, 200)) || !validText5(item.failure_reason, 1, 4e3))
       return false;
     if (item.status === "download_failed")
       return receipt2.acquired === 0 && receipt2.failed === 1 && item.attempts.length > 0;
@@ -9629,7 +10772,7 @@ ${JSON.stringify(request, null, 2)}`;
   }
   function rejectedPaperResult(slug, validation, code = null) {
     const canonical = typeof slug === "string" && PAPER_SLUG.test(slug);
-    const failure = operationFailure4(
+    const failure = operationFailure5(
       code || validation.code,
       "paper.identity",
       "known",
@@ -9660,20 +10803,20 @@ ${JSON.stringify(request, null, 2)}`;
     };
   }
   function result2(state, status, stage, extra = {}, failure = null) {
-    const terminal5 = status === "ok" ? "complete" : status === "blocked" ? "blocked" : "failed";
+    const terminal6 = status === "ok" ? "complete" : status === "blocked" ? "blocked" : "failed";
     return {
       slug: state.slug,
       status,
       ...extra,
       material_receipt: materialReceipt2(state, {
-        status: terminal5,
+        status: terminal6,
         stage,
         failure
       })
     };
   }
   function blocked2(state, stage, operationKey, receipt2) {
-    const failure = receipt2 && receipt2.failure || operationFailure4(
+    const failure = receipt2 && receipt2.failure || operationFailure5(
       "paper.writer_outcome_unknown",
       operationKey,
       "unknown"
@@ -9686,7 +10829,7 @@ ${JSON.stringify(request, null, 2)}`;
       "blocked",
       stage,
       {},
-      operationFailure4(
+      operationFailure5(
         "paper.writer_receipt_mismatch",
         operationKey,
         "unknown",
@@ -9698,9 +10841,9 @@ ${JSON.stringify(request, null, 2)}`;
     const extraction = await runtime.runOperation(
       extractTextOperationPrompt(state.materialKey, input, output),
       {
-        phase: "Paper",
+        phase: "Prepare",
         agentType: "general-purpose",
-        label: `paper.extract-text:${state.slug}`,
+        label: `${state.slug}:extract-text`,
         schema: TEXT_EXTRACT_SCHEMA
       },
       {
@@ -9747,7 +10890,7 @@ ${JSON.stringify(request, null, 2)}`;
       };
     if (extraction.status !== "succeeded" || extraction.exit !== 0 || extraction.exists !== true)
       return {
-        failure: extraction.failure || operationFailure4(
+        failure: extraction.failure || operationFailure5(
           "document.extract_text_failed",
           "document.extract-text"
         )
@@ -9762,9 +10905,9 @@ ${JSON.stringify(request, null, 2)}`;
     const assessment = await runtime.runOperation(
       readabilityOperationPrompt(state.materialKey, output, extraction),
       {
-        phase: "Paper",
+        phase: "Prepare",
         agentType: "general-purpose",
-        label: `paper.assess:${state.slug}`,
+        label: `${state.slug}:assess-readability`,
         schema: READABILITY_SCHEMA
       },
       {
@@ -9784,7 +10927,7 @@ ${JSON.stringify(request, null, 2)}`;
       role: "normalized_text"
     }))
       return {
-        failure: assessment && assessment.failure && assessment.failure.outcome === "unknown" && assessment.failure || operationFailure4(
+        failure: assessment && assessment.failure && assessment.failure.outcome === "unknown" && assessment.failure || operationFailure5(
           "document.assess_readability_failed",
           "document.assess-readability"
         )
@@ -9804,9 +10947,9 @@ ${JSON.stringify(request, null, 2)}`;
         diagnostics
       ),
       {
-        phase: "Paper",
+        phase: "Analyse",
         agentType: "quasi:analyse-agent",
-        label: `paper.analyse:${state.slug}`,
+        label: `${state.slug}:analyse`,
         schema: PAPER_ANALYSE_SCHEMA
       },
       {
@@ -9870,7 +11013,7 @@ ${JSON.stringify(request, null, 2)}`;
           {
             notes: receipt2.failure && receipt2.failure.code
           },
-          receipt2.failure || operationFailure4("paper.analysis_failed", "paper.analyse")
+          receipt2.failure || operationFailure5("paper.analysis_failed", "paper.analyse")
         )
       };
     state.artifacts = state.artifacts.filter(
@@ -9900,9 +11043,9 @@ ${JSON.stringify(request, null, 2)}`;
     const receipt2 = await runtime.runOperation(
       paperAuditPrompt(state.slug, pass),
       {
-        phase: "Paper",
+        phase: "Audit",
         agentType: "quasi:audit-agent",
-        label: `paper.audit:${state.slug}`,
+        label: `${state.slug}:audit`,
         schema: PAPER_AUDIT_SCHEMA
       },
       {
@@ -9954,14 +11097,14 @@ ${JSON.stringify(request, null, 2)}`;
   }
   async function processValidatedPaper(runtime, slug, meta) {
     const { log, phase, runOperation } = runtime;
-    phase("Paper");
+    phase("Acquire");
     const state = createPaperState(slug);
     const download = await runOperation(
       paperAcquirePrompt(slug, meta),
       {
-        phase: "Paper",
+        phase: "Acquire",
         agentType: "quasi:download-agent",
-        label: `paper.acquire:${slug}`,
+        label: `${slug}:acquire`,
         schema: PAPER_ACQUIRE_SCHEMA
       },
       {
@@ -10045,7 +11188,7 @@ ${JSON.stringify(request, null, 2)}`;
         "analyse_failed",
         "assess-readability",
         {},
-        operationFailure4(
+        operationFailure5(
           "paper.invalid_source",
           "document.assess-readability"
         )
@@ -10059,9 +11202,9 @@ ${JSON.stringify(request, null, 2)}`;
           state.ocrSource
         ),
         {
-          phase: "Paper",
+          phase: "Prepare",
           agentType: "general-purpose",
-          label: `paper.ocr:${slug}`,
+          label: `${slug}:ocr`,
           schema: DOCUMENT_OCR_SCHEMA
         },
         {
@@ -10098,7 +11241,7 @@ ${JSON.stringify(request, null, 2)}`;
           "ocr_failed",
           "ocr",
           {},
-          ocr.failure || operationFailure4("paper.ocr_failed", "document.ocr")
+          ocr.failure || operationFailure5("paper.ocr_failed", "document.ocr")
         );
       if (existingRecovery)
         state.warnings.push(
@@ -10132,7 +11275,7 @@ ${JSON.stringify(request, null, 2)}`;
           "ocr_failed",
           "assess-readability",
           {},
-          operationFailure4(
+          operationFailure5(
             normalized.signal === "needs_ocr" ? "paper.ocr_insufficient" : "paper.invalid_recovery_source",
             "document.assess-readability"
           )
@@ -10174,7 +11317,7 @@ ${JSON.stringify(request, null, 2)}`;
           "audit_escalated",
           "audit",
           { escalated: auditResult.escalated },
-          operationFailure4(
+          operationFailure5(
             "paper.repair_owner_unknown",
             "paper.audit"
           )
@@ -10196,7 +11339,7 @@ ${JSON.stringify(request, null, 2)}`;
           "audit_escalated",
           "audit",
           { escalated: auditResult.escalated },
-          operationFailure4(
+          operationFailure5(
             "paper.repair_exhausted",
             "paper.audit"
           )
@@ -10759,7 +11902,7 @@ ${JSON.stringify(request, null, 2)}`;
   // scripts/workflows/materials/talk.mjs
   var MATERIAL_RECEIPT_VERSION4 = "quasi.material-loop.receipt/0.1";
   var TALK_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
-  var CONTROL_CHARS5 = /[\u0000-\u001f\u007f-\u009f]/;
+  var CONTROL_CHARS6 = /[\u0000-\u001f\u007f-\u009f]/;
   var HASH2 = /^[a-f0-9]{64}$/;
   var DATE = /^\d{4}-\d{2}-\d{2}$/;
   var ENGINES = /* @__PURE__ */ new Set([
@@ -10797,10 +11940,10 @@ ${JSON.stringify(request, null, 2)}`;
     "ogg",
     "opus"
   ]);
-  var exactKeys5 = (value, keys) => !!(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(
+  var exactKeys6 = (value, keys) => !!(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(
     (key) => Object.prototype.hasOwnProperty.call(value, key)
   ));
-  var validText5 = (value, min, max) => typeof value === "string" && value === value.trim() && value.length >= min && value.length <= max && !CONTROL_CHARS5.test(value);
+  var validText6 = (value, min, max) => typeof value === "string" && value === value.trim() && value.length >= min && value.length <= max && !CONTROL_CHARS6.test(value);
   var sameStrings2 = (left, right) => Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => value === right[index]);
   var validHash2 = (value) => typeof value === "string" && HASH2.test(value);
   function validDate(value) {
@@ -10825,7 +11968,7 @@ ${JSON.stringify(request, null, 2)}`;
         code: "talk.identity_invalid",
         message: "talk metadata must be an object"
       };
-    if (!validText5(meta.title, 2, 280))
+    if (!validText6(meta.title, 2, 280))
       return {
         ok: false,
         code: "talk.identity_invalid",
@@ -10837,7 +11980,7 @@ ${JSON.stringify(request, null, 2)}`;
         code: "talk.identity_invalid",
         message: "date must be an exact calendar YYYY-MM-DD"
       };
-    if (!validText5(meta.media, 1, 2048) || meta.media.includes("\\") || meta.media.split("/").includes("..") || mediaExtension(meta.media) === "" || !MEDIA_EXTENSIONS.has(mediaExtension(meta.media)))
+    if (!validText6(meta.media, 1, 2048) || meta.media.includes("\\") || meta.media.split("/").includes("..") || mediaExtension(meta.media) === "" || !MEDIA_EXTENSIONS.has(mediaExtension(meta.media)))
       return {
         ok: false,
         code: "talk.identity_invalid",
@@ -10877,21 +12020,21 @@ ${JSON.stringify(request, null, 2)}`;
       fingerprint: JSON.stringify(normalized)
     };
   }
-  var operationFailure5 = (code, operationKey, outcome = "known", message = null) => ({
+  var operationFailure6 = (code, operationKey, outcome = "known", message = null) => ({
     code,
     operation_key: operationKey,
     outcome,
     retryable: false,
     message
   });
-  function validFailure4(failure, operationKey, outcome, retryable = false) {
-    return !!(exactKeys5(failure, [
+  function validFailure5(failure, operationKey, outcome, retryable = false) {
+    return !!(exactKeys6(failure, [
       "code",
       "operation_key",
       "outcome",
       "retryable",
       "message"
-    ]) && validText5(failure.code, 1, 200) && failure.operation_key === operationKey && failure.outcome === outcome && failure.retryable === retryable && (failure.message === null || validText5(failure.message, 1, 4e3)));
+    ]) && validText6(failure.code, 1, 200) && failure.operation_key === operationKey && failure.outcome === outcome && failure.retryable === retryable && (failure.message === null || validText6(failure.message, 1, 4e3)));
   }
   function createState3(slug, meta) {
     const outputDir = `vault/talks/${slug}`;
@@ -10974,7 +12117,7 @@ ${JSON.stringify(request, null, 2)}`;
       }
     };
   }
-  function terminal3(state, legacyStatus2, receiptStatus, stage, failure = null, extra = {}) {
+  function terminal4(state, legacyStatus2, receiptStatus, stage, failure = null, extra = {}) {
     return {
       slug: state.slug,
       status: legacyStatus2,
@@ -11001,13 +12144,13 @@ ${JSON.stringify(request, null, 2)}`;
       lang: "auto",
       prepare_media: false
     });
-    const failure = operationFailure5(
+    const failure = operationFailure6(
       conflict ? "talk.identity_conflict" : validation.code,
       "talk.identity",
       "known",
       validation.message
     );
-    return terminal3(
+    return terminal4(
       state,
       "blocked",
       "blocked",
@@ -11015,17 +12158,17 @@ ${JSON.stringify(request, null, 2)}`;
       failure
     );
   }
-  function runtimeUnknown4(receipt2) {
+  function runtimeUnknown5(receipt2) {
     return !!(receipt2 && receipt2.schema_version === "quasi.operation.runtime.receipt/0.1" && receipt2.failure && receipt2.failure.outcome === "unknown");
   }
   function validArtifactRow(row, state) {
-    if (!exactKeys5(row, ["role", "path", "sha256", "size"]) || ![
+    if (!exactKeys6(row, ["role", "path", "sha256", "size"]) || ![
       "prepared_media",
       "transcript",
       "subtitle",
       "engine_transcript",
       "canonical"
-    ].includes(row.role) || !validText5(row.path, 1, 2048) || !validHash2(row.sha256) || !Number.isInteger(row.size) || row.size < 1)
+    ].includes(row.role) || !validText6(row.path, 1, 2048) || !validHash2(row.sha256) || !Number.isInteger(row.size) || row.size < 1)
       return false;
     if (row.role === "prepared_media")
       return row.path === state.prepared;
@@ -11044,7 +12187,7 @@ ${JSON.stringify(request, null, 2)}`;
     return new Set(paths).size === paths.length;
   }
   function strictObserve(receipt2, state) {
-    if (!exactKeys5(receipt2, [
+    if (!exactKeys6(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -11109,19 +12252,19 @@ ${JSON.stringify(request, null, 2)}`;
       return true;
     }
     if (receipt2.status === "failed")
-      return validFailure4(
+      return validFailure5(
         receipt2.failure,
         "talk.observe",
         "known"
       );
-    return receipt2.status === "blocked" && validFailure4(
+    return receipt2.status === "blocked" && validFailure5(
       receipt2.failure,
       "talk.observe",
       "unknown"
     );
   }
   function strictPrepare(receipt2, state) {
-    if (!exactKeys5(receipt2, [
+    if (!exactKeys6(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -11141,19 +12284,19 @@ ${JSON.stringify(request, null, 2)}`;
     if (receipt2.status === "succeeded")
       return receipt2.failure === null && receipt2.input_sha256 === state.sourceSha256 && validHash2(receipt2.output_sha256) && receipt2.size > 0;
     if (receipt2.status === "failed")
-      return receipt2.action === "create" && receipt2.input_sha256 === state.sourceSha256 && receipt2.output_sha256 === null && validFailure4(
+      return receipt2.action === "create" && receipt2.input_sha256 === state.sourceSha256 && receipt2.output_sha256 === null && validFailure5(
         receipt2.failure,
         "talk.prepare-media",
         "known"
       ) && receipt2.size === 0;
-    return receipt2.status === "blocked" && receipt2.action === "create" && receipt2.input_sha256 === state.sourceSha256 && receipt2.output_sha256 === null && receipt2.size === 0 && validFailure4(
+    return receipt2.status === "blocked" && receipt2.action === "create" && receipt2.input_sha256 === state.sourceSha256 && receipt2.output_sha256 === null && receipt2.size === 0 && validFailure5(
       receipt2.failure,
       "talk.prepare-media",
       "unknown"
     );
   }
   function strictEngineRow(row, engine, state) {
-    if (!exactKeys5(row, [
+    if (!exactKeys6(row, [
       "name",
       "status",
       "segments",
@@ -11172,7 +12315,7 @@ ${JSON.stringify(request, null, 2)}`;
     const expectedInputSha = inputPath === state.media ? state.sourceSha256 : state.artifacts.find(
       (row) => row.role === "prepared_media" && row.path === inputPath
     )?.sha256;
-    if (!exactKeys5(receipt2, [
+    if (!exactKeys6(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -11235,12 +12378,12 @@ ${JSON.stringify(request, null, 2)}`;
       ));
     }
     if (receipt2.status === "failed")
-      return receipt2.manifest_exists === true && validHash2(receipt2.manifest_fingerprint) && validHash2(receipt2.request_fingerprint) && receipt2.disposition === null && validFailure4(
+      return receipt2.manifest_exists === true && validHash2(receipt2.manifest_fingerprint) && validHash2(receipt2.request_fingerprint) && receipt2.disposition === null && validFailure5(
         receipt2.failure,
         "talk.transcribe",
         "known"
       );
-    return receipt2.status === "blocked" && receipt2.disposition === null && (receipt2.manifest_fingerprint === null || validHash2(receipt2.manifest_fingerprint)) && validFailure4(
+    return receipt2.status === "blocked" && receipt2.disposition === null && (receipt2.manifest_fingerprint === null || validHash2(receipt2.manifest_fingerprint)) && validFailure5(
       receipt2.failure,
       "talk.transcribe",
       "unknown"
@@ -11250,7 +12393,7 @@ ${JSON.stringify(request, null, 2)}`;
     const transcriptArtifact = state.transcriptArtifacts.find(
       (row) => row.role === "transcript"
     );
-    if (!exactKeys5(receipt2, [
+    if (!exactKeys6(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -11266,16 +12409,16 @@ ${JSON.stringify(request, null, 2)}`;
       return false;
     if (receipt2.status === "succeeded") {
       const signals = receipt2.machine_signals;
-      return !!(["live", "dead", "empty"].includes(receipt2.signal) && exactKeys5(signals, [
+      return !!(["live", "dead", "empty"].includes(receipt2.signal) && exactKeys6(signals, [
         "total",
         "uniq_ratio",
         "chars",
         "spam_hits",
         "blank_dominant",
         "reason"
-      ]) && Number.isInteger(signals.total) && signals.total >= 0 && typeof signals.uniq_ratio === "number" && signals.uniq_ratio >= 0 && signals.uniq_ratio <= 1 && Number.isInteger(signals.chars) && signals.chars >= 0 && Number.isInteger(signals.spam_hits) && signals.spam_hits >= 0 && typeof signals.blank_dominant === "boolean" && validText5(signals.reason, 1, 1e3) && receipt2.failure === null);
+      ]) && Number.isInteger(signals.total) && signals.total >= 0 && typeof signals.uniq_ratio === "number" && signals.uniq_ratio >= 0 && signals.uniq_ratio <= 1 && Number.isInteger(signals.chars) && signals.chars >= 0 && Number.isInteger(signals.spam_hits) && signals.spam_hits >= 0 && typeof signals.blank_dominant === "boolean" && validText6(signals.reason, 1, 1e3) && receipt2.failure === null);
     }
-    return receipt2.status === "failed" && receipt2.signal === null && receipt2.machine_signals === null && validFailure4(
+    return receipt2.status === "failed" && receipt2.signal === null && receipt2.machine_signals === null && validFailure5(
       receipt2.failure,
       "talk.classify",
       "known"
@@ -11283,12 +12426,12 @@ ${JSON.stringify(request, null, 2)}`;
   }
   function strictProducerFailure(receipt2, operationKey, mode) {
     if (receipt2.status === "failed")
-      return receipt2.action === mode && validFailure4(
+      return receipt2.action === mode && validFailure5(
         receipt2.failure,
         operationKey,
         "known"
       );
-    return receipt2.status === "blocked" && receipt2.action === mode && validFailure4(
+    return receipt2.status === "blocked" && receipt2.action === mode && validFailure5(
       receipt2.failure,
       operationKey,
       "unknown"
@@ -11306,7 +12449,7 @@ ${JSON.stringify(request, null, 2)}`;
     return primary ? [primary, ...engines] : [];
   }
   function strictAnalyse(receipt2, state, inputs, mode) {
-    if (!exactKeys5(receipt2, [
+    if (!exactKeys6(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -11337,7 +12480,7 @@ ${JSON.stringify(request, null, 2)}`;
     );
   }
   function strictSilent(receipt2, state, mode) {
-    if (!exactKeys5(receipt2, [
+    if (!exactKeys6(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -11365,10 +12508,10 @@ ${JSON.stringify(request, null, 2)}`;
     );
   }
   function validDiagnostic(item) {
-    return !!(exactKeys5(item, ["path", "kind", "reason"]) && validText5(item.path, 1, 2048) && validText5(item.kind, 1, 200) && validText5(item.reason, 1, 4e3));
+    return !!(exactKeys6(item, ["path", "kind", "reason"]) && validText6(item.path, 1, 2048) && validText6(item.kind, 1, 200) && validText6(item.reason, 1, 4e3));
   }
   function strictAudit3(receipt2, state) {
-    if (!exactKeys5(receipt2, [
+    if (!exactKeys6(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -11381,7 +12524,7 @@ ${JSON.stringify(request, null, 2)}`;
     ]) || receipt2.schema_version !== "quasi.operation.talk.audit.legacy.receipt/0.1" || receipt2.key !== "talk.audit.legacy" || receipt2.effect !== "writer" || receipt2.attempt !== 1 || receipt2.target_path !== state.canonical || !Number.isInteger(receipt2.remaining_violations) || receipt2.remaining_violations < 0 || !Array.isArray(receipt2.escalated) || receipt2.escalated.some(
       (item) => !validDiagnostic(item)
     ) || !Array.isArray(receipt2.mutated_paths) || receipt2.mutated_paths.some(
-      (path) => !validText5(path, 1, 2048)
+      (path) => !validText6(path, 1, 2048)
     ))
       return false;
     if (receipt2.status === "clean")
@@ -11397,12 +12540,12 @@ ${JSON.stringify(request, null, 2)}`;
     ].every((path) => path === state.canonical);
   }
   function writerMismatch2(state, stage, operationKey) {
-    return terminal3(
+    return terminal4(
       state,
       "blocked",
       "blocked",
       stage,
-      operationFailure5(
+      operationFailure6(
         "talk.writer_receipt_mismatch",
         operationKey,
         "unknown",
@@ -11432,12 +12575,12 @@ ${JSON.stringify(request, null, 2)}`;
       const inputs = analysisInputs(state);
       if (!inputs.length)
         return {
-          terminal: terminal3(
+          terminal: terminal4(
             state,
             "analyse_failed",
             "failed",
             "analyse",
-            operationFailure5(
+            operationFailure6(
               "talk.transcript_generation_invalid",
               "talk.analyse",
               "known",
@@ -11453,9 +12596,9 @@ ${JSON.stringify(request, null, 2)}`;
           diagnostics
         ),
         {
-          phase: "Talk",
+          phase: "Analyse",
           agentType: "quasi:analyse-agent",
-          label: mode === "repair" ? `repair-talk:${state.slug}` : `analyse-talk:${state.slug}`,
+          label: mode === "repair" ? `${state.slug}:analyse-repair` : `${state.slug}:analyse`,
           schema: TALK_ANALYSE_SCHEMA
         },
         {
@@ -11478,7 +12621,7 @@ ${JSON.stringify(request, null, 2)}`;
         };
       if (receipt3.status === "blocked")
         return {
-          terminal: terminal3(
+          terminal: terminal4(
             state,
             "blocked",
             "blocked",
@@ -11488,7 +12631,7 @@ ${JSON.stringify(request, null, 2)}`;
         };
       if (receipt3.status === "failed")
         return {
-          terminal: terminal3(
+          terminal: terminal4(
             state,
             "analyse_failed",
             "failed",
@@ -11526,9 +12669,9 @@ ${JSON.stringify(request, null, 2)}`;
         diagnostics
       ),
       {
-        phase: "Talk",
+        phase: "Analyse",
         agentType: "quasi:transcribe-agent",
-        label: mode === "repair" ? `repair-silent:${state.slug}` : `render-silent:${state.slug}`,
+        label: mode === "repair" ? `${state.slug}:render-silent-repair` : `${state.slug}:render-silent`,
         schema: TALK_RENDER_SILENT_SCHEMA
       },
       {
@@ -11551,7 +12694,7 @@ ${JSON.stringify(request, null, 2)}`;
       };
     if (receipt2.status === "blocked")
       return {
-        terminal: terminal3(
+        terminal: terminal4(
           state,
           "blocked",
           "blocked",
@@ -11561,7 +12704,7 @@ ${JSON.stringify(request, null, 2)}`;
       };
     if (receipt2.status === "failed")
       return {
-        terminal: terminal3(
+        terminal: terminal4(
           state,
           "analyse_failed",
           "failed",
@@ -11596,9 +12739,9 @@ ${JSON.stringify(request, null, 2)}`;
     const receipt2 = await runtime.runOperation(
       talkAuditLegacyPrompt(state.slug, pass),
       {
-        phase: "Talk",
+        phase: "Audit",
         agentType: "quasi:audit-agent",
-        label: pass === 1 ? `audit-talk:${state.slug}` : `audit2-talk:${state.slug}`,
+        label: pass === 1 ? `${state.slug}:audit` : `${state.slug}:audit-${pass}`,
         schema: TALK_AUDIT_SCHEMA
       },
       {
@@ -11623,12 +12766,12 @@ ${JSON.stringify(request, null, 2)}`;
       };
     if (!ownedAuditPaths2(receipt2, state))
       return {
-        terminal: terminal3(
+        terminal: terminal4(
           state,
           "audit_escalated",
           "failed",
           "audit",
-          operationFailure5(
+          operationFailure6(
             "talk.repair_owner_unknown",
             "talk.audit.legacy",
             "known",
@@ -11639,12 +12782,12 @@ ${JSON.stringify(request, null, 2)}`;
       };
     if (receipt2.status === "error")
       return {
-        terminal: terminal3(
+        terminal: terminal4(
           state,
           "audit_escalated",
           "failed",
           "audit",
-          operationFailure5(
+          operationFailure6(
             "talk.audit_failed",
             "talk.audit.legacy",
             "known",
@@ -11666,9 +12809,9 @@ ${JSON.stringify(request, null, 2)}`;
     const observe = await runtime.runOperation(
       talkObservePrompt(state),
       {
-        phase: "Talk",
+        phase: "Recall",
         agentType: "quasi:transcribe-agent",
-        label: `observe-talk:${state.slug}`,
+        label: `${state.slug}:observe`,
         schema: TALK_OBSERVE_SCHEMA
       },
       {
@@ -11682,13 +12825,13 @@ ${JSON.stringify(request, null, 2)}`;
     );
     state.operations.push(observe);
     if (!strictObserve(observe, state)) {
-      const unknown = runtimeUnknown4(observe);
-      return terminal3(
+      const unknown = runtimeUnknown5(observe);
+      return terminal4(
         state,
         unknown ? "blocked" : "transcribe_failed",
         unknown ? "blocked" : "failed",
         "reconcile",
-        operationFailure5(
+        operationFailure6(
           "talk.observation_receipt_invalid",
           "talk.observe",
           unknown ? "unknown" : "known",
@@ -11697,7 +12840,7 @@ ${JSON.stringify(request, null, 2)}`;
       );
     }
     if (observe.status === "blocked")
-      return terminal3(
+      return terminal4(
         state,
         "blocked",
         "blocked",
@@ -11705,7 +12848,7 @@ ${JSON.stringify(request, null, 2)}`;
         observe.failure
       );
     if (observe.status === "failed")
-      return terminal3(
+      return terminal4(
         state,
         "transcribe_failed",
         "failed",
@@ -11777,9 +12920,9 @@ ${JSON.stringify(request, null, 2)}`;
         const receipt2 = await runtime.runOperation(
           talkPrepareMediaPrompt(state),
           {
-            phase: "Talk",
+            phase: "Prepare",
             agentType: "quasi:transcribe-agent",
-            label: `prepare-media:${state.slug}`,
+            label: `${state.slug}:prepare-media`,
             schema: TALK_PREPARE_MEDIA_SCHEMA
           },
           {
@@ -11799,7 +12942,7 @@ ${JSON.stringify(request, null, 2)}`;
             "talk.prepare-media"
           );
         if (receipt2.status === "blocked")
-          return terminal3(
+          return terminal4(
             state,
             "blocked",
             "blocked",
@@ -11807,7 +12950,7 @@ ${JSON.stringify(request, null, 2)}`;
             receipt2.failure
           );
         if (receipt2.status === "failed")
-          return terminal3(
+          return terminal4(
             state,
             "transcribe_failed",
             "failed",
@@ -11834,9 +12977,9 @@ ${JSON.stringify(request, null, 2)}`;
       const receipt2 = await runtime.runOperation(
         talkTranscribePrompt(state, inputPath),
         {
-          phase: "Talk",
+          phase: "Prepare",
           agentType: "quasi:transcribe-agent",
-          label: `transcribe-talk:${state.slug}`,
+          label: `${state.slug}:transcribe`,
           schema: TALK_TRANSCRIBE_SCHEMA
         },
         {
@@ -11860,7 +13003,7 @@ ${JSON.stringify(request, null, 2)}`;
           "talk.transcribe"
         );
       if (receipt2.status === "blocked")
-        return terminal3(
+        return terminal4(
           state,
           "blocked",
           "blocked",
@@ -11868,7 +13011,7 @@ ${JSON.stringify(request, null, 2)}`;
           receipt2.failure
         );
       if (receipt2.status === "failed")
-        return terminal3(
+        return terminal4(
           state,
           "transcribe_failed",
           "failed",
@@ -11896,12 +13039,12 @@ ${JSON.stringify(request, null, 2)}`;
       (row) => row.role === "transcript"
     );
     if (!transcript)
-      return terminal3(
+      return terminal4(
         state,
         "transcribe_failed",
         "failed",
         "transcribe",
-        operationFailure5(
+        operationFailure6(
           "talk.transcript_missing",
           "talk.transcribe",
           "known",
@@ -11912,9 +13055,9 @@ ${JSON.stringify(request, null, 2)}`;
     const classification = await runtime.runOperation(
       talkClassifyPrompt(state, transcript.path),
       {
-        phase: "Talk",
+        phase: "Prepare",
         agentType: "quasi:transcribe-agent",
-        label: `classify-talk:${state.slug}`,
+        label: `${state.slug}:classify`,
         schema: TALK_CLASSIFY_SCHEMA
       },
       {
@@ -11928,20 +13071,20 @@ ${JSON.stringify(request, null, 2)}`;
     );
     state.operations.push(classification);
     if (!strictClassify(classification, state, transcript.path))
-      return terminal3(
+      return terminal4(
         state,
         "transcribe_failed",
         "failed",
         "classify",
-        operationFailure5(
+        operationFailure6(
           "talk.classification_receipt_invalid",
           "talk.classify",
-          runtimeUnknown4(classification) ? "unknown" : "known",
+          runtimeUnknown5(classification) ? "unknown" : "known",
           "classification receipt did not prove exact typed state"
         )
       );
     if (classification.status === "failed")
-      return terminal3(
+      return terminal4(
         state,
         "transcribe_failed",
         "failed",
@@ -11982,12 +13125,12 @@ ${JSON.stringify(request, null, 2)}`;
       audited = await runAudit2(runtime, state, 2);
       if (audited.terminal) return audited.terminal;
       if (!audited.clean)
-        return terminal3(
+        return terminal4(
           state,
           "audit_escalated",
           "failed",
           "audit",
-          operationFailure5(
+          operationFailure6(
             "talk.repair_exhausted",
             "talk.audit.legacy",
             "known",
@@ -11996,7 +13139,7 @@ ${JSON.stringify(request, null, 2)}`;
           { escalated: audited.diagnostics }
         );
     }
-    return terminal3(
+    return terminal4(
       state,
       "ok",
       "complete",
@@ -12004,7 +13147,7 @@ ${JSON.stringify(request, null, 2)}`;
     );
   }
   async function processTalk(runtime, slug, rawMeta) {
-    runtime.phase("Talk");
+    runtime.phase("Recall");
     const validation = validateIdentity3(slug, rawMeta);
     if (!validation.ok)
       return rejectedResult3(slug, validation);
@@ -12148,32 +13291,32 @@ ${JSON.stringify(request, null, 2)}`;
 
   // scripts/workflows/research/topic-recall.mjs
   var RESEARCH_RECEIPT_VERSION = "quasi.research.topic.receipt/0.1";
-  var SLUG2 = /^[a-z0-9][a-z0-9-]{0,79}$/;
-  var CONTROL_CHARS6 = /[\u0000-\u001f\u007f-\u009f]/;
+  var SLUG3 = /^[a-z0-9][a-z0-9-]{0,79}$/;
+  var CONTROL_CHARS7 = /[\u0000-\u001f\u007f-\u009f]/;
   var KINDS = /* @__PURE__ */ new Set(["book", "paper", "talk"]);
-  var exactKeys6 = (value, keys) => !!(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(
+  var exactKeys7 = (value, keys) => !!(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(
     (key) => Object.prototype.hasOwnProperty.call(value, key)
   ));
-  var validText6 = (value, min, max) => typeof value === "string" && value === value.trim() && value.length >= min && value.length <= max && !CONTROL_CHARS6.test(value);
+  var validText7 = (value, min, max) => typeof value === "string" && value === value.trim() && value.length >= min && value.length <= max && !CONTROL_CHARS7.test(value);
   var sameStrings3 = (left, right) => Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => value === right[index]);
-  var operationFailure6 = (code, operationKey, outcome, message) => ({
+  var operationFailure7 = (code, operationKey, outcome, message) => ({
     code,
     operation_key: operationKey,
     outcome,
     retryable: false,
     message
   });
-  function validFailure5(failure, key, outcome) {
-    return !!(exactKeys6(failure, [
+  function validFailure6(failure, key, outcome) {
+    return !!(exactKeys7(failure, [
       "code",
       "operation_key",
       "outcome",
       "retryable",
       "message"
-    ]) && validText6(failure.code, 1, 200) && failure.operation_key === key && failure.outcome === outcome && failure.retryable === false && (failure.message === null || validText6(failure.message, 1, 4e3)));
+    ]) && validText7(failure.code, 1, 200) && failure.operation_key === key && failure.outcome === outcome && failure.retryable === false && (failure.message === null || validText7(failure.message, 1, 4e3)));
   }
   function validateIdentity4(slug, meta) {
-    if (typeof slug !== "string" || !SLUG2.test(slug))
+    if (typeof slug !== "string" || !SLUG3.test(slug))
       return {
         ok: false,
         code: "topic.slug_invalid",
@@ -12186,7 +13329,7 @@ ${JSON.stringify(request, null, 2)}`;
         message: "topic metadata must be an object"
       };
     const desc = meta.desc || meta.topic_desc || slug;
-    if (!validText6(desc, 1, 1e3))
+    if (!validText7(desc, 1, 1e3))
       return {
         ok: false,
         code: "topic.identity_invalid",
@@ -12214,7 +13357,7 @@ ${JSON.stringify(request, null, 2)}`;
         message: "final must be boolean"
       };
     const seeds = meta.seeds === void 0 ? [] : meta.seeds;
-    if (!Array.isArray(seeds) || seeds.length > 16 || seeds.some((seed) => !validText6(seed, 1, 500)))
+    if (!Array.isArray(seeds) || seeds.length > 16 || seeds.some((seed) => !validText7(seed, 1, 500)))
       return {
         ok: false,
         code: "topic.identity_invalid",
@@ -12314,7 +13457,7 @@ ${JSON.stringify(request, null, 2)}`;
       resume: status === "blocked" ? { operation_key: "topic.reconcile" } : null
     };
   }
-  function terminal4(state, legacyStatus2, researchStatus, stage, failure = null, extra = {}) {
+  function terminal5(state, legacyStatus2, researchStatus, stage, failure = null, extra = {}) {
     const books = state.members.filter((member) => member.kind === "book").map((member) => member.slug);
     return {
       slug: state.slug,
@@ -12349,7 +13492,7 @@ ${JSON.stringify(request, null, 2)}`;
     };
   }
   function rejectedResult4(slug, validation, conflict = false) {
-    const canonical = typeof slug === "string" && SLUG2.test(slug);
+    const canonical = typeof slug === "string" && SLUG3.test(slug);
     const state = createState4(canonical ? slug : "", {
       desc: canonical ? slug : "",
       strict: false,
@@ -12359,12 +13502,12 @@ ${JSON.stringify(request, null, 2)}`;
       final: false,
       seeds: []
     });
-    return terminal4(
+    return terminal5(
       state,
       "blocked",
       "blocked",
       "identity",
-      operationFailure6(
+      operationFailure7(
         conflict ? "topic.identity_conflict" : validation.code,
         "topic.identity",
         "known",
@@ -12373,10 +13516,10 @@ ${JSON.stringify(request, null, 2)}`;
     );
   }
   function validRecalledItem(item) {
-    return !!(exactKeys6(item, ["kind", "slug", "path"]) && KINDS.has(item.kind) && SLUG2.test(item.slug) && (item.path === null || item.path === expectedPath(item.kind, item.slug)));
+    return !!(exactKeys7(item, ["kind", "slug", "path"]) && KINDS.has(item.kind) && SLUG3.test(item.slug) && (item.path === null || item.path === expectedPath(item.kind, item.slug)));
   }
   function strictRecall(receipt2, state) {
-    if (!exactKeys6(receipt2, [
+    if (!exactKeys7(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -12394,8 +13537,8 @@ ${JSON.stringify(request, null, 2)}`;
     if (receipt2.status === "succeeded")
       return receipt2.failure === null;
     if (receipt2.status === "failed")
-      return receipt2.items.length === 0 && validFailure5(receipt2.failure, "topic.recall", "known");
-    return receipt2.status === "blocked" && receipt2.items.length === 0 && validFailure5(receipt2.failure, "topic.recall", "unknown");
+      return receipt2.items.length === 0 && validFailure6(receipt2.failure, "topic.recall", "known");
+    return receipt2.status === "blocked" && receipt2.items.length === 0 && validFailure6(receipt2.failure, "topic.recall", "unknown");
   }
   function expectedPath(kind, slug) {
     if (kind === "book")
@@ -12405,7 +13548,7 @@ ${JSON.stringify(request, null, 2)}`;
     return `vault/talks/${slug}/talk.md`;
   }
   function strictMembership2(receipt2, state, requests, allowAlias = false) {
-    if (!exactKeys6(receipt2, [
+    if (!exactKeys7(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -12417,17 +13560,17 @@ ${JSON.stringify(request, null, 2)}`;
       "failure"
     ]) || receipt2.schema_version !== "quasi.operation.topic.resolve-membership.receipt/0.1" || receipt2.key !== "topic.resolve-membership" || receipt2.effect !== "readonly" || receipt2.attempt !== 1 || receipt2.research_key !== state.researchKey || !Array.isArray(receipt2.requests) || !Array.isArray(receipt2.resolved) || receipt2.requests.length !== requests.length || !requests.every((request, index) => {
       const echoed = receipt2.requests[index];
-      return exactKeys6(echoed, ["kind", "slug"]) && echoed.kind === request.kind && echoed.slug === request.slug;
+      return exactKeys7(echoed, ["kind", "slug"]) && echoed.kind === request.kind && echoed.slug === request.slug;
     }))
       return false;
     if (receipt2.status === "failed")
-      return receipt2.resolved.length === 0 && validFailure5(
+      return receipt2.resolved.length === 0 && validFailure6(
         receipt2.failure,
         "topic.resolve-membership",
         "known"
       );
     if (receipt2.status === "blocked")
-      return receipt2.resolved.length === 0 && validFailure5(
+      return receipt2.resolved.length === 0 && validFailure6(
         receipt2.failure,
         "topic.resolve-membership",
         "unknown"
@@ -12436,7 +13579,7 @@ ${JSON.stringify(request, null, 2)}`;
       return false;
     return requests.every((request, index) => {
       const row = receipt2.resolved[index];
-      if (!exactKeys6(row, [
+      if (!exactKeys7(row, [
         "kind",
         "requested_slug",
         "resolved_slug",
@@ -12446,13 +13589,13 @@ ${JSON.stringify(request, null, 2)}`;
         return false;
       if (row.resolved_slug === null)
         return row.path === null && row.match === null;
-      if (!SLUG2.test(row.resolved_slug) || row.path !== expectedPath(row.kind, row.resolved_slug) || !validText6(row.match, 1, 100))
+      if (!SLUG3.test(row.resolved_slug) || row.path !== expectedPath(row.kind, row.resolved_slug) || !validText7(row.match, 1, 100))
         return false;
       return allowAlias ? true : row.resolved_slug === request.slug && row.match === "slug";
     });
   }
   function validSubquestion(value) {
-    return !!(exactKeys6(value, [
+    return !!(exactKeys7(value, [
       "id",
       "question",
       "coverage",
@@ -12462,29 +13605,29 @@ ${JSON.stringify(request, null, 2)}`;
       "theory_used",
       "items",
       "cards"
-    ]) && /^sq-[a-z0-9][a-z0-9-]{0,76}$/.test(value.id) && validText6(value.question, 1, 500) && ["gap", "thin", "covered", "saturated"].includes(
+    ]) && /^sq-[a-z0-9][a-z0-9-]{0,76}$/.test(value.id) && validText7(value.question, 1, 500) && ["gap", "thin", "covered", "saturated"].includes(
       value.coverage
     ) && ["academic", "web", "mixed"].includes(value.channel) && typeof value.dossier === "boolean" && (value.page === null || /^[0-9]{2}-[a-z0-9][a-z0-9-]*\.md$/.test(
       value.page
     )) && Number.isInteger(value.theory_used) && value.theory_used >= 0 && value.theory_used <= 3 && Array.isArray(value.items) && value.items.length <= 50 && value.items.every(
-      (item) => exactKeys6(item, ["kind", "slug", "role"]) && KINDS.has(item.kind) && SLUG2.test(item.slug) && ["evidence", "theory", "method", "context"].includes(
+      (item) => exactKeys7(item, ["kind", "slug", "role"]) && KINDS.has(item.kind) && SLUG3.test(item.slug) && ["evidence", "theory", "method", "context"].includes(
         item.role
       )
-    ) && Array.isArray(value.cards) && value.cards.length <= 50 && value.cards.every((card) => SLUG2.test(card)));
+    ) && Array.isArray(value.cards) && value.cards.length <= 50 && value.cards.every((card) => SLUG3.test(card)));
   }
   function validCandidate2(value) {
-    return !!(exactKeys6(value, [
+    return !!(exactKeys7(value, [
       "kind",
       "query",
       "subq",
       "role",
       "reason"
-    ]) && ["book", "paper"].includes(value.kind) && validText6(value.query, 1, 500) && /^sq-[a-z0-9][a-z0-9-]{0,76}$/.test(value.subq) && ["evidence", "theory", "method", "context"].includes(
+    ]) && ["book", "paper"].includes(value.kind) && validText7(value.query, 1, 500) && /^sq-[a-z0-9][a-z0-9-]{0,76}$/.test(value.subq) && ["evidence", "theory", "method", "context"].includes(
       value.role
-    ) && validText6(value.reason, 1, 1e3));
+    ) && validText7(value.reason, 1, 1e3));
   }
   function sameDemand(left, right) {
-    return exactKeys6(left, ["kind", "query", "subq", "role", "reason"]) && exactKeys6(right, ["kind", "query", "subq", "role", "reason"]) && ["kind", "query", "subq", "role", "reason"].every(
+    return exactKeys7(left, ["kind", "query", "subq", "role", "reason"]) && exactKeys7(right, ["kind", "query", "subq", "role", "reason"]) && ["kind", "query", "subq", "role", "reason"].every(
       (key) => left[key] === right[key]
     );
   }
@@ -12492,7 +13635,7 @@ ${JSON.stringify(request, null, 2)}`;
     if (!candidate || typeof candidate !== "object")
       return false;
     if (kind === "book")
-      return !!(exactKeys6(candidate, [
+      return !!(exactKeys7(candidate, [
         "kind",
         "slug",
         "title",
@@ -12502,15 +13645,15 @@ ${JSON.stringify(request, null, 2)}`;
         "publisher",
         "category",
         "confidence"
-      ]) && candidate.kind === "book" && SLUG2.test(candidate.slug) && validText6(candidate.title, 1, 1e3) && Array.isArray(candidate.authors) && candidate.authors.length > 0 && candidate.authors.length <= 32 && candidate.authors.every(
-        (author) => validText6(author, 1, 500)
-      ) && Number.isInteger(candidate.year) && candidate.year >= 1 && candidate.year <= 9999 && (candidate.isbn === null || validText6(candidate.isbn, 1, 64)) && validText6(candidate.publisher, 1, 500) && [
+      ]) && candidate.kind === "book" && SLUG3.test(candidate.slug) && validText7(candidate.title, 1, 1e3) && Array.isArray(candidate.authors) && candidate.authors.length > 0 && candidate.authors.length <= 32 && candidate.authors.every(
+        (author) => validText7(author, 1, 500)
+      ) && Number.isInteger(candidate.year) && candidate.year >= 1 && candidate.year <= 9999 && (candidate.isbn === null || validText7(candidate.isbn, 1, 64)) && validText7(candidate.publisher, 1, 500) && [
         "monograph",
         "edited-volume",
         "handbook",
         "other"
       ].includes(candidate.category) && ["high", "medium"].includes(candidate.confidence));
-    return !!(exactKeys6(candidate, [
+    return !!(exactKeys7(candidate, [
       "kind",
       "slug",
       "title",
@@ -12521,15 +13664,15 @@ ${JSON.stringify(request, null, 2)}`;
       "url",
       "journal",
       "confidence"
-    ]) && candidate.kind === "paper" && SLUG2.test(candidate.slug) && validText6(candidate.title, 1, 1e3) && Array.isArray(candidate.authors) && candidate.authors.length > 0 && candidate.authors.length <= 32 && candidate.authors.every(
-      (author) => validText6(author, 1, 500)
+    ]) && candidate.kind === "paper" && SLUG3.test(candidate.slug) && validText7(candidate.title, 1, 1e3) && Array.isArray(candidate.authors) && candidate.authors.length > 0 && candidate.authors.length <= 32 && candidate.authors.every(
+      (author) => validText7(author, 1, 500)
     ) && Number.isInteger(candidate.year) && candidate.year >= 1 && candidate.year <= 9999 && ["doi", "oa_url", "url"].every(
-      (key) => candidate[key] === null || validText6(candidate[key], 1, key === "doi" ? 500 : 2048)
-    ) && validText6(candidate.journal, 1, 1e3) && ["high", "medium"].includes(candidate.confidence));
+      (key) => candidate[key] === null || validText7(candidate[key], 1, key === "doi" ? 500 : 2048)
+    ) && validText7(candidate.journal, 1, 1e3) && ["high", "medium"].includes(candidate.confidence));
   }
   function strictDiscovery2(receipt2, state, demandId, demand) {
     const key = `topic.discover-${demand.kind}`;
-    if (!exactKeys6(receipt2, [
+    if (!exactKeys7(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -12546,8 +13689,8 @@ ${JSON.stringify(request, null, 2)}`;
       return receipt2.failure === null && validDiscoveredCandidate(receipt2.candidate, demand.kind);
     if (receipt2.candidate !== null) return false;
     if (receipt2.status === "failed")
-      return validFailure5(receipt2.failure, key, "known");
-    return receipt2.status === "blocked" && validFailure5(receipt2.failure, key, "unknown");
+      return validFailure6(receipt2.failure, key, "known");
+    return receipt2.status === "blocked" && validFailure6(receipt2.failure, key, "unknown");
   }
   function validMaterialFailure2(failure) {
     return !!(failure && typeof failure === "object" && !Array.isArray(failure) && [4, 5].includes(Object.keys(failure).length) && ["code", "operation_key", "outcome", "retryable"].every(
@@ -12560,21 +13703,21 @@ ${JSON.stringify(request, null, 2)}`;
         "retryable",
         "message"
       ].includes(key)
-    ) && validText6(failure.code, 1, 200) && validText6(failure.operation_key, 1, 200) && ["known", "unknown"].includes(failure.outcome) && typeof failure.retryable === "boolean" && (failure.message === void 0 || failure.message === null || validText6(failure.message, 1, 4e3)));
+    ) && validText7(failure.code, 1, 200) && validText7(failure.operation_key, 1, 200) && ["known", "unknown"].includes(failure.outcome) && typeof failure.retryable === "boolean" && (failure.message === void 0 || failure.message === null || validText7(failure.message, 1, 4e3)));
   }
   function validMaterialArtifact2(artifact3) {
-    return !!(exactKeys6(artifact3, [
+    return !!(exactKeys7(artifact3, [
       "role",
       "path",
       "exists",
       "usable",
       "producer"
-    ]) && validText6(artifact3.role, 1, 100) && validText6(artifact3.path, 1, 1e3) && artifact3.exists === true && [null, true, false].includes(artifact3.usable) && validText6(artifact3.producer, 1, 200));
+    ]) && validText7(artifact3.role, 1, 100) && validText7(artifact3.path, 1, 1e3) && artifact3.exists === true && [null, true, false].includes(artifact3.usable) && validText7(artifact3.producer, 1, 200));
   }
   function cleanChildAudit(receipt2, demand) {
     const target = expectedPath(demand.kind, demand.id);
     if (demand.kind === "paper")
-      return !!(exactKeys6(receipt2.audit, [
+      return !!(exactKeys7(receipt2.audit, [
         "schema_version",
         "key",
         "effect",
@@ -12615,11 +13758,11 @@ ${JSON.stringify(request, null, 2)}`;
       "present_slots",
       "missing_slots"
     ];
-    if (!(exactKeys6(receipt2, baseKeys) || demand.kind === "book" && exactKeys6(receipt2, bookKeys)) || receipt2.schema_version !== "quasi.material-loop.receipt/0.1" || receipt2.material_key !== demand.material_key || receipt2.kind !== demand.kind || receipt2.id !== demand.id || !["complete", "blocked", "failed"].includes(
+    if (!(exactKeys7(receipt2, baseKeys) || demand.kind === "book" && exactKeys7(receipt2, bookKeys)) || receipt2.schema_version !== "quasi.material-loop.receipt/0.1" || receipt2.material_key !== demand.material_key || receipt2.kind !== demand.kind || receipt2.id !== demand.id || !["complete", "blocked", "failed"].includes(
       receipt2.status
     ) || !Array.isArray(receipt2.artifacts) || receipt2.artifacts.some(
       (artifact3) => !validMaterialArtifact2(artifact3)
-    ) || !Array.isArray(receipt2.operations) || !Array.isArray(receipt2.warnings) || !exactKeys6(receipt2.freshness, ["observation", "basis"]) || receipt2.freshness.observation !== "unknown" || receipt2.freshness.basis !== "operation-receipts-and-final-audit")
+    ) || !Array.isArray(receipt2.operations) || !Array.isArray(receipt2.warnings) || !exactKeys7(receipt2.freshness, ["observation", "basis"]) || receipt2.freshness.observation !== "unknown" || receipt2.freshness.basis !== "operation-receipts-and-final-audit")
       return null;
     const target = expectedPath(demand.kind, demand.id);
     const canonicals = receipt2.artifacts.filter(
@@ -12686,7 +13829,7 @@ ${JSON.stringify(request, null, 2)}`;
         if (existing.identity !== identity)
           return {
             ok: false,
-            failure: operationFailure6(
+            failure: operationFailure7(
               "topic.material_identity_conflict",
               "topic.resolve-membership",
               "known",
@@ -12737,7 +13880,7 @@ ${JSON.stringify(request, null, 2)}`;
       subq: demand.subq,
       role: demand.role,
       receipt: null,
-      failure: operationFailure6(
+      failure: operationFailure7(
         "topic.child_receipt_invalid",
         "topic.material-join",
         "unknown",
@@ -12746,15 +13889,15 @@ ${JSON.stringify(request, null, 2)}`;
     };
   }
   function validWebTask(value) {
-    return !!(exactKeys6(value, [
+    return !!(exactKeys7(value, [
       "subq",
       "card_slug",
       "query",
       "note"
-    ]) && /^sq-[a-z0-9][a-z0-9-]{0,76}$/.test(value.subq) && SLUG2.test(value.card_slug) && validText6(value.query, 1, 500) && validText6(value.note, 1, 1e3));
+    ]) && /^sq-[a-z0-9][a-z0-9-]{0,76}$/.test(value.subq) && SLUG3.test(value.card_slug) && validText7(value.query, 1, 500) && validText7(value.note, 1, 1e3));
   }
   function strictSteer(receipt2, state, memberRefs, inputPaths, mode) {
-    if (!exactKeys6(receipt2, [
+    if (!exactKeys7(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -12774,7 +13917,7 @@ ${JSON.stringify(request, null, 2)}`;
       "failure"
     ]) || receipt2.schema_version !== "quasi.operation.topic.steer.receipt/0.1" || receipt2.key !== "topic.steer" || receipt2.effect !== "writer" || receipt2.attempt !== 1 || receipt2.research_key !== state.researchKey || !Array.isArray(receipt2.member_refs) || receipt2.member_refs.length !== memberRefs.length || !memberRefs.every((member, index) => {
       const echoed = receipt2.member_refs[index];
-      return exactKeys6(echoed, ["kind", "slug", "path"]) && echoed.kind === member.kind && echoed.slug === member.slug && echoed.path === member.path;
+      return exactKeys7(echoed, ["kind", "slug", "path"]) && echoed.kind === member.kind && echoed.slug === member.slug && echoed.path === member.path;
     }) || !sameStrings3(receipt2.input_paths, inputPaths) || receipt2.output_path !== state.paths.outline || !["create", "refresh", "repair", "reconciled"].includes(
       receipt2.action
     ) || !["continue", "needs_seeds", "saturated"].includes(
@@ -12786,26 +13929,26 @@ ${JSON.stringify(request, null, 2)}`;
     ) || !Array.isArray(receipt2.web_tasks) || receipt2.web_tasks.length > 6 || receipt2.web_tasks.some((task) => !validWebTask(task)) || !Array.isArray(receipt2.dirty) || receipt2.dirty.length > 6 || receipt2.dirty.some(
       (id) => !/^sq-[a-z0-9][a-z0-9-]{0,76}$/.test(id)
     ) || !Array.isArray(receipt2.suggested_queries) || receipt2.suggested_queries.length > 6 || receipt2.suggested_queries.some(
-      (query) => !validText6(query, 1, 500)
+      (query) => !validText7(query, 1, 500)
     ))
       return false;
     const actionOk = mode === "create" ? ["create", "reconciled"].includes(receipt2.action) : mode === "refresh" ? ["refresh", "reconciled"].includes(receipt2.action) : ["repair", "reconciled"].includes(receipt2.action);
     if (receipt2.status === "succeeded")
       return actionOk && receipt2.failure === null;
     if (receipt2.status === "failed")
-      return validFailure5(
+      return validFailure6(
         receipt2.failure,
         "topic.steer",
         "known"
       );
-    return receipt2.status === "blocked" && validFailure5(
+    return receipt2.status === "blocked" && validFailure6(
       receipt2.failure,
       "topic.steer",
       "unknown"
     );
   }
   function strictSynthesis3(receipt2, state, key, inputPaths, outputPath, role, mode) {
-    if (!exactKeys6(receipt2, [
+    if (!exactKeys7(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -12822,7 +13965,7 @@ ${JSON.stringify(request, null, 2)}`;
       "failure"
     ]) || receipt2.schema_version !== `quasi.operation.${key}.receipt/0.1` || receipt2.key !== key || receipt2.effect !== "writer" || receipt2.attempt !== 1 || receipt2.research_key !== state.researchKey || !Array.isArray(receipt2.member_refs) || receipt2.member_refs.length !== state.members.length || !state.members.every((member, index) => {
       const echoed = receipt2.member_refs[index];
-      return exactKeys6(echoed, ["kind", "slug", "path"]) && echoed.kind === member.kind && echoed.slug === member.slug && echoed.path === member.path;
+      return exactKeys7(echoed, ["kind", "slug", "path"]) && echoed.kind === member.kind && echoed.slug === member.slug && echoed.path === member.path;
     }) || !sameStrings3(receipt2.input_paths, inputPaths) || receipt2.outline_path !== state.paths.outline || receipt2.output_path !== outputPath || !sameStrings3(receipt2.artifact_roles, [role]) || !["create", "repair", "reconciled"].includes(
       receipt2.action
     ) || !Number.isInteger(receipt2.members_analyzed) || receipt2.members_analyzed < 0)
@@ -12831,11 +13974,11 @@ ${JSON.stringify(request, null, 2)}`;
     if (receipt2.status === "succeeded")
       return actionOk && receipt2.failure === null && (receipt2.action === "reconciled" ? receipt2.members_analyzed === 0 : receipt2.members_analyzed === state.members.length);
     if (receipt2.status === "failed")
-      return validFailure5(receipt2.failure, key, "known");
-    return receipt2.status === "blocked" && validFailure5(receipt2.failure, key, "unknown");
+      return validFailure6(receipt2.failure, key, "known");
+    return receipt2.status === "blocked" && validFailure6(receipt2.failure, key, "unknown");
   }
   function strictAudit4(receipt2, state, target) {
-    if (!exactKeys6(receipt2, [
+    if (!exactKeys7(receipt2, [
       "schema_version",
       "key",
       "effect",
@@ -12848,32 +13991,32 @@ ${JSON.stringify(request, null, 2)}`;
       "mutated_paths",
       "failure"
     ]) || receipt2.schema_version !== "quasi.operation.topic.audit.legacy.receipt/0.1" || receipt2.key !== "topic.audit.legacy" || receipt2.effect !== "writer" || receipt2.attempt !== 1 || receipt2.research_key !== state.researchKey || receipt2.target_path !== target || !Number.isInteger(receipt2.remaining_violations) || receipt2.remaining_violations < 0 || !Array.isArray(receipt2.escalated) || !Array.isArray(receipt2.mutated_paths) || receipt2.escalated.some(
-      (item) => !exactKeys6(item, ["path", "kind", "reason"]) || !validText6(item.path, 1, 2048) || !validText6(item.kind, 1, 200) || !validText6(item.reason, 1, 4e3)
+      (item) => !exactKeys7(item, ["path", "kind", "reason"]) || !validText7(item.path, 1, 2048) || !validText7(item.kind, 1, 200) || !validText7(item.reason, 1, 4e3)
     ) || receipt2.mutated_paths.some(
-      (path) => !validText6(path, 1, 2048)
+      (path) => !validText7(path, 1, 2048)
     ))
       return false;
     if (receipt2.status === "clean")
       return receipt2.remaining_violations === 0 && receipt2.escalated.length === 0 && receipt2.failure === null;
     if (receipt2.status === "partial")
       return receipt2.remaining_violations > 0 && receipt2.escalated.length === receipt2.remaining_violations && receipt2.failure === null;
-    return receipt2.status === "error" && receipt2.remaining_violations === 0 && receipt2.escalated.length === 0 && (validFailure5(
+    return receipt2.status === "error" && receipt2.remaining_violations === 0 && receipt2.escalated.length === 0 && (validFailure6(
       receipt2.failure,
       "topic.audit.legacy",
       "known"
-    ) || validFailure5(
+    ) || validFailure6(
       receipt2.failure,
       "topic.audit.legacy",
       "unknown"
     ));
   }
   function writerMismatch3(state, key, stage) {
-    return terminal4(
+    return terminal5(
       state,
       "blocked",
       "blocked",
       stage,
-      operationFailure6(
+      operationFailure7(
         "topic.writer_receipt_mismatch",
         key,
         "unknown",
@@ -12883,7 +14026,7 @@ ${JSON.stringify(request, null, 2)}`;
   }
   function writerTerminal(state, receipt2, key, stage) {
     if (receipt2.status === "blocked")
-      return terminal4(
+      return terminal5(
         state,
         "blocked",
         "blocked",
@@ -12891,7 +14034,7 @@ ${JSON.stringify(request, null, 2)}`;
         receipt2.failure
       );
     if (receipt2.status === "failed")
-      return terminal4(
+      return terminal5(
         state,
         key === "topic.audit.legacy" ? "audit_escalated" : "synth_failed",
         "failed",
@@ -12933,7 +14076,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
         diagnostics
       }),
       {
-        phase: "Topic",
+        phase: "Search",
         agentType: "quasi:steer-agent",
         label,
         schema: TOPIC_STEER_SCHEMA
@@ -12986,7 +14129,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
     const receipt2 = await runtime.runOperation(
       prompt,
       {
-        phase: "Topic",
+        phase: "Synthesise",
         agentType: "quasi:synthesis-agent",
         label,
         schema: overview ? TOPIC_OVERVIEW_SYNTHESISE_SCHEMA : TOPIC_RESOURCES_SYNTHESISE_SCHEMA
@@ -13023,9 +14166,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
     const receipt2 = await runtime.runOperation(
       topicAuditLegacyPrompt(state.researchKey, target, pass),
       {
-        phase: "Topic",
+        phase: "Audit",
         agentType: "quasi:audit-agent",
-        label: `audit-topic:${pass}:${target}`,
+        label: `${state.slug}:audit-${pass}:${target.split("/").pop()}`,
         schema: TOPIC_AUDIT_LEGACY_SCHEMA
       },
       operationOptions(
@@ -13051,12 +14194,12 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
     ].every((path) => path === target);
     if (!owned)
       return {
-        terminal: terminal4(
+        terminal: terminal5(
           state,
           "audit_escalated",
           "failed",
           "audit",
-          operationFailure6(
+          operationFailure7(
             "topic.repair_owner_unknown",
             "topic.audit.legacy",
             "known",
@@ -13068,7 +14211,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
     if (receipt2.mutated_paths.length) state.repaired = true;
     if (receipt2.status === "error")
       return {
-        terminal: terminal4(
+        terminal: terminal5(
           state,
           receipt2.failure.outcome === "unknown" ? "blocked" : "audit_escalated",
           receipt2.failure.outcome === "unknown" ? "blocked" : "failed",
@@ -13104,9 +14247,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
             demand
           ),
           {
-            phase: "Topic",
+            phase: "Search",
             agentType: "quasi:discovery-agent",
-            label: `discover:${demandId}:${state.slug}`,
+            label: `${state.slug}:discover:${demandId}`,
             schema: book ? TOPIC_DISCOVER_BOOK_SCHEMA : TOPIC_DISCOVER_PAPER_SCHEMA
           },
           operationOptions(
@@ -13126,12 +14269,12 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
         ledger[index].demand
       ))
         return {
-          terminal: terminal4(
+          terminal: terminal5(
             state,
             "blocked",
             "blocked",
             "discovery",
-            operationFailure6(
+            operationFailure7(
               "topic.discovery_receipt_invalid",
               `topic.discover-${ledger[index].demand.kind}`,
               "unknown",
@@ -13157,9 +14300,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
     const membership = await runtime.runOperation(
       topicResolveMembershipOperationPrompt(state.researchKey, requests),
       {
-        phase: "Topic",
+        phase: "Recall",
         agentType: "general-purpose",
-        label: `resolve-discovered:${state.slug}:r1`,
+        label: `${state.slug}:resolve-discovered:r1`,
         schema: TOPIC_RESOLVE_MEMBERSHIP_SCHEMA
       },
       operationOptions(
@@ -13176,12 +14319,12 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
       true
     ))
       return {
-        terminal: terminal4(
+        terminal: terminal5(
           state,
           "blocked",
           "blocked",
           "membership",
-          operationFailure6(
+          operationFailure7(
             "topic.membership_receipt_invalid",
             "topic.resolve-membership",
             "unknown",
@@ -13191,7 +14334,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
       };
     if (membership.status !== "succeeded")
       return {
-        terminal: terminal4(
+        terminal: terminal5(
           state,
           membership.status === "blocked" ? "blocked" : "all_failed",
           membership.status === "blocked" ? "blocked" : "failed",
@@ -13205,7 +14348,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
     );
     if (!grouped.ok)
       return {
-        terminal: terminal4(
+        terminal: terminal5(
           state,
           "all_failed",
           "failed",
@@ -13268,9 +14411,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
           state.maxItems
         ),
         {
-          phase: "Topic",
+          phase: "Recall",
           agentType: "general-purpose",
-          label: `recall:${slug}`,
+          label: `${slug}:recall`,
           schema: TOPIC_RECALL_SCHEMA
         },
         operationOptions("topic.recall", "readonly", [])
@@ -13282,17 +14425,17 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
         [],
         "create",
         [],
-        `steer:${slug}:r0`
+        `${slug}:steer:r0`
       )
     ]);
     state.operations.unshift(recall);
     if (!strictRecall(recall, state)) {
-      return terminal4(
+      return terminal5(
         state,
         "blocked",
         "blocked",
         "recall",
-        operationFailure6(
+        operationFailure7(
           "topic.recall_receipt_invalid",
           "topic.recall",
           "unknown",
@@ -13303,7 +14446,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
     if (initialSteerResult.terminal)
       return initialSteerResult.terminal;
     if (recall.status === "blocked")
-      return terminal4(
+      return terminal5(
         state,
         "blocked",
         "blocked",
@@ -13311,7 +14454,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
         recall.failure
       );
     if (recall.status === "failed" && meta.maxRounds === 0)
-      return terminal4(
+      return terminal5(
         state,
         "no_works",
         "failed",
@@ -13326,12 +14469,12 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
     }
     const requests = recall.status === "succeeded" ? recall.items : [];
     if (!requests.length && meta.maxRounds === 0)
-      return terminal4(
+      return terminal5(
         state,
         "no_works",
         "failed",
         "recall",
-        operationFailure6(
+        operationFailure7(
           "topic.no_works",
           "topic.join",
           "known",
@@ -13342,9 +14485,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
       const membership = await runtime.runOperation(
         topicResolveMembershipOperationPrompt(state.researchKey, requests),
         {
-          phase: "Topic",
+          phase: "Recall",
           agentType: "general-purpose",
-          label: `resolve-membership:${slug}`,
+          label: `${slug}:resolve-membership`,
           schema: TOPIC_RESOLVE_MEMBERSHIP_SCHEMA
         },
         operationOptions(
@@ -13355,12 +14498,12 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
       );
       state.operations.push(membership);
       if (!strictMembership2(membership, state, requests)) {
-        return terminal4(
+        return terminal5(
           state,
           "blocked",
           "blocked",
           "membership",
-          operationFailure6(
+          operationFailure7(
             "topic.membership_receipt_invalid",
             "topic.resolve-membership",
             "unknown",
@@ -13369,7 +14512,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
         );
       }
       if (membership.status === "failed")
-        return terminal4(
+        return terminal5(
           state,
           "no_works",
           "failed",
@@ -13377,7 +14520,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
           membership.failure
         );
       if (membership.status === "blocked")
-        return terminal4(
+        return terminal5(
           state,
           "blocked",
           "blocked",
@@ -13392,12 +14535,12 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
       state.recalled = state.members.length;
     }
     if (!state.members.length && meta.maxRounds === 0)
-      return terminal4(
+      return terminal5(
         state,
         state.final ? "no_works" : "needs_seeds",
         state.final ? "failed" : "needs_input",
         "membership",
-        operationFailure6(
+        operationFailure7(
           state.final ? "topic.no_works" : "topic.needs_seeds",
           "topic.join",
           "known",
@@ -13414,7 +14557,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
         state.members,
         "refresh",
         [],
-        meta.maxRounds === 0 ? `steer:${slug}:r1-close` : `steer:${slug}:r1-plan`
+        meta.maxRounds === 0 ? `${slug}:steer:r1-close` : `${slug}:steer:r1-plan`
       );
       if (planningSteer.terminal) return planningSteer.terminal;
     }
@@ -13434,18 +14577,18 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
           state.members,
           "refresh",
           [],
-          `steer:${slug}:r1-close`
+          `${slug}:steer:r1-close`
         );
         if (closingSteer.terminal) return closingSteer.terminal;
       }
     }
     if (!state.members.length)
-      return terminal4(
+      return terminal5(
         state,
         state.final ? "no_works" : "needs_seeds",
         state.final ? "failed" : "needs_input",
         state.rounds ? "material-join" : "steer",
-        operationFailure6(
+        operationFailure7(
           state.final ? "topic.no_works" : "topic.needs_seeds",
           "topic.join",
           "known",
@@ -13454,12 +14597,12 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
         { suggested_queries: state.suggestedQueries }
       );
     if (state.members.length < state.minItems && !state.final)
-      return terminal4(
+      return terminal5(
         state,
         "needs_seeds",
         "needs_input",
         "membership",
-        operationFailure6(
+        operationFailure7(
           "topic.needs_seeds",
           "topic.join",
           "known",
@@ -13477,7 +14620,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
         "overview",
         "create",
         [],
-        `synth-overview:${slug}`
+        `${slug}:synthesise-overview`
       ),
       () => runSynthesis2(
         runtime,
@@ -13485,7 +14628,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
         "resources",
         "create",
         [],
-        `synth-resources:${slug}`
+        `${slug}:synthesise-resources`
       )
     ]);
     const synthTerminal = synthResults.find(
@@ -13528,7 +14671,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
               state.members,
               "repair",
               result3.diagnostics,
-              `repair-outline:${slug}`
+              `${slug}:repair-outline`
             );
           return runSynthesis2(
             runtime,
@@ -13536,7 +14679,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
             producer,
             "repair",
             result3.diagnostics,
-            `repair-${producer}:${slug}`
+            `${slug}:repair-${producer}`
           );
         })
       );
@@ -13557,12 +14700,12 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
         (result3) => !result3.clean
       );
       if (residual)
-        return terminal4(
+        return terminal5(
           state,
           "audit_escalated",
           "failed",
           "audit",
-          operationFailure6(
+          operationFailure7(
             "topic.audit_repair_exhausted",
             "topic.audit.legacy",
             "known",
@@ -13594,7 +14737,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
     const partial = state.recallFailed || state.discoveryFailures.length > 0 || state.materialResults.some(
       (member) => member.status !== "complete"
     );
-    return terminal4(
+    return terminal5(
       state,
       "ok",
       partial ? "partial" : "complete",
@@ -13602,7 +14745,7 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
     );
   }
   async function processTopicStrict(runtime, router, slug, rawMeta) {
-    runtime.phase("Topic");
+    runtime.phase("Recall");
     const validation = validateIdentity4(slug, rawMeta);
     if (!validation.ok)
       return rejectedResult4(slug, validation);
@@ -13629,24 +14772,24 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
   };
   async function processTopicLegacy(runtime, router, slug, meta) {
     const { guard, log, parallel, phase, retryNull } = runtime;
-    phase("Topic");
+    phase("Recall");
     const desc = meta.desc || meta.topic_desc || slug;
     const maxRounds = positiveInt(meta.maxRounds, 3);
     const perRound = positiveInt(meta.maxPerRound, 8);
     const perCards = positiveInt(meta.maxCardsPerRound, 3);
     const [recall, initialSteer] = await parallel([
       () => retryNull(vaultRecallPrompt(desc, perRound * 2), {
-        phase: "Topic",
+        phase: "Recall",
         agentType: "general-purpose",
-        label: `recall:${slug}`,
+        label: `${slug}:recall`,
         schema: RECALL_SCHEMA
       }),
       () => retryNull(
         steerPrompt(slug, desc, 0, [], [], perRound, meta.seeds),
         {
-          phase: "Topic",
+          phase: "Search",
           agentType: "quasi:steer-agent",
-          label: `steer:${slug}:r0`,
+          label: `${slug}:steer:r0`,
           schema: STEER_SCHEMA
         }
       )
@@ -13674,9 +14817,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
     let webTasks = scheduleCards(steer);
     const priorCards = registered(steer);
     const priorProbe = priorCards.length ? await retryNull(cardExistencePrompt(slug, priorCards), {
-      phase: "Topic",
+      phase: "Recall",
       agentType: "general-purpose",
-      label: `probe-cards:${slug}:r0`,
+      label: `${slug}:probe-cards:r0`,
       schema: CARD_PROBE_SCHEMA
     }) : null;
     (priorProbe && priorProbe.existing || []).filter((card) => priorCards.includes(card)).forEach((card) => availableCards.add(card));
@@ -13703,9 +14846,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
       const cardWork = parallel(
         roundTasks.map(
           (task) => () => retryNull(webcardPrompt(slug, desc, task, steer), {
-            phase: "Topic",
+            phase: "Search",
             agentType: "quasi:webcard-agent",
-            label: `webcard:${task.card_slug}:${slug}`,
+            label: `${slug}:webcard:${task.card_slug}`,
             schema: CARD_SCHEMA
           })
         )
@@ -13716,9 +14859,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
           batch.filter((candidate) => !isBook(candidate))
         ),
         {
-          phase: "Topic",
+          phase: "Recall",
           agentType: "general-purpose",
-          label: `probe-done:${slug}:r${round}`,
+          label: `${slug}:probe-done:r${round}`,
           schema: PROBE_SCHEMA
         }
       ) : null;
@@ -13802,9 +14945,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
           claimedFiles.map((claim) => claim.card_slug)
         ),
         {
-          phase: "Topic",
+          phase: "Recall",
           agentType: "general-purpose",
-          label: `probe-cards:${slug}:r${round}`,
+          label: `${slug}:probe-cards:r${round}`,
           schema: CARD_PROBE_SCHEMA
         }
       ) : null;
@@ -13850,9 +14993,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
           roundCards
         ),
         {
-          phase: "Topic",
+          phase: "Search",
           agentType: "quasi:steer-agent",
-          label: `steer:${slug}:r${round}`,
+          label: `${slug}:steer:r${round}`,
           schema: STEER_SCHEMA
         }
       );
@@ -13884,9 +15027,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
           []
         ),
         {
-          phase: "Topic",
+          phase: "Search",
           agentType: "quasi:steer-agent",
-          label: `steer:${slug}:r1-close`,
+          label: `${slug}:steer:r1-close`,
           schema: STEER_SCHEMA
         }
       );
@@ -13952,9 +15095,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
             cards
           ),
           {
-            phase: "Topic",
+            phase: "Synthesise",
             agentType: "quasi:synthesis-agent",
-            label: `synth-dossier:${subquestion.id}:${slug}`,
+            label: `${slug}:synthesise-dossier:${subquestion.id}`,
             schema: SY_SCHEMA
           },
           OVERWRITE
@@ -13976,9 +15119,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
         cards
       ),
       {
-        phase: "Topic",
+        phase: "Synthesise",
         agentType: "quasi:synthesis-agent",
-        label: `synth-topic:${slug}`,
+        label: `${slug}:synthesise-topic`,
         schema: SY_SCHEMA
       },
       OVERWRITE
@@ -14007,9 +15150,9 @@ User seeds: ${state.seeds.join("; ")}` : state.desc,
       const results = await parallel(
         auditPaths.map(
           (path) => () => retryNull(`path: ${path}`, {
-            phase: "Topic",
+            phase: "Audit",
             agentType: "quasi:audit-agent",
-            label: `audit${suffix}:${path}`,
+            label: `${slug}:audit${suffix}:${path.split("/").pop()}`,
             schema: AU_SCHEMA
           })
         )
@@ -14059,9 +15202,9 @@ reason: audit escalated ${reasons}`;
                   []
                 ) + reason,
                 {
-                  phase: "Topic",
+                  phase: "Search",
                   agentType: "quasi:steer-agent",
-                  label: `regen-outline:${slug}`
+                  label: `${slug}:repair-outline`
                 }
               );
             const dossier = subquestions.find(
@@ -14073,12 +15216,13 @@ reason: audit escalated ${reasons}`;
                   slug,
                   desc,
                   dossier,
-                  cards
-                ) + reason,
+                  cards,
+                  [`audit escalated: ${reasons}`]
+                ),
                 {
-                  phase: "Topic",
+                  phase: "Synthesise",
                   agentType: "quasi:synthesis-agent",
-                  label: `regen-dossier:${dossier.id}:${slug}`
+                  label: `${slug}:repair-dossier:${dossier.id}`
                 }
               );
             const card = cards.find(
@@ -14088,9 +15232,9 @@ reason: audit escalated ${reasons}`;
               return guard(
                 webcardPrompt(slug, desc, card, steer) + reason,
                 {
-                  phase: "Topic",
+                  phase: "Search",
                   agentType: "quasi:webcard-agent",
-                  label: `regen-card:${card.card_slug}:${slug}`
+                  label: `${slug}:repair-card:${card.card_slug}`
                 }
               );
             return Promise.resolve({ status: "spine" });
@@ -14103,12 +15247,15 @@ reason: audit escalated ${reasons}`;
           desc,
           ok,
           spineSubquestions,
-          cards
-        ) + "\nreason: audit escalated",
+          cards,
+          escalated.map(
+            (entry) => `audit escalated ${entry.kind}: ${entry.reason}`
+          )
+        ),
         {
-          phase: "Topic",
+          phase: "Synthesise",
           agentType: "quasi:synthesis-agent",
-          label: `regen-topic:${slug}`
+          label: `${slug}:repair-topic`
         }
       );
       escalated = await audit3("2");
@@ -14148,14 +15295,15 @@ reason: audit escalated ${reasons}`;
   // scripts/workflows/process-material.entry.mjs
   var workflowMeta = {
     name: "process-material",
-    description: "Unified acquisition→analysis graph: router(kind) → book | paper | talk | translate | author | topic",
+    description: "Moves academic materials through a shared processing pipeline",
     phases: [
-      { title: "Book" },
-      { title: "Paper" },
-      { title: "Talk" },
-      { title: "Translation" },
-      { title: "Author" },
-      { title: "Topic" }
+      { title: "Recall" },
+      { title: "Search" },
+      { title: "Acquire" },
+      { title: "Prepare" },
+      { title: "Analyse" },
+      { title: "Synthesise" },
+      { title: "Audit" }
     ]
   };
   async function run(primitives, inputArgs) {
@@ -14165,7 +15313,10 @@ reason: audit escalated ${reasons}`;
       processPaper: (slug, meta) => processPaper(runtime, slug, meta),
       processTalk: (slug, meta) => processTalk(runtime, slug, meta)
     };
-    const dispatchMaterial = createMaterialDispatch(materialProcessors);
+    const dispatchMaterial = createMaterialDispatch(
+      runtime,
+      materialProcessors
+    );
     async function router(kind, args2, opts = {}) {
       switch (kind) {
         case "book":
@@ -14204,12 +15355,16 @@ reason: audit escalated ${reasons}`;
       throw new Error(
         "process-material: 需要 args.kind(book|paper|talk|translate|author|topic)"
       );
-    const entryOpts = args.kind === "book" && Object.prototype.hasOwnProperty.call(args, "year_decision") ? { yearDecision: args.year_decision } : {};
+    const entryOpts = {
+      ...["book", "paper"].includes(args.kind) ? { resolveIdentity: true } : {},
+      ...args.kind === "book" && Object.prototype.hasOwnProperty.call(args, "year_decision") ? { yearDecision: args.year_decision } : {}
+    };
     let result3 = await router(args.kind, args, entryOpts);
     if (args.kind === "paper" && args.translate === true && result3 && result3.status === "ok") {
       const receipt2 = result3.material_receipt;
-      const sources = receipt2 && receipt2.schema_version === "quasi.material-loop.receipt/0.1" && receipt2.material_key === `paper:${args.slug}` && receipt2.kind === "paper" && receipt2.id === args.slug && receipt2.status === "complete" && Array.isArray(receipt2.artifacts) ? receipt2.artifacts.filter(
-        (artifact3) => artifact3 && artifact3.role === "source" && artifact3.exists === true && artifact3.path === `sources/${args.slug}.pdf`
+      const resolvedSlug = result3.slug;
+      const sources = receipt2 && receipt2.schema_version === "quasi.material-loop.receipt/0.1" && receipt2.material_key === `paper:${resolvedSlug}` && receipt2.kind === "paper" && receipt2.id === resolvedSlug && receipt2.status === "complete" && Array.isArray(receipt2.artifacts) ? receipt2.artifacts.filter(
+        (artifact3) => artifact3 && artifact3.role === "source" && artifact3.exists === true && artifact3.path === `sources/${resolvedSlug}.pdf`
       ) : [];
       const translationMeta = {
         source_file: sources.length === 1 ? sources[0].path : null,
@@ -14220,10 +15375,10 @@ reason: audit escalated ${reasons}`;
       };
       const translation = sources.length === 1 ? await processTranslation(
         runtime,
-        args.slug,
+        resolvedSlug,
         translationMeta
       ) : translationDependencyFailure(
-        args.slug,
+        resolvedSlug,
         translationMeta,
         "translation.paper_source_missing",
         "Paper MaterialReceipt did not contain one exact source artifact"

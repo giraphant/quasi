@@ -33,7 +33,7 @@ export const positiveInt = (value, fallback) => {
 
 export async function processTopicLegacy(runtime, router, slug, meta) {
   const { guard, log, parallel, phase, retryNull } = runtime;
-  phase("Topic");
+  phase("Recall");
   const desc = meta.desc || meta.topic_desc || slug;
   const maxRounds = positiveInt(meta.maxRounds, 3);
   const perRound = positiveInt(meta.maxPerRound, 8);
@@ -42,18 +42,18 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
   const [recall, initialSteer] = await parallel([
     () =>
       retryNull(vaultRecallPrompt(desc, perRound * 2), {
-        phase: "Topic",
+        phase: "Recall",
         agentType: "general-purpose",
-        label: `recall:${slug}`,
+        label: `${slug}:recall`,
         schema: RECALL_SCHEMA,
       }),
     () =>
       retryNull(
         steerPrompt(slug, desc, 0, [], [], perRound, meta.seeds),
         {
-          phase: "Topic",
+          phase: "Search",
           agentType: "quasi:steer-agent",
-          label: `steer:${slug}:r0`,
+          label: `${slug}:steer:r0`,
           schema: STEER_SCHEMA,
         },
       ),
@@ -87,9 +87,9 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
   const priorCards = registered(steer);
   const priorProbe = priorCards.length
     ? await retryNull(cardExistencePrompt(slug, priorCards), {
-        phase: "Topic",
+        phase: "Recall",
         agentType: "general-purpose",
-        label: `probe-cards:${slug}:r0`,
+        label: `${slug}:probe-cards:r0`,
         schema: CARD_PROBE_SCHEMA,
       })
     : null;
@@ -135,9 +135,9 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
       roundTasks.map(
         (task) => () =>
           retryNull(webcardPrompt(slug, desc, task, steer), {
-            phase: "Topic",
+            phase: "Search",
             agentType: "quasi:webcard-agent",
-            label: `webcard:${task.card_slug}:${slug}`,
+            label: `${slug}:webcard:${task.card_slug}`,
             schema: CARD_SCHEMA,
           }),
       ),
@@ -150,9 +150,9 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
             batch.filter((candidate) => !isBook(candidate)),
           ),
           {
-            phase: "Topic",
+            phase: "Recall",
             agentType: "general-purpose",
-            label: `probe-done:${slug}:r${round}`,
+            label: `${slug}:probe-done:r${round}`,
             schema: PROBE_SCHEMA,
           },
         )
@@ -268,9 +268,9 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
             claimedFiles.map((claim) => claim.card_slug),
           ),
           {
-            phase: "Topic",
+            phase: "Recall",
             agentType: "general-purpose",
-            label: `probe-cards:${slug}:r${round}`,
+            label: `${slug}:probe-cards:r${round}`,
             schema: CARD_PROBE_SCHEMA,
           },
         )
@@ -331,9 +331,9 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
         roundCards,
       ),
       {
-        phase: "Topic",
+        phase: "Search",
         agentType: "quasi:steer-agent",
-        label: `steer:${slug}:r${round}`,
+        label: `${slug}:steer:r${round}`,
         schema: STEER_SCHEMA,
       },
     );
@@ -371,9 +371,9 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
         [],
       ),
       {
-        phase: "Topic",
+        phase: "Search",
         agentType: "quasi:steer-agent",
-        label: `steer:${slug}:r1-close`,
+        label: `${slug}:steer:r1-close`,
         schema: STEER_SCHEMA,
       },
     );
@@ -450,9 +450,9 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
             cards,
           ),
           {
-            phase: "Topic",
+            phase: "Synthesise",
             agentType: "quasi:synthesis-agent",
-            label: `synth-dossier:${subquestion.id}:${slug}`,
+            label: `${slug}:synthesise-dossier:${subquestion.id}`,
             schema: SY_SCHEMA,
           },
           OVERWRITE,
@@ -481,9 +481,9 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
       cards,
     ),
     {
-      phase: "Topic",
+      phase: "Synthesise",
       agentType: "quasi:synthesis-agent",
-      label: `synth-topic:${slug}`,
+      label: `${slug}:synthesise-topic`,
       schema: SY_SCHEMA,
     },
     OVERWRITE,
@@ -520,9 +520,9 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
       auditPaths.map(
         (path) => () =>
           retryNull(`path: ${path}`, {
-            phase: "Topic",
+            phase: "Audit",
             agentType: "quasi:audit-agent",
-            label: `audit${suffix}:${path}`,
+            label: `${slug}:audit${suffix}:${path.split("/").pop()}`,
             schema: AU_SCHEMA,
           }),
       ),
@@ -574,9 +574,9 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
                 [],
               ) + reason,
               {
-                phase: "Topic",
+                phase: "Search",
                 agentType: "quasi:steer-agent",
-                label: `regen-outline:${slug}`,
+                label: `${slug}:repair-outline`,
               },
             );
           const dossier = subquestions.find(
@@ -591,11 +591,12 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
                 desc,
                 dossier,
                 cards,
-              ) + reason,
+                [`audit escalated: ${reasons}`],
+              ),
               {
-                phase: "Topic",
+                phase: "Synthesise",
                 agentType: "quasi:synthesis-agent",
-                label: `regen-dossier:${dossier.id}:${slug}`,
+                label: `${slug}:repair-dossier:${dossier.id}`,
               },
             );
           const card = cards.find(
@@ -606,9 +607,9 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
             return guard(
               webcardPrompt(slug, desc, card, steer) + reason,
               {
-                phase: "Topic",
+                phase: "Search",
                 agentType: "quasi:webcard-agent",
-                label: `regen-card:${card.card_slug}:${slug}`,
+                label: `${slug}:repair-card:${card.card_slug}`,
               },
             );
           return Promise.resolve({ status: "spine" });
@@ -622,11 +623,15 @@ export async function processTopicLegacy(runtime, router, slug, meta) {
         ok,
         spineSubquestions,
         cards,
-      ) + "\nreason: audit escalated",
+        escalated.map(
+          (entry) =>
+            `audit escalated ${entry.kind}: ${entry.reason}`,
+        ),
+      ),
       {
-        phase: "Topic",
+        phase: "Synthesise",
         agentType: "quasi:synthesis-agent",
-        label: `regen-topic:${slug}`,
+        label: `${slug}:repair-topic`,
       },
     );
     escalated = await audit("2");

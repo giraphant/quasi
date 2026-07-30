@@ -594,7 +594,12 @@ def test_fresh_translation_uses_exact_typed_sequence() -> None:
         "translation.run",
         "translation.reconcile",
     ]
-    assert report["phases"] == ["Translation"]
+    assert report["phases"] == ["Recall"]
+    assert [row["phase"] for row in report["trace"]] == [
+        "Recall",
+        "Prepare",
+        "Audit",
+    ]
     result = report["result"]
     assert result["status"] == "success"
     assert result["final_pdf"] == paths(slug)["output"]
@@ -1477,6 +1482,87 @@ def paper_responses(slug: str) -> dict[str, list[dict[str, Any]]]:
     values = happy_responses(slug)
     values.update(
         {
+            "material.recall": [
+                step(
+                    {
+                        "schema_version": (
+                            "quasi.operation.material.recall.receipt/0.1"
+                        ),
+                        "key": "material.recall",
+                        "effect": "readonly",
+                        "status": "succeeded",
+                        "attempt": 1,
+                        "request_key": f"paper:{slug}",
+                        "kind": "paper",
+                        "requested_slug": slug,
+                        "vault_slug": None,
+                        "path": None,
+                        "match": None,
+                        "failure": None,
+                    }
+                )
+            ],
+            "material.search": [
+                step(
+                    {
+                        "schema_version": (
+                            "quasi.operation.material.search.receipt/0.1"
+                        ),
+                        "key": "material.search",
+                        "effect": "readonly",
+                        "status": "succeeded",
+                        "attempt": 1,
+                        "request_key": f"paper:{slug}",
+                        "kind": "paper",
+                        "query": {
+                            "slug": slug,
+                            "title": "A Paper with a Derivative",
+                            "authors": ["Ada Example"],
+                            "year": 2026,
+                            "doi": "10.1000/translation",
+                            "oa_url": None,
+                            "url": None,
+                            "journal": "Journal of Derivatives",
+                        },
+                        "picked": {
+                            "slug": slug,
+                            "title": "A Paper with a Derivative",
+                            "authors": ["Ada Example"],
+                            "year": 2026,
+                            "doi": "10.1000/translation",
+                            "oa_url": None,
+                            "url": None,
+                            "journal": "Journal of Derivatives",
+                            "confidence": "high",
+                        },
+                        "confidence": "high",
+                        "sources_hit": ["fixture"],
+                        "conflicts": [],
+                        "notes": "verified fixture identity",
+                        "failure": None,
+                    }
+                )
+            ],
+            "material.resolve": [
+                step(
+                    {
+                        "schema_version": (
+                            "quasi.operation.material.resolve.receipt/0.1"
+                        ),
+                        "key": "material.resolve",
+                        "effect": "readonly",
+                        "status": "succeeded",
+                        "attempt": 1,
+                        "request_key": f"paper:{slug}",
+                        "kind": "paper",
+                        "requested_slug": slug,
+                        "vault_slug": None,
+                        "path": None,
+                        "match": None,
+                        "failure": None,
+                    }
+                )
+            ],
             "paper.acquire": [
                 step(
                     {
@@ -1635,7 +1721,7 @@ def test_direct_translate_kind_routes_through_source_entry() -> None:
     )
     assert report["result"]["status"] == "success"
     assert report["result"]["translation_receipt"]["status"] == "complete"
-    assert report["phases"] == ["Translation"]
+    assert report["phases"] == ["Recall"]
 
 
 def test_source_entry_and_committed_bundle_parity_when_bundle_is_current() -> None:

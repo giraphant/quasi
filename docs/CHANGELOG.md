@@ -2,6 +2,13 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.16** (2026-07-31): **材料从第一步进入统一图，Workflow UI 改为真正的处理看板。**
+  - 顶层单本 Book/Paper 不再由 `collect-material` 在图外先跑 metadata 与 vault recall。Workflow 新增闭合的 `material.recall → material.search → material.resolve` readonly ingress，接收用户原始 title/DOI/ISBN 提示后核定 canonical identity、已有 vault owner 与写入路径，再进入 Acquire；Author/Topic 已验证的 child identity 继续直达 child Material Loop，不重复搜索。
+  - `collect-material` 收敛为薄协调层：启动图、展示 typed user gate、传递 Book year/Translation source 决定，并解释 blocked/failed receipt。未知 writer outcome 不再由 Skill 猜测文件存在后自动重投；下一次明确调用由图内 Recall/reconcile 观察真实产物。`metadata-agent` 同步改为只执行 caller 注入的 recall/search/resolve operation。
+  - Workflow UI phase 从 `Paper|Book|Author|Talk|Topic|Translation` 分支名改成统一的 `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`，label 统一以 material/collection slug 开头。批量 Paper、Book 或 Author 运行现在可以直接看出每项材料停在哪个处理阶段。
+  - `synthesis-agent` 与 `translate-agent` 删除大段 operation-specific 流程和示例，只保留稳定的输入输出、证据纪律、exact-write/command-relay 与 receipt 协议；Book/Author/Topic synthesis 结构及 Translation transaction 细节由 operation adapter 以自足 envelope 注入。Topic legacy synthesis 也改为显式 refs、outputs、artifact contract 和 diagnostics，不再依赖 Agent 内隐藏 mode dispatch。
+  - 生成 bundle 与模块源码保持一致；Book/Paper/Author/Talk/Topic/Translation、Claude/Pi/Codex adapter、Schema/CLI 与 Skill 全库回归共 861 项通过。
+
 - **0.52.15** (2026-07-30): **Book TOC 提取回执与严格 Graph 对齐。**
   - `quasi-extract split --method toc` 的 manifest 会保留已知 `start_page`，在没有逐章写入确定性结束页时返回 `end_page: null`。Book Graph 现在接受这一合法的 start-only 章节引用，不再把已经事务落盘的 TOC 章节集误判为 `book.writer_receipt_mismatch`。
   - 其它页码边界仍保持 fail closed：只有结束页、页码小于 1、或结束页早于起始页继续拒绝。回归覆盖真实 TOC receipt 形状与两个反例，并重新生成唯一 Workflow bundle。

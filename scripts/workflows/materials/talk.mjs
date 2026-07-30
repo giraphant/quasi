@@ -1167,12 +1167,12 @@ async function runProducer(
         diagnostics,
       ),
       {
-        phase: "Talk",
+        phase: "Analyse",
         agentType: "quasi:analyse-agent",
         label:
           mode === "repair"
-            ? `repair-talk:${state.slug}`
-            : `analyse-talk:${state.slug}`,
+            ? `${state.slug}:analyse-repair`
+            : `${state.slug}:analyse`,
         schema: TALK_ANALYSE_SCHEMA,
       },
       {
@@ -1246,12 +1246,12 @@ async function runProducer(
       diagnostics,
     ),
     {
-      phase: "Talk",
+      phase: "Analyse",
       agentType: "quasi:transcribe-agent",
       label:
         mode === "repair"
-          ? `repair-silent:${state.slug}`
-          : `render-silent:${state.slug}`,
+          ? `${state.slug}:render-silent-repair`
+          : `${state.slug}:render-silent`,
       schema: TALK_RENDER_SILENT_SCHEMA,
     },
     {
@@ -1322,12 +1322,12 @@ async function runAudit(runtime, state, pass) {
   const receipt = await runtime.runOperation(
     talkAuditLegacyPrompt(state.slug, pass),
     {
-      phase: "Talk",
+      phase: "Audit",
       agentType: "quasi:audit-agent",
       label:
         pass === 1
-          ? `audit-talk:${state.slug}`
-          : `audit2-talk:${state.slug}`,
+          ? `${state.slug}:audit`
+          : `${state.slug}:audit-${pass}`,
       schema: TALK_AUDIT_SCHEMA,
     },
     {
@@ -1396,9 +1396,9 @@ async function processTalkStrict(runtime, state) {
   const observe = await runtime.runOperation(
     talkObservePrompt(state),
     {
-      phase: "Talk",
+      phase: "Recall",
       agentType: "quasi:transcribe-agent",
-      label: `observe-talk:${state.slug}`,
+      label: `${state.slug}:observe`,
       schema: TALK_OBSERVE_SCHEMA,
     },
     {
@@ -1513,9 +1513,9 @@ async function processTalkStrict(runtime, state) {
       const receipt = await runtime.runOperation(
         talkPrepareMediaPrompt(state),
         {
-          phase: "Talk",
+          phase: "Prepare",
           agentType: "quasi:transcribe-agent",
-          label: `prepare-media:${state.slug}`,
+          label: `${state.slug}:prepare-media`,
           schema: TALK_PREPARE_MEDIA_SCHEMA,
         },
         {
@@ -1573,9 +1573,9 @@ async function processTalkStrict(runtime, state) {
     const receipt = await runtime.runOperation(
       talkTranscribePrompt(state, inputPath),
       {
-        phase: "Talk",
+        phase: "Prepare",
         agentType: "quasi:transcribe-agent",
-        label: `transcribe-talk:${state.slug}`,
+        label: `${state.slug}:transcribe`,
         schema: TALK_TRANSCRIBE_SCHEMA,
       },
       {
@@ -1660,9 +1660,9 @@ async function processTalkStrict(runtime, state) {
   const classification = await runtime.runOperation(
     talkClassifyPrompt(state, transcript.path),
     {
-      phase: "Talk",
+      phase: "Prepare",
       agentType: "quasi:transcribe-agent",
-      label: `classify-talk:${state.slug}`,
+      label: `${state.slug}:classify`,
       schema: TALK_CLASSIFY_SCHEMA,
     },
     {
@@ -1761,7 +1761,7 @@ async function processTalkStrict(runtime, state) {
 }
 
 export async function processTalk(runtime, slug, rawMeta) {
-  runtime.phase("Talk");
+  runtime.phase("Recall");
   const validation = validateIdentity(slug, rawMeta);
   if (!validation.ok)
     return rejectedResult(slug, validation);

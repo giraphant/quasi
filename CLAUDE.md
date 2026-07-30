@@ -14,8 +14,8 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 
 ### Layer ownership
 
-- `skills/` own user-facing workflow state machines: input normalisation, manifests, skip rules, human gates, and dispatch order.
-- `workflows/` owns host-neutral deterministic graphs. Graphs use only the injected `agent`, `parallel`, `phase`, `log`, and `args` primitives.
+- `skills/` are thin user-facing coordinators: they identify intent, start the graph, present typed human gates, and explain blocked or failed results.
+- `workflows/` owns host-neutral deterministic graphs, including material input normalisation, Recall/Search identity resolution, path ownership, skip/reconcile rules, and dispatch order. Graphs use only the injected `agent`, `parallel`, `phase`, `log`, and `args` primitives.
 - `agents/` are specialist workers. They call only the public `quasi-*` CLI or read/write the exact local artifact named in their contract. The sole remote-tool exception is `webcard-agent`, which may `WebFetch` the exact URLs returned by `quasi-search kagi` for its one assigned evidence card.
 - `bin/quasi-*` is the stable shell surface exposed to agents and skills.
 - `scripts/` contains deterministic capability entrypoints and build-only sources;
@@ -24,6 +24,13 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
   Agents do not import it directly: the workflow build injects canonical producer/search
   projections, while audit/typecheck/migration consume the registry in Python.
 - `core/` is the minimal runtime base for path/frontmatter/json/module-loading helpers.
+
+### Workflow UI stages
+
+- Workflow phases describe processing progress, never router branches or material kinds. The shared order is `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`.
+- Every `agent()` call must carry its exact stage through `opts.phase`; do not use `Paper`, `Book`, `Author`, `Talk`, `Topic`, or `Translation` as a phase.
+- Agent labels begin with the stable material slug or collection key, followed by the operation, so parallel work remains identifiable when the UI truncates long labels.
+- `Recall` observes local state and resolves existing membership; `Search` discovers or verifies external records; `Acquire` accepts a source artifact; `Prepare` converts or structures inputs; the remaining stages produce, combine, and validate canonical artifacts.
 
 ### Path roots
 
@@ -69,7 +76,7 @@ Current userConfig mapping:
 
 ### State and handoff contracts
 
-- The skill main process owns workflow state files: manifests, decisions, search caches, recovery files, and `.quasi/<domain>/...` orchestration artifacts.
+- The graph owns material identity and processing state. The skill main process owns only user decisions and explicitly skill-scoped sidecars; it must not maintain a second metadata, recall, or writer-success state machine.
 - `metadata-agent`, `discovery-agent`, and `localisation-agent` return JSON and do not write files.
 - `download-agent` accepts or rejects candidates through `quasi-download`; it returns `DOWNLOAD_RESULT.per_item` and does not own caller manifests.
 - `extract-agent` writes chapter extraction output and `processing/chapters/{slug}/manifest.json`.
@@ -78,7 +85,7 @@ Current userConfig mapping:
 - `webcard-agent` turns one topic `web_task` into one evidence card at the caller-named `vault/topics/{slug}/cards/{card-slug}.md`; it writes nothing else, and returns `status: empty` rather than writing a card it could not verify. Cards are not vault analysis products: they travel on their own `cards` channel (outline `subquestions[].cards`, synth `card_paths`) and never enter the `book|paper|talk` corpus table.
 - `audit-agent` runs `quasi-audit --path`; it may apply local mechanical fixes but does not own workflow state.
 - A deterministic CLI may write an artifact only when its command contract names that output path.
-- Pseudocode helpers in skill files (`parse_args`, `read_json`, `write_json`, `write_temp_json`, `format_yaml_list`, `exists`, `Agent(...).result`) are maintainer shorthand for main-process Claude Code actions, not a hidden runtime library.
+- Pseudocode helpers in skill files (`parse_args`, `read_json`, `write_json`, `write_temp_json`, `format_yaml_list`, `exists`) are maintainer shorthand for main-process Claude Code actions, not a hidden runtime library.
 - Temp JSON passed to helpers should live under `.quasi/temp/` unless a specific helper contract says otherwise.
 
 ### Active CLI surface
@@ -145,7 +152,7 @@ writer receipt is an unknown outcome and must block rather than retry.
 
 Public skill routing separates material intake from topic research. `collect-material` owns paper, book, author, Talk, and Translation; `precise-topic` owns vault recall, outline steering, evidence cards, human seed gates, and topic synthesis. Both still call `workflows/process-material.mjs`, so topic candidates reuse the same paper/book router without duplicating graph nodes. Draft proofreading and citation closure use `finalise-draft`.
 
-For a single title-only book or paper request, `collect-material` must dispatch `metadata-agent` before vault recall or graph startup. Author/Topic candidate finding uses `discovery-agent`; Chinese-edition matching uses `localisation-agent`. The verified metadata record owns author order, year, identifiers, venue, access URLs, and canonical slug. The main process must not substitute generic web or browser search; a failed download must preserve `failure_reason` and per-source `attempts` in the graph result.
+For a single Book or Paper request, `collect-material` passes only bounded user-provided hints into the graph. The graph runs `material.recall`, `material.search`, and `material.resolve` through `metadata-agent` before constructing a writable material path. Search owns author order, year, identifiers, venue/publisher, access URLs, and canonical slug; resolve may replace that slug only with an exact existing vault owner. Author/Topic candidate finding uses `discovery-agent`; Chinese-edition matching uses `localisation-agent`. The skill main process must not dispatch metadata workers, run vault recall, or substitute generic web/browser search before graph startup. A failed download must preserve `failure_reason` and per-source `attempts` in the graph result.
 
 Paper metadata merging treats Crossref as the authority for the journal container title and decodes its HTML entities at the adapter boundary. Do not let asynchronous adapter completion order choose `venue`; OpenAlex may omit meaningful punctuation from the same journal name.
 
@@ -153,7 +160,7 @@ Codex does not inject Claude plugin Configure options, and a native subagent may
 
 `quasi-translate` has two interchangeable backends behind one output contract (`processing/translations/{slug}-{full-target-tag-lower}.pdf`, for example `-zh-cn.pdf`; alternating original/translated pages, bookmarks): `immersive` (default, Immersive Translate Zotero API) and `pdf2zh` (local `pdf2zh-next` via uvx, driving a user-supplied OpenAI-compatible endpoint). Backend selection is user config (`translate_backend`), not an agent decision — strict `observe`/`run` reject a caller backend override, while the legacy prose entry still accepts `--backend` as a compatibility adapter into the same transaction. For pdf2zh, a root-only `translate_base_url` gets `/v1` appended; any explicit path is preserved because compatible providers also use paths such as `/api/paas/v4` and `/openai/v1`. The pdf2zh path uses `--use-alternating-pages-dual`, which emits the same page layout Immersive produces *after* `split_dual_pdf()`, so the TOC helpers are shared verbatim. Strict and legacy public entries reject free backend arguments; provider credentials stay out of argv. Because pdf2zh-next exits 0 on a mangled translation, the transaction gates on output pages == 2× source pages, then ToUnicode repair and coverage, before manifest-last publication. Rejected or uncertain generations remain in their fenced `processing/translations/.{stem}.translate-*` directory and never become canonical output.
 
-Both backends also gate on translation coverage (`scripts/translate/coverage.py`), because a structurally perfect dual PDF — right page count, exit 0, no warning — can still be missing most of its body text: when the source's own text layer is fragmented, BabelDOC's layout model stops recognising paragraphs as translatable blocks and leaves them as untouched scan. Translated Han characters per source Latin letter separates the two cleanly (0.30–0.36 on every healthy page measured; 0.15 median, 0.01 at worst on a book that came out 43% translated), so the gate is the per-page median against `MIN_MEDIAN`. It is a median, not a mean or a per-page rule, so one plate or part-title page cannot reject a complete book; the cost is that a single dead page inside a good book passes. Only Chinese targets are scored. The check must run *after* `tounicode.py::repair_pdf`, and does in both backends: an unrepaired book extracts as mojibake in the CJK extension-A block, which the counter deliberately does not count, so a healthy 368-page translation scored 0.17 before repair and 0.31 after. Run the script standalone to audit PDFs translated before this existed — repair first. `agents/translate-agent.md` answers the error with exactly one re-OCR-and-retry through `quasi-extract ocr --layout`.
+Both backends also gate on translation coverage (`scripts/translate/coverage.py`), because a structurally perfect dual PDF — right page count, exit 0, no warning — can still be missing most of its body text: when the source's own text layer is fragmented, BabelDOC's layout model stops recognising paragraphs as translatable blocks and leaves them as untouched scan. Translated Han characters per source Latin letter separates the two cleanly (0.30–0.36 on every healthy page measured; 0.15 median, 0.01 at worst on a book that came out 43% translated), so the gate is the per-page median against `MIN_MEDIAN`. It is a median, not a mean or a per-page rule, so one plate or part-title page cannot reject a complete book; the cost is that a single dead page inside a good book passes. Only Chinese targets are scored. The check must run *after* `tounicode.py::repair_pdf`, and does in both backends: an unrepaired book extracts as mojibake in the CJK extension-A block, which the counter deliberately does not count, so a healthy 368-page translation scored 0.17 before repair and 0.31 after. Run the script standalone to audit PDFs translated before this existed — repair first. The Translation Graph consumes this typed failure and owns the single bounded `quasi-extract ocr --layout` recovery edge; `agents/translate-agent.md` only relays the one command selected for the current operation.
 
 Both backends run `scripts/translate/tounicode.py::repair_pdf` on the finished PDF. BabelDOC — which Immersive Translate's PDF pipeline also uses, same font stack — emits a `/ToUnicode` CMap holding a couple of dozen entries instead of one per glyph once a run exceeds a few translated pages. The pages render correctly but copy/paste and in-PDF search return mojibake, because the reader falls back to reading the raw CID as a codepoint. The subset fonts are Identity-H with original glyph numbering, so the map is rebuilt from the cached original TTF under `~/.cache/babeldoc/fonts` (override with `QUASI_BABELDOC_FONT_DIR`); every rebuild is cross-checked against the entries BabelDOC got right and a font that disagrees is skipped rather than corrupted. Run the script standalone to repair PDFs translated before this existed.
 
@@ -227,4 +234,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.15.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.16.

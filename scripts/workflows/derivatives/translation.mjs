@@ -1070,9 +1070,14 @@ async function reconcile(runtime, state, mode) {
   const receipt = await runtime.runOperation(
     translationReconcilePrompt(state, mode),
     {
-      phase: "Translation",
+      phase:
+        mode === "initial"
+          ? "Recall"
+          : mode === "final"
+            ? "Audit"
+            : "Prepare",
       agentType: "quasi:translate-agent",
-      label: `translation.reconcile-${mode}:${state.slug}`,
+      label: `${state.slug}:reconcile-${mode}`,
       schema: TRANSLATION_RECONCILE_SCHEMA,
     },
     {
@@ -1290,9 +1295,9 @@ async function runTranslation(runtime, state, inputPath, attempt) {
   const receipt = await runtime.runOperation(
     translationRunPrompt(state, inputPath, attempt),
     {
-      phase: "Translation",
+      phase: "Prepare",
       agentType: "quasi:translate-agent",
-      label: `translation.run-${attempt}:${state.slug}`,
+      label: `${state.slug}:translate-${attempt}`,
       schema: TRANSLATION_RUN_SCHEMA,
     },
     {
@@ -1422,9 +1427,9 @@ async function reocr(runtime, state) {
   const receipt = await runtime.runOperation(
     translationReocrPrompt(state),
     {
-      phase: "Translation",
+      phase: "Prepare",
       agentType: "quasi:translate-agent",
-      label: `translation.reocr:${state.slug}`,
+      label: `${state.slug}:reocr`,
       schema: TRANSLATION_REOCR_SCHEMA,
     },
     {
@@ -1534,7 +1539,7 @@ async function reocr(runtime, state) {
 }
 
 async function processStrict(runtime, state) {
-  runtime.phase("Translation");
+  runtime.phase("Recall");
   const observed = await reconcile(runtime, state, "initial");
   if (observed.terminal) return observed.terminal;
   if (observed.reused) {
