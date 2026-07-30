@@ -1,9 +1,9 @@
 ---
-name: process-draft
+name: finalise-draft
 description: Use when the user wants to finalise a draft by proofreading text and checking citations, or clean up proofread records after review.
 ---
 
-# Wrap-Up — 文章收尾
+# Finalise Draft — 文章收尾
 
 ## 任务
 

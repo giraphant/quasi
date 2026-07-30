@@ -1155,6 +1155,11 @@ def test_book_identity_preserves_publisher_and_category_ingress(
         "isbn",
         "category",
     ]
+    assert download_request["operation_policy"]["receipt"]["path_echo"] == {
+        "source": "request.allowed_outputs[].path",
+        "byte_for_byte": True,
+        "cli_resolved_path_is_observation_only": True,
+    }
     assert synth_identity["publisher"] == "Exact Academic Publisher"
     assert synth_identity["category"] == "edited-volume"
 

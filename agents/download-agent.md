@@ -43,3 +43,7 @@ Receipt 逐字回显 caller 要求的 identity、paths 和 operation key。`succ
 reuse 或 accept 已由实际 identity/path/format 证据确认；全部来源以已知结果失败时返回
 failed/known，并保留 `failure_reason` 与 `attempts`；command、identity、path 或 writer
 outcome 无法确认时返回 blocked/unknown。每次 invocation 只处理这一份材料。
+
+`quasi-download` 为观察或 accept 回执打印的绝对/resolved path 只用于证明实际文件；
+最终 acquisition receipt 的 `path` 必须按 `operation_policy.receipt.path_echo` 逐字使用
+request 中的 `exact_output` 或所选 `allowed_outputs[].path`，不得把 CLI 的路径表示抄回。

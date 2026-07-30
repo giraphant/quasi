@@ -1,4 +1,4 @@
-"""Pluggable STT engines for the process-talk ensemble.
+"""Pluggable STT engines for the Talk transcription ensemble.
 
 Each engine is a function `wav_path -> list[Segment]` where
 `Segment = {"start": float, "end": float, "text": str}` (seconds). Engines are

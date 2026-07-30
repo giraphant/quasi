@@ -24,7 +24,9 @@ ARTIFACT_CONTRACTS = (
 AUDIT_OPERATION = (
     PLUGIN_ROOT / "scripts/workflows" / "operations" / "audit.mjs"
 )
-SKILL = PLUGIN_ROOT / "skills" / "process-talk" / "SKILL.md"
+SKILL = (
+    PLUGIN_ROOT / "skills" / "process-material" / "references" / "talk.md"
+)
 TRANSCRIBE_OPERATION = (
     PLUGIN_ROOT / "scripts/workflows" / "operations" / "transcribe.mjs"
 )

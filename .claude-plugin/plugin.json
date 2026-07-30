@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "quasi",
   "description": "Academic research toolkit — search, download, extract, analyze, synthesize",
-  "version": "0.52.9",
+  "version": "0.52.10",
   "author": {
     "name": "ramu"
   },
@@ -92,7 +92,7 @@
     "soniox_api_key": {
       "type": "string",
       "title": "Soniox API key",
-      "description": "API key for the Soniox stt-async-v4 speech-to-text engine, used by process-talk as the highest-quality transcription engine in the ensemble. Get one at https://soniox.com. Stored in the system keychain.",
+      "description": "API key for the Soniox stt-async-v4 speech-to-text engine, used by the process-material Talk path as the highest-quality transcription engine in the ensemble. Get one at https://soniox.com. Stored in the system keychain.",
       "sensitive": true
     }
   }

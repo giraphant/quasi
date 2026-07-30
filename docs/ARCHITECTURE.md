@@ -115,16 +115,17 @@ active skills.
 ## Active Skills
 
 - `process-material`
-- `research-topic`
-- `process-talk`
-- `process-draft`
+- `organise-topic`
+- `finalise-draft`
 
-`process-material` owns the current Paper/Book/Author entry. `research-topic`
-owns the distinct iterative research state machine while reusing the same
-material graph rather than duplicating its nodes. `process-talk` remains the
-current Talk intake until the Talk Material Loop gains generation/fingerprint
-state. Journal has a schema but no active or archived workflow; its future entry
-will be a thin collection loop over Paper receipts.
+`process-material` owns the current Paper/Book/Author/Talk/Translation entry.
+Talk-specific media normalisation is progressively disclosed from
+`skills/process-material/references/talk.md`; it is not a second public Skill.
+`organise-topic` owns the distinct iterative topic state machine while reusing
+the same material graph rather than duplicating its nodes. `finalise-draft`
+owns interactive proofreading, citation review, and bibliography closure.
+Journal has a schema but no active or archived workflow; its future entry will
+be a thin collection loop over Paper receipts.
 
 ## Material Loops
 

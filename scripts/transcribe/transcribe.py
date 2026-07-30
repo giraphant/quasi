@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""quasi-transcribe — deterministic transcription for process-talk.
+"""quasi-transcribe — deterministic transcription for Talk processing.
 
 Subcommands (JSON to stdout; the skill orchestrates, the agent summarises):
 

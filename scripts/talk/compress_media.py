@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Atomic, replay-aware single-recording compression for process-talk."""
+"""Atomic, replay-aware single-recording compression for Talk processing."""
 
 from __future__ import annotations
 

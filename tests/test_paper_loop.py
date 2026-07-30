@@ -402,6 +402,14 @@ def test_born_digital_runs_explicit_typed_sequence(tmp_path: Path) -> None:
         "accept_budget": 1,
         "verify_fields": ["title", "authors", "doi"],
     }
+    assert download["operation_policy"]["receipt"]["path_echo"] == {
+        "source": "request.exact_output",
+        "byte_for_byte": True,
+        "cli_resolved_path_is_observation_only": True,
+    }
+    assert "receipt path must equal request.exact_output byte-for-byte" in (
+        download_prompt
+    )
     assert download["identity_contract"]["fields"] == [
         "title",
         "authors",
@@ -1423,6 +1431,8 @@ def test_download_prompt_shell_argv_neutralises_remote_metadata(
     ).read_text(encoding="utf-8")
     assert "`shell_argv` token 逐字用于 Bash" in agent
     assert "`eval`、`sh -c`、command substitution" in agent
+    assert "绝对/resolved path 只用于证明实际文件" in agent
+    assert "`operation_policy.receipt.path_echo`" in agent
 
 
 def test_malformed_extract_writer_receipt_is_blocked_unknown(

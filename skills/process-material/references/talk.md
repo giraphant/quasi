@@ -1,9 +1,4 @@
----
-name: process-talk
-description: Use when the user wants to transcribe and summarise a meeting or lecture recording into a structured talk page in the vault.
----
-
-# Process Talk — 统一讲座处理
+# Talk intake and processing
 
 ## 任务
 

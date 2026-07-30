@@ -337,7 +337,7 @@ def test_translate_receipt_copies_nullable_fields_as_literal_json_tokens() -> No
 def test_process_material_routes_translation_through_the_shared_workflow() -> None:
     skill = text(SKILL)
 
-    assert 'args.kind not in ("book", "paper", "author", "translate")' in skill
+    assert 'args.kind not in ("book", "paper", "author", "talk", "translate")' in skill
     assert '"kind": "translate"' in skill
     assert 'wf_args["translate"] = True' in skill
     for field in ("target_language", "source_file", "toc_json", "toc_page_side"):

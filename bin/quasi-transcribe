@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# quasi-transcribe — deterministic multi-engine transcription for process-talk.
+# quasi-transcribe — deterministic multi-engine transcription for Talk processing.
 #
 # Usage:
 #   quasi-transcribe observe --media FILE --slug SLUG --title T --date YYYY-MM-DD --json

@@ -873,10 +873,10 @@ eq(positiveInt(-2, 3), 3, '负配额回退')
 """)
 
 
-def test_research_topic_gates_dead_end_back_to_the_user():
+def test_organise_topic_gates_dead_end_back_to_the_user():
     """Snowball runs dry long before the corpus is useful; the graph can only report that, the
     seeds decision is the user's. Dropping the gate turns a 2-item topic into a silent `ok`."""
-    text = (PLUGIN_ROOT / "skills" / "research-topic" / "SKILL.md").read_text(
+    text = (PLUGIN_ROOT / "skills" / "organise-topic" / "SKILL.md").read_text(
         encoding="utf-8"
     )
 
@@ -899,7 +899,7 @@ def test_public_skills_carry_material_and_topic_post_steps():
         encoding="utf-8"
     )
     topic_skill = (
-        PLUGIN_ROOT / "skills" / "research-topic" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "organise-topic" / "SKILL.md"
     ).read_text(encoding="utf-8")
     graph = workflow_source()
 
@@ -955,16 +955,17 @@ def test_material_and_topic_have_distinct_public_routing_hints():
         PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
     ).read_text(encoding="utf-8")
     topic = (
-        PLUGIN_ROOT / "skills" / "research-topic" / "SKILL.md"
+        PLUGIN_ROOT / "skills" / "organise-topic" / "SKILL.md"
     ).read_text(encoding="utf-8")
 
     assert "topic review" not in frontmatter_description(
         PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
     )
-    assert "research a topic" in frontmatter_description(
-        PLUGIN_ROOT / "skills" / "research-topic" / "SKILL.md"
+    assert "organise a topic" in frontmatter_description(
+        PLUGIN_ROOT / "skills" / "organise-topic" / "SKILL.md"
     )
-    assert 'args.kind not in ("book", "paper", "author", "translate")' in material
+    assert 'args.kind not in ("book", "paper", "author", "talk", "translate")' in material
+    assert 'follow_reference("references/talk.md")' in material
     assert '{"kind": "topic"' in topic
 
 
@@ -1216,14 +1217,21 @@ def test_webcard_agent_contract_forbids_invention_and_owns_one_card():
     )
 
 
-def test_process_talk_is_a_single_shared_workflow_ingress():
+def test_talk_reference_is_a_single_shared_workflow_ingress():
     """Talk 的 compress/transcribe/classify/analyse/audit 控制边属于同一张 graph。
 
     这是静态 Skill/Agent 边界检查，不是 native Claude Workflow E2E。
     """
-    skill = (PLUGIN_ROOT / "skills" / "process-talk" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
+    material_skill = (
+        PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    skill = (
+        PLUGIN_ROOT
+        / "skills"
+        / "process-material"
+        / "references"
+        / "talk.md"
+    ).read_text(encoding="utf-8")
     transcribe = (PLUGIN_ROOT / "agents" / "transcribe-agent.md").read_text(
         encoding="utf-8"
     )
@@ -1234,6 +1242,11 @@ def test_process_talk_is_a_single_shared_workflow_ingress():
         encoding="utf-8"
     )
 
+    assert not (PLUGIN_ROOT / "skills" / "process-talk").exists()
+    assert "references/talk.md" in material_skill
+    assert "meeting" in frontmatter_description(
+        PLUGIN_ROOT / "skills" / "process-material" / "SKILL.md"
+    )
     assert "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" in skill
     assert '"kind": "talk"' in skill
     assert skill.count("return Workflow(") == 1

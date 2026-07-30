@@ -1,9 +1,9 @@
 ---
-name: research-topic
-description: Use when the user wants to research a topic through iterative vault recall, academic discovery, evidence cards, and a structured literature review.
+name: organise-topic
+description: Use when the user wants to organise a topic through iterative vault recall, academic discovery, evidence cards, and a structured literature review.
 ---
 
-# Research Topic — 主题研究
+# Organise Topic — 主题组织
 
 ## 任务
 

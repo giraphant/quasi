@@ -2644,7 +2644,12 @@ well-formed command status "failed", nonzero exit, or explicitly reported absent
     receipt: {
       preserve_attempt_rows: true,
       known_exhaustion: "download_failed",
-      uncertain_identity_path_or_writer: "blocked"
+      uncertain_identity_path_or_writer: "blocked",
+      path_echo: {
+        source: "request.allowed_outputs[].path",
+        byte_for_byte: true,
+        cli_resolved_path_is_observation_only: true
+      }
     }
   };
   var PAPER_ACQUISITION_POLICY = {
@@ -2668,7 +2673,12 @@ well-formed command status "failed", nonzero exit, or explicitly reported absent
     receipt: {
       preserve_attempt_rows: true,
       known_exhaustion: "download_failed",
-      uncertain_identity_path_or_writer: "blocked"
+      uncertain_identity_path_or_writer: "blocked",
+      path_echo: {
+        source: "request.exact_output",
+        byte_for_byte: true,
+        cli_resolved_path_is_observation_only: true
+      }
     }
   };
   function bookAcquirePrompt(slug, meta, batchYear, yearDecision = null) {
@@ -2718,6 +2728,9 @@ well-formed command status "failed", nonzero exit, or explicitly reported absent
       operation_policy: BOOK_ACQUISITION_POLICY
     };
     return `Execute one acquisition operation from this self-contained JSON request.
+For a succeeded item, receipt path must echo the chosen request.allowed_outputs[].path
+byte-for-byte. An absolute/resolved path printed by quasi-download is observation evidence only;
+never copy that rendering into the receipt.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}
 \`\`\``;
@@ -2759,6 +2772,9 @@ ${JSON.stringify(request, null, 2)}
       operation_policy: PAPER_ACQUISITION_POLICY
     };
     return `Execute one acquisition operation from this self-contained JSON request.
+For a succeeded item, receipt path must equal request.exact_output byte-for-byte. An
+absolute/resolved path printed by quasi-download is observation evidence only; never copy that
+rendering into the receipt.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}
 \`\`\``;

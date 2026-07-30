@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.10** (2026-07-30): **收敛公共 Skill，并修正 Paper 获取回执的路径边界。**
+  - `process-talk` 合入 `process-material`，Talk 的渐进加载合同移到该 Skill 的 reference；`process-draft` 改名为英式拼写的 `finalise-draft`，`research-topic` 改名为 `organise-topic`。公共入口由四个收敛为三个，但底层 Talk、Material 与 Topic Workflow 能力不变。
+  - Paper/Book acquisition receipt 的 `path` 现在必须逐字回显 request 中 caller 指定的相对路径；`quasi-download` 返回的绝对解析路径只作为观察证据。此前已正确取得并核验的 PDF 会因两种等价路径写法不一致而被误判为 `writer_receipt_mismatch`。
+  - 下一轮 Paper 调用可由 reconcile 复用已经存在且身份已核验的 source，不需要重新下载，也不再因 CLI 的绝对路径回显而阻断。
+
 - **0.52.9** (2026-07-30): **Configure 的翻译选项按决策顺序分组并缩短标题。**
   - 展示顺序改为 PDF translation backend → Immersive auth key → 三个 pdf2zh 字段；用户先选后端，再只填写该后端需要的配置。
   - 后端标题不再内嵌 `immersive or pdf2zh`，pdf2zh base URL 标题不再内嵌 `OpenAI-compatible`；合法值、兼容协议与 URL 规则保留在字段 description。

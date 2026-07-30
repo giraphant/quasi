@@ -1,31 +1,34 @@
 ---
 name: process-material
-description: Use when the user wants to search, download, analyse, or translate a book, a paper, an author's representative works, or an existing PDF into structured outputs.
+description: Use when the user wants to search, download, analyse, translate, or transcribe a book, paper, author's representative works, existing PDF, meeting, or lecture recording into structured outputs.
 ---
 
 # Process Material — 统一材料处理
 
 ## 任务
 
-用一张确定性编排图,把 paper / book / author 从采集跑到分析,或为已有 PDF
-产出可验证的 Translation derivative。
+用一张确定性编排图,把 paper / book / author / talk 从采集或本地录制跑到分析,
+或为已有 PDF 产出可验证的 Translation derivative。
 
 ## 输入
 
 从用户请求归一化出:
 
-- `kind`:`book` | `paper` | `author` | `translate`
+- `kind`:`book` | `paper` | `author` | `talk` | `translate`
 - 该 kind 的参数,统一塞进 `args`:
   - book:`slug`(可由 title+author 先经 search 定)、`meta{title,authors,isbn,year,publisher,category,format?,confidence,topic}`；publisher 必须来自用户或 metadata search 明确证据，category 缺省只用非猜测 fallback `other`；format 缺失保持 null/auto，绝不在 skill 预填 PDF
   - paper:`slug` + `meta{doi,title,authors,journal}`;top-level `translate` 可选布尔；
     显式为 true 时可另带 top-level `target_language/toc_json/toc_page_side`,由同一次
     shared Workflow run 产生附加 `translation_receipt`
   - author:`name` + `meta{full_name,topic,maxBooks,maxPapers}`
+  - talk:完整读取并遵守
+    [`references/talk.md`](references/talk.md)；该 reference 定义本地 media、
+    title/date/slug 人闸、可选 engines/lang 和 Talk MaterialReceipt 的完整入口合同
   - translate:`slug` + exact `source_file`(可选;不提供时由 Graph reconcile) +
     `target_language|target`(归一化为 `target_language`) +
     `toc_json/toc_page_side`(可选)；人工 source decision 只来自 Graph typed gate
 
-三个 material/collection kind 与一个 Translation derivative 都由同一 bundle
+四个 material/collection kind 与一个 Translation derivative 都由同一 bundle
 承担;递归复用是重点——`author` 直接调用同图中的 `processBook` / `processPaper`,
 Translation 则保持独立 receipt,不伪装成 Material。
 
@@ -44,7 +47,9 @@ Translation 则保持独立 receipt,不伪装成 Material。
 
 ## 硬约束
 
-- **topic / talk / draft 不走本 skill**——topic 用 `research-topic`,talk 用 transcribe 原语,draft 是交互审定。
+- **topic / draft 不走本 skill**——topic 用 `organise-topic`,draft 用
+  `finalise-draft`。Talk 是本 skill 的 `kind:talk` 分支；只有命中 Talk 意图时才读取
+  `references/talk.md`。
 - shared `workflows/process-material.mjs` 在 Claude Code 走 Workflow 工具,在 Pi
   走薄 runner,在 Codex GUI 走原生 subagent driver;主进程只做 Step 0
   本地召回/去重、归一化输入、人工卡点、LOCALISE 回填与报告。Translation
@@ -115,8 +120,11 @@ Translation 则保持独立 receipt,不伪装成 Material。
 
 ```python
 args = parse_request()   # kind + 该 kind 参数
-if args.kind not in ("book", "paper", "author", "translate"):
+if args.kind not in ("book", "paper", "author", "talk", "translate"):
     report(f"未知 kind: {args.kind}"); return
+if args.kind == "talk":
+    follow_reference("references/talk.md")  # 完整执行 Talk ingress 后 return
+    return
 if args.kind == "translate":
     args.target_language = args.get("target_language") or args.get("target") or "zh-CN"
 
