@@ -45,7 +45,7 @@ DEAD_NAMES = [
     "research-topic",
     "quasi:process-material",
     "organise-topic",
-    "finalise-draft",
+    "finalize-draft",
     "kb-update",
     "mode: journal",
     "profile-agent",
@@ -92,7 +92,7 @@ def test_removed_public_skill_directories_are_not_present():
     for name in (
         "process-material",
         "organise-topic",
-        "finalise-draft",
+        "finalize-draft",
         "process-talk",
         "process-draft",
         "research-topic",

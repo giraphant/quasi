@@ -48,7 +48,7 @@ Translation 则保持独立 receipt,不伪装成 Material。
 ## 硬约束
 
 - **topic / draft 不走本 skill**——topic 用 `precise-topic`,draft 用
-  `finalize-draft`。Talk 是本 skill 的 `kind:talk` 分支；只有命中 Talk 意图时才读取
+  `finalise-draft`。Talk 是本 skill 的 `kind:talk` 分支；只有命中 Talk 意图时才读取
   `references/talk.md`。
 - shared `workflows/process-material.mjs` 在 Claude Code 走 Workflow 工具,在 Pi
   走薄 runner,在 Codex GUI 走原生 subagent driver;主进程只做 Step 0

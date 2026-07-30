@@ -2,6 +2,9 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.12** (2026-07-30): **Draft Skill 恢复英式拼写。**
+  - 公共入口由 `finalize-draft` 修正为 `finalise-draft`，与项目采用的英式拼写和用户术语保持一致；Workflow、Agent 与产物协议均未改变。
+
 - **0.52.11** (2026-07-30): **采集成功回执补齐来源证明，公共 Skill 采用更顺手的动词。**
   - Paper acquisition 的成功 item 现在必须返回非空 `source`；验证并复用既有 PDF 时固定为 `existing_file`。此前 0.52.10 已统一 caller path，但真实 Workflow 又证明 Agent 可能漏掉 strict validator 所需的来源字段，导致正确 source 仍被 fail-closed。
   - 最外层材料 Skill 会把可信 metadata 的 `container_title|venue` 归一化为 Paper `journal`；对 `paper.acquire` 的 unknown receipt，仅在 exact source 已存在且 resume 明确为 `paper.reconcile` 时自动发起一次 bounded 新 run。其它 unknown writer 仍不重投，并报告 stage、failure 与 resume。
