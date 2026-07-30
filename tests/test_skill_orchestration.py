@@ -1141,27 +1141,32 @@ def test_orchestrate_retries_every_receipt_reading_agent():
     used to read that null as a content answer: a dead probe re-processes the whole author batch
     (destructive re-extract), a dead audit reads as clean, a dead chapter leaves the book at 8/9
     (Bowker 2005 — ch04 and ch07 both died, one refill round could only save one)."""
-    text = (PLUGIN_ROOT / "workflows" / "process-material.mjs").read_text(
+    runtime = (
+        PLUGIN_ROOT / "scripts" / "workflows" / "runtime.mjs"
+    ).read_text(
         encoding="utf-8"
     )
 
     # 0.49.9: agent() is wrapped in guard() (timeout → null), so retryNull re-dispatches on guard's null.
-    assert "?? guard(" in text, "retryNull must re-dispatch on a null receipt"
-    # A receipt with a schema is one the script branches on, so it must go through retryNull.
-    lines = text.splitlines()
+    assert re.search(
+        r"\(await guard\(prompt,\s*opts\)\)\s*\?\?\s*guard\(",
+        runtime,
+    ), "retryNull must re-dispatch on a null receipt"
+
+    # The generated bundle may be whitespace-minified. Enforce the ownership
+    # boundary in the readable source tree: runtime.mjs is the sole caller of
+    # the host primitive, and every receipt-reading node goes through either
+    # retryNull or runOperation.
     bare = []
-    for i, line in enumerate(lines):
-        if "await agent(" not in line:
+    workflow_root = PLUGIN_ROOT / "scripts" / "workflows"
+    for path in workflow_root.rglob("*.mjs"):
+        if path.name == "runtime.mjs":
             continue
-        call = []  # the call's own lines, up to the `})` that closes its opts
-        for nxt in lines[i : i + 6]:
-            call.append(nxt)
-            if "})" in nxt:
-                break
-        if any("schema:" in c for c in call):
-            bare.append(i + 1)
+        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if re.search(r"(?<![\w.:])agent\s*\(", line):
+                bare.append(f"{path.relative_to(workflow_root)}:{i}")
     assert bare == [], (
-        f"receipt-reading agent() calls must use retryNull; bare at lines {bare}"
+        f"receipt-reading agent() calls must use runtime; bare at {bare}"
     )
 
 

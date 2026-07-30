@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.17** (2026-07-31): **修复 Claude Code 拒绝加载过大的统一 Workflow。**
+  - 0.52.16 的生成图达到 531,416 bytes，超过 Claude Code 对单个 Workflow 脚本的 524,288-byte 硬上限，导致图在任何节点启动前直接失败。构建器现在只压缩生成 bundle 的空白，不改标识符、字段名或运行逻辑；产物降至约 390 KB，并保留足够的后续增长余量。
+  - 构建和测试新增 512 KiB 硬性体积门。以后无论本地构建、`--check`、CI 还是发版，只要统一图重新超过宿主上限就会在发布前明确失败，不再把不可加载的版本交给用户。
+
 - **0.52.16** (2026-07-31): **材料从第一步进入统一图，Workflow UI 改为真正的处理看板。**
   - 顶层单本 Book/Paper 不再由 `collect-material` 在图外先跑 metadata 与 vault recall。Workflow 新增闭合的 `material.recall → material.search → material.resolve` readonly ingress，接收用户原始 title/DOI/ISBN 提示后核定 canonical identity、已有 vault owner 与写入路径，再进入 Acquire；Author/Topic 已验证的 child identity 继续直达 child Material Loop，不重复搜索。
   - `collect-material` 收敛为薄协调层：启动图、展示 typed user gate、传递 Book year/Translation source 决定，并解释 blocked/failed receipt。未知 writer outcome 不再由 Skill 猜测文件存在后自动重投；下一次明确调用由图内 Recall/reconcile 观察真实产物。`metadata-agent` 同步改为只执行 caller 注入的 recall/search/resolve operation。

@@ -12,6 +12,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW_SOURCE_ROOT = join(ROOT, "scripts", "workflows");
 const ENTRY = join(WORKFLOW_SOURCE_ROOT, "process-material.entry.mjs");
 const OUTPUT = join(ROOT, "workflows", "process-material.mjs");
+const CLAUDE_WORKFLOW_MAX_BYTES = 512 * 1024;
 const ARTIFACT_CONTRACT_ROOT = join(
   WORKFLOW_SOURCE_ROOT,
   "artifact-contracts",
@@ -61,7 +62,7 @@ const result = await build({
   globalName: "__quasiWorkflow",
   legalComments: "none",
   logLevel: "silent",
-  minify: false,
+  minifyWhitespace: true,
   platform: "neutral",
   sourcemap: false,
   target: ["es2022"],
@@ -85,6 +86,7 @@ return await __quasiWorkflow.run({ agent, parallel, phase, log }, args)
 `;
 
 validateRuntimeBundle(generated);
+validateBundleSize(generated);
 
 if (CHECK) {
   await assertCurrent(
@@ -197,4 +199,12 @@ function validateRuntimeBundle(source) {
     "args",
     withoutMeta,
   );
+}
+
+function validateBundleSize(source) {
+  const bytes = Buffer.byteLength(source, "utf8");
+  if (bytes > CLAUDE_WORKFLOW_MAX_BYTES)
+    throw new Error(
+      `workflow bundle is ${bytes} bytes; Claude Code accepts at most ${CLAUDE_WORKFLOW_MAX_BYTES}`,
+    );
 }

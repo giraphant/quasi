@@ -13,6 +13,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = PLUGIN_ROOT / "workflows" / "process-material.mjs"
 ENTRY = PLUGIN_ROOT / "scripts/workflows" / "process-material.entry.mjs"
 BUILD = PLUGIN_ROOT / "scripts" / "build-workflows.mjs"
+CLAUDE_WORKFLOW_MAX_BYTES = 512 * 1024
 
 
 def run_node(body: str) -> dict:
@@ -148,6 +149,14 @@ def test_workflow_bundle_is_current() -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert "workflow bundle is current" in proc.stdout
+
+
+def test_workflow_bundle_fits_claude_code_limit() -> None:
+    size = len(BUNDLE.read_bytes())
+    assert size <= CLAUDE_WORKFLOW_MAX_BYTES, (
+        f"workflow bundle is {size} bytes; Claude Code accepts at most "
+        f"{CLAUDE_WORKFLOW_MAX_BYTES}"
+    )
 
 
 def test_workflow_bundle_has_the_asyncfunction_abi() -> None:

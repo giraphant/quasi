@@ -42,7 +42,10 @@ def test_one_agent_primitive_feeds_bounded_legacy_and_unbounded_writer():
     ]
 
     assert len(bare) == 1, f"agent() 调用边界漂移: {bare}"
-    assert "Promise.resolve(agent(prompt, opts))" in bare[0][1]
+    assert re.search(
+        r"Promise\.resolve\(agent\(prompt,\s*opts\)\)",
+        bare[0][1],
+    )
 
     runtime = runtime_source()
     assert "const callAgent = (prompt, opts) =>" in runtime
