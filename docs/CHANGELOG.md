@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.9** (2026-07-30): **Configure 的翻译选项按决策顺序分组并缩短标题。**
+  - 展示顺序改为 PDF translation backend → Immersive auth key → 三个 pdf2zh 字段；用户先选后端，再只填写该后端需要的配置。
+  - 后端标题不再内嵌 `immersive or pdf2zh`，pdf2zh base URL 标题不再内嵌 `OpenAI-compatible`；合法值、兼容协议与 URL 规则保留在字段 description。
+
 - **0.52.8** (2026-07-30): **macOS Keychain 二进制凭据兼容与简化 marketplace 身份。**
   - Claude Code 会把某些 `Claude Code-credentials` password 作为二进制数据保存；`security ... -w` 对这类记录返回十六进制文本。Python hook helper 与 Pi runner 现在同时接受裸 JSON 和十六进制 UTF-8 JSON，Configure 中已保存的敏感字段不再出现“钥匙串里存在、quasi 却读取不到”的假缺失。
   - Marketplace 从 `ramu-toolkit` 简化为 `ramu`，新安装标识为 `quasi@ramu`；插件本身仍叫 `quasi`，Configure 字段和 Keychain 数据结构不变。

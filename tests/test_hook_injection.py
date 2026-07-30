@@ -9,6 +9,7 @@ import sys
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 HOOK = PLUGIN_ROOT / "scripts" / "hooks" / "inject-userconfig.py"
+PLUGIN_MANIFEST = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
 
 
 def run_hook(command: str, env: dict[str, str]) -> dict:
@@ -30,6 +31,25 @@ def load_hook_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_translation_config_labels_are_short_and_grouped_by_backend():
+    manifest = json.loads(PLUGIN_MANIFEST.read_text(encoding="utf-8"))
+    config = manifest["userConfig"]
+
+    translation_keys = [
+        "translate_backend",
+        "immersive_auth_key",
+        "translate_base_url",
+        "translate_api_key",
+        "translate_model",
+    ]
+    assert [key for key in config if key in translation_keys] == translation_keys
+    assert config["translate_backend"]["title"] == "PDF translation backend"
+    assert "immersive" in config["translate_backend"]["description"]
+    assert "pdf2zh" in config["translate_backend"]["description"]
+    assert config["translate_base_url"]["title"] == "pdf2zh: API base URL"
+    assert "OpenAI-compatible" in config["translate_base_url"]["description"]
 
 
 def test_hook_reads_quasi_options_from_claude_keychain_blob():
