@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.8** (2026-07-30): **macOS Keychain 二进制凭据兼容与简化 marketplace 身份。**
+  - Claude Code 会把某些 `Claude Code-credentials` password 作为二进制数据保存；`security ... -w` 对这类记录返回十六进制文本。Python hook helper 与 Pi runner 现在同时接受裸 JSON 和十六进制 UTF-8 JSON，Configure 中已保存的敏感字段不再出现“钥匙串里存在、quasi 却读取不到”的假缺失。
+  - Marketplace 从 `ramu-toolkit` 简化为 `ramu`，新安装标识为 `quasi@ramu`；插件本身仍叫 `quasi`，Configure 字段和 Keychain 数据结构不变。
+  - 新增 Python/Node 双路径回归，覆盖裸 JSON、十六进制 JSON、显式环境变量优先及 Keychain 缺失的 fail-soft 行为。
+
 - **0.52.7** (2026-07-30): **单入口 Workflow 分层、Schema 驱动产物合同与可恢复的材料事务。**
   - `workflows/process-material.mjs` 继续是 Claude/Pi/Codex 共用的唯一运行入口，但可维护源码拆到 `scripts/workflows/`：Material、Collection、Research、Derivative Loop 只消费 typed Operation receipt；构建器确定性生成并校验 host-neutral bundle，不再靠手改 15K 行生成物。
   - Paper 与 Book 已迁到 fail-closed Material Loop：writer 的 null/timeout/malformed receipt 一律 blocked/unknown、下一轮从 reconcile 观察真实 artifact；Paper 的 extract/readability/OCR/analyse/audit 与 Book 的 transactional chapter extraction、boundary assessment、fan-out/join/refill/synthesis/audit 都有 exact path、有限预算和 owner routing。原生 Claude Book 三章 E2E 已完成 10 started/10 result、MaterialReceipt complete、双重 audit clean。

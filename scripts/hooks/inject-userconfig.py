@@ -72,12 +72,30 @@ def _read_keychain_blob() -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def _decode_keychain_payload(blob: str) -> dict:
+    """Decode Claude credentials stored as JSON text or Keychain hex bytes."""
+    candidates = [blob.strip()]
+    encoded = candidates[0]
+    if encoded.lower().startswith("0x"):
+        encoded = encoded[2:]
+    if encoded and len(encoded) % 2 == 0 and re.fullmatch(r"[0-9a-fA-F]+", encoded):
+        try:
+            candidates.append(bytes.fromhex(encoded).decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            pass
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate or "{}")
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
 def _keychain_options(read_blob=_read_keychain_blob) -> dict[str, str]:
     """Read quasi's Claude plugin config for hosts that cannot inject options."""
-    try:
-        payload = json.loads(read_blob() or "{}")
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return {}
+    payload = _decode_keychain_payload(read_blob() or "")
     secrets = payload.get("pluginSecrets")
     if not isinstance(secrets, dict):
         return {}

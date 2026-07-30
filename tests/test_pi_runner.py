@@ -165,6 +165,36 @@ console.log(JSON.stringify({{
     }
 
 
+def test_load_keychain_configs_parses_hex_encoded_plugin_secrets() -> None:
+    result = run_node(f"""
+import {{ loadKeychainConfigs }} from {json.dumps(RUNNER.as_uri())}
+const jsonBlob = JSON.stringify({{
+  pluginSecrets: {{
+    'quasi@ramu': {{
+      anna_donator_key: 'donator-key',
+      translate_backend: 'pdf2zh',
+    }}
+  }}
+}})
+const blob = Buffer.from(jsonBlob, 'utf8').toString('hex')
+delete process.env.QUASI_ANNA_DONATOR_KEY
+delete process.env.QUASI_TRANSLATE_BACKEND
+await loadKeychainConfigs({{
+  readBlob: async () => blob,
+  log: () => {{}},
+}})
+console.log(JSON.stringify({{
+  anna: process.env.QUASI_ANNA_DONATOR_KEY,
+  backend: process.env.QUASI_TRANSLATE_BACKEND,
+}}))
+""")
+
+    assert result == {
+        "anna": "donator-key",
+        "backend": "pdf2zh",
+    }
+
+
 def test_load_keychain_configs_existing_env_wins() -> None:
     result = run_node(f"""
 import {{ loadKeychainConfigs }} from {json.dumps(RUNNER.as_uri())}

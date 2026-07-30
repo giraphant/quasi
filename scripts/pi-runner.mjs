@@ -212,6 +212,34 @@ function readKeychainBlob() {
 	});
 }
 
+function parseKeychainBlob(blob) {
+	const candidates = [blob.trim()];
+	let encoded = candidates[0];
+	if (encoded.toLowerCase().startsWith("0x")) encoded = encoded.slice(2);
+	if (
+		encoded &&
+		encoded.length % 2 === 0 &&
+		/^[0-9a-fA-F]+$/.test(encoded)
+	) {
+		try {
+			candidates.push(Buffer.from(encoded, "hex").toString("utf8"));
+		} catch {
+			// Keep the raw JSON compatibility path below.
+		}
+	}
+	for (const candidate of candidates) {
+		try {
+			const parsed = JSON.parse(candidate);
+			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+				return parsed;
+			}
+		} catch {
+			// Try the next supported Keychain representation.
+		}
+	}
+	return null;
+}
+
 export async function loadKeychainConfigs({
 	readBlob = readKeychainBlob,
 	log = () => {},
@@ -223,12 +251,8 @@ export async function loadKeychainConfigs({
 		return;
 	}
 	if (!blob) return;
-	let data;
-	try {
-		data = JSON.parse(blob);
-	} catch {
-		return;
-	}
+	const data = parseKeychainBlob(blob);
+	if (!data) return;
 	const secrets = data?.pluginSecrets;
 	if (!secrets || typeof secrets !== "object") return;
 	const pluginKey = Object.keys(secrets).find((k) => k.startsWith("quasi@"));

@@ -52,6 +52,25 @@ def test_hook_reads_quasi_options_from_claude_keychain_blob():
     }
 
 
+def test_hook_reads_hex_encoded_claude_keychain_blob():
+    module = load_hook_module()
+    blob = json.dumps(
+        {
+            "pluginSecrets": {
+                "quasi@ramu": {
+                    "anna_donator_key": "donator-key",
+                    "translate_backend": "pdf2zh",
+                }
+            }
+        }
+    ).encode("utf-8").hex()
+
+    assert module._keychain_options(lambda: blob) == {
+        "ANNA_DONATOR_KEY": "donator-key",
+        "TRANSLATE_BACKEND": "pdf2zh",
+    }
+
+
 def test_hook_existing_quasi_env_is_not_serialised_into_command():
     out = run_hook(
         "quasi-search paper --title X",
