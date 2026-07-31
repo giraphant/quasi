@@ -3,6 +3,7 @@ import {
   PAPER_ARTIFACT_CONTRACT,
   TALK_ARTIFACT_CONTRACT,
 } from "../artifact-contracts/generated.mjs";
+import { composedSchema } from "./extract.mjs";
 
 export const PAPER_ANALYSE_SCHEMA = {
   type: "object",
@@ -195,6 +196,258 @@ export const TALK_ANALYSE_SCHEMA = {
       },
     },
   },
+};
+
+const RECONCILE_CODE = "output_exists_requires_reconcile";
+
+const nonReconcileFailure = (outcome) => ({
+  type: "object",
+  required: ["outcome", "code"],
+  properties: {
+    outcome: { const: outcome },
+    code: { not: { const: RECONCILE_CODE } },
+  },
+});
+
+// The create/repair action matrix rides the schema so a wrong receipt is
+// bounced back to the still-running writer; the contract keeps only the
+// reconcile-edge detector.
+const paperAnalyseBranches = (mode) =>
+  mode === "create"
+    ? {
+        succeeded: {
+          properties: {
+            status: { const: "succeeded" },
+            failure: { type: "null" },
+            action: { const: "create" },
+          },
+        },
+        failed: {
+          properties: {
+            status: { const: "failed" },
+            action: { const: "create" },
+            failure: nonReconcileFailure("known"),
+          },
+        },
+        blocked_unknown: {
+          properties: {
+            status: { const: "blocked" },
+            action: { const: "create" },
+            failure: nonReconcileFailure("unknown"),
+          },
+        },
+        blocked_reconcile: {
+          properties: {
+            status: { const: "blocked" },
+            action: { const: "reconciled" },
+            failure: {
+              type: "object",
+              required: ["outcome", "code"],
+              properties: {
+                outcome: { const: "known" },
+                code: { const: RECONCILE_CODE },
+              },
+            },
+          },
+        },
+      }
+    : {
+        succeeded: {
+          properties: {
+            status: { const: "succeeded" },
+            failure: { type: "null" },
+            action: { enum: ["repair", "reconciled"] },
+          },
+        },
+        failed: {
+          properties: {
+            status: { const: "failed" },
+            action: { const: "repair" },
+            failure: nonReconcileFailure("known"),
+          },
+        },
+        blocked: {
+          properties: {
+            status: { const: "blocked" },
+            action: { const: "repair" },
+            failure: nonReconcileFailure("unknown"),
+          },
+        },
+      };
+
+export const paperAnalyseSchema = ({ mode, input, output }) =>
+  composedSchema(
+    PAPER_ANALYSE_SCHEMA,
+    {
+      input_path: { const: input },
+      output_path: { const: output },
+    },
+    paperAnalyseBranches(mode),
+  );
+
+export const PAPER_ANALYSE_CONTRACT = {
+  schema: PAPER_ANALYSE_SCHEMA,
+  reconcile: (receipt, context) =>
+    context.mode === "create" &&
+    receipt.status === "blocked" &&
+    receipt.action === "reconciled",
+};
+
+// The chapter.analyse write_state matrix rides the schema: succeeded proves
+// written (or a repair reconciliation that wrote nothing), failed proves
+// not_written, blocked leaves it unknown except for the typed create
+// collision. The contract keeps only the reconcile-edge detector.
+const chapterAnalyseBranches = (mode) =>
+  mode === "create"
+    ? {
+        succeeded: {
+          properties: {
+            status: { const: "succeeded" },
+            failure: { type: "null" },
+            action: { const: "create" },
+            write_state: { const: "written" },
+          },
+        },
+        failed: {
+          properties: {
+            status: { const: "failed" },
+            action: { const: "create" },
+            write_state: { const: "not_written" },
+            failure: nonReconcileFailure("known"),
+          },
+        },
+        blocked_unknown: {
+          properties: {
+            status: { const: "blocked" },
+            action: { const: "create" },
+            write_state: { const: "unknown" },
+            failure: nonReconcileFailure("unknown"),
+          },
+        },
+        blocked_reconcile: {
+          properties: {
+            status: { const: "blocked" },
+            action: { const: "reconciled" },
+            write_state: { const: "not_written" },
+            failure: {
+              type: "object",
+              required: ["outcome", "code"],
+              properties: {
+                outcome: { const: "unknown" },
+                code: { const: RECONCILE_CODE },
+              },
+            },
+          },
+        },
+      }
+    : {
+        succeeded_repair: {
+          properties: {
+            status: { const: "succeeded" },
+            failure: { type: "null" },
+            action: { const: "repair" },
+            write_state: { const: "written" },
+          },
+        },
+        succeeded_reconciled: {
+          properties: {
+            status: { const: "succeeded" },
+            failure: { type: "null" },
+            action: { const: "reconciled" },
+            write_state: { const: "not_written" },
+          },
+        },
+        failed: {
+          properties: {
+            status: { const: "failed" },
+            action: { const: "repair" },
+            write_state: { const: "not_written" },
+            failure: nonReconcileFailure("known"),
+          },
+        },
+        blocked: {
+          properties: {
+            status: { const: "blocked" },
+            action: { const: "repair" },
+            write_state: { const: "unknown" },
+            failure: nonReconcileFailure("unknown"),
+          },
+        },
+      };
+
+export const chapterAnalyseSchema = ({ mode, input, output }) =>
+  composedSchema(
+    CHAPTER_ANALYSE_SCHEMA,
+    {
+      input_path: { const: input },
+      output_path: { const: output },
+    },
+    chapterAnalyseBranches(mode),
+  );
+
+export const CHAPTER_ANALYSE_CONTRACT = {
+  schema: CHAPTER_ANALYSE_SCHEMA,
+  reconcile: (receipt, context) =>
+    context.mode === "create" &&
+    receipt.status === "blocked" &&
+    receipt.action === "reconciled" &&
+    receipt.failure.code === RECONCILE_CODE,
+};
+
+// The talk.analyse writer matrix and the exact ordered transcript-generation
+// echo (paths and hashes) ride the schema as deep consts.
+const modeActionBranches = (mode) => ({
+  succeeded: {
+    properties: {
+      status: { const: "succeeded" },
+      failure: { type: "null" },
+      action:
+        mode === "create"
+          ? { const: "create" }
+          : { enum: ["repair", "reconciled"] },
+    },
+  },
+  failed: {
+    properties: {
+      status: { const: "failed" },
+      action: { const: mode },
+      failure: {
+        type: "object",
+        required: ["outcome"],
+        properties: { outcome: { const: "known" } },
+      },
+    },
+  },
+  blocked: {
+    properties: {
+      status: { const: "blocked" },
+      action: { const: mode },
+      failure: {
+        type: "object",
+        required: ["outcome"],
+        properties: { outcome: { const: "unknown" } },
+      },
+    },
+  },
+});
+
+export const talkAnalyseSchema = ({ inputs, mode, output }) =>
+  composedSchema(
+    TALK_ANALYSE_SCHEMA,
+    {
+      input_paths: {
+        const: inputs.map((input) => input.path),
+      },
+      input_sha256s: {
+        const: inputs.map((input) => input.sha256),
+      },
+      output_path: { const: output },
+    },
+    modeActionBranches(mode),
+  );
+
+export const TALK_ANALYSE_CONTRACT = {
+  schema: TALK_ANALYSE_SCHEMA,
 };
 
 export const TALK_EVIDENCE_RULES = [

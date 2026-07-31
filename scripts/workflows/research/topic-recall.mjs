@@ -1,54 +1,41 @@
 import {
+  TOPIC_DISCOVER_BOOK_CONTRACT,
   TOPIC_DISCOVER_BOOK_SCHEMA,
+  TOPIC_DISCOVER_PAPER_CONTRACT,
   TOPIC_DISCOVER_PAPER_SCHEMA,
+  TOPIC_RECALL_CONTRACT,
   TOPIC_RECALL_SCHEMA,
+  TOPIC_RESOLVE_MEMBERSHIP_CONTRACT,
   TOPIC_RESOLVE_MEMBERSHIP_SCHEMA,
   topicDiscoverBookOperationPrompt,
   topicDiscoverPaperOperationPrompt,
+  topicMemberPath,
   topicRecallOperationPrompt as topicRecallPrompt,
   topicResolveMembershipOperationPrompt as topicResolveMembershipPrompt,
 } from "../operations/acquire.mjs";
 import {
-  TOPIC_AUDIT_LEGACY_SCHEMA as TOPIC_AUDIT_SCHEMA,
+  TOPIC_AUDIT_CONTRACT,
   topicAuditLegacyPrompt,
+  topicAuditSchema,
 } from "../operations/audit.mjs";
 import {
-  TOPIC_OVERVIEW_SYNTHESISE_SCHEMA,
-  TOPIC_RESOURCES_SYNTHESISE_SCHEMA,
+  TOPIC_OVERVIEW_SYNTHESISE_CONTRACT,
+  TOPIC_RESOURCES_SYNTHESISE_CONTRACT,
   topicOverviewSynthesiseOperationPrompt as topicOverviewSynthesisePrompt,
+  topicOverviewSynthesiseSchema,
   topicResourcesSynthesiseOperationPrompt as topicResourcesSynthesisePrompt,
+  topicResourcesSynthesiseSchema,
 } from "../operations/synthesise.mjs";
 import {
+  TOPIC_STEER_CONTRACT,
   TOPIC_STEER_SCHEMA as TOPIC_STEER_OPERATION_SCHEMA,
   topicSteerOperationPrompt,
 } from "../operations/steer.mjs";
+import { exactKeys, validText } from "../runtime.mjs";
 
 const RESEARCH_RECEIPT_VERSION =
   "quasi.research.topic.receipt/0.1";
 const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
-const KINDS = new Set(["book", "paper", "talk"]);
-
-const exactKeys = (value, keys) =>
-  !!(
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === keys.length &&
-    keys.every((key) =>
-      Object.prototype.hasOwnProperty.call(value, key),
-    )
-  );
-
-const validText = (value, min, max) =>
-  typeof value === "string" &&
-  value === value.trim() &&
-  value.length >= min &&
-  value.length <= max &&
-  !CONTROL_CHARS.test(value);
-
-const optionalText = (value, max) =>
-  value === null || validText(value, 1, max);
 
 const sameStrings = (left, right) =>
   Array.isArray(left) &&
@@ -68,24 +55,6 @@ const operationFailure = (
   retryable: false,
   message,
 });
-
-function validFailure(failure, key, outcome) {
-  return !!(
-    exactKeys(failure, [
-      "code",
-      "operation_key",
-      "outcome",
-      "retryable",
-      "message",
-    ]) &&
-    validText(failure.code, 1, 200) &&
-    failure.operation_key === key &&
-    failure.outcome === outcome &&
-    failure.retryable === false &&
-    (failure.message === null ||
-      validText(failure.message, 1, 4000))
-  );
-}
 
 function validateIdentity(slug, meta) {
   if (typeof slug !== "string" || !SLUG.test(slug))
@@ -344,349 +313,6 @@ function rejectedResult(slug, validation, conflict = false) {
   );
 }
 
-function validRecalledItem(item) {
-  return !!(
-    exactKeys(item, ["kind", "slug", "path"]) &&
-    KINDS.has(item.kind) &&
-    SLUG.test(item.slug) &&
-    (item.path === null ||
-      item.path === expectedPath(item.kind, item.slug))
-  );
-}
-
-function strictRecall(receipt, state) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "research_key",
-      "query",
-      "max_items",
-      "items",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.topic.recall.receipt/0.1" ||
-    receipt.key !== "topic.recall" ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    receipt.research_key !== state.researchKey ||
-    receipt.query !== state.desc ||
-    receipt.max_items !== state.maxItems ||
-    !Array.isArray(receipt.items) ||
-    receipt.items.length > state.maxItems ||
-    receipt.items.some((item) => !validRecalledItem(item)) ||
-    new Set(
-      receipt.items.map((item) => `${item.kind}:${item.slug}`),
-    ).size !== receipt.items.length
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return receipt.failure === null;
-  if (receipt.status === "failed")
-    return (
-      receipt.items.length === 0 &&
-      validFailure(receipt.failure, "topic.recall", "known")
-    );
-  return (
-    receipt.status === "blocked" &&
-    receipt.items.length === 0 &&
-    validFailure(receipt.failure, "topic.recall", "unknown")
-  );
-}
-
-function expectedPath(kind, slug) {
-  if (kind === "book")
-    return `vault/books/${slug}/00-overview.md`;
-  if (kind === "paper")
-    return `vault/papers/${slug}.md`;
-  return `vault/talks/${slug}/talk.md`;
-}
-
-function strictMembership(
-  receipt,
-  state,
-  requests,
-  allowAlias = false,
-) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "research_key",
-      "requests",
-      "resolved",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.topic.resolve-membership.receipt/0.1" ||
-    receipt.key !== "topic.resolve-membership" ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    receipt.research_key !== state.researchKey ||
-    !Array.isArray(receipt.requests) ||
-    !Array.isArray(receipt.resolved) ||
-    receipt.requests.length !== requests.length ||
-    !requests.every((request, index) => {
-      const echoed = receipt.requests[index];
-      return (
-        exactKeys(echoed, ["kind", "slug"]) &&
-        echoed.kind === request.kind &&
-        echoed.slug === request.slug
-      );
-    })
-  )
-    return false;
-  if (receipt.status === "failed")
-    return (
-      receipt.resolved.length === 0 &&
-      validFailure(
-        receipt.failure,
-        "topic.resolve-membership",
-        "known",
-      )
-    );
-  if (receipt.status === "blocked")
-    return (
-      receipt.resolved.length === 0 &&
-      validFailure(
-        receipt.failure,
-        "topic.resolve-membership",
-        "unknown",
-      )
-    );
-  if (
-    receipt.status !== "succeeded" ||
-    receipt.failure !== null ||
-    receipt.resolved.length !== requests.length
-  )
-    return false;
-  return requests.every((request, index) => {
-    const row = receipt.resolved[index];
-    if (
-      !exactKeys(row, [
-        "kind",
-        "requested_slug",
-        "resolved_slug",
-        "path",
-        "match",
-      ]) ||
-      row.kind !== request.kind ||
-      row.requested_slug !== request.slug
-    )
-      return false;
-    if (row.resolved_slug === null)
-      return row.path === null && row.match === null;
-    if (
-      !SLUG.test(row.resolved_slug) ||
-      row.path !== expectedPath(row.kind, row.resolved_slug) ||
-      !validText(row.match, 1, 100)
-    )
-      return false;
-    return allowAlias
-      ? true
-      : row.resolved_slug === request.slug &&
-          row.match === "slug";
-  });
-}
-
-function validSubquestion(value) {
-  return !!(
-    exactKeys(value, [
-      "id",
-      "question",
-      "coverage",
-      "channel",
-      "dossier",
-      "page",
-      "theory_used",
-      "items",
-      "cards",
-    ]) &&
-    /^sq-[a-z0-9][a-z0-9-]{0,76}$/.test(value.id) &&
-    validText(value.question, 1, 500) &&
-    ["gap", "thin", "covered", "saturated"].includes(
-      value.coverage,
-    ) &&
-    ["academic", "web", "mixed"].includes(value.channel) &&
-    typeof value.dossier === "boolean" &&
-    (value.page === null ||
-      /^[0-9]{2}-[a-z0-9][a-z0-9-]*\.md$/.test(
-        value.page,
-      )) &&
-    Number.isInteger(value.theory_used) &&
-    value.theory_used >= 0 &&
-    value.theory_used <= 3 &&
-    Array.isArray(value.items) &&
-    value.items.length <= 50 &&
-    value.items.every(
-      (item) =>
-        exactKeys(item, ["kind", "slug", "role"]) &&
-        KINDS.has(item.kind) &&
-        SLUG.test(item.slug) &&
-        ["evidence", "theory", "method", "context"].includes(
-          item.role,
-        ),
-    ) &&
-    Array.isArray(value.cards) &&
-    value.cards.length <= 50 &&
-    value.cards.every((card) => SLUG.test(card))
-  );
-}
-
-function validCandidate(value) {
-  return !!(
-    exactKeys(value, [
-      "kind",
-      "query",
-      "subq",
-      "role",
-      "reason",
-    ]) &&
-    ["book", "paper"].includes(value.kind) &&
-    validText(value.query, 1, 500) &&
-    /^sq-[a-z0-9][a-z0-9-]{0,76}$/.test(value.subq) &&
-    ["evidence", "theory", "method", "context"].includes(
-      value.role,
-    ) &&
-    validText(value.reason, 1, 1000)
-  );
-}
-
-function sameDemand(left, right) {
-  return (
-    exactKeys(left, ["kind", "query", "subq", "role", "reason"]) &&
-    exactKeys(right, ["kind", "query", "subq", "role", "reason"]) &&
-    ["kind", "query", "subq", "role", "reason"].every(
-      (key) => left[key] === right[key],
-    )
-  );
-}
-
-function validDiscoveredCandidate(candidate, kind) {
-  if (!candidate || typeof candidate !== "object")
-    return false;
-  if (kind === "book")
-    return !!(
-      exactKeys(candidate, [
-        "kind",
-        "slug",
-        "title",
-        "authors",
-        "year",
-        "isbn",
-        "publisher",
-        "category",
-        "confidence",
-      ]) &&
-      candidate.kind === "book" &&
-      SLUG.test(candidate.slug) &&
-      validText(candidate.title, 1, 1000) &&
-      Array.isArray(candidate.authors) &&
-      candidate.authors.length > 0 &&
-      candidate.authors.length <= 32 &&
-      candidate.authors.every((author) =>
-        validText(author, 1, 500),
-      ) &&
-      Number.isInteger(candidate.year) &&
-      candidate.year >= 1 &&
-      candidate.year <= 9999 &&
-      (candidate.isbn === null ||
-        validText(candidate.isbn, 1, 64)) &&
-      validText(candidate.publisher, 1, 500) &&
-      [
-        "monograph",
-        "edited-volume",
-        "handbook",
-        "other",
-      ].includes(candidate.category) &&
-      ["high", "medium"].includes(candidate.confidence)
-    );
-  return !!(
-    exactKeys(candidate, [
-      "kind",
-      "slug",
-      "title",
-      "authors",
-      "year",
-      "doi",
-      "oa_url",
-      "url",
-      "journal",
-      "confidence",
-    ]) &&
-    candidate.kind === "paper" &&
-    SLUG.test(candidate.slug) &&
-    validText(candidate.title, 1, 1000) &&
-    Array.isArray(candidate.authors) &&
-    candidate.authors.length > 0 &&
-    candidate.authors.length <= 32 &&
-    candidate.authors.every((author) =>
-      validText(author, 1, 500),
-    ) &&
-    Number.isInteger(candidate.year) &&
-    candidate.year >= 1 &&
-    candidate.year <= 9999 &&
-    ["doi", "oa_url", "url"].every(
-      (key) =>
-        candidate[key] === null ||
-        validText(candidate[key], 1, key === "doi" ? 500 : 2048),
-    ) &&
-    validText(candidate.journal, 1, 1000) &&
-    ["high", "medium"].includes(candidate.confidence)
-  );
-}
-
-function strictDiscovery(
-  receipt,
-  state,
-  demandId,
-  demand,
-) {
-  const key = `topic.discover-${demand.kind}`;
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "research_key",
-      "demand_id",
-      "demand",
-      "candidate",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      `quasi.operation.${key}.receipt/0.1` ||
-    receipt.key !== key ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    receipt.research_key !== state.researchKey ||
-    receipt.demand_id !== demandId ||
-    !sameDemand(receipt.demand, demand)
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      validDiscoveredCandidate(receipt.candidate, demand.kind)
-    );
-  if (receipt.candidate !== null) return false;
-  if (receipt.status === "failed")
-    return validFailure(receipt.failure, key, "known");
-  return (
-    receipt.status === "blocked" &&
-    validFailure(receipt.failure, key, "unknown")
-  );
-}
-
 function validMaterialFailure(failure) {
   return !!(
     failure &&
@@ -734,7 +360,7 @@ function validMaterialArtifact(artifact) {
 }
 
 function cleanChildAudit(receipt, demand) {
-  const target = expectedPath(demand.kind, demand.id);
+  const target = topicMemberPath(demand.kind, demand.id);
   if (demand.kind === "paper")
     return !!(
       exactKeys(receipt.audit, [
@@ -834,7 +460,7 @@ function strictMaterialResult(result, demand) {
       "operation-receipts-and-final-audit"
   )
     return null;
-  const target = expectedPath(demand.kind, demand.id);
+  const target = topicMemberPath(demand.kind, demand.id);
   const canonicals = receipt.artifacts.filter(
     (artifact) =>
       artifact.role === "canonical" &&
@@ -996,265 +622,6 @@ function invalidMaterialResult(demand, message) {
   };
 }
 
-function validWebTask(value) {
-  return !!(
-    exactKeys(value, [
-      "subq",
-      "card_slug",
-      "query",
-      "note",
-    ]) &&
-    /^sq-[a-z0-9][a-z0-9-]{0,76}$/.test(value.subq) &&
-    SLUG.test(value.card_slug) &&
-    validText(value.query, 1, 500) &&
-    validText(value.note, 1, 1000)
-  );
-}
-
-function strictSteer(
-  receipt,
-  state,
-  memberRefs,
-  inputPaths,
-  mode,
-) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "research_key",
-      "member_refs",
-      "input_paths",
-      "output_path",
-      "action",
-      "signal",
-      "subquestions",
-      "candidate_demands",
-      "web_tasks",
-      "dirty",
-      "suggested_queries",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.topic.steer.receipt/0.1" ||
-    receipt.key !== "topic.steer" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.research_key !== state.researchKey ||
-    !Array.isArray(receipt.member_refs) ||
-    receipt.member_refs.length !== memberRefs.length ||
-    !memberRefs.every((member, index) => {
-      const echoed = receipt.member_refs[index];
-      return (
-        exactKeys(echoed, ["kind", "slug", "path"]) &&
-        echoed.kind === member.kind &&
-        echoed.slug === member.slug &&
-        echoed.path === member.path
-      );
-    }) ||
-    !sameStrings(receipt.input_paths, inputPaths) ||
-    receipt.output_path !== state.paths.outline ||
-    !["create", "refresh", "repair", "reconciled"].includes(
-      receipt.action,
-    ) ||
-    !["continue", "needs_seeds", "saturated"].includes(
-      receipt.signal,
-    ) ||
-    !Array.isArray(receipt.subquestions) ||
-    receipt.subquestions.length < 1 ||
-    receipt.subquestions.length > 6 ||
-    receipt.subquestions.some(
-      (subquestion) => !validSubquestion(subquestion),
-    ) ||
-    !Array.isArray(receipt.candidate_demands) ||
-    receipt.candidate_demands.length > 12 ||
-    receipt.candidate_demands.some(
-      (candidate) => !validCandidate(candidate),
-    ) ||
-    !Array.isArray(receipt.web_tasks) ||
-    receipt.web_tasks.length > 6 ||
-    receipt.web_tasks.some((task) => !validWebTask(task)) ||
-    !Array.isArray(receipt.dirty) ||
-    receipt.dirty.length > 6 ||
-    receipt.dirty.some(
-      (id) => !/^sq-[a-z0-9][a-z0-9-]{0,76}$/.test(id),
-    ) ||
-    !Array.isArray(receipt.suggested_queries) ||
-    receipt.suggested_queries.length > 6 ||
-    receipt.suggested_queries.some(
-      (query) => !validText(query, 1, 500),
-    )
-  )
-    return false;
-  const actionOk =
-    mode === "create"
-      ? ["create", "reconciled"].includes(receipt.action)
-      : mode === "refresh"
-        ? ["refresh", "reconciled"].includes(receipt.action)
-        : ["repair", "reconciled"].includes(receipt.action);
-  if (receipt.status === "succeeded")
-    return actionOk && receipt.failure === null;
-  if (receipt.status === "failed")
-    return validFailure(
-      receipt.failure,
-      "topic.steer",
-      "known",
-    );
-  return (
-    receipt.status === "blocked" &&
-    validFailure(
-      receipt.failure,
-      "topic.steer",
-      "unknown",
-    )
-  );
-}
-
-function strictSynthesis(
-  receipt,
-  state,
-  key,
-  inputPaths,
-  outputPath,
-  role,
-  mode,
-) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "research_key",
-      "member_refs",
-      "input_paths",
-      "outline_path",
-      "output_path",
-      "artifact_roles",
-      "action",
-      "members_analyzed",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      `quasi.operation.${key}.receipt/0.1` ||
-    receipt.key !== key ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.research_key !== state.researchKey ||
-    !Array.isArray(receipt.member_refs) ||
-    receipt.member_refs.length !== state.members.length ||
-    !state.members.every((member, index) => {
-      const echoed = receipt.member_refs[index];
-      return (
-        exactKeys(echoed, ["kind", "slug", "path"]) &&
-        echoed.kind === member.kind &&
-        echoed.slug === member.slug &&
-        echoed.path === member.path
-      );
-    }) ||
-    !sameStrings(receipt.input_paths, inputPaths) ||
-    receipt.outline_path !== state.paths.outline ||
-    receipt.output_path !== outputPath ||
-    !sameStrings(receipt.artifact_roles, [role]) ||
-    !["create", "repair", "reconciled"].includes(
-      receipt.action,
-    ) ||
-    !Number.isInteger(receipt.members_analyzed) ||
-    receipt.members_analyzed < 0
-  )
-    return false;
-  const actionOk =
-    mode === "create"
-      ? ["create", "reconciled"].includes(receipt.action)
-      : ["repair", "reconciled"].includes(receipt.action);
-  if (receipt.status === "succeeded")
-    return (
-      actionOk &&
-      receipt.failure === null &&
-      (receipt.action === "reconciled"
-        ? receipt.members_analyzed === 0
-        : receipt.members_analyzed === state.members.length)
-    );
-  if (receipt.status === "failed")
-    return validFailure(receipt.failure, key, "known");
-  return (
-    receipt.status === "blocked" &&
-    validFailure(receipt.failure, key, "unknown")
-  );
-}
-
-function strictAudit(receipt, state, target) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "research_key",
-      "target_path",
-      "remaining_violations",
-      "escalated",
-      "mutated_paths",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.topic.audit.legacy.receipt/0.1" ||
-    receipt.key !== "topic.audit.legacy" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.research_key !== state.researchKey ||
-    receipt.target_path !== target ||
-    !Number.isInteger(receipt.remaining_violations) ||
-    receipt.remaining_violations < 0 ||
-    !Array.isArray(receipt.escalated) ||
-    !Array.isArray(receipt.mutated_paths) ||
-    receipt.escalated.some(
-      (item) =>
-        !exactKeys(item, ["path", "kind", "reason"]) ||
-        !validText(item.path, 1, 2048) ||
-        !validText(item.kind, 1, 200) ||
-        !validText(item.reason, 1, 4000),
-    ) ||
-    receipt.mutated_paths.some(
-      (path) => !validText(path, 1, 2048),
-    )
-  )
-    return false;
-  if (receipt.status === "clean")
-    return (
-      receipt.remaining_violations === 0 &&
-      receipt.escalated.length === 0 &&
-      receipt.failure === null
-    );
-  if (receipt.status === "partial")
-    return (
-      receipt.remaining_violations > 0 &&
-      receipt.escalated.length ===
-        receipt.remaining_violations &&
-      receipt.failure === null
-    );
-  return (
-    receipt.status === "error" &&
-    receipt.remaining_violations === 0 &&
-    receipt.escalated.length === 0 &&
-    (validFailure(
-      receipt.failure,
-      "topic.audit.legacy",
-      "known",
-    ) ||
-      validFailure(
-        receipt.failure,
-        "topic.audit.legacy",
-        "unknown",
-      ))
-  );
-}
-
 function writerMismatch(state, key, stage) {
   return terminal(
     state,
@@ -1306,7 +673,7 @@ function applySteer(state, receipt) {
     state.disposition = "reused";
 }
 
-function operationOptions(key, effect, roles) {
+function operationOptions(key, effect, roles, contract, context) {
   return {
     key,
     effect,
@@ -1317,6 +684,8 @@ function operationOptions(key, effect, roles) {
       effect === "readonly"
         ? "topic.readonly_outcome_unknown"
         : "topic.writer_outcome_unknown",
+    contract,
+    context,
   };
 }
 
@@ -1330,7 +699,7 @@ async function runSteer(
   label,
 ) {
   const inputPaths = members.map((member) => member.path);
-  const receipt = await runtime.runOperation(
+  const steered = await runtime.operate(
     topicSteerOperationPrompt({
       researchKey: state.researchKey,
       topicSlug: state.slug,
@@ -1348,18 +717,20 @@ async function runSteer(
       label,
       schema: TOPIC_STEER_OPERATION_SCHEMA,
     },
-    operationOptions("topic.steer", "writer", ["outline"]),
+    operationOptions(
+      "topic.steer",
+      "writer",
+      ["outline"],
+      TOPIC_STEER_CONTRACT,
+      { state, memberRefs: members, inputPaths, mode },
+    ),
   );
+  const receipt = steered.receipt;
   state.operations.push(receipt);
   state.budgets.steer.used += 1;
   if (
-    !strictSteer(
-      receipt,
-      state,
-      members,
-      inputPaths,
-      mode,
-    )
+    steered.edge === "unknown" ||
+    steered.edge === "mismatch"
   )
     return { terminal: writerMismatch(state, "topic.steer", "steer") };
   const stopped = writerTerminal(
@@ -1409,30 +780,39 @@ async function runSynthesis(
         mode,
         diagnostics,
       });
-  const receipt = await runtime.runOperation(
+  const synthesis = await runtime.operate(
     prompt,
     {
       phase: "Synthesise",
       agentType: "quasi:synthesis-agent",
       label,
-      schema: overview
-        ? TOPIC_OVERVIEW_SYNTHESISE_SCHEMA
-        : TOPIC_RESOURCES_SYNTHESISE_SCHEMA,
+      schema: (overview
+        ? topicOverviewSynthesiseSchema
+        : topicResourcesSynthesiseSchema)({
+        researchKey: state.researchKey,
+        members: state.members,
+        inputPaths,
+        outline: state.paths.outline,
+        output,
+        mode,
+      }),
     },
-    operationOptions(key, "writer", [role]),
+    operationOptions(
+      key,
+      "writer",
+      [role],
+      overview
+        ? TOPIC_OVERVIEW_SYNTHESISE_CONTRACT
+        : TOPIC_RESOURCES_SYNTHESISE_CONTRACT,
+      { state, inputPaths, output, role, mode },
+    ),
   );
+  const receipt = synthesis.receipt;
   state.operations.push(receipt);
   state.budgets.synthesis.used += 1;
   if (
-    !strictSynthesis(
-      receipt,
-      state,
-      key,
-      inputPaths,
-      output,
-      role,
-      mode,
-    )
+    synthesis.edge === "unknown" ||
+    synthesis.edge === "mismatch"
   )
     return { terminal: writerMismatch(state, key, "synthesis") };
   const stopped = writerTerminal(
@@ -1454,24 +834,33 @@ async function runSynthesis(
 }
 
 async function runAudit(runtime, state, target, pass) {
-  const receipt = await runtime.runOperation(
+  const audited = await runtime.operate(
     topicAuditLegacyPrompt(state.researchKey, target, pass),
     {
       phase: "Audit",
       agentType: "quasi:audit-agent",
       label: `${state.slug}:audit-${pass}:${target.split("/").pop()}`,
-      schema: TOPIC_AUDIT_SCHEMA,
+      schema: topicAuditSchema({
+        researchKey: state.researchKey,
+        target,
+      }),
     },
     operationOptions(
       "topic.audit.legacy",
       "writer",
       ["topic_product"],
+      TOPIC_AUDIT_CONTRACT,
+      { researchKey: state.researchKey, target },
     ),
   );
+  const receipt = audited.receipt;
   state.operations.push(receipt);
   state.audit.push(receipt);
   state.budgets.auditPasses.used += 1;
-  if (!strictAudit(receipt, state, target))
+  if (
+    audited.edge === "unknown" ||
+    audited.edge === "mismatch"
+  )
     return {
       terminal: writerMismatch(
         state,
@@ -1500,7 +889,7 @@ async function runAudit(runtime, state, target, pass) {
       ),
     };
   if (receipt.mutated_paths.length) state.repaired = true;
-  if (receipt.status === "error")
+  if (audited.edge !== "ok")
     return {
       terminal: terminal(
         state,
@@ -1536,10 +925,10 @@ async function runMaterialRound(
   if (!ledger.length) return { partial: false };
   state.rounds = 1;
   state.budgets.discovery.used = ledger.length;
-  const discoveryReceipts = await runtime.parallel(
+  const discoveryRuns = await runtime.parallel(
     ledger.map(({ demand, demandId }) => () => {
       const book = demand.kind === "book";
-      return runtime.runOperation(
+      return runtime.operate(
         book
           ? topicDiscoverBookOperationPrompt(
               state.researchKey,
@@ -1563,18 +952,21 @@ async function runMaterialRound(
           `topic.discover-${demand.kind}`,
           "readonly",
           [],
+          book
+            ? TOPIC_DISCOVER_BOOK_CONTRACT
+            : TOPIC_DISCOVER_PAPER_CONTRACT,
+          { state, demandId, demand },
         ),
       );
     }),
   );
-  state.operations.push(...discoveryReceipts);
+  state.operations.push(
+    ...discoveryRuns.map((run) => run.receipt),
+  );
   for (let index = 0; index < ledger.length; index += 1) {
     if (
-      !strictDiscovery(
-        discoveryReceipts[index],
-        state,
-        ledger[index].demandId,
-        ledger[index].demand,
+      ["unknown", "mismatch"].includes(
+        discoveryRuns[index].edge,
       )
     )
       return {
@@ -1595,10 +987,11 @@ async function runMaterialRound(
   const discoveries = ledger
     .map((entry, index) => ({
       ...entry,
-      receipt: discoveryReceipts[index],
+      run: discoveryRuns[index],
+      receipt: discoveryRuns[index].receipt,
     }))
-    .filter(({ receipt }) => {
-      if (receipt.status === "succeeded") return true;
+    .filter(({ run, receipt }) => {
+      if (run.edge === "ok") return true;
       state.discoveryFailures.push(receipt.failure);
       return false;
     });
@@ -1609,7 +1002,7 @@ async function runMaterialRound(
     kind: receipt.candidate.kind,
     slug: receipt.candidate.slug,
   }));
-  const membership = await runtime.runOperation(
+  const membershipRun = await runtime.operate(
     topicResolveMembershipPrompt(state.researchKey, requests),
     {
       phase: "Recall",
@@ -1621,16 +1014,15 @@ async function runMaterialRound(
       "topic.resolve-membership",
       "readonly",
       [],
+      TOPIC_RESOLVE_MEMBERSHIP_CONTRACT,
+      { state, requests, allowAlias: true },
     ),
   );
+  const membership = membershipRun.receipt;
   state.operations.push(membership);
   if (
-    !strictMembership(
-      membership,
-      state,
-      requests,
-      true,
-    )
+    membershipRun.edge === "unknown" ||
+    membershipRun.edge === "mismatch"
   )
     return {
       terminal: terminal(
@@ -1646,14 +1038,14 @@ async function runMaterialRound(
         ),
       ),
     };
-  if (membership.status !== "succeeded")
+  if (membershipRun.edge !== "ok")
     return {
       terminal: terminal(
         state,
-        membership.status === "blocked"
+        membershipRun.edge === "blocked"
           ? "blocked"
           : "all_failed",
-        membership.status === "blocked"
+        membershipRun.edge === "blocked"
           ? "blocked"
           : "failed",
         "membership",
@@ -1727,9 +1119,9 @@ async function processStrict(runtime, router, slug, meta) {
     `${slug}: strict Topic ${meta.maxRounds === 0 ? "recall-only" : "one material round"}`,
   );
   state.budgets.recall.used = state.maxItems;
-  const [recall, initialSteerResult] = await runtime.parallel([
+  const [recallRun, initialSteerResult] = await runtime.parallel([
     () =>
-      runtime.runOperation(
+      runtime.operate(
         topicRecallPrompt(
           state.researchKey,
           state.desc,
@@ -1741,7 +1133,13 @@ async function processStrict(runtime, router, slug, meta) {
           label: `${slug}:recall`,
           schema: TOPIC_RECALL_SCHEMA,
         },
-        operationOptions("topic.recall", "readonly", []),
+        operationOptions(
+          "topic.recall",
+          "readonly",
+          [],
+          TOPIC_RECALL_CONTRACT,
+          { state },
+        ),
       ),
     () =>
       runSteer(
@@ -1754,8 +1152,12 @@ async function processStrict(runtime, router, slug, meta) {
         `${slug}:steer:r0`,
       ),
   ]);
+  const recall = recallRun.receipt;
   state.operations.unshift(recall);
-  if (!strictRecall(recall, state)) {
+  if (
+    recallRun.edge === "unknown" ||
+    recallRun.edge === "mismatch"
+  ) {
     return terminal(
       state,
       "blocked",
@@ -1771,7 +1173,7 @@ async function processStrict(runtime, router, slug, meta) {
   }
   if (initialSteerResult.terminal)
     return initialSteerResult.terminal;
-  if (recall.status === "blocked")
+  if (recallRun.edge === "blocked")
     return terminal(
       state,
       "blocked",
@@ -1779,7 +1181,7 @@ async function processStrict(runtime, router, slug, meta) {
       "recall",
       recall.failure,
     );
-  if (recall.status === "failed" && meta.maxRounds === 0)
+  if (recallRun.edge === "failed" && meta.maxRounds === 0)
     return terminal(
       state,
       "no_works",
@@ -1787,7 +1189,7 @@ async function processStrict(runtime, router, slug, meta) {
       "recall",
       recall.failure,
     );
-  if (recall.status === "failed") {
+  if (recallRun.edge === "failed") {
     state.recallFailed = true;
     state.warnings.push(
       `Topic recall failed before the material round: ${recall.failure.code}`,
@@ -1795,7 +1197,7 @@ async function processStrict(runtime, router, slug, meta) {
   }
 
   const requests =
-    recall.status === "succeeded" ? recall.items : [];
+    recallRun.edge === "ok" ? recall.items : [];
   if (!requests.length && meta.maxRounds === 0)
     return terminal(
       state,
@@ -1811,7 +1213,7 @@ async function processStrict(runtime, router, slug, meta) {
     );
 
   if (requests.length) {
-    const membership = await runtime.runOperation(
+    const membershipRun = await runtime.operate(
       topicResolveMembershipPrompt(state.researchKey, requests),
       {
         phase: "Recall",
@@ -1823,10 +1225,16 @@ async function processStrict(runtime, router, slug, meta) {
         "topic.resolve-membership",
         "readonly",
         [],
+        TOPIC_RESOLVE_MEMBERSHIP_CONTRACT,
+        { state, requests, allowAlias: false },
       ),
     );
+    const membership = membershipRun.receipt;
     state.operations.push(membership);
-    if (!strictMembership(membership, state, requests)) {
+    if (
+      membershipRun.edge === "unknown" ||
+      membershipRun.edge === "mismatch"
+    ) {
       return terminal(
         state,
         "blocked",
@@ -1840,7 +1248,7 @@ async function processStrict(runtime, router, slug, meta) {
         ),
       );
     }
-    if (membership.status === "failed")
+    if (membershipRun.edge === "failed")
       return terminal(
         state,
         "no_works",
@@ -1848,7 +1256,7 @@ async function processStrict(runtime, router, slug, meta) {
         "membership",
         membership.failure,
       );
-    if (membership.status === "blocked")
+    if (membershipRun.edge === "blocked")
       return terminal(
         state,
         "blocked",

@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.20** (2026-07-31): **把 Workflow 收敛为 Operation 图：回执校验进入 Schema/Runtime，Agent 接回稳定执行合同。**
+  - Writer 的 exact path、ordered inputs、status matrix 与 closed failure 现在由每次调用的 composed StructuredOutput schema 直接约束；仍在运行的原 Agent 会被宿主要求修正不合格 receipt，Graph 只消费 `unknown|mismatch|reconcile|blocked|failed|ok` 闭合边，不再复制一套细粒度验证或在 unknown writer outcome 后重投。
+  - `runtime.mjs::operate` 用同一个 host schema 做统一 backstop；跨字段计数、年份证据、人类决定 replay、reconcile 解释等 JSON Schema 无法表达的少量语义留在 Operation contract。Author/Topic 的 child MaterialReceipt join 继续严格重证 identity、canonical artifact 与 final audit，host-pluggable dispatch seam 不被错误信任。
+  - 有明确 owner Agent 的 operation prompt 改为自足 JSON envelope。Agent 合同统一拥有 exact-command/transaction discipline、JSON 类型保真、禁止 alternate command/retry/自行选图边；operation request 只携带业务词汇、exact refs、mode、diagnostics 与 evidence policy，host schema 拥有最终 receipt 形状。Talk transcription 合同因此从大段示例与字段清单收敛为稳定 relay 协议。
+  - Book/Paper/Talk/Author/strict Topic/Translation 图移除重复 prompt pack 与 receipt predicate，生成 bundle 保持在 Claude Code 上限内；410 项 workflow 回归和 19 项 Talk/Translation relay 合同回归通过。
+
 - **0.52.19** (2026-07-31): **批量材料共用一张处理图，并修复三处原生 Workflow 合同接缝。**
   - 同一请求中的 2–32 个 Book/Paper 现在作为一个 `kind:"batch"` envelope 进入一次 Workflow，共享同一 runtime，按输入顺序并行推进 `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`。顶层返回 `quasi.collection.material-batch.receipt/0.1`，逐项汇总 `complete|needs_input|blocked|failed`；一个卡点不取消其它材料，也不再在 Claude Code UI 中展开成 N 张同名图。
   - `material.recall` / `material.resolve` 升到 receipt 0.2，以无歧义的 `__none__` / `match:"none"` 表达 miss，再由 Graph 边界归一化为内部 null。这样绕开 Claude StructuredOutput 对 nullable path 的 `"null"` 字符串与 pattern 重试问题，同时保持 hit 的 canonical path、slug 和 identity 严格校验。

@@ -1,58 +1,29 @@
 import {
+  AUTHOR_DISCOVER_BOOKS_CONTRACT,
   AUTHOR_DISCOVER_BOOKS_SCHEMA,
+  AUTHOR_DISCOVER_PAPERS_CONTRACT,
   AUTHOR_DISCOVER_PAPERS_SCHEMA,
+  AUTHOR_RESOLVE_MEMBERSHIP_CONTRACT,
   AUTHOR_RESOLVE_MEMBERSHIP_SCHEMA,
   authorDiscoveryPrompt,
   authorResolveMembershipPrompt,
 } from "../operations/acquire.mjs";
 import {
-  AUTHOR_AUDIT_SCHEMA,
+  AUTHOR_AUDIT_CONTRACT,
   authorAuditLegacyPrompt,
+  authorAuditSchema,
 } from "../operations/audit.mjs";
 import {
-  AUTHOR_SYNTHESISE_SCHEMA,
+  AUTHOR_SYNTHESISE_CONTRACT,
   authorSynthesiseOperationPrompt,
+  authorSynthesiseSchema,
 } from "../operations/synthesise.mjs";
+import { strictChildResult } from "../materials/member.mjs";
+import { validText } from "../runtime.mjs";
 
 const AUTHOR_RECEIPT_VERSION =
   "quasi.collection.author.receipt/0.1";
-const MATERIAL_RECEIPT_VERSION =
-  "quasi.material-loop.receipt/0.1";
 const AUTHOR_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
-const CATEGORIES = new Set([
-  "monograph",
-  "edited-volume",
-  "handbook",
-  "other",
-]);
-
-const exactKeys = (value, keys) =>
-  !!(
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === keys.length &&
-    keys.every((key) =>
-      Object.prototype.hasOwnProperty.call(value, key),
-    )
-  );
-
-const validText = (value, min, max) =>
-  typeof value === "string" &&
-  value === value.trim() &&
-  value.length >= min &&
-  value.length <= max &&
-  !CONTROL_CHARS.test(value);
-
-const optionalText = (value, max) =>
-  value == null || value === "" || validText(value, 1, max);
-
-const sameStrings = (left, right) =>
-  Array.isArray(left) &&
-  Array.isArray(right) &&
-  left.length === right.length &&
-  left.every((value, index) => value === right[index]);
 
 const operationFailure = (
   code,
@@ -67,38 +38,6 @@ const operationFailure = (
   retryable,
   ...(message ? { message } : {}),
 });
-
-const runtimeUnknown = (receipt) =>
-  !!(
-    receipt &&
-    receipt.schema_version ===
-      "quasi.operation.runtime.receipt/0.1" &&
-    receipt.failure &&
-    receipt.failure.outcome === "unknown"
-  );
-
-function validFailure(
-  failure,
-  operationKey,
-  outcome,
-  retryable,
-) {
-  return !!(
-    exactKeys(failure, [
-        "code",
-        "operation_key",
-        "outcome",
-        "retryable",
-        "message",
-      ]) &&
-    validText(failure.code, 1, 200) &&
-    failure.operation_key === operationKey &&
-    failure.outcome === outcome &&
-    failure.retryable === retryable &&
-    (failure.message === null ||
-      validText(failure.message, 1, 4000))
-  );
-}
 
 function validateIdentity(name, meta) {
   if (typeof name !== "string" || !AUTHOR_SLUG.test(name))
@@ -132,7 +71,7 @@ function validateIdentity(name, meta) {
     typeof topic !== "string" ||
     topic !== topic.trim() ||
     topic.length > 500 ||
-    CONTROL_CHARS.test(topic)
+    (topic !== "" && !validText(topic, 1, 500))
   )
     return {
       ok: false,
@@ -337,127 +276,6 @@ function rejectedResult(name, validation, conflict = false) {
   );
 }
 
-function validBookCandidate(candidate, full) {
-  return !!(
-    exactKeys(candidate, [
-      "kind",
-      "slug",
-      "title",
-      "authors",
-      "year",
-      "isbn",
-      "publisher",
-      "category",
-      "confidence",
-    ]) &&
-    candidate.kind === "book" &&
-    AUTHOR_SLUG.test(candidate.slug) &&
-    validText(candidate.title, 1, 500) &&
-    Array.isArray(candidate.authors) &&
-    candidate.authors.length >= 1 &&
-    candidate.authors.length <= 32 &&
-    candidate.authors.every((author) =>
-      validText(author, 1, 200),
-    ) &&
-    candidate.authors.includes(full) &&
-    Number.isInteger(candidate.year) &&
-    candidate.year >= 1500 &&
-    candidate.year <= 2030 &&
-    optionalText(candidate.isbn, 100) &&
-    validText(candidate.publisher, 2, 500) &&
-    CATEGORIES.has(candidate.category) &&
-    ["high", "medium"].includes(candidate.confidence)
-  );
-}
-
-function validPaperCandidate(candidate, full) {
-  return !!(
-    exactKeys(candidate, [
-      "kind",
-      "slug",
-      "title",
-      "authors",
-      "year",
-      "doi",
-      "oa_url",
-      "url",
-      "journal",
-      "confidence",
-    ]) &&
-    candidate.kind === "paper" &&
-    AUTHOR_SLUG.test(candidate.slug) &&
-    validText(candidate.title, 1, 500) &&
-    Array.isArray(candidate.authors) &&
-    candidate.authors.length >= 1 &&
-    candidate.authors.length <= 32 &&
-    candidate.authors.every((author) =>
-      validText(author, 1, 200),
-    ) &&
-    candidate.authors.includes(full) &&
-    Number.isInteger(candidate.year) &&
-    candidate.year >= 1500 &&
-    candidate.year <= 2030 &&
-    optionalText(candidate.doi, 300) &&
-    optionalText(candidate.oa_url, 2048) &&
-    optionalText(candidate.url, 2048) &&
-    validText(candidate.journal, 1, 500) &&
-    ["high", "medium"].includes(candidate.confidence)
-  );
-}
-
-function strictDiscovery(
-  receipt,
-  state,
-  kind,
-  count,
-) {
-  const key =
-    kind === "book"
-      ? "author.discover-books"
-      : "author.discover-papers";
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "collection_key",
-      "kind",
-      "full_name",
-      "topic",
-      "count",
-      "candidates",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      `quasi.operation.${key}.receipt/0.1` ||
-    receipt.key !== key ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    receipt.collection_key !== state.collectionKey ||
-    receipt.kind !== kind ||
-    receipt.full_name !== state.full ||
-    receipt.topic !== state.topic ||
-    receipt.count !== count ||
-    !Array.isArray(receipt.candidates) ||
-    receipt.candidates.length > count ||
-    receipt.candidates.some((candidate) =>
-      kind === "book"
-        ? !validBookCandidate(candidate, state.full)
-        : !validPaperCandidate(candidate, state.full),
-    )
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return receipt.failure === null;
-  return (
-    receipt.status === "failed" &&
-    receipt.candidates.length === 0 &&
-    validFailure(receipt.failure, key, "known", false)
-  );
-}
-
 function emptyDiscovery(state, kind) {
   const key =
     kind === "book"
@@ -477,94 +295,6 @@ function emptyDiscovery(state, kind) {
     candidates: [],
     failure: null,
   };
-}
-
-function strictMembership(
-  receipt,
-  state,
-  candidates,
-) {
-  const requests = candidates.map(({ kind, slug }) => ({
-    kind,
-    slug,
-  }));
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "collection_key",
-      "output_path",
-      "output_exists",
-      "requests",
-      "resolved",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.author.resolve-membership.receipt/0.1" ||
-    receipt.key !== "author.resolve-membership" ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    receipt.collection_key !== state.collectionKey ||
-    receipt.output_path !== state.output ||
-    typeof receipt.output_exists !== "boolean" ||
-    !Array.isArray(receipt.requests) ||
-    !Array.isArray(receipt.resolved) ||
-    receipt.requests.length !== requests.length ||
-    !requests.every((request, index) => {
-      const echoed = receipt.requests[index];
-      return (
-        exactKeys(echoed, ["kind", "slug"]) &&
-        echoed.kind === request.kind &&
-        echoed.slug === request.slug
-      );
-    })
-  )
-    return false;
-  if (receipt.status === "failed")
-    return (
-      receipt.output_exists === false &&
-      receipt.resolved.length === 0 &&
-      validFailure(
-        receipt.failure,
-        "author.resolve-membership",
-        "known",
-        false,
-      )
-    );
-  if (receipt.status !== "succeeded" || receipt.failure !== null)
-    return false;
-  if (receipt.resolved.length !== requests.length) return false;
-  return requests.every((request, index) => {
-    const row = receipt.resolved[index];
-    if (
-      !exactKeys(row, [
-        "kind",
-        "requested_slug",
-        "vault_slug",
-        "path",
-        "match",
-      ]) ||
-      row.kind !== request.kind ||
-      row.requested_slug !== request.slug
-    )
-      return false;
-    if (row.vault_slug === null)
-      return row.path === null && row.match === null;
-    if (
-      typeof row.vault_slug !== "string" ||
-      !AUTHOR_SLUG.test(row.vault_slug) ||
-      !validText(row.match, 1, 100)
-    )
-      return false;
-    const expected =
-      row.kind === "book"
-        ? `vault/books/${row.vault_slug}/00-overview.md`
-        : `vault/papers/${row.vault_slug}.md`;
-    return row.path === expected;
-  });
 }
 
 function demandIdentity(candidate) {
@@ -647,288 +377,6 @@ function buildDemands(candidates, resolved) {
   return { ok: true, demands };
 }
 
-function canonicalPath(kind, id) {
-  return kind === "book"
-    ? `vault/books/${id}/00-overview.md`
-    : `vault/papers/${id}.md`;
-}
-
-function validMaterialFailure(failure) {
-  if (
-    !failure ||
-    typeof failure !== "object" ||
-    Array.isArray(failure) ||
-    ![4, 5].includes(Object.keys(failure).length) ||
-    !["code", "operation_key", "outcome", "retryable"].every(
-      (key) =>
-        Object.prototype.hasOwnProperty.call(failure, key),
-    ) ||
-    Object.keys(failure).some(
-      (key) =>
-        ![
-          "code",
-          "operation_key",
-          "outcome",
-          "retryable",
-          "message",
-        ].includes(key),
-    )
-  )
-    return false;
-  return (
-    validText(failure.code, 1, 200) &&
-    validText(failure.operation_key, 1, 200) &&
-    ["known", "unknown"].includes(failure.outcome) &&
-    typeof failure.retryable === "boolean" &&
-    (failure.message === undefined ||
-      failure.message === null ||
-      validText(failure.message, 1, 4000))
-  );
-}
-
-function validMaterialArtifact(artifact) {
-  return !!(
-    exactKeys(artifact, [
-      "role",
-      "path",
-      "exists",
-      "usable",
-      "producer",
-    ]) &&
-    validText(artifact.role, 1, 100) &&
-    validText(artifact.path, 1, 1000) &&
-    artifact.exists === true &&
-    [null, true, false].includes(artifact.usable) &&
-    validText(artifact.producer, 1, 200)
-  );
-}
-
-function validAuditDiagnostic(diagnostic) {
-  return !!(
-    exactKeys(diagnostic, ["path", "kind", "reason"]) &&
-    validText(diagnostic.path, 1, 1000) &&
-    validText(diagnostic.kind, 1, 200) &&
-    validText(diagnostic.reason, 1, 4000)
-  );
-}
-
-function validPaperAudit(audit, expectedPath) {
-  return !!(
-    exactKeys(audit, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "target_path",
-      "remaining_violations",
-      "escalated",
-    ]) &&
-    audit.schema_version ===
-      "quasi.operation.paper.audit.agent-receipt/0.1" &&
-    audit.key === "paper.audit" &&
-    audit.effect === "writer" &&
-    audit.status === "clean" &&
-    audit.attempt === 1 &&
-    audit.target_path === expectedPath &&
-    audit.remaining_violations === 0 &&
-    Array.isArray(audit.escalated) &&
-    audit.escalated.length === 0
-  );
-}
-
-function validBookAuditItem(audit, expectedPath) {
-  return !!(
-    exactKeys(audit, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "target_path",
-      "remaining_violations",
-      "escalated",
-      "mutated_paths",
-    ]) &&
-    audit.schema_version ===
-      "quasi.operation.book.audit.receipt/0.1" &&
-    audit.key === "book.audit" &&
-    audit.effect === "writer" &&
-    ["clean", "partial", "error"].includes(audit.status) &&
-    audit.attempt === 1 &&
-    audit.target_path === expectedPath &&
-    Number.isInteger(audit.remaining_violations) &&
-    audit.remaining_violations >= 0 &&
-    Array.isArray(audit.escalated) &&
-    audit.escalated.every(validAuditDiagnostic) &&
-    Array.isArray(audit.mutated_paths) &&
-    audit.mutated_paths.every((path) =>
-      validText(path, 1, 1000),
-    )
-  );
-}
-
-function cleanMaterialAudit(receipt, demand) {
-  if (demand.kind === "paper")
-    return validPaperAudit(
-      receipt.audit,
-      canonicalPath(demand.kind, demand.id),
-    );
-  const expected = `vault/books/${demand.id}`;
-  if (
-    !Array.isArray(receipt.audit) ||
-    receipt.audit.length < 1 ||
-    !receipt.audit.every((audit) =>
-      validBookAuditItem(audit, expected),
-    )
-  )
-    return false;
-  const last = receipt.audit[receipt.audit.length - 1];
-  return (
-    last.status === "clean" &&
-    last.remaining_violations === 0 &&
-    last.escalated.length === 0
-  );
-}
-
-function strictChildResult(result, demand) {
-  if (
-    !result ||
-    typeof result !== "object" ||
-    Array.isArray(result) ||
-    result.slug !== demand.id ||
-    !result.material_receipt ||
-    typeof result.material_receipt !== "object" ||
-    Array.isArray(result.material_receipt)
-  )
-    return null;
-  const receipt = result.material_receipt;
-  const baseKeys = [
-    "schema_version",
-    "material_key",
-    "kind",
-    "id",
-    "status",
-    "disposition",
-    "stage",
-    "artifacts",
-    "operations",
-    "audit",
-    "freshness",
-    "warnings",
-    "failure",
-    "resume",
-  ];
-  const bookInventoryKeys = [
-    "expected_slots",
-    "present_slots",
-    "missing_slots",
-  ];
-  const topLevelClosed =
-    exactKeys(receipt, baseKeys) ||
-    (demand.kind === "book" &&
-      exactKeys(receipt, [...baseKeys, ...bookInventoryKeys]));
-  if (
-    !topLevelClosed ||
-    receipt.schema_version !== MATERIAL_RECEIPT_VERSION ||
-    receipt.material_key !== demand.material_key ||
-    receipt.kind !== demand.kind ||
-    receipt.id !== demand.id ||
-    !["complete", "blocked", "failed"].includes(receipt.status) ||
-    !Array.isArray(receipt.artifacts) ||
-    !Array.isArray(receipt.operations) ||
-    receipt.operations.some(
-      (operation) =>
-        !operation ||
-        typeof operation !== "object" ||
-        Array.isArray(operation),
-    ) ||
-    !Array.isArray(receipt.warnings) ||
-    receipt.warnings.some(
-      (warning) => !validText(warning, 1, 1000),
-    ) ||
-    !exactKeys(receipt.freshness, ["observation", "basis"]) ||
-    receipt.freshness.observation !== "unknown" ||
-    receipt.freshness.basis !==
-      "operation-receipts-and-final-audit" ||
-    typeof receipt.stage !== "string" ||
-    receipt.artifacts.some(
-      (artifact) => !validMaterialArtifact(artifact),
-    )
-  )
-    return null;
-  const expected = canonicalPath(demand.kind, demand.id);
-  const allCanonicals = receipt.artifacts.filter(
-    (artifact) => artifact && artifact.role === "canonical",
-  );
-  const canonicals = allCanonicals.filter(
-    (artifact) =>
-      artifact.path === expected &&
-      artifact.exists === true,
-  );
-  if (receipt.status === "complete") {
-    if (
-      !["created", "reused", "repaired"].includes(
-        receipt.disposition,
-      ) ||
-      receipt.stage !== "audit" ||
-      receipt.failure !== null ||
-      receipt.resume !== null ||
-      receipt.operations.length < 1 ||
-      allCanonicals.length !== 1 ||
-      canonicals.length !== 1 ||
-      !cleanMaterialAudit(receipt, demand)
-    )
-      return null;
-    if (
-      demand.kind === "book" &&
-      Object.prototype.hasOwnProperty.call(
-        receipt,
-        "expected_slots",
-      ) &&
-      (!Array.isArray(receipt.expected_slots) ||
-        !Array.isArray(receipt.present_slots) ||
-        !Array.isArray(receipt.missing_slots) ||
-        !sameStrings(
-          receipt.expected_slots,
-          receipt.present_slots,
-        ) ||
-        receipt.expected_slots.some(
-          (slot) => !/^\d{2,3}$/.test(slot),
-        ) ||
-        receipt.missing_slots.length !== 0)
-    )
-      return null;
-  } else if (
-    receipt.disposition !== null ||
-    !validMaterialFailure(receipt.failure) ||
-    (receipt.status === "failed" && receipt.resume !== null) ||
-    (receipt.status === "blocked" &&
-      !(
-        receipt.resume === null ||
-        (receipt.resume &&
-          typeof receipt.resume === "object" &&
-          !Array.isArray(receipt.resume))
-      ))
-  ) {
-    return null;
-  }
-  return {
-    material_key: demand.material_key,
-    kind: demand.kind,
-    id: demand.id,
-    status: receipt.status,
-    canonical_path:
-      receipt.status === "complete" ? expected : null,
-    receipt,
-    year_warning:
-      demand.kind === "book" && result.year_warning
-        ? result.year_warning
-        : null,
-    title: demand.title,
-  };
-}
-
 function malformedChild(demand, message) {
   return {
     material_key: demand.material_key,
@@ -961,123 +409,6 @@ function synthesisInputs(state) {
     }));
 }
 
-function strictSynthesis(receipt, state, inputs, mode) {
-  const keys = inputs.map((input) => input.material_key);
-  const paths = inputs.map((input) => input.path);
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "input_material_keys",
-      "input_paths",
-      "output_path",
-      "artifact_roles",
-      "action",
-      "materials_analyzed",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.author.synthesise.receipt/0.1" ||
-    receipt.key !== "author.synthesise" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    !sameStrings(receipt.input_material_keys, keys) ||
-    !sameStrings(receipt.input_paths, paths) ||
-    receipt.output_path !== state.output ||
-    !sameStrings(receipt.artifact_roles, ["canonical"]) ||
-    !Number.isInteger(receipt.materials_analyzed) ||
-    receipt.materials_analyzed < 0 ||
-    !["create", "repair", "reconciled"].includes(
-      receipt.action,
-    )
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      receipt.materials_analyzed === inputs.length &&
-      (mode === "create"
-        ? receipt.action === "create"
-        : ["repair", "reconciled"].includes(receipt.action))
-    );
-  if (receipt.status === "failed")
-    return (
-      receipt.action === mode &&
-      validFailure(
-        receipt.failure,
-        "author.synthesise",
-        "known",
-        false,
-      )
-    );
-  return (
-    receipt.status === "blocked" &&
-    receipt.action === mode &&
-    validFailure(
-      receipt.failure,
-      "author.synthesise",
-      "unknown",
-      false,
-    )
-  );
-}
-
-function strictAudit(receipt, state) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "target_path",
-      "remaining_violations",
-      "escalated",
-      "mutated_paths",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.author.audit.legacy.receipt/0.1" ||
-    receipt.key !== "author.audit.legacy" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.target_path !== state.output ||
-    !Number.isInteger(receipt.remaining_violations) ||
-    receipt.remaining_violations < 0 ||
-    !Array.isArray(receipt.escalated) ||
-    !Array.isArray(receipt.mutated_paths) ||
-    receipt.escalated.some(
-      (diagnostic) =>
-        !exactKeys(diagnostic, ["path", "kind", "reason"]) ||
-        !validText(diagnostic.path, 1, 2048) ||
-        !validText(diagnostic.kind, 1, 200) ||
-        !validText(diagnostic.reason, 1, 4000),
-    ) ||
-    receipt.mutated_paths.some(
-      (path) => !validText(path, 1, 2048),
-    )
-  )
-    return false;
-  if (receipt.status === "clean")
-    return (
-      receipt.remaining_violations === 0 &&
-      receipt.escalated.length === 0
-    );
-  if (receipt.status === "partial")
-    return (
-      receipt.remaining_violations > 0 &&
-      receipt.escalated.length ===
-        receipt.remaining_violations
-    );
-  return (
-    receipt.status === "error" &&
-    receipt.remaining_violations === 0 &&
-    receipt.escalated.length === 0
-  );
-}
-
 function ownedAuditPaths(receipt, output) {
   return [
     ...receipt.escalated.map((item) => item.path),
@@ -1093,7 +424,7 @@ async function runSynthesis(
   diagnostics,
   label,
 ) {
-  const receipt = await runtime.runOperation(
+  const synthesis = await runtime.operate(
     authorSynthesiseOperationPrompt(
       state.name,
       state.full,
@@ -1106,7 +437,11 @@ async function runSynthesis(
       phase: "Synthesise",
       agentType: "quasi:synthesis-agent",
       label,
-      schema: AUTHOR_SYNTHESISE_SCHEMA,
+      schema: authorSynthesiseSchema({
+        inputs,
+        mode,
+        output: state.output,
+      }),
     },
     {
       key: "author.synthesise",
@@ -1115,10 +450,16 @@ async function runSynthesis(
       replay: "blocked",
       artifactRoles: ["canonical"],
       unknownFailureCode: "author.writer_outcome_unknown",
+      contract: AUTHOR_SYNTHESISE_CONTRACT,
+      context: { inputs, mode, output: state.output },
     },
   );
+  const receipt = synthesis.receipt;
   state.operations.push(receipt);
-  if (!strictSynthesis(receipt, state, inputs, mode)) {
+  if (
+    synthesis.edge === "unknown" ||
+    synthesis.edge === "mismatch"
+  ) {
     const failure = operationFailure(
       "author.writer_receipt_mismatch",
       "author.synthesise",
@@ -1136,7 +477,7 @@ async function runSynthesis(
       ),
     };
   }
-  if (receipt.status === "blocked")
+  if (synthesis.edge === "blocked")
     return {
       terminal: terminal(
         state,
@@ -1146,7 +487,7 @@ async function runSynthesis(
         receipt.failure,
       ),
     };
-  if (receipt.status === "failed")
+  if (synthesis.edge !== "ok")
     return {
       terminal: terminal(
         state,
@@ -1178,13 +519,13 @@ async function runSynthesis(
 }
 
 async function runAudit(runtime, state, pass, label) {
-  const receipt = await runtime.runOperation(
+  const auditRun = await runtime.operate(
     authorAuditLegacyPrompt(state.name, pass),
     {
       phase: "Audit",
       agentType: "quasi:audit-agent",
       label,
-      schema: AUTHOR_AUDIT_SCHEMA,
+      schema: authorAuditSchema({ target: state.output }),
     },
     {
       key: "author.audit.legacy",
@@ -1193,12 +534,18 @@ async function runAudit(runtime, state, pass, label) {
       replay: "blocked",
       artifactRoles: ["canonical"],
       unknownFailureCode: "author.writer_outcome_unknown",
+      contract: AUTHOR_AUDIT_CONTRACT,
+      context: { target: state.output },
     },
   );
+  const receipt = auditRun.receipt;
   state.operations.push(receipt);
   state.audit.push(receipt);
   state.budgets.auditPasses.used += 1;
-  if (!strictAudit(receipt, state)) {
+  if (
+    auditRun.edge === "unknown" ||
+    auditRun.edge === "mismatch"
+  ) {
     const failure = operationFailure(
       "author.writer_receipt_mismatch",
       "author.audit.legacy",
@@ -1235,7 +582,7 @@ async function runAudit(runtime, state, pass, label) {
       ),
     };
   }
-  if (receipt.status === "error") {
+  if (auditRun.edge !== "ok") {
     const failure = operationFailure(
       "author.audit_failed",
       "author.audit.legacy",
@@ -1275,88 +622,83 @@ async function processAuthorStrict(
   if (state.maxBooks > 0)
     discoveryTasks.push(() =>
       runtime
-        .runOperation(
-        authorDiscoveryPrompt(
-          name,
-          state.full,
-          state.topic,
-          "book",
-          state.maxBooks,
-        ),
-        {
-          phase: "Search",
-          agentType: "quasi:discovery-agent",
-          label: `${name}:discover-books`,
-          schema: AUTHOR_DISCOVER_BOOKS_SCHEMA,
-        },
-        {
-          key: "author.discover-books",
-          effect: "readonly",
-          retry: "safe",
-          replay: "safe",
-          artifactRoles: [],
-          unknownFailureCode:
-            "author.readonly_outcome_unknown",
-        },
+        .operate(
+          authorDiscoveryPrompt(
+            name,
+            state.full,
+            state.topic,
+            "book",
+            state.maxBooks,
+          ),
+          {
+            phase: "Search",
+            agentType: "quasi:discovery-agent",
+            label: `${name}:discover-books`,
+            schema: AUTHOR_DISCOVER_BOOKS_SCHEMA,
+          },
+          {
+            key: "author.discover-books",
+            effect: "readonly",
+            retry: "safe",
+            replay: "safe",
+            artifactRoles: [],
+            unknownFailureCode:
+              "author.readonly_outcome_unknown",
+            contract: AUTHOR_DISCOVER_BOOKS_CONTRACT,
+            context: { state, count: state.maxBooks },
+          },
         )
-        .then((receipt) => ({ kind: "book", receipt })),
+        .then((run) => ({ kind: "book", run })),
     );
   if (state.maxPapers > 0)
     discoveryTasks.push(() =>
       runtime
-        .runOperation(
-        authorDiscoveryPrompt(
-          name,
-          state.full,
-          state.topic,
-          "paper",
-          state.maxPapers,
-        ),
-        {
-          phase: "Search",
-          agentType: "quasi:discovery-agent",
-          label: `${name}:discover-papers`,
-          schema: AUTHOR_DISCOVER_PAPERS_SCHEMA,
-        },
-        {
-          key: "author.discover-papers",
-          effect: "readonly",
-          retry: "safe",
-          replay: "safe",
-          artifactRoles: [],
-          unknownFailureCode:
-            "author.readonly_outcome_unknown",
-        },
+        .operate(
+          authorDiscoveryPrompt(
+            name,
+            state.full,
+            state.topic,
+            "paper",
+            state.maxPapers,
+          ),
+          {
+            phase: "Search",
+            agentType: "quasi:discovery-agent",
+            label: `${name}:discover-papers`,
+            schema: AUTHOR_DISCOVER_PAPERS_SCHEMA,
+          },
+          {
+            key: "author.discover-papers",
+            effect: "readonly",
+            retry: "safe",
+            replay: "safe",
+            artifactRoles: [],
+            unknownFailureCode:
+              "author.readonly_outcome_unknown",
+            contract: AUTHOR_DISCOVER_PAPERS_CONTRACT,
+            context: { state, count: state.maxPapers },
+          },
         )
-        .then((receipt) => ({ kind: "paper", receipt })),
+        .then((run) => ({ kind: "paper", run })),
     );
   const discoveries = await runtime.parallel(discoveryTasks);
-  const bookDiscovery =
-    discoveries.find((item) => item.kind === "book")?.receipt ||
-    emptyDiscovery(state, "book");
-  const paperDiscovery =
-    discoveries.find((item) => item.kind === "paper")?.receipt ||
-    emptyDiscovery(state, "paper");
+  const bookRun =
+    discoveries.find((item) => item.kind === "book")?.run ||
+    { edge: "ok", receipt: emptyDiscovery(state, "book") };
+  const paperRun =
+    discoveries.find((item) => item.kind === "paper")?.run ||
+    { edge: "ok", receipt: emptyDiscovery(state, "paper") };
+  const bookDiscovery = bookRun.receipt;
+  const paperDiscovery = paperRun.receipt;
   state.operations.push(bookDiscovery, paperDiscovery);
-  if (
-    !strictDiscovery(
-      bookDiscovery,
-      state,
-      "book",
-      state.maxBooks,
-    ) ||
-    !strictDiscovery(
-      paperDiscovery,
-      state,
-      "paper",
-      state.maxPapers,
-    )
-  ) {
+  const invalid = [bookRun, paperRun].filter((run) =>
+    ["unknown", "mismatch"].includes(run.edge),
+  );
+  if (invalid.length) {
     const failure = operationFailure(
       "author.discovery_receipt_invalid",
       "author.discovery",
-      runtimeUnknown(bookDiscovery) ||
-        runtimeUnknown(paperDiscovery)
+      invalid.some((run) => run.edge === "unknown")
         ? "unknown"
         : "known",
       false,
@@ -1370,9 +712,9 @@ async function processAuthorStrict(
       failure,
     );
   }
-  if (bookDiscovery.status === "failed")
+  if (bookRun.edge === "failed")
     state.discoveryFailures.push(bookDiscovery.failure);
-  if (paperDiscovery.status === "failed")
+  if (paperRun.edge === "failed")
     state.discoveryFailures.push(paperDiscovery.failure);
   const candidates = [
     ...bookDiscovery.candidates,
@@ -1401,7 +743,7 @@ async function processAuthorStrict(
     );
   }
 
-  const membership = await runtime.runOperation(
+  const membershipRun = await runtime.operate(
     authorResolveMembershipPrompt(
       name,
       state.output,
@@ -1420,14 +762,26 @@ async function processAuthorStrict(
       replay: "safe",
       artifactRoles: [],
       unknownFailureCode: "author.readonly_outcome_unknown",
+      contract: AUTHOR_RESOLVE_MEMBERSHIP_CONTRACT,
+      context: {
+        state,
+        requests: candidates.map(({ kind, slug }) => ({
+          kind,
+          slug,
+        })),
+      },
     },
   );
+  const membership = membershipRun.receipt;
   state.operations.push(membership);
-  if (!strictMembership(membership, state, candidates)) {
+  if (
+    membershipRun.edge === "unknown" ||
+    membershipRun.edge === "mismatch"
+  ) {
     const failure = operationFailure(
       "author.membership_receipt_invalid",
       "author.resolve-membership",
-      runtimeUnknown(membership) ? "unknown" : "known",
+      membershipRun.edge === "unknown" ? "unknown" : "known",
       false,
       "membership receipt did not correlate exact requests",
     );
@@ -1439,7 +793,7 @@ async function processAuthorStrict(
       failure,
     );
   }
-  if (membership.status === "failed")
+  if (membershipRun.edge !== "ok")
     return terminal(
       state,
       "all_failed",

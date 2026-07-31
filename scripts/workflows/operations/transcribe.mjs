@@ -419,12 +419,7 @@ export function talkObservePrompt(state) {
     ...baseRequest("talk.observe", state),
     exact_command: exactCommand,
   };
-  return `Execute exactly one talk.observe command-relay operation from this JSON request.
-Run exact_command once, parse its one JSON stdout object, and return only the strict receipt.
-Copy every stdout field and value exactly: a CLI JSON null must remain the literal JSON null
-token, never the string "null", and a null classification must not become empty.
-Do not write, repair, transcribe, classify, or inspect another path.
-${JSON.stringify(request, null, 2)}`;
+  return JSON.stringify(request, null, 2);
 }
 
 export function talkPrepareMediaPrompt(state) {
@@ -443,10 +438,7 @@ export function talkPrepareMediaPrompt(state) {
     output: { role: "prepared_media", path: state.prepared },
     exact_command: exactCommand,
   };
-  return `Execute exactly one talk.prepare-media command-relay operation from this JSON request.
-Run exact_command once and return only its strict one-object JSON receipt. Never run a
-second command, overwrite an existing unverified output, or choose another output path.
-${JSON.stringify(request, null, 2)}`;
+  return JSON.stringify(request, null, 2);
 }
 
 export function talkTranscribePrompt(state, inputPath) {
@@ -475,11 +467,7 @@ export function talkTranscribePrompt(state, inputPath) {
     ],
     exact_command: exactCommand,
   };
-  return `Execute exactly one talk.transcribe command-relay operation from this JSON request.
-Run exact_command once. The CLI owns engine fan-out, staging, locking, manifest-last commit,
-and reconciliation. Do not invoke an engine or retry independently. Return only the exact
-flat JSON receipt emitted by the command.
-${JSON.stringify(request, null, 2)}`;
+  return JSON.stringify(request, null, 2);
 }
 
 export function talkClassifyPrompt(state, transcriptPath) {
@@ -497,10 +485,7 @@ export function talkClassifyPrompt(state, transcriptPath) {
     input: { role: "transcript", path: transcriptPath },
     exact_command: exactCommand,
   };
-  return `Execute exactly one read-only talk.classify command-relay operation from this JSON
-request. Run exact_command once and return only its strict receipt. Machine signals are
-evidence for the typed live|dead|empty result; do not write or select the next graph edge.
-${JSON.stringify(request, null, 2)}`;
+  return JSON.stringify(request, null, 2);
 }
 
 export function talkRenderSilentPrompt(
@@ -541,8 +526,427 @@ export function talkRenderSilentPrompt(
     repair_diagnostics: mode === "repair" ? diagnostics : [],
     exact_command: exactCommand,
   };
-  return `Execute exactly one talk.render-silent command-relay operation from this JSON
-request. Run exact_command once. create never clobbers; repair is allowed only for the exact
-diagnostics and output. Return only the CLI's strict JSON receipt and choose no graph edge.
-${JSON.stringify(request, null, 2)}`;
+  return JSON.stringify(request, null, 2);
 }
+
+// --- Receipt contracts -----------------------------------------------------
+// Status invariants and exact-state echoes the host schema cannot carry.
+// Context carries the graph's talk state plus per-call identity; the runtime
+// enforces schema, echo, then these through classifyReceipt.
+
+import { validText } from "../runtime.mjs";
+import { composedSchema } from "./extract.mjs";
+
+const TALK_HASH = /^[a-f0-9]{64}$/;
+const TALK_HASH_PATTERN = "^[a-f0-9]{64}$";
+
+const talkFailureBranch = (outcome) => ({
+  type: "object",
+  required: ["outcome"],
+  properties: {
+    outcome: { const: outcome },
+    code: { minLength: 1, maxLength: 200 },
+    message: { maxLength: 4000 },
+  },
+});
+
+const validHash = (value) =>
+  typeof value === "string" && TALK_HASH.test(value);
+
+const sameStrings = (left, right) =>
+  Array.isArray(left) &&
+  Array.isArray(right) &&
+  left.length === right.length &&
+  left.every((value, index) => value === right[index]);
+
+const validTalkFailure = (failure, operationKey, outcome) =>
+  !!(
+    failure &&
+    validText(failure.code, 1, 200) &&
+    failure.operation_key === operationKey &&
+    failure.outcome === outcome &&
+    failure.retryable === false &&
+    (failure.message === null ||
+      validText(failure.message, 1, 4000))
+  );
+
+const validArtifactRow = (row, state) => {
+  if (
+    !validText(row.path, 1, 2048) ||
+    !validHash(row.sha256)
+  )
+    return false;
+  if (row.role === "prepared_media")
+    return row.path === state.prepared;
+  if (row.role === "transcript")
+    return row.path === state.transcript;
+  if (row.role === "subtitle")
+    return row.path === state.subtitle;
+  if (row.role === "canonical")
+    return row.path === state.canonical;
+  return state.engines.some(
+    (engine) =>
+      row.path ===
+      `${state.processingDir}/transcript.${engine}.srt`,
+  );
+};
+
+const uniqueArtifactRows = (rows) => {
+  const paths = rows.map((row) => row.path);
+  return new Set(paths).size === paths.length;
+};
+
+const GENERATED_ROLES = [
+  "transcript",
+  "subtitle",
+  "engine_transcript",
+];
+
+export const TALK_OBSERVE_CONTRACT = {
+  schema: TALK_OBSERVE_SCHEMA,
+  echo: (receipt, context) => {
+    const state = context.state;
+    return (
+      receipt.material_key === state.materialKey &&
+      receipt.slug === state.slug &&
+      receipt.input_path === state.media &&
+      receipt.output_dir === state.processingDir &&
+      receipt.manifest_path === state.manifest &&
+      [null, state.prepared].includes(receipt.prepared_path) &&
+      [null, state.transcript].includes(receipt.transcript_path) &&
+      [null, state.subtitle].includes(receipt.subtitle_path) &&
+      receipt.talk_path === state.canonical &&
+      receipt.artifacts.every((row) =>
+        validArtifactRow(row, state),
+      ) &&
+      uniqueArtifactRows(receipt.artifacts)
+    );
+  },
+  statuses: {
+    succeeded: (receipt, context) => {
+      const state = context.state;
+      if (
+        receipt.failure !== null ||
+        !validHash(receipt.source_sha256) ||
+        receipt.source_size < 1 ||
+        (receipt.prepared_path === null) !==
+          (receipt.prepared_sha256 === null) ||
+        (receipt.prepared_sha256 !== null &&
+          !validHash(receipt.prepared_sha256)) ||
+        receipt.talk_exists !== (receipt.talk_sha256 !== null) ||
+        (receipt.talk_sha256 !== null &&
+          !validHash(receipt.talk_sha256))
+      )
+        return false;
+      if (
+        receipt.prepared_path !== null &&
+        !receipt.artifacts.some(
+          (row) =>
+            row.role === "prepared_media" &&
+            row.path === receipt.prepared_path &&
+            row.sha256 === receipt.prepared_sha256,
+        )
+      )
+        return false;
+      if (receipt.manifest_exists) {
+        if (validHash(receipt.request_fingerprint)) {
+          if (
+            receipt.transcript_path !== state.transcript ||
+            !receipt.artifacts.some(
+              (row) =>
+                row.role === "transcript" &&
+                row.path === state.transcript,
+            )
+          )
+            return false;
+        } else if (
+          receipt.request_fingerprint !== null ||
+          receipt.transcript_path !== state.transcript ||
+          receipt.subtitle_path !== state.subtitle ||
+          receipt.classification !== null ||
+          receipt.artifacts.some((row) =>
+            GENERATED_ROLES.includes(row.role),
+          )
+        ) {
+          return false;
+        }
+      } else if (
+        receipt.request_fingerprint !== null ||
+        receipt.transcript_path !== null ||
+        receipt.subtitle_path !== null ||
+        receipt.classification !== null ||
+        receipt.artifacts.some((row) =>
+          GENERATED_ROLES.includes(row.role),
+        )
+      ) {
+        return false;
+      }
+      if (
+        !(receipt.manifest_exists &&
+          receipt.request_fingerprint === null) &&
+        receipt.talk_exists !==
+          receipt.artifacts.some(
+            (row) =>
+              row.role === "canonical" &&
+              row.path === state.canonical,
+          )
+      )
+        return false;
+      return true;
+    },
+    failed: (receipt) =>
+      validTalkFailure(receipt.failure, "talk.observe", "known"),
+    blocked: (receipt) =>
+      validTalkFailure(receipt.failure, "talk.observe", "unknown"),
+  },
+};
+
+export const talkPrepareMediaSchema = ({
+  materialKey,
+  input,
+  output,
+  inputSha,
+}) =>
+  composedSchema(
+    TALK_PREPARE_MEDIA_SCHEMA,
+    {
+      material_key: { const: materialKey },
+      input_path: { const: input },
+      output_path: { const: output },
+      input_sha256: { const: inputSha },
+    },
+    {
+      succeeded: {
+        properties: {
+          status: { const: "succeeded" },
+          failure: { type: "null" },
+          output_sha256: {
+            type: "string",
+            pattern: TALK_HASH_PATTERN,
+          },
+          size: { minimum: 1 },
+        },
+      },
+      failed: {
+        properties: {
+          status: { const: "failed" },
+          action: { const: "create" },
+          output_sha256: { type: "null" },
+          size: { const: 0 },
+          failure: talkFailureBranch("known"),
+        },
+      },
+      blocked: {
+        properties: {
+          status: { const: "blocked" },
+          action: { const: "create" },
+          output_sha256: { type: "null" },
+          size: { const: 0 },
+          failure: talkFailureBranch("unknown"),
+        },
+      },
+    },
+  );
+
+export const TALK_PREPARE_MEDIA_CONTRACT = {
+  schema: TALK_PREPARE_MEDIA_SCHEMA,
+};
+
+const strictEngineRow = (row, engine, state) => {
+  if (row.name !== engine) return false;
+  const expected = `${state.processingDir}/transcript.${engine}.srt`;
+  if (row.status === "succeeded")
+    return (
+      row.segments > 0 &&
+      row.path === expected &&
+      validHash(row.sha256)
+    );
+  return (
+    row.segments === 0 &&
+    row.path === null &&
+    row.sha256 === null
+  );
+};
+
+export const TALK_TRANSCRIBE_CONTRACT = {
+  schema: TALK_TRANSCRIBE_SCHEMA,
+  echo: (receipt, context) => {
+    const state = context.state;
+    return (
+      receipt.material_key === state.materialKey &&
+      receipt.slug === state.slug &&
+      receipt.input_path === context.inputPath &&
+      receipt.output_dir === state.processingDir &&
+      receipt.talk_dir === state.talkDir &&
+      receipt.manifest_path === state.manifest &&
+      receipt.source_sha256 === context.expectedInputSha &&
+      receipt.lang === state.lang &&
+      receipt.title === state.title &&
+      sameStrings(receipt.engines, state.engines) &&
+      receipt.per_engine.length === state.engines.length &&
+      state.engines.every((engine, index) =>
+        strictEngineRow(
+          receipt.per_engine[index],
+          engine,
+          state,
+        ),
+      ) &&
+      receipt.artifacts.every((row) =>
+        validArtifactRow(row, state),
+      ) &&
+      uniqueArtifactRows(receipt.artifacts)
+    );
+  },
+  statuses: {
+    succeeded: (receipt, context) => {
+      const state = context.state;
+      if (
+        receipt.failure !== null ||
+        receipt.manifest_exists !== true ||
+        !validHash(receipt.manifest_fingerprint) ||
+        !validHash(receipt.request_fingerprint) ||
+        !validHash(receipt.source_sha256) ||
+        !["created", "replaced", "reconciled"].includes(
+          receipt.disposition,
+        ) ||
+        receipt.transcript_path !== state.transcript ||
+        !receipt.artifacts.some(
+          (row) =>
+            row.role === "transcript" &&
+            row.path === state.transcript,
+        )
+      )
+        return false;
+      const succeeded = receipt.per_engine.filter(
+        (row) => row.status === "succeeded",
+      );
+      if (receipt.primary_engine === null)
+        return (
+          succeeded.length === 0 &&
+          receipt.subtitle_path === null &&
+          !receipt.artifacts.some(
+            (row) =>
+              row.role === "subtitle" ||
+              row.role === "engine_transcript",
+          )
+        );
+      const primary = receipt.per_engine.find(
+        (row) => row.name === receipt.primary_engine,
+      );
+      return !!(
+        primary &&
+        primary.status === "succeeded" &&
+        receipt.subtitle_path === state.subtitle &&
+        receipt.artifacts.some(
+          (row) =>
+            row.role === "subtitle" &&
+            row.path === state.subtitle,
+        ) &&
+        succeeded.every((row) =>
+          receipt.artifacts.some(
+            (artifactRow) =>
+              artifactRow.role === "engine_transcript" &&
+              artifactRow.path === row.path &&
+              artifactRow.sha256 === row.sha256,
+          ),
+        )
+      );
+    },
+    failed: (receipt) =>
+      receipt.manifest_exists === true &&
+      validHash(receipt.manifest_fingerprint) &&
+      validHash(receipt.request_fingerprint) &&
+      receipt.disposition === null &&
+      validTalkFailure(
+        receipt.failure,
+        "talk.transcribe",
+        "known",
+      ),
+    blocked: (receipt) =>
+      receipt.disposition === null &&
+      (receipt.manifest_fingerprint === null ||
+        validHash(receipt.manifest_fingerprint)) &&
+      validTalkFailure(
+        receipt.failure,
+        "talk.transcribe",
+        "unknown",
+      ),
+  },
+};
+
+export const TALK_CLASSIFY_CONTRACT = {
+  schema: TALK_CLASSIFY_SCHEMA,
+  echo: (receipt, context) =>
+    receipt.material_key === context.state.materialKey &&
+    receipt.input_path === context.transcript &&
+    receipt.input_sha256 === context.transcriptSha,
+  statuses: {
+    succeeded: (receipt) =>
+      receipt.failure === null &&
+      ["live", "dead", "empty"].includes(receipt.signal) &&
+      receipt.machine_signals !== null &&
+      validText(receipt.machine_signals.reason, 1, 1000),
+    failed: (receipt) =>
+      receipt.signal === null &&
+      receipt.machine_signals === null &&
+      validTalkFailure(
+        receipt.failure,
+        "talk.classify",
+        "known",
+      ),
+  },
+};
+
+export const talkRenderSilentSchema = ({
+  materialKey,
+  input,
+  output,
+  signal,
+  mode,
+}) =>
+  composedSchema(
+    TALK_RENDER_SILENT_SCHEMA,
+    {
+      material_key: { const: materialKey },
+      input_path: { const: input },
+      output_path: { const: output },
+      classification_signal: { const: signal },
+    },
+    {
+      succeeded: {
+        properties: {
+          status: { const: "succeeded" },
+          failure: { type: "null" },
+          output_sha256: {
+            type: "string",
+            pattern: TALK_HASH_PATTERN,
+          },
+          size: { minimum: 1 },
+          action:
+            mode === "create"
+              ? { const: "create" }
+              : { enum: ["repair", "reconciled"] },
+        },
+      },
+      failed: {
+        properties: {
+          status: { const: "failed" },
+          output_sha256: { type: "null" },
+          action: { const: mode },
+          failure: talkFailureBranch("known"),
+        },
+      },
+      blocked: {
+        properties: {
+          status: { const: "blocked" },
+          output_sha256: { type: "null" },
+          action: { const: mode },
+          failure: talkFailureBranch("unknown"),
+        },
+      },
+    },
+  );
+
+export const TALK_RENDER_SILENT_CONTRACT = {
+  schema: TALK_RENDER_SILENT_SCHEMA,
+};

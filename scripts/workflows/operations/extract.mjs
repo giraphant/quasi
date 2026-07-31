@@ -1,3 +1,5 @@
+import { exactKeys, validText } from "../runtime.mjs";
+
 const operationFailureSchema = (
   operationKey,
   retryable,
@@ -180,6 +182,170 @@ export const documentOcrSchema = (failureNamespace) => {
 
 export const DOCUMENT_OCR_SCHEMA = documentOcrSchema("paper");
 export const BOOK_DOCUMENT_OCR_SCHEMA = documentOcrSchema("book");
+
+// Composed operation schemas: the status invariants and exact-path echoes ride
+// the host-facing schema as anyOf branches and const properties, so the
+// StructuredOutput layer bounces an invalid receipt back to the still-running
+// agent — the only place a retry is safe. The runtime backstop validates the
+// same object, so weaker harnesses converge on the same verdict. Contracts
+// keep only what a JSON Schema cannot express.
+
+export const composedSchema = (base, overrides, branches) => ({
+  ...base,
+  properties: { ...base.properties, ...overrides },
+  anyOf: Object.values(branches),
+});
+
+const knownFailureBranch = (extra = {}) => ({
+  type: "object",
+  required: ["outcome"],
+  properties: { outcome: { const: "known" }, ...extra },
+});
+
+const unknownFailureBranch = (extra = {}) => ({
+  type: "object",
+  required: ["outcome"],
+  properties: { outcome: { const: "unknown" }, ...extra },
+});
+
+const TEXT_EXTRACT_BRANCHES = {
+  succeeded: {
+    properties: {
+      status: { const: "succeeded" },
+      failure: { type: "null" },
+      exit: { const: 0 },
+      exists: { const: true },
+    },
+  },
+  failed: {
+    properties: {
+      status: { const: "failed" },
+      failure: knownFailureBranch(),
+    },
+  },
+  blocked: {
+    properties: {
+      status: { const: "blocked" },
+      failure: unknownFailureBranch(),
+    },
+  },
+};
+
+export const textExtractSchema = ({ input, output }) =>
+  composedSchema(
+    TEXT_EXTRACT_SCHEMA,
+    {
+      input_path: { const: input },
+      output_path: { const: output },
+    },
+    TEXT_EXTRACT_BRANCHES,
+  );
+
+export const TEXT_EXTRACT_CONTRACT = {
+  schema: TEXT_EXTRACT_SCHEMA,
+};
+
+const READABILITY_BRANCHES = {
+  succeeded: {
+    properties: {
+      status: { const: "succeeded" },
+      failure: { type: "null" },
+      signal: {
+        enum: ["readable", "needs_ocr", "invalid_source"],
+      },
+    },
+  },
+  failed: {
+    properties: {
+      status: { const: "failed" },
+      signal: { type: "null" },
+      failure: knownFailureBranch(),
+    },
+  },
+  blocked: {
+    properties: {
+      status: { const: "blocked" },
+      signal: { type: "null" },
+      failure: unknownFailureBranch(),
+    },
+  },
+};
+
+export const readabilitySchema = ({ input }) =>
+  composedSchema(
+    READABILITY_SCHEMA,
+    { input_path: { const: input } },
+    READABILITY_BRANCHES,
+  );
+
+export const READABILITY_CONTRACT = {
+  schema: READABILITY_SCHEMA,
+};
+
+const documentOcrBranches = (failureNamespace) => ({
+  succeeded: {
+    properties: {
+      status: { const: "succeeded" },
+      failure: { type: "null" },
+      exit: { const: 0 },
+      exists: { const: true },
+      size: { minimum: 1 },
+    },
+  },
+  failed: {
+    properties: {
+      status: { const: "failed" },
+      failure: knownFailureBranch({
+        code: { const: `${failureNamespace}.ocr_failed` },
+      }),
+    },
+  },
+  blocked_mismatch: {
+    properties: {
+      status: { const: "blocked" },
+      failure: unknownFailureBranch({
+        code: {
+          const: `${failureNamespace}.writer_receipt_mismatch`,
+        },
+      }),
+    },
+  },
+  blocked_reconcile: {
+    properties: {
+      status: { const: "blocked" },
+      exit: { const: 0 },
+      exists: { const: true },
+      size: { minimum: 1 },
+      failure: unknownFailureBranch({
+        code: { const: "output_exists_requires_reconcile" },
+      }),
+    },
+  },
+});
+
+export const documentOcrOperationSchema = (
+  failureNamespace,
+  { input, output },
+) =>
+  composedSchema(
+    documentOcrSchema(failureNamespace),
+    {
+      input_path: { const: input },
+      output_path: { const: output },
+    },
+    documentOcrBranches(failureNamespace),
+  );
+
+export const documentOcrContract = (failureNamespace) => ({
+  schema: documentOcrSchema(failureNamespace),
+  reconcile: (receipt) =>
+    receipt.status === "blocked" &&
+    receipt.failure.code === "output_exists_requires_reconcile",
+});
+
+export const DOCUMENT_OCR_CONTRACT = documentOcrContract("paper");
+export const BOOK_DOCUMENT_OCR_CONTRACT = documentOcrContract("book");
+
 
 const chapterRefSchema = {
   type: "object",
@@ -439,6 +605,241 @@ export const CHAPTER_ASSESS_SCHEMA = {
   },
 };
 
+const CHAPTER_SLOT = /^\d{2,3}[a-z]{0,2}$/;
+const CHAPTER_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
+
+const validChapterRef = (chapter) => {
+  const filenameIsSafe =
+    validText(chapter && chapter.filename, 1, 128) &&
+    chapter.filename.startsWith(`${chapter.slot}_`) &&
+    chapter.filename.endsWith(".txt") &&
+    !chapter.filename.includes("/") &&
+    !chapter.filename.includes("\\") &&
+    !chapter.filename.includes("..");
+  if (
+    !CHAPTER_SLOT.test(chapter.slot) ||
+    !CHAPTER_SLUG.test(chapter.slug) ||
+    !filenameIsSafe ||
+    !validText(chapter.title, 1, 500)
+  )
+    return false;
+  const noPages =
+    chapter.start_page === null && chapter.end_page === null;
+  const startOnly =
+    Number.isInteger(chapter.start_page) &&
+    chapter.start_page >= 1 &&
+    chapter.end_page === null;
+  const pages =
+    Number.isInteger(chapter.start_page) &&
+    Number.isInteger(chapter.end_page) &&
+    chapter.start_page >= 1 &&
+    chapter.end_page >= chapter.start_page;
+  return noPages || startOnly || pages;
+};
+
+const uniqueChapters = (chapters) => {
+  if (
+    !chapters.length ||
+    chapters.some((chapter) => !validChapterRef(chapter))
+  )
+    return false;
+  const slots = new Set();
+  const filenames = new Set();
+  const slugs = new Set();
+  return chapters.every((chapter) => {
+    if (
+      slots.has(chapter.slot) ||
+      filenames.has(chapter.filename) ||
+      slugs.has(chapter.slug)
+    )
+      return false;
+    slots.add(chapter.slot);
+    filenames.add(chapter.filename);
+    slugs.add(chapter.slug);
+    return true;
+  });
+};
+
+const planRefused = (receipt) =>
+  receipt.mode === null &&
+  receipt.chapters.length === 0 &&
+  !!receipt.failure;
+
+export const CHAPTER_PLAN_CONTRACT = {
+  schema: CHAPTER_PLAN_SCHEMA,
+  echo: (receipt, context) =>
+    receipt.input_path === context.input &&
+    receipt.normalized_path === context.normalized,
+  statuses: {
+    succeeded: (receipt) => {
+      if (
+        receipt.failure !== null ||
+        !["toc", "pattern", "manual"].includes(receipt.mode)
+      )
+        return false;
+      if (receipt.mode !== "manual")
+        return receipt.chapters.length === 0;
+      if (!receipt.chapters.length) return false;
+      let lastEnd = 0;
+      return receipt.chapters.every((chapter) => {
+        if (
+          !validText(chapter.title, 1, 500) ||
+          chapter.end < chapter.start ||
+          chapter.start <= lastEnd
+        )
+          return false;
+        lastEnd = chapter.end;
+        return true;
+      });
+    },
+    failed: (receipt) =>
+      planRefused(receipt) &&
+      receipt.failure.outcome === "known",
+    blocked: (receipt) =>
+      planRefused(receipt) &&
+      receipt.failure.outcome === "unknown",
+  },
+};
+
+export const chapterExtractSchema = ({
+  input,
+  outputDir,
+  manifest,
+  mode,
+}) =>
+  composedSchema(
+    CHAPTER_EXTRACT_SCHEMA,
+    {
+      input_path: { const: input },
+      output_path: { const: outputDir },
+      manifest_path: { const: manifest },
+      mode: { const: mode },
+    },
+    {
+      succeeded: {
+        properties: {
+          status: { const: "succeeded" },
+          failure: { type: "null" },
+          exit: { const: 0 },
+          manifest_exists: { const: true },
+          request_fingerprint: { type: "string" },
+          manifest_fingerprint: { type: "string" },
+          disposition: { type: "string" },
+        },
+      },
+      failed: {
+        properties: {
+          status: { const: "failed" },
+          failure: knownFailureBranch(),
+        },
+      },
+      blocked: {
+        properties: {
+          status: { const: "blocked" },
+          failure: unknownFailureBranch(),
+        },
+      },
+    },
+  );
+
+// Chapter-count arithmetic and cross-item uniqueness stay in the contract.
+export const CHAPTER_EXTRACT_CONTRACT = {
+  schema: CHAPTER_EXTRACT_SCHEMA,
+  statuses: {
+    succeeded: (receipt) =>
+      receipt.chapter_count === receipt.chapters.length &&
+      (receipt.chapter_count === 0 ||
+        uniqueChapters(receipt.chapters)),
+    failed: (receipt) =>
+      receipt.chapter_count === receipt.chapters.length,
+    blocked: (receipt) =>
+      receipt.chapter_count === receipt.chapters.length,
+  },
+};
+
+const assessDiagnosticsValid = (receipt, context) => {
+  const allowed = new Set([
+    context.manifest,
+    ...context.chapters.map((chapter) => chapter.path),
+  ]);
+  return receipt.diagnostics.every((diagnostic) => {
+    if (
+      !allowed.has(diagnostic.path) ||
+      !validText(diagnostic.kind, 1, 200) ||
+      !validText(diagnostic.reason, 1, 4000) ||
+      (diagnostic.slot !== null &&
+        !CHAPTER_SLOT.test(diagnostic.slot)) ||
+      (diagnostic.title !== null &&
+        !validText(diagnostic.title, 1, 500))
+    )
+      return false;
+    const noPages =
+      diagnostic.start_page === null &&
+      diagnostic.end_page === null;
+    const pages =
+      Number.isInteger(diagnostic.start_page) &&
+      Number.isInteger(diagnostic.end_page) &&
+      diagnostic.start_page >= 1 &&
+      diagnostic.end_page >= diagnostic.start_page;
+    return noPages || pages;
+  });
+};
+
+export const CHAPTER_ASSESS_CONTRACT = {
+  schema: CHAPTER_ASSESS_SCHEMA,
+  echo: (receipt, context) =>
+    receipt.manifest_path === context.manifest &&
+    JSON.stringify(receipt.input_paths) ===
+      JSON.stringify(
+        context.chapters.map((chapter) => chapter.path),
+      ),
+  statuses: {
+    succeeded: (receipt, context) => {
+      if (!assessDiagnosticsValid(receipt, context)) return false;
+      if (
+        receipt.failure !== null ||
+        ![
+          "ready",
+          "needs_replan",
+          "needs_repair",
+          "needs_ocr",
+          "invalid_source",
+        ].includes(receipt.signal)
+      )
+        return false;
+      if (receipt.signal === "ready")
+        return receipt.diagnostics.length === 0;
+      if (!receipt.diagnostics.length) return false;
+      if (receipt.signal !== "needs_repair") return true;
+      const targets = new Set();
+      return receipt.diagnostics.every((diagnostic) => {
+        const chapter = context.chapters.find(
+          (candidate) => diagnostic.path === candidate.path,
+        );
+        const valid =
+          chapter &&
+          diagnostic.slot === chapter.slot &&
+          validText(diagnostic.title, 1, 500) &&
+          Number.isInteger(diagnostic.start_page) &&
+          Number.isInteger(diagnostic.end_page) &&
+          !targets.has(diagnostic.path);
+        targets.add(diagnostic.path);
+        return valid;
+      });
+    },
+    failed: (receipt, context) =>
+      assessDiagnosticsValid(receipt, context) &&
+      receipt.signal === null &&
+      !!receipt.failure &&
+      receipt.failure.outcome === "known",
+    blocked: (receipt, context) =>
+      assessDiagnosticsValid(receipt, context) &&
+      receipt.signal === null &&
+      !!receipt.failure &&
+      receipt.failure.outcome === "unknown",
+  },
+};
+
 export function extractTextOperationPrompt(
   materialKey,
   input,
@@ -557,25 +958,7 @@ export function chapterPlanOperationPrompt(
     max_chapters: 150,
     diagnostics,
   };
-  return `Execute one readonly chapter.plan judgement. Read only the exact source path and,
-when normalized.path is non-null, that exact normalized document path. A null normalized
-path is intentional for an EPUB replan: do not invent or discover another path. Do not run
-Bash, Glob, quasi-extract, OCR, search, or write files. Select exactly one mode: toc when
-the source has a trustworthy embedded TOC, pattern
-when real chapter headings are semantically regular, or manual when explicit page ranges are
-required. Manual mode must return non-overlapping, ordered, inclusive page ranges with titles;
-toc/pattern return chapters=[]. A chapter count or length is only machine evidence, never the
-semantic verdict. Diagnostics are evidence for this one replan, not permission to loop.
-
-Request:
-${JSON.stringify(request, null, 2)}
-
-Return exactly one quasi.operation.chapter.plan.receipt/0.1 object with key=chapter.plan,
-effect=readonly, attempt=1, input_path and nullable normalized_path echoed byte-for-byte,
-artifact_roles=["chapter_plan"], status succeeded|failed, mode toc|pattern|manual or null,
-chapters, diagnostics, and failure. succeeded requires one mode and failure=null. failed
-requires mode=null and failure
-{"code":"chapter.plan_failed","operation_key":"chapter.plan","outcome":"known","retryable":true}.`;
+  return JSON.stringify(request, null, 2);
 }
 
 export function chapterExtractOperationPrompt({
@@ -679,25 +1062,7 @@ export function chapterAssessOperationPrompt(
     })),
     machine_signals: machineSignals,
   };
-  return `Execute one readonly semantic assessment of an extracted chapter set. Read the exact
-manifest and only the exact manifest-listed chapter paths in this request. Inspect actual
-chapter openings/endings and enough body prose to judge coherence, truncation, crossed
-boundaries, headers-only/garbled extraction, or a scan. Do not run Bash, Glob, OCR, extract,
-search, or write. Counts, sizes and limit.exceeded are evidence only; never turn a character
-or chapter-count threshold into the semantic verdict.
-
-Return exactly one quasi.operation.chapter.assess-boundaries.receipt/0.1 object with
-key=chapter.assess-boundaries, effect=readonly, attempt=1, exact manifest_path and ordered
-input_paths. input_paths must equal Request.chapters[].path in that exact order and must not
-include manifest_path. artifact_roles=["chapter_manifest","normalized_chapter"], status,
-signal, diagnostics and failure. A succeeded signal is exactly ready|needs_replan|needs_repair|
-needs_ocr|invalid_source. Every diagnostic is exactly
-{path,kind,reason,slot,title,start_page,end_page}; path must equal the manifest path or one
-listed chapter path. needs_repair diagnostics must identify one listed chapter plus exact
-slot/title/inclusive page range. Free prose never controls the next edge.
-
-Request:
-${JSON.stringify(request, null, 2)}`;
+  return JSON.stringify(request, null, 2);
 }
 
 export function documentOcrOperationPrompt(

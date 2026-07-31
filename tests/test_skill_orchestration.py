@@ -333,6 +333,89 @@ def test_frontmatter_descriptions_are_routing_hints():
     assert offenders == []
 
 
+def test_owned_operation_prompts_use_self_contained_json_envelopes():
+    prompt_contracts = {
+        "operations/acquire.mjs": (
+            4,
+            (
+                "materialRecallPrompt",
+                "materialResolvePrompt",
+                "materialSearchPrompt",
+                "authorDiscoveryPrompt",
+                "topicDiscoverBookOperationPrompt",
+                "topicDiscoverPaperOperationPrompt",
+            ),
+        ),
+        "operations/steer.mjs": (1, ("topicSteerOperationPrompt",)),
+        "operations/synthesise.mjs": (
+            3,
+            (
+                "bookSynthesiseOperationPrompt",
+                "authorSynthesiseOperationPrompt",
+                "topicOverviewSynthesiseOperationPrompt",
+                "topicResourcesSynthesiseOperationPrompt",
+            ),
+        ),
+        "operations/extract.mjs": (
+            2,
+            ("chapterPlanOperationPrompt", "chapterAssessOperationPrompt"),
+        ),
+        "operations/audit.mjs": (
+            5,
+            (
+                "paperAuditPrompt",
+                "bookAuditPrompt",
+                "authorAuditLegacyPrompt",
+                "talkAuditLegacyPrompt",
+                "topicAuditLegacyPrompt",
+            ),
+        ),
+        "operations/transcribe.mjs": (
+            5,
+            (
+                "talkObservePrompt",
+                "talkPrepareMediaPrompt",
+                "talkTranscribePrompt",
+                "talkClassifyPrompt",
+                "talkRenderSilentPrompt",
+            ),
+        ),
+        "operations/translate.mjs": (
+            3,
+            (
+                "translationReconcilePrompt",
+                "translationRunPrompt",
+                "translationReocrPrompt",
+            ),
+        ),
+    }
+    for relative, (minimum_json_returns, builders) in prompt_contracts.items():
+        operation = source_file(relative)
+        assert operation.count("return JSON.stringify") >= minimum_json_returns
+        for builder in builders:
+            assert re.search(
+                rf"export (?:function|const)\s+{builder}\b", operation
+            ), f"{builder} must remain an explicit owner-backed prompt boundary"
+
+    for agent_name in (
+        "metadata",
+        "discovery",
+        "steer",
+        "synthesis",
+        "extract",
+        "audit",
+        "transcribe",
+        "translate",
+    ):
+        contract = (
+            PLUGIN_ROOT / "agents" / f"{agent_name}-agent.md"
+        ).read_text(encoding="utf-8")
+        compact = re.sub(r"\s+", "", contract)
+        assert "用户消息可以只有" in compact
+        assert "JSON" in compact
+        assert "不得依赖外围" in contract
+
+
 def test_scenario_search_agents_keep_distinct_contracts():
     metadata = (PLUGIN_ROOT / "agents" / "metadata-agent.md").read_text(
         encoding="utf-8"
@@ -357,7 +440,8 @@ def test_scenario_search_agents_keep_distinct_contracts():
 
     assert "`quasi-search book|paper ... --json`" in metadata
     assert "运行 request 给出的单次" in metadata
-    assert "do not change the query or start a second search" in source_file(
+    assert "不得重建\n  argv、添加 shell operator 或开始第二个查询" in metadata
+    assert "do not change the query or start a second search" not in source_file(
         "operations/acquire.mjs"
     )
     assert "Author discovery" not in metadata
@@ -424,23 +508,11 @@ def test_orchestrate_reads_every_receipt_it_branches_on():
         "SY_SCHEMA",
         "STEER_SCHEMA",
         "RECALL_SCHEMA",
-        "TEXT_EXTRACT_SCHEMA",
-        "READABILITY_SCHEMA",
-        "DOCUMENT_OCR_SCHEMA",
-        "PAPER_ANALYSE_SCHEMA",
-        "PAPER_AUDIT_SCHEMA",
-        "BOOK_ACQUIRE_SCHEMA",
         "CHAPTER_PLAN_SCHEMA",
-        "CHAPTER_EXTRACT_SCHEMA",
         "CHAPTER_ASSESS_SCHEMA",
-        "CHAPTER_ANALYSE_SCHEMA",
-        "BOOK_SYNTHESISE_SCHEMA",
-        "BOOK_AUDIT_SCHEMA",
         "AUTHOR_DISCOVER_BOOKS_SCHEMA",
         "AUTHOR_DISCOVER_PAPERS_SCHEMA",
         "AUTHOR_RESOLVE_MEMBERSHIP_SCHEMA",
-        "AUTHOR_SYNTHESISE_SCHEMA",
-        "AUTHOR_AUDIT_SCHEMA",
     ):
         assert re.search(
             rf"(?:export\s+)?const\s+{schema}\s*=", text
@@ -448,17 +520,54 @@ def test_orchestrate_reads_every_receipt_it_branches_on():
         assert re.search(rf"schema:\s*{schema}\b", text), (
             f"{schema} is defined but never attached to an agent() call"
         )
+    for base, builder in (
+        ("TEXT_EXTRACT_SCHEMA", "textExtractSchema"),
+        ("READABILITY_SCHEMA", "readabilitySchema"),
+        ("DOCUMENT_OCR_SCHEMA", "documentOcrOperationSchema"),
+        ("PAPER_ANALYSE_SCHEMA", "paperAnalyseSchema"),
+        ("PAPER_AUDIT_SCHEMA", "paperAuditSchema"),
+        ("PAPER_ACQUIRE_SCHEMA", "paperAcquireSchema"),
+        ("CHAPTER_EXTRACT_SCHEMA", "chapterExtractSchema"),
+        ("CHAPTER_ANALYSE_SCHEMA", "chapterAnalyseSchema"),
+        ("BOOK_SYNTHESISE_SCHEMA", "bookSynthesiseSchema"),
+        ("BOOK_AUDIT_SCHEMA", "bookAuditSchema"),
+        ("AUTHOR_SYNTHESISE_SCHEMA", "authorSynthesiseSchema"),
+        ("AUTHOR_AUDIT_SCHEMA", "authorAuditSchema"),
+    ):
+        assert re.search(
+            rf"(?:export\s+)?const\s+{base}\s*=", text
+        ), f"{base} must be defined"
+        assert re.search(rf"schema:\s*{builder}\(", text), (
+            f"{builder} is defined but never attached to an agent() call"
+        )
+    # Book acquisition binds its composed schema once so the same object
+    # reaches both the host layer and the runtime backstop classifier.
+    assert re.search(
+        r"(?:export\s+)?const\s+BOOK_ACQUIRE_SCHEMA\s*=", text
+    )
+    assert re.search(
+        r"const\s+acquireSchema\s*=\s*bookAcquireSchema\(", text
+    )
+    assert re.search(r"schema:\s*acquireSchema\b", text), (
+        "bookAcquireSchema is built but never attached to the acquire call"
+    )
 
 
 def test_orchestrate_book_reconciles_exact_chapter_receipts_before_reporting_ok():
     """Bowker 2005: 9 chapter agents all reported success, 2 files landed, synth honestly said
     chapters_analyzed: 2, and the graph still returned book_failures: 0. Silent truncation."""
     text = source_file("materials/book.mjs")
+    synth = source_file("operations/synthesise.mjs")
 
-    assert "chapterPresent(receipt, \"create\")" in text
-    assert "receipt.chapters_analyzed !== inputPaths.length" in text
+    assert 'analysis.edge === "ok" || analysis.edge === "reconcile"' in text, (
+        "chapter presence must come only from a proved ok/reconcile edge"
+    )
+    assert "chapters_analyzed: { const: count }" in synth, (
+        "synth chapters_analyzed must be pinned to the exact chapter count"
+    )
+    assert "bookSynthesiseBranches(mode, inputPaths.length)" in synth
     assert (
-        "JSON.stringify(receipt.input_paths) !== JSON.stringify(inputPaths)" in text
+        "input_paths: { const: inputPaths }" in synth
     ), "synthesis must echo the exact ordered chapter owner list"
     assert "chapters_incomplete" in text, "an unreconciled book must not report ok"
     for inventory in ("expected_slots", "present_slots", "missing_slots"):
@@ -486,7 +595,8 @@ def test_book_ingress_requires_publisher_enrichment_even_with_isbn():
     assert "收到 Book/Paper 请求后立即启动图" in skill
     assert "validBookPicked" in ingress
     assert "validText(picked.publisher, 2, 500)" in ingress
-    assert "material.identity_not_resolved" in acquire
+    assert "material.identity_not_resolved" in metadata
+    assert "material.identity_not_resolved" not in acquire
     assert "publisher: { type: \"string\" }" in acquire
     assert "Publisher 必须有 catalog" in metadata
     assert "`picked:null`" in metadata
@@ -549,7 +659,9 @@ def test_book_auto_format_handoff_is_finite_and_never_defaults_to_pdf():
     assert ': ["epub", "pdf"]' in book
     assert "allowed_outputs: allowedOutputs" in acquire
     assert "format_preference: formats" in acquire
-    assert "item.format === format && item.path === path" in book
+    assert "anyOf: allowedSources.map(({ format, path }) => ({" in acquire, (
+        "the accepted book path must stay paired with its exact format"
+    )
     assert 'multiple: "blocked"' in acquire
     assert "可带 `authors/year/publisher/category/format`" in skill
     assert 'request.query.format' in source_file("materials/ingress.mjs")
@@ -648,7 +760,7 @@ def test_author_collection_uses_strict_operations_and_shared_agent_contracts():
         "author.audit.legacy",
     ):
         assert key in author
-    assert "runtime.runOperation" in author
+    assert "runtime.operate" in author
     assert "runtime.coalesce" in author
     assert "retryNull" not in author
     assert "OVERWRITE" not in author
@@ -666,13 +778,15 @@ def test_author_collection_uses_strict_operations_and_shared_agent_contracts():
 
 
 def test_book_boundary_receipt_does_not_duplicate_manifest_in_input_paths():
+    agent = (PLUGIN_ROOT / "agents" / "extract-agent.md").read_text(
+        encoding="utf-8"
+    )
     extract = source_file("operations/extract.mjs")
 
-    assert (
-        "input_paths must equal Request.chapters[].path in that exact order"
-        in extract
-    )
-    assert "must not\ninclude manifest_path" in extract
+    assert "Receipt `input_paths` 必须逐字等于" in agent
+    assert "`request.chapters[].path` 的有序列表" in agent
+    assert "不能包含 manifest" in agent
+    assert "input_paths must equal Request.chapters[].path" not in extract
 
 
 def test_collect_material_reports_any_status_that_is_not_ok():
@@ -1081,11 +1195,13 @@ def test_extract_agent_is_readonly_and_graph_receipt_owns_chapter_inventory():
 
 def test_book_graph_consumes_cli_manifest_filenames_without_reinventing_them():
     book = source_file("materials/book.mjs")
+    extract = source_file("operations/extract.mjs")
 
-    assert "const CHAPTER_SLOT = /^\\d{2,3}[a-z]{0,2}$/;" in book
-    assert 'chapter.filename.startsWith(`${chapter.slot}_`)' in book
-    assert 'chapter.filename.endsWith(".txt")' in book
+    assert "const CHAPTER_SLOT = /^\\d{2,3}[a-z]{0,2}$/;" in extract
+    assert 'chapter.filename.startsWith(`${chapter.slot}_`)' in extract
+    assert 'chapter.filename.endsWith(".txt")' in extract
     assert "`ch${chapter.slot}-${chapter.slug}.txt`" not in book
+    assert "`ch${chapter.slot}-${chapter.slug}.txt`" not in extract
 
 
 def test_synthesis_agent_consumes_only_graph_supplied_members():

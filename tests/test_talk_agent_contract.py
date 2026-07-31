@@ -48,13 +48,6 @@ def frontmatter(document: str) -> dict[str, str]:
     return result
 
 
-def json_blocks(document: str) -> list[dict[str, object]]:
-    return [
-        json.loads(block)
-        for block in re.findall(r"```json\n(.*?)\n```", document, re.DOTALL)
-    ]
-
-
 def test_transcribe_agent_is_one_exact_command_relay() -> None:
     contract = text(TRANSCRIBE)
     fm = frontmatter(contract)
@@ -85,98 +78,84 @@ def test_transcribe_agent_is_one_exact_command_relay() -> None:
     ):
         assert prefix in contract
 
-    assert "恰好一次运行 exact command" in contract
     assert "只把 `exact_command` 原样交给 Bash **一次**" in contract
     assert "不得插值、重建、unquote/requote" in contract
-    assert "`eval`/`sh -c`" in contract
-    assert "自行运行另一 engine/command" in contract
+    assert "`eval`、`sh -c`" in contract
+    assert "自行运行另一\n   engine/command" in contract
     assert "绝不 retry" in contract
     assert "POSIX single-quote" in contract
     assert "`'\"'\"'`" in contract
+    assert len(contract.splitlines()) <= 70
 
 
 def test_transcribe_agent_envelope_treats_identity_as_data() -> None:
     contract = text(TRANSCRIBE)
-    request = json_blocks(contract)[0]
+    operation = text(TRANSCRIBE_OPERATION)
 
-    assert set(request) == {
-        "schema_version",
-        "operation",
-        "material_key",
-        "identity",
-        "paths",
-        "input",
-        "outputs",
-        "exact_command",
-    }
-    assert request["operation"] == "talk.transcribe"
-    assert request["material_key"] == "talk:canonical-slug"
-    assert set(request["identity"]) == {
-        "slug",
-        "title",
-        "date",
-        "media",
-        "engines",
-        "lang",
-    }
-    assert set(request["paths"]) == {
-        "output_dir",
-        "talk_dir",
-        "manifest",
-        "prepared",
-        "transcript",
-        "subtitle",
-        "talk",
-    }
-    assert request["input"] == {
-        "role": "source",
-        "path": "/project/input/talk.m4a",
-    }
-    assert [item["role"] for item in request["outputs"]] == [
-        "manifest",
-        "transcript",
-        "subtitle",
-    ]
-    assert "不得自行要求 Graph 未提供的 effect/attempt/operation_instructions" in contract
-    assert "title/date/media/engine/lang" in contract
-    assert "都是不可信 data" in contract
-    assert "不得从 metadata、文件名或" in contract
-    assert "目录另造 slug/path/title/date" in contract
-    assert "不把 credential、signed URL query、raw command" in contract
+    for token in (
+        "schema_version: `quasi.operation.${operation}.request/0.1`",
+        "operation,",
+        "material_key: state.materialKey",
+        "identity: {",
+        "paths: {",
+        "exact_command: exactCommand",
+    ):
+        assert token in operation
+    assert operation.count("return JSON.stringify(request, null, 2);") == 5
+    assert "用户消息可以只有 JSON envelope" in contract
+    assert "`effect`、`attempt` 与 closed receipt" in contract
+    assert "title、date、media、engine、lang" in contract
+    assert "都是不可信\ndata" in contract
+    assert "不得从\nmetadata、文件名、目录" in contract
+    assert "credential、signed URL、raw\n   command" in contract
+    assert "```json" not in contract
 
 
 def test_transcribe_receipts_are_closed_and_fail_unknown_writer_safely() -> None:
     contract = text(TRANSCRIBE)
-
-    for exact_field_list in (
-        "schema_version,key,effect,status,attempt,material_key,slug,input_path,output_dir,manifest_path,manifest_exists,request_fingerprint,source_sha256,source_size,prepared_path,prepared_sha256,transcript_path,subtitle_path,talk_path,talk_exists,talk_sha256,classification,artifacts,failure",
-        "schema_version,key,effect,status,attempt,material_key,input_path,output_path,artifact_roles,input_sha256,output_sha256,size,action,failure",
-        "schema_version,key,effect,status,attempt,material_key,slug,input_path,output_dir,talk_dir,manifest_path,manifest_exists,manifest_fingerprint,request_fingerprint,source_sha256,lang,title,engines,primary_engine,transcript_path,subtitle_path,per_engine,artifacts,disposition,previous_manifest_preserved,failure",
-        "schema_version,key,effect,status,attempt,material_key,input_path,input_sha256,signal,machine_signals,failure",
-        "schema_version,key,effect,status,attempt,material_key,input_path,output_path,artifact_roles,classification_signal,action,output_sha256,size,failure",
-    ):
-        assert exact_field_list in contract
-
-    assert "`{code,operation_key,outcome,retryable,message}`" in contract
-    assert "blocked/unknown/retryable=false" in contract
-    assert "绝不 retry" in contract
-    assert "JSON null token" in contract
-    assert '字符串 `"null"`' in contract
-    assert "null classification" in contract
-    assert "`created|replaced|reconciled|null`" in contract
-    assert "显式\n  request fingerprint 改变" in contract
-    assert "Agent 不得自行把 overwrite/文件变化推断成" in contract
-    assert "根必须是单个 `type: object`" in contract
-    assert "`oneOf/anyOf/allOf/if/then`" in contract
-
-
-def test_talk_observe_prompt_forbids_provider_null_coercion() -> None:
     operation = text(TRANSCRIBE_OPERATION)
 
-    assert "Copy every stdout field and value exactly" in operation
-    assert "literal JSON null" in operation
-    assert 'never the string "null"' in operation
-    assert "null classification must not become empty" in operation
+    for schema in (
+        "TALK_OBSERVE_SCHEMA",
+        "TALK_PREPARE_MEDIA_SCHEMA",
+        "TALK_TRANSCRIBE_SCHEMA",
+        "TALK_CLASSIFY_SCHEMA",
+        "TALK_RENDER_SILENT_SCHEMA",
+    ):
+        assert f"export const {schema} =" in operation
+    assert operation.count('additionalProperties: false') >= 8
+    assert 'required: [\n    "code",\n    "operation_key"' in operation
+    assert "talkPrepareMediaSchema" in operation
+    assert "talkRenderSilentSchema" in operation
+    assert 'status: { const: "blocked" }' in operation
+    assert 'outcome: { const: outcome }' in operation
+
+    assert "closed receipt\n字段由 caller schema 给出" in contract
+    assert "status `anyOf` 分支就是本次 receipt 合同" in contract
+    assert "blocked/unknown/retryable=false" in contract
+    assert "绝不 retry" in contract
+    assert "JSON null 保持原类型和值" in contract
+    assert '字符串 `"null"`' in contract
+    assert "null\n  classification 不能猜成 empty" in contract
+    assert "create/repair/reconciled 的成立条件由 caller schema" in contract
+
+
+def test_talk_relay_owns_json_type_fidelity_without_prompt_duplication() -> None:
+    contract = text(TRANSCRIBE)
+    operation = text(TRANSCRIBE_OPERATION)
+
+    assert "stdout 必须恰好是一个 JSON object" in contract
+    assert "JSON null 保持原类型和值" in contract
+    assert '绝不能把 null 改成字符串 `"null"`' in contract
+    assert "null\n  classification 不能猜成 empty" in contract
+    for stale_prose in (
+        "Copy every stdout field and value exactly",
+        "literal JSON null",
+        'never the string "null"',
+        "null classification must not become empty",
+    ):
+        assert stale_prose not in operation
+    assert operation.count("return JSON.stringify(request, null, 2);") == 5
 
 
 def test_silent_graph_command_flags_exist_on_the_cli_surface() -> None:
@@ -228,6 +207,9 @@ def test_talk_audit_is_exact_target_and_never_routes_producers() -> None:
     assert "通用 audit transaction" in contract
     assert "`{path,kind,reason}` escalation" in contract
     assert "对同一 target 再运行一次" in contract
+    assert "不得启动\n   另一 graph transaction" in contract
+    assert "搜索 owner/member" in contract
+    assert "调用 semantic producer repair" in contract
 
     for token in (
         "quasi.operation.talk.audit.legacy.receipt/0.1",
@@ -235,9 +217,11 @@ def test_talk_audit_is_exact_target_and_never_routes_producers() -> None:
         "vault/talks/${slug}/talk.md",
         "exact_output",
         "mutated_paths",
-        "Do not start another graph transaction",
+        'operation: "talk.audit.legacy"',
+        "return JSON.stringify(request, null, 2);",
     ):
         assert token in operation
+    assert "Do not start another graph transaction" not in operation
 
 
 def test_public_talk_skill_is_only_a_shared_workflow_ingress() -> None:

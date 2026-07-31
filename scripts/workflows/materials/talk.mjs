@@ -1,29 +1,35 @@
 import {
-  TALK_ANALYSE_SCHEMA,
+  TALK_ANALYSE_CONTRACT,
   talkAnalyseOperationPrompt,
+  talkAnalyseSchema,
 } from "../operations/analyse.mjs";
 import {
-  TALK_AUDIT_SCHEMA,
+  TALK_AUDIT_CONTRACT,
   talkAuditLegacyPrompt,
+  talkAuditSchema,
 } from "../operations/audit.mjs";
 import {
+  TALK_CLASSIFY_CONTRACT,
   TALK_CLASSIFY_SCHEMA,
+  TALK_OBSERVE_CONTRACT,
   TALK_OBSERVE_SCHEMA,
-  TALK_PREPARE_MEDIA_SCHEMA,
-  TALK_RENDER_SILENT_SCHEMA,
+  TALK_PREPARE_MEDIA_CONTRACT,
+  TALK_RENDER_SILENT_CONTRACT,
+  TALK_TRANSCRIBE_CONTRACT,
   TALK_TRANSCRIBE_SCHEMA,
   talkClassifyPrompt,
   talkObservePrompt,
   talkPrepareMediaPrompt,
+  talkPrepareMediaSchema,
   talkRenderSilentPrompt,
+  talkRenderSilentSchema,
   talkTranscribePrompt,
 } from "../operations/transcribe.mjs";
+import { validText } from "../runtime.mjs";
 
 const MATERIAL_RECEIPT_VERSION =
   "quasi.material-loop.receipt/0.1";
 const TALK_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
-const HASH = /^[a-f0-9]{64}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ENGINES = new Set([
   "soniox",
@@ -60,33 +66,6 @@ const MEDIA_EXTENSIONS = new Set([
   "ogg",
   "opus",
 ]);
-
-const exactKeys = (value, keys) =>
-  !!(
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === keys.length &&
-    keys.every((key) =>
-      Object.prototype.hasOwnProperty.call(value, key),
-    )
-  );
-
-const validText = (value, min, max) =>
-  typeof value === "string" &&
-  value === value.trim() &&
-  value.length >= min &&
-  value.length <= max &&
-  !CONTROL_CHARS.test(value);
-
-const sameStrings = (left, right) =>
-  Array.isArray(left) &&
-  Array.isArray(right) &&
-  left.length === right.length &&
-  left.every((value, index) => value === right[index]);
-
-const validHash = (value) =>
-  typeof value === "string" && HASH.test(value);
 
 function validDate(value) {
   if (!DATE.test(value)) return false;
@@ -204,29 +183,6 @@ const operationFailure = (
   retryable: false,
   message,
 });
-
-function validFailure(
-  failure,
-  operationKey,
-  outcome,
-  retryable = false,
-) {
-  return !!(
-    exactKeys(failure, [
-      "code",
-      "operation_key",
-      "outcome",
-      "retryable",
-      "message",
-    ]) &&
-    validText(failure.code, 1, 200) &&
-    failure.operation_key === operationKey &&
-    failure.outcome === outcome &&
-    failure.retryable === retryable &&
-    (failure.message === null ||
-      validText(failure.message, 1, 4000))
-  );
-}
 
 function createState(slug, meta) {
   const outputDir = `vault/talks/${slug}`;
@@ -390,712 +346,6 @@ function rejectedResult(slug, validation, conflict = false) {
   );
 }
 
-function runtimeUnknown(receipt) {
-  return !!(
-    receipt &&
-    receipt.schema_version ===
-      "quasi.operation.runtime.receipt/0.1" &&
-    receipt.failure &&
-    receipt.failure.outcome === "unknown"
-  );
-}
-
-function validArtifactRow(row, state) {
-  if (
-    !exactKeys(row, ["role", "path", "sha256", "size"]) ||
-    ![
-      "prepared_media",
-      "transcript",
-      "subtitle",
-      "engine_transcript",
-      "canonical",
-    ].includes(row.role) ||
-    !validText(row.path, 1, 2048) ||
-    !validHash(row.sha256) ||
-    !Number.isInteger(row.size) ||
-    row.size < 1
-  )
-    return false;
-  if (row.role === "prepared_media")
-    return row.path === state.prepared;
-  if (row.role === "transcript")
-    return row.path === state.transcript;
-  if (row.role === "subtitle")
-    return row.path === state.subtitle;
-  if (row.role === "canonical")
-    return row.path === state.canonical;
-  return state.engines.some(
-    (engine) =>
-      row.path ===
-      `${state.processingDir}/transcript.${engine}.srt`,
-  );
-}
-
-function uniqueArtifactRows(rows) {
-  const paths = rows.map((row) => row.path);
-  return new Set(paths).size === paths.length;
-}
-
-function strictObserve(receipt, state) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "material_key",
-      "slug",
-      "input_path",
-      "output_dir",
-      "manifest_path",
-      "manifest_exists",
-      "request_fingerprint",
-      "source_sha256",
-      "source_size",
-      "prepared_path",
-      "prepared_sha256",
-      "transcript_path",
-      "subtitle_path",
-      "talk_path",
-      "talk_exists",
-      "talk_sha256",
-      "classification",
-      "artifacts",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.talk.observe.receipt/0.1" ||
-    receipt.key !== "talk.observe" ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    receipt.material_key !== state.materialKey ||
-    receipt.slug !== state.slug ||
-    receipt.input_path !== state.media ||
-    receipt.output_dir !== state.processingDir ||
-    receipt.manifest_path !== state.manifest ||
-    typeof receipt.manifest_exists !== "boolean" ||
-    !Number.isInteger(receipt.source_size) ||
-    receipt.source_size < 0 ||
-    ![null, state.prepared].includes(receipt.prepared_path) ||
-    ![null, state.transcript].includes(receipt.transcript_path) ||
-    ![null, state.subtitle].includes(receipt.subtitle_path) ||
-    receipt.talk_path !== state.canonical ||
-    typeof receipt.talk_exists !== "boolean" ||
-    ![null, "live", "dead", "empty"].includes(
-      receipt.classification,
-    ) ||
-    !Array.isArray(receipt.artifacts) ||
-    receipt.artifacts.some(
-      (row) => !validArtifactRow(row, state),
-    ) ||
-    !uniqueArtifactRows(receipt.artifacts)
-  )
-    return false;
-  if (receipt.status === "succeeded") {
-    if (
-      receipt.failure !== null ||
-      !validHash(receipt.source_sha256) ||
-      receipt.source_size < 1 ||
-      (receipt.prepared_path === null) !==
-        (receipt.prepared_sha256 === null) ||
-      (receipt.prepared_sha256 !== null &&
-        !validHash(receipt.prepared_sha256)) ||
-      receipt.talk_exists !== (receipt.talk_sha256 !== null) ||
-      (receipt.talk_sha256 !== null &&
-        !validHash(receipt.talk_sha256))
-    )
-      return false;
-    if (
-      receipt.prepared_path !== null &&
-      !receipt.artifacts.some(
-        (row) =>
-          row.role === "prepared_media" &&
-          row.path === receipt.prepared_path &&
-          row.sha256 === receipt.prepared_sha256,
-      )
-    )
-      return false;
-    if (receipt.manifest_exists) {
-      if (validHash(receipt.request_fingerprint)) {
-        if (
-          receipt.transcript_path !== state.transcript ||
-          !receipt.artifacts.some(
-            (row) =>
-              row.role === "transcript" &&
-              row.path === state.transcript,
-          )
-        )
-          return false;
-      } else if (
-        receipt.request_fingerprint !== null ||
-        receipt.transcript_path !== state.transcript ||
-        receipt.subtitle_path !== state.subtitle ||
-        receipt.classification !== null ||
-        receipt.artifacts.some((row) =>
-          ["transcript", "subtitle", "engine_transcript"].includes(
-            row.role,
-          ),
-        )
-      ) {
-        return false;
-      }
-    } else if (
-      receipt.request_fingerprint !== null ||
-      receipt.transcript_path !== null ||
-      receipt.subtitle_path !== null ||
-      receipt.classification !== null ||
-      receipt.artifacts.some((row) =>
-        ["transcript", "subtitle", "engine_transcript"].includes(
-          row.role,
-        ),
-      )
-    ) {
-      return false;
-    }
-    if (
-      !(receipt.manifest_exists &&
-        receipt.request_fingerprint === null) &&
-      receipt.talk_exists !==
-        receipt.artifacts.some(
-          (row) =>
-            row.role === "canonical" &&
-            row.path === state.canonical,
-        )
-    )
-      return false;
-    return true;
-  }
-  if (receipt.status === "failed")
-    return validFailure(
-      receipt.failure,
-      "talk.observe",
-      "known",
-    );
-  return (
-    receipt.status === "blocked" &&
-    validFailure(
-      receipt.failure,
-      "talk.observe",
-      "unknown",
-    )
-  );
-}
-
-function strictPrepare(receipt, state) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "material_key",
-      "input_path",
-      "output_path",
-      "artifact_roles",
-      "input_sha256",
-      "output_sha256",
-      "size",
-      "action",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.talk.prepare-media.receipt/0.1" ||
-    receipt.key !== "talk.prepare-media" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.material_key !== state.materialKey ||
-    receipt.input_path !== state.media ||
-    receipt.output_path !== state.prepared ||
-    !sameStrings(receipt.artifact_roles, ["prepared_media"]) ||
-    !["create", "reconciled"].includes(receipt.action) ||
-    !Number.isInteger(receipt.size) ||
-    receipt.size < 0
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      receipt.input_sha256 === state.sourceSha256 &&
-      validHash(receipt.output_sha256) &&
-      receipt.size > 0
-    );
-  if (receipt.status === "failed")
-    return (
-      receipt.action === "create" &&
-      receipt.input_sha256 === state.sourceSha256 &&
-      receipt.output_sha256 === null &&
-      validFailure(
-        receipt.failure,
-        "talk.prepare-media",
-        "known",
-      ) &&
-      receipt.size === 0
-    );
-  return (
-    receipt.status === "blocked" &&
-    receipt.action === "create" &&
-    receipt.input_sha256 === state.sourceSha256 &&
-    receipt.output_sha256 === null &&
-    receipt.size === 0 &&
-    validFailure(
-      receipt.failure,
-      "talk.prepare-media",
-      "unknown",
-    )
-  );
-}
-
-function strictEngineRow(row, engine, state) {
-  if (
-    !exactKeys(row, [
-      "name",
-      "status",
-      "segments",
-      "path",
-      "sha256",
-    ]) ||
-    row.name !== engine ||
-    !["succeeded", "empty", "unavailable", "failed"].includes(
-      row.status,
-    ) ||
-    !Number.isInteger(row.segments) ||
-    row.segments < 0
-  )
-    return false;
-  const expected = `${state.processingDir}/transcript.${engine}.srt`;
-  if (row.status === "succeeded")
-    return (
-      row.segments > 0 &&
-      row.path === expected &&
-      validHash(row.sha256)
-    );
-  return (
-    row.segments === 0 &&
-    row.path === null &&
-    row.sha256 === null
-  );
-}
-
-function strictTranscribe(receipt, state, inputPath) {
-  const expectedInputSha =
-    inputPath === state.media
-      ? state.sourceSha256
-      : state.artifacts.find(
-          (row) =>
-            row.role === "prepared_media" &&
-            row.path === inputPath,
-        )?.sha256;
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "material_key",
-      "slug",
-      "input_path",
-      "output_dir",
-      "talk_dir",
-      "manifest_path",
-      "manifest_exists",
-      "manifest_fingerprint",
-      "request_fingerprint",
-      "source_sha256",
-      "lang",
-      "title",
-      "engines",
-      "primary_engine",
-      "transcript_path",
-      "subtitle_path",
-      "per_engine",
-      "artifacts",
-      "disposition",
-      "previous_manifest_preserved",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.talk.transcribe.receipt/0.1" ||
-    receipt.key !== "talk.transcribe" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.material_key !== state.materialKey ||
-    receipt.slug !== state.slug ||
-    receipt.input_path !== inputPath ||
-    receipt.output_dir !== state.processingDir ||
-    receipt.talk_dir !== state.talkDir ||
-    receipt.manifest_path !== state.manifest ||
-    receipt.source_sha256 !== expectedInputSha ||
-    receipt.lang !== state.lang ||
-    receipt.title !== state.title ||
-    !sameStrings(receipt.engines, state.engines) ||
-    !Array.isArray(receipt.per_engine) ||
-    receipt.per_engine.length !== state.engines.length ||
-    !state.engines.every((engine, index) =>
-      strictEngineRow(
-        receipt.per_engine[index],
-        engine,
-        state,
-      ),
-    ) ||
-    !Array.isArray(receipt.artifacts) ||
-    receipt.artifacts.some(
-      (row) => !validArtifactRow(row, state),
-    ) ||
-    !uniqueArtifactRows(receipt.artifacts) ||
-    typeof receipt.previous_manifest_preserved !== "boolean"
-  )
-    return false;
-  if (receipt.status === "succeeded") {
-    if (
-      receipt.failure !== null ||
-      receipt.manifest_exists !== true ||
-      !validHash(receipt.manifest_fingerprint) ||
-      !validHash(receipt.request_fingerprint) ||
-      !validHash(receipt.source_sha256) ||
-      !["created", "replaced", "reconciled"].includes(
-        receipt.disposition,
-      ) ||
-      receipt.transcript_path !== state.transcript ||
-      !receipt.artifacts.some(
-        (row) =>
-          row.role === "transcript" &&
-          row.path === state.transcript,
-      )
-    )
-      return false;
-    const succeeded = receipt.per_engine.filter(
-      (row) => row.status === "succeeded",
-    );
-    if (receipt.primary_engine === null)
-      return (
-        succeeded.length === 0 &&
-        receipt.subtitle_path === null &&
-        !receipt.artifacts.some(
-          (row) =>
-            row.role === "subtitle" ||
-            row.role === "engine_transcript",
-        )
-      );
-    const primary = receipt.per_engine.find(
-      (row) => row.name === receipt.primary_engine,
-    );
-    return !!(
-      primary &&
-      primary.status === "succeeded" &&
-      receipt.subtitle_path === state.subtitle &&
-      receipt.artifacts.some(
-        (row) =>
-          row.role === "subtitle" &&
-          row.path === state.subtitle,
-      ) &&
-      succeeded.every((row) =>
-        receipt.artifacts.some(
-          (artifactRow) =>
-            artifactRow.role === "engine_transcript" &&
-            artifactRow.path === row.path &&
-            artifactRow.sha256 === row.sha256,
-        ),
-      )
-    );
-  }
-  if (receipt.status === "failed")
-    return (
-      receipt.manifest_exists === true &&
-      validHash(receipt.manifest_fingerprint) &&
-      validHash(receipt.request_fingerprint) &&
-      receipt.disposition === null &&
-      validFailure(
-        receipt.failure,
-        "talk.transcribe",
-        "known",
-      )
-    );
-  return (
-    receipt.status === "blocked" &&
-    receipt.disposition === null &&
-    (receipt.manifest_fingerprint === null ||
-      validHash(receipt.manifest_fingerprint)) &&
-    validFailure(
-      receipt.failure,
-      "talk.transcribe",
-      "unknown",
-    )
-  );
-}
-
-function strictClassify(receipt, state, transcript) {
-  const transcriptArtifact = state.transcriptArtifacts.find(
-    (row) => row.role === "transcript",
-  );
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "material_key",
-      "input_path",
-      "input_sha256",
-      "signal",
-      "machine_signals",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.talk.classify.receipt/0.1" ||
-    receipt.key !== "talk.classify" ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    receipt.material_key !== state.materialKey ||
-    receipt.input_path !== transcript ||
-    !transcriptArtifact ||
-    receipt.input_sha256 !== transcriptArtifact.sha256
-  )
-    return false;
-  if (receipt.status === "succeeded") {
-    const signals = receipt.machine_signals;
-    return !!(
-      ["live", "dead", "empty"].includes(receipt.signal) &&
-      exactKeys(signals, [
-        "total",
-        "uniq_ratio",
-        "chars",
-        "spam_hits",
-        "blank_dominant",
-        "reason",
-      ]) &&
-      Number.isInteger(signals.total) &&
-      signals.total >= 0 &&
-      typeof signals.uniq_ratio === "number" &&
-      signals.uniq_ratio >= 0 &&
-      signals.uniq_ratio <= 1 &&
-      Number.isInteger(signals.chars) &&
-      signals.chars >= 0 &&
-      Number.isInteger(signals.spam_hits) &&
-      signals.spam_hits >= 0 &&
-      typeof signals.blank_dominant === "boolean" &&
-      validText(signals.reason, 1, 1000) &&
-      receipt.failure === null
-    );
-  }
-  return (
-    receipt.status === "failed" &&
-    receipt.signal === null &&
-    receipt.machine_signals === null &&
-    validFailure(
-      receipt.failure,
-      "talk.classify",
-      "known",
-    )
-  );
-}
-
-function strictProducerFailure(
-  receipt,
-  operationKey,
-  mode,
-) {
-  if (receipt.status === "failed")
-    return (
-      receipt.action === mode &&
-      validFailure(
-        receipt.failure,
-        operationKey,
-        "known",
-      )
-    );
-  return (
-    receipt.status === "blocked" &&
-    receipt.action === mode &&
-    validFailure(
-      receipt.failure,
-      operationKey,
-      "unknown",
-    )
-  );
-}
-
-function analysisInputs(state) {
-  const primary = state.transcriptArtifacts.find(
-    (row) => row.role === "transcript",
-  );
-  const engines = state.engines
-    .map((engine) =>
-      state.transcriptArtifacts.find(
-        (row) =>
-          row.role === "engine_transcript" &&
-          row.path ===
-            `${state.processingDir}/transcript.${engine}.srt`,
-      ),
-    )
-    .filter(Boolean);
-  return primary ? [primary, ...engines] : [];
-}
-
-function strictAnalyse(receipt, state, inputs, mode) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "input_paths",
-      "input_sha256s",
-      "output_path",
-      "artifact_roles",
-      "action",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.talk.analyse.receipt/0.1" ||
-    receipt.key !== "talk.analyse" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    !sameStrings(
-      receipt.input_paths,
-      inputs.map((input) => input.path),
-    ) ||
-    !sameStrings(
-      receipt.input_sha256s,
-      inputs.map((input) => input.sha256),
-    ) ||
-    receipt.output_path !== state.canonical ||
-    !sameStrings(receipt.artifact_roles, ["canonical"]) ||
-    !["create", "repair", "reconciled"].includes(
-      receipt.action,
-    )
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      (mode === "create"
-        ? receipt.action === "create"
-        : ["repair", "reconciled"].includes(receipt.action))
-    );
-  return strictProducerFailure(
-    receipt,
-    "talk.analyse",
-    mode,
-  );
-}
-
-function strictSilent(receipt, state, mode) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "material_key",
-      "input_path",
-      "output_path",
-      "artifact_roles",
-      "classification_signal",
-      "action",
-      "output_sha256",
-      "size",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.talk.render-silent.receipt/0.1" ||
-    receipt.key !== "talk.render-silent" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.material_key !== state.materialKey ||
-    receipt.input_path !== state.transcript ||
-    receipt.output_path !== state.canonical ||
-    !sameStrings(receipt.artifact_roles, ["canonical"]) ||
-    receipt.classification_signal !== state.classification ||
-    !["create", "repair", "reconciled"].includes(
-      receipt.action,
-    ) ||
-    !Number.isInteger(receipt.size) ||
-    receipt.size < 0
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      validHash(receipt.output_sha256) &&
-      receipt.size > 0 &&
-      (mode === "create"
-        ? receipt.action === "create"
-        : ["repair", "reconciled"].includes(receipt.action))
-    );
-  return (
-    receipt.output_sha256 === null &&
-    strictProducerFailure(
-      receipt,
-      "talk.render-silent",
-      mode,
-    )
-  );
-}
-
-function validDiagnostic(item) {
-  return !!(
-    exactKeys(item, ["path", "kind", "reason"]) &&
-    validText(item.path, 1, 2048) &&
-    validText(item.kind, 1, 200) &&
-    validText(item.reason, 1, 4000)
-  );
-}
-
-function strictAudit(receipt, state) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "target_path",
-      "remaining_violations",
-      "escalated",
-      "mutated_paths",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.talk.audit.legacy.receipt/0.1" ||
-    receipt.key !== "talk.audit.legacy" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.target_path !== state.canonical ||
-    !Number.isInteger(receipt.remaining_violations) ||
-    receipt.remaining_violations < 0 ||
-    !Array.isArray(receipt.escalated) ||
-    receipt.escalated.some(
-      (item) => !validDiagnostic(item),
-    ) ||
-    !Array.isArray(receipt.mutated_paths) ||
-    receipt.mutated_paths.some(
-      (path) => !validText(path, 1, 2048),
-    )
-  )
-    return false;
-  if (receipt.status === "clean")
-    return (
-      receipt.remaining_violations === 0 &&
-      receipt.escalated.length === 0
-    );
-  if (receipt.status === "partial")
-    return (
-      receipt.remaining_violations > 0 &&
-      receipt.escalated.length ===
-        receipt.remaining_violations
-    );
-  return (
-    receipt.status === "error" &&
-    receipt.remaining_violations === 0 &&
-    receipt.escalated.length === 0
-  );
-}
-
 function ownedAuditPaths(receipt, state) {
   return [
     ...receipt.escalated.map((item) => item.path),
@@ -1136,6 +386,23 @@ function addGeneratedArtifacts(state, rows, producer) {
   state.artifacts = [...replace.values()];
 }
 
+function analysisInputs(state) {
+  const primary = state.transcriptArtifacts.find(
+    (row) => row.role === "transcript",
+  );
+  const engines = state.engines
+    .map((engine) =>
+      state.transcriptArtifacts.find(
+        (row) =>
+          row.role === "engine_transcript" &&
+          row.path ===
+            `${state.processingDir}/transcript.${engine}.srt`,
+      ),
+    )
+    .filter(Boolean);
+  return primary ? [primary, ...engines] : [];
+}
+
 async function runProducer(
   runtime,
   state,
@@ -1159,7 +426,7 @@ async function runProducer(
           ),
         ),
       };
-    const receipt = await runtime.runOperation(
+    const analysis = await runtime.operate(
       talkAnalyseOperationPrompt(
         state,
         inputs,
@@ -1173,7 +440,11 @@ async function runProducer(
           mode === "repair"
             ? `${state.slug}:analyse-repair`
             : `${state.slug}:analyse`,
-        schema: TALK_ANALYSE_SCHEMA,
+        schema: talkAnalyseSchema({
+          inputs,
+          mode,
+          output: state.canonical,
+        }),
       },
       {
         key: "talk.analyse",
@@ -1182,10 +453,16 @@ async function runProducer(
         replay: "blocked",
         artifactRoles: ["canonical"],
         unknownFailureCode: "talk.writer_outcome_unknown",
+        contract: TALK_ANALYSE_CONTRACT,
+        context: { inputs, mode, output: state.canonical },
       },
     );
+    const receipt = analysis.receipt;
     state.operations.push(receipt);
-    if (!strictAnalyse(receipt, state, inputs, mode))
+    if (
+      analysis.edge === "unknown" ||
+      analysis.edge === "mismatch"
+    )
       return {
         terminal: writerMismatch(
           state,
@@ -1193,7 +470,7 @@ async function runProducer(
           "talk.analyse",
         ),
       };
-    if (receipt.status === "blocked")
+    if (analysis.edge === "blocked")
       return {
         terminal: terminal(
           state,
@@ -1203,7 +480,7 @@ async function runProducer(
           receipt.failure,
         ),
       };
-    if (receipt.status === "failed")
+    if (analysis.edge !== "ok")
       return {
         terminal: terminal(
           state,
@@ -1237,7 +514,7 @@ async function runProducer(
     return { receipt };
   }
 
-  const receipt = await runtime.runOperation(
+  const rendered = await runtime.operate(
     talkRenderSilentPrompt(
       state,
       state.transcript,
@@ -1252,7 +529,13 @@ async function runProducer(
         mode === "repair"
           ? `${state.slug}:render-silent-repair`
           : `${state.slug}:render-silent`,
-      schema: TALK_RENDER_SILENT_SCHEMA,
+      schema: talkRenderSilentSchema({
+        materialKey: state.materialKey,
+        input: state.transcript,
+        output: state.canonical,
+        signal: state.classification,
+        mode,
+      }),
     },
     {
       key: "talk.render-silent",
@@ -1261,10 +544,16 @@ async function runProducer(
       replay: "blocked",
       artifactRoles: ["canonical"],
       unknownFailureCode: "talk.writer_outcome_unknown",
+      contract: TALK_RENDER_SILENT_CONTRACT,
+      context: { state, mode },
     },
   );
+  const receipt = rendered.receipt;
   state.operations.push(receipt);
-  if (!strictSilent(receipt, state, mode))
+  if (
+    rendered.edge === "unknown" ||
+    rendered.edge === "mismatch"
+  )
     return {
       terminal: writerMismatch(
         state,
@@ -1272,7 +561,7 @@ async function runProducer(
         "talk.render-silent",
       ),
     };
-  if (receipt.status === "blocked")
+  if (rendered.edge === "blocked")
     return {
       terminal: terminal(
         state,
@@ -1282,7 +571,7 @@ async function runProducer(
         receipt.failure,
       ),
     };
-  if (receipt.status === "failed")
+  if (rendered.edge !== "ok")
     return {
       terminal: terminal(
         state,
@@ -1319,7 +608,7 @@ async function runProducer(
 }
 
 async function runAudit(runtime, state, pass) {
-  const receipt = await runtime.runOperation(
+  const auditRun = await runtime.operate(
     talkAuditLegacyPrompt(state.slug, pass),
     {
       phase: "Audit",
@@ -1328,7 +617,7 @@ async function runAudit(runtime, state, pass) {
         pass === 1
           ? `${state.slug}:audit`
           : `${state.slug}:audit-${pass}`,
-      schema: TALK_AUDIT_SCHEMA,
+      schema: talkAuditSchema({ target: state.canonical }),
     },
     {
       key: "talk.audit.legacy",
@@ -1337,12 +626,18 @@ async function runAudit(runtime, state, pass) {
       replay: "blocked",
       artifactRoles: ["canonical"],
       unknownFailureCode: "talk.writer_outcome_unknown",
+      contract: TALK_AUDIT_CONTRACT,
+      context: { target: state.canonical },
     },
   );
+  const receipt = auditRun.receipt;
   state.operations.push(receipt);
   state.audit.push(receipt);
   state.budgets.auditPasses.used += 1;
-  if (!strictAudit(receipt, state))
+  if (
+    auditRun.edge === "unknown" ||
+    auditRun.edge === "mismatch"
+  )
     return {
       terminal: writerMismatch(
         state,
@@ -1366,7 +661,7 @@ async function runAudit(runtime, state, pass) {
         { escalated: receipt.escalated },
       ),
     };
-  if (receipt.status === "error")
+  if (auditRun.edge !== "ok")
     return {
       terminal: terminal(
         state,
@@ -1393,7 +688,7 @@ async function runAudit(runtime, state, pass) {
 }
 
 async function processTalkStrict(runtime, state) {
-  const observe = await runtime.runOperation(
+  const observed = await runtime.operate(
     talkObservePrompt(state),
     {
       phase: "Recall",
@@ -1408,11 +703,17 @@ async function processTalkStrict(runtime, state) {
       replay: "safe",
       artifactRoles: [],
       unknownFailureCode: "talk.readonly_outcome_unknown",
+      contract: TALK_OBSERVE_CONTRACT,
+      context: { state },
     },
   );
+  const observe = observed.receipt;
   state.operations.push(observe);
-  if (!strictObserve(observe, state)) {
-    const unknown = runtimeUnknown(observe);
+  if (
+    observed.edge === "unknown" ||
+    observed.edge === "mismatch"
+  ) {
+    const unknown = observed.edge === "unknown";
     return terminal(
       state,
       unknown ? "blocked" : "transcribe_failed",
@@ -1426,7 +727,7 @@ async function processTalkStrict(runtime, state) {
       ),
     );
   }
-  if (observe.status === "blocked")
+  if (observed.edge === "blocked")
     return terminal(
       state,
       "blocked",
@@ -1434,7 +735,7 @@ async function processTalkStrict(runtime, state) {
       "reconcile",
       observe.failure,
     );
-  if (observe.status === "failed")
+  if (observed.edge !== "ok")
     return terminal(
       state,
       "transcribe_failed",
@@ -1510,13 +811,18 @@ async function processTalkStrict(runtime, state) {
       inputPath = prepared.path;
     } else {
       state.budgets.prepareMedia.used = 1;
-      const receipt = await runtime.runOperation(
+      const prepareRun = await runtime.operate(
         talkPrepareMediaPrompt(state),
         {
           phase: "Prepare",
           agentType: "quasi:transcribe-agent",
           label: `${state.slug}:prepare-media`,
-          schema: TALK_PREPARE_MEDIA_SCHEMA,
+          schema: talkPrepareMediaSchema({
+            materialKey: state.materialKey,
+            input: state.media,
+            output: state.prepared,
+            inputSha: state.sourceSha256,
+          }),
         },
         {
           key: "talk.prepare-media",
@@ -1525,16 +831,22 @@ async function processTalkStrict(runtime, state) {
           replay: "blocked",
           artifactRoles: ["prepared_media"],
           unknownFailureCode: "talk.writer_outcome_unknown",
+          contract: TALK_PREPARE_MEDIA_CONTRACT,
+          context: { state },
         },
       );
+      const receipt = prepareRun.receipt;
       state.operations.push(receipt);
-      if (!strictPrepare(receipt, state))
+      if (
+        prepareRun.edge === "unknown" ||
+        prepareRun.edge === "mismatch"
+      )
         return writerMismatch(
           state,
           "prepare-media",
           "talk.prepare-media",
         );
-      if (receipt.status === "blocked")
+      if (prepareRun.edge === "blocked")
         return terminal(
           state,
           "blocked",
@@ -1542,7 +854,7 @@ async function processTalkStrict(runtime, state) {
           "prepare-media",
           receipt.failure,
         );
-      if (receipt.status === "failed")
+      if (prepareRun.edge !== "ok")
         return terminal(
           state,
           "transcribe_failed",
@@ -1570,7 +882,15 @@ async function processTalkStrict(runtime, state) {
 
   if (!state.transcriptArtifacts.length) {
     state.budgets.transcribe.used = 1;
-    const receipt = await runtime.runOperation(
+    const expectedInputSha =
+      inputPath === state.media
+        ? state.sourceSha256
+        : state.artifacts.find(
+            (row) =>
+              row.role === "prepared_media" &&
+              row.path === inputPath,
+          )?.sha256;
+    const transcribeRun = await runtime.operate(
       talkTranscribePrompt(state, inputPath),
       {
         phase: "Prepare",
@@ -1589,16 +909,22 @@ async function processTalkStrict(runtime, state) {
           "engine_transcript",
         ],
         unknownFailureCode: "talk.writer_outcome_unknown",
+        contract: TALK_TRANSCRIBE_CONTRACT,
+        context: { state, inputPath, expectedInputSha },
       },
     );
+    const receipt = transcribeRun.receipt;
     state.operations.push(receipt);
-    if (!strictTranscribe(receipt, state, inputPath))
+    if (
+      transcribeRun.edge === "unknown" ||
+      transcribeRun.edge === "mismatch"
+    )
       return writerMismatch(
         state,
         "transcribe",
         "talk.transcribe",
       );
-    if (receipt.status === "blocked")
+    if (transcribeRun.edge === "blocked")
       return terminal(
         state,
         "blocked",
@@ -1606,7 +932,7 @@ async function processTalkStrict(runtime, state) {
         "transcribe",
         receipt.failure,
       );
-    if (receipt.status === "failed")
+    if (transcribeRun.edge !== "ok")
       return terminal(
         state,
         "transcribe_failed",
@@ -1657,7 +983,7 @@ async function processTalkStrict(runtime, state) {
     );
 
   state.budgets.classify.used = 1;
-  const classification = await runtime.runOperation(
+  const classified = await runtime.operate(
     talkClassifyPrompt(state, transcript.path),
     {
       phase: "Prepare",
@@ -1672,10 +998,20 @@ async function processTalkStrict(runtime, state) {
       replay: "safe",
       artifactRoles: [],
       unknownFailureCode: "talk.readonly_outcome_unknown",
+      contract: TALK_CLASSIFY_CONTRACT,
+      context: {
+        state,
+        transcript: transcript.path,
+        transcriptSha: transcript.sha256,
+      },
     },
   );
+  const classification = classified.receipt;
   state.operations.push(classification);
-  if (!strictClassify(classification, state, transcript.path))
+  if (
+    classified.edge === "unknown" ||
+    classified.edge === "mismatch"
+  )
     return terminal(
       state,
       "transcribe_failed",
@@ -1684,11 +1020,11 @@ async function processTalkStrict(runtime, state) {
       operationFailure(
         "talk.classification_receipt_invalid",
         "talk.classify",
-        runtimeUnknown(classification) ? "unknown" : "known",
+        classified.edge === "unknown" ? "unknown" : "known",
         "classification receipt did not prove exact typed state",
       ),
     );
-  if (classification.status === "failed")
+  if (classified.edge !== "ok")
     return terminal(
       state,
       "transcribe_failed",

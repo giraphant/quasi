@@ -1253,9 +1253,16 @@ def test_audit_partial_requires_positive_exact_diagnostic_count(
         "enum": ["clean", "partial", "error"],
     }
     assert schema["properties"]["remaining_violations"]["minimum"] == 0
-    schema_keys = set(_nested_mapping_keys(schema))
-    assert schema_keys.isdisjoint(
-        {"oneOf", "allOf", "anyOf", "if", "then"}
+    assert schema["properties"]["target_path"] == {
+        "const": paths(slug)["canonical"]
+    }
+    branch_statuses = {
+        branch["properties"]["status"]["const"]
+        for branch in schema["anyOf"]
+    }
+    assert branch_statuses == {"clean", "partial", "error"}, (
+        "status invariants must ride the host schema so the"
+        " still-running agent self-repairs its receipt"
     )
 
 

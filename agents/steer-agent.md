@@ -9,8 +9,9 @@ model: opus
 
 ## Runtime operation envelope（`topic.steer`）
 
-prompt 含 `operation: "topic.steer"` 或
-`schema_version=quasi.operation.topic.steer.request/0.1` 时，必须走这个严格分支；畸形、
+用户消息可以只有 JSON envelope，不得依赖外围 prose 补全严格分支合同。它含
+`operation: "topic.steer"` 或 `schema_version=quasi.operation.topic.steer.request/0.1` 时，必须
+走这个严格分支；畸形、
 不支持或字段不一致的 envelope 返回 typed failed receipt，绝不能退回下面 legacy 轮次
 模式。只接受：
 

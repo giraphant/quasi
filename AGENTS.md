@@ -79,7 +79,7 @@ Current userConfig mapping:
 - The graph owns material identity and processing state. The skill main process owns only user decisions and explicitly skill-scoped sidecars; it must not maintain a second metadata, recall, or writer-success state machine.
 - `metadata-agent`, `discovery-agent`, and `localisation-agent` return JSON and do not write files.
 - `download-agent` accepts or rejects candidates through `quasi-download`; it returns `DOWNLOAD_RESULT.per_item` and does not own caller manifests.
-- `extract-agent` writes chapter extraction output and `processing/chapters/{slug}/manifest.json`.
+- `extract-agent` only plans or assesses the exact chapter set named by the caller; deterministic `quasi-extract` transactions own chapter files and `processing/chapters/{slug}/manifest.json`.
 - `analyse-agent`, `synthesis-agent`, `proofread-agent`, and `citecheck-agent` write only the exact product path assigned by the caller.
 - `steer-agent` owns `vault/topics/{slug}/02-outline.md` (the topic research outline; users may hand-edit it between runs) and returns sub-question-targeted candidates; it writes nothing else.
 - `webcard-agent` turns one topic `web_task` into one evidence card at the caller-named `vault/topics/{slug}/cards/{card-slug}.md`; it writes nothing else, and returns `status: empty` rather than writing a card it could not verify. Cards are not vault analysis products: they travel on their own `cards` channel (outline `subquestions[].cards`, synth `card_paths`) and never enter the `book|paper|talk` corpus table.
@@ -126,6 +126,16 @@ Artifact writing has three ownership layers:
   dynamic frontmatter seeds, and operation-only evidence rules. It must not
   duplicate artifact structure.
 
+For an operation with a named owner Agent, the prompt boundary should be a
+self-contained JSON envelope whenever prose adds no operation-specific value.
+The Agent contract owns stable command-relay or transaction discipline, JSON
+fidelity, and the prohibition on retries, alternate commands, and graph-edge
+selection. The operation request owns business vocabulary, exact commands and
+refs, mode, diagnostics, and evidence policy. The host-facing schema owns the
+closed receipt fields, exact `const` echoes, ordered inputs, and status matrix.
+Do not repeat any of those generic contracts as surrounding prompt prose; a
+JSON-only user message must remain sufficient for the Agent to execute safely.
+
 Edit `scripts/schemas/` when changing a Paper, Chapter, Book overview, or Talk
 output structure, then run `npm run build:workflows`. The build updates
 `scripts/workflows/artifact-contracts/generated.mjs` and
@@ -141,6 +151,46 @@ readability, follows a bounded OCR recovery edge when needed, and gives one
 common `analyse-agent` a Paper-specific operation envelope. Writer receipts are
 strictly reconciled against exact target identity; a malformed or ambiguous
 writer receipt is an unknown outcome and must block rather than retry.
+
+Receipt validation is centralised, not per-graph. Each Operation exports a
+receipt contract next to its schema in `scripts/workflows/operations/` and
+`runtime.mjs::operate` enforces it once before the graph sees a closed edge:
+`unknown | mismatch | reconcile | blocked | failed | ok`. Graphs branch only
+on that edge algebra and must not re-derive receipt invariants inline.
+
+Writer operations are Claude-first: status invariants and exact path echoes
+ride the host-facing schema itself, as per-call composed schemas
+(`textExtractSchema`, `paperAnalyseSchema`, `chapterExtractSchema`,
+`bookAcquireSchema`, `talkRenderSilentSchema`,
+`topicOverviewSynthesiseSchema`, … built from base + `anyOf` status branches
++ `const` echoes, including deep-equality consts for ordered input lists).
+The StructuredOutput layer then bounces an invalid receipt back to the
+still-running agent — the only place a retry is ever safe for a writer —
+before the graph is involved. `classifyReceipt` validates the same composed
+schema object as a backstop, so harnesses that do not enforce
+StructuredOutput converge on the same verdict, and the contract keeps only
+what a JSON Schema cannot express (count arithmetic like
+`remaining_violations === escalated.length`, year-evidence semantics and
+human year-decision replay for Book acquisition, reconcile-edge detection,
+non-default status accessors). Book acquisition builds its composed schema
+once and hands the same object to both the host layer and its direct
+`classifyReceipt` call, because the graph normalises an accepted item's
+`tmp_path` away between the two. This deliberately drops the earlier
+composition-free schema constraint that existed for Codex `--output-schema`
+compatibility; the Codex worker path is no longer guaranteed to pre-enforce
+these schemas and relies on the runtime backstop alone. Read-only operations
+(chapter plan/assess, observe, classify, recall, membership, discovery), the
+arithmetic-heavy `talk.transcribe`, and the Translation/steer command relays
+still carry predicate-style contracts: a wrong writer receipt blocks a
+material, so writers got the self-repair loop first.
+
+Child MaterialReceipt admission at collection/research joins stays strict on
+purpose — the dispatch seam is host-pluggable, so a join re-proves identity,
+canonical artifact, and clean final audit
+(`scripts/workflows/materials/member.mjs` for Author; `topic-recall.mjs`
+keeps its own variant with deliberately different book audit and canonical
+rules pending alignment). `research/topic.mjs` (the multi-round loop) is the
+remaining unmigrated graph.
 
 `quasi-pi-runner` is the Pi-only adapter for the existing `workflows/process-material.mjs` graph. It uses the official Pi SDK already installed with Pi, loads `quasi:<name>` definitions from root `agents/`, and deliberately implements only `agent`, `parallel`, `phase`, `log`, and `args`; do not add a third-party workflow compatibility dependency. Claude Code keeps using its native Workflow path.
 
@@ -236,4 +286,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.19.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.20.

@@ -63,22 +63,23 @@ def test_translate_agent_is_one_exact_command_relay() -> None:
     assert "```json" not in contract
 
 
-def test_translation_runtime_prompts_repeat_json_null_type_fidelity() -> None:
+def test_translation_agent_owns_json_fidelity_without_prompt_duplication() -> None:
+    contract = text(AGENT)
     operations = text(OPERATIONS)
 
-    assert operations.count(
-        "A CLI JSON null must remain the literal JSON"
-    ) == 3
-    assert operations.count(
-        'never the string "null" or an empty string'
-    ) == 3
-    assert (
-        "requested_source, source_path, toc_json, signal, hashes, "
-        "coverage, fingerprints"
-    ) in operations
-    assert (
-        "toc_json, hashes, coverage, disposition, gate, failure"
-    ) in operations
+    assert "逐字段复制 JSON value" in contract
+    assert "string、number、boolean、null、array 和 object" in contract
+    assert 'literal `null` 不能写成字符串 `"null"`' in contract
+    assert "空集合也不能与 null 互换" in contract
+    assert "Schema 的 exact `const`、ordered list 和 status 分支" in contract
+    for stale_prose in (
+        "A CLI JSON null must remain the literal JSON",
+        'never the string "null" or an empty string',
+        "requested_source, source_path, toc_json, signal, hashes, coverage, fingerprints",
+        "toc_json, hashes, coverage, disposition, gate, failure",
+    ):
+        assert stale_prose not in operations
+    assert operations.count("return JSON.stringify(request, null, 2);") == 3
 
 
 def test_translation_structured_output_uses_explicit_nullable_scalar_branches() -> None:
@@ -186,7 +187,8 @@ def test_translate_reconcile_carries_mode_generation_and_source_decision() -> No
     ):
         assert flag in operations
     assert '"--generation-attempt"' not in operations
-    assert "Never add --backend" in operations
+    assert "不添加 backend" in text(AGENT)
+    assert "Never add --backend" not in operations
     assert "frozen_backend: state.backend" in operations
 
 

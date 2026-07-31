@@ -1,121 +1,23 @@
 import {
+  TRANSLATION_RECONCILE_CONTRACT,
   TRANSLATION_RECONCILE_SCHEMA,
+  TRANSLATION_REOCR_CONTRACT,
   TRANSLATION_REOCR_SCHEMA,
+  TRANSLATION_RUN_CONTRACT,
   TRANSLATION_RUN_SCHEMA,
+  normalizeLanguage,
   translationReconcilePrompt,
   translationReocrPrompt,
   translationRunPrompt,
+  validRequestedSource,
+  validSelectableSource,
+  validTranslationHash,
 } from "../operations/translate.mjs";
+import { exactKeys, validText } from "../runtime.mjs";
 
 const RECEIPT_VERSION =
   "quasi.derivative.translation.receipt/0.1";
 const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
-const HASH = /^[a-f0-9]{64}$/;
-const LANGUAGE =
-  /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,8}){0,3}$/;
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
-const BACKENDS = new Set(["immersive", "pdf2zh"]);
-const SIGNALS = new Set([
-  "missing",
-  "reused",
-  "configuration_required",
-  "source_selection",
-  null,
-]);
-const RECONCILE_KEYS = [
-  "schema_version",
-  "key",
-  "effect",
-  "status",
-  "attempt",
-  "generation_attempt",
-  "derivative_key",
-  "slug",
-  "mode",
-  "requested_source",
-  "source_path",
-  "output_path",
-  "manifest_path",
-  "target_language",
-  "toc_json",
-  "toc_page_side",
-  "backend",
-  "signal",
-  "request_fingerprint",
-  "source_sha256",
-  "source_size",
-  "source_pages",
-  "output_sha256",
-  "manifest_sha256",
-  "output_size",
-  "output_pages",
-  "toc_entries",
-  "coverage",
-  "candidates",
-  "candidates_fingerprint",
-  "gate",
-  "failure",
-];
-const RUN_KEYS = [
-  "schema_version",
-  "key",
-  "effect",
-  "status",
-  "attempt",
-  "derivative_key",
-  "slug",
-  "backend",
-  "input_path",
-  "output_path",
-  "manifest_path",
-  "target_language",
-  "toc_json",
-  "toc_page_side",
-  "request_fingerprint",
-  "source_sha256",
-  "output_sha256",
-  "manifest_sha256",
-  "output_size",
-  "source_pages",
-  "output_pages",
-  "toc_entries",
-  "coverage",
-  "disposition",
-  "canonical_committed",
-  "previous_manifest_preserved",
-  "gate",
-  "failure",
-];
-const REOCR_KEYS = [
-  "status",
-  "input",
-  "output",
-  "exit",
-  "exists",
-  "size",
-  "failure",
-];
-
-const exactKeys = (value, keys) =>
-  !!(
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === keys.length &&
-    keys.every((key) =>
-      Object.prototype.hasOwnProperty.call(value, key),
-    )
-  );
-
-const validText = (value, min, max) =>
-  typeof value === "string" &&
-  value === value.trim() &&
-  value.length >= min &&
-  value.length <= max &&
-  !CONTROL_CHARS.test(value);
-
-const validHash = (value) =>
-  typeof value === "string" && HASH.test(value);
 
 function validRelativePath(value, suffix) {
   if (
@@ -131,43 +33,6 @@ function validRelativePath(value, suffix) {
     value.startsWith("processing/translations/") ||
     value.startsWith(".quasi/")
   );
-}
-
-function normalizeLanguage(value) {
-  if (!validText(value, 2, 35) || !LANGUAGE.test(value))
-    return null;
-  const parts = value.split("-");
-  return parts
-    .map((part, index) => {
-      if (index === 0) return part.toLowerCase();
-      if (part.length === 2) return part.toUpperCase();
-      return part.toLowerCase();
-    })
-    .join("-");
-}
-
-function sourceRoles(slug, targetLanguage) {
-  const langTag = targetLanguage.toLowerCase();
-  return {
-    canonical: `sources/${slug}.pdf`,
-    paperOcr: `processing/papers/${slug}/ocr.pdf`,
-    derivativeRecovery:
-      `processing/translations/${slug}-${langTag}-reocr.pdf`,
-  };
-}
-
-function validRequestedSource(path, slug, targetLanguage) {
-  const roles = sourceRoles(slug, targetLanguage);
-  return [
-    roles.canonical,
-    roles.paperOcr,
-    roles.derivativeRecovery,
-  ].includes(path);
-}
-
-function validSelectableSource(path, slug, targetLanguage) {
-  const roles = sourceRoles(slug, targetLanguage);
-  return [roles.canonical, roles.paperOcr].includes(path);
 }
 
 function validateIdentity(slug, rawMeta) {
@@ -232,8 +97,10 @@ function validateIdentity(slug, rawMeta) {
         slug,
         targetLanguage,
       ) ||
-      !validHash(sourceDecision.sha256) ||
-      !validHash(sourceDecision.candidates_fingerprint) ||
+      !validTranslationHash(sourceDecision.sha256) ||
+      !validTranslationHash(
+        sourceDecision.candidates_fingerprint,
+      ) ||
       (requestedSource !== null &&
         requestedSource !== sourceDecision.path))
   )
@@ -303,164 +170,6 @@ const operationFailure = (
   retryable: false,
   message,
 });
-
-function validFailure(failure, operationKey, outcome = null) {
-  return !!(
-    exactKeys(failure, [
-      "code",
-      "operation_key",
-      "outcome",
-      "retryable",
-      "message",
-    ]) &&
-    validText(failure.code, 1, 200) &&
-    failure.operation_key === operationKey &&
-    ["known", "unknown"].includes(failure.outcome) &&
-    (outcome === null || failure.outcome === outcome) &&
-    failure.retryable === false &&
-    (failure.message === null ||
-      validText(failure.message, 1, 4000))
-  );
-}
-
-function validCoverage(value) {
-  if (
-    !exactKeys(value, [
-      "signal",
-      "median",
-      "measured_pages",
-      "minimum_median",
-      "weakest",
-      "detail",
-    ]) ||
-    ![
-      "pending",
-      "not_applicable",
-      "insufficient_evidence",
-      "pass",
-      "under_translated",
-    ].includes(value.signal) ||
-    !Number.isInteger(value.measured_pages) ||
-    value.measured_pages < 0 ||
-    (value.minimum_median !== null &&
-      (typeof value.minimum_median !== "number" ||
-        value.minimum_median < 0)) ||
-    (value.median !== null &&
-      (typeof value.median !== "number" ||
-        value.median < 0)) ||
-    !Array.isArray(value.weakest) ||
-    value.weakest.length > 32 ||
-    value.weakest.some(
-      (row) =>
-        !exactKeys(row, ["page", "ratio"]) ||
-        !Number.isInteger(row.page) ||
-        row.page < 1 ||
-        typeof row.ratio !== "number" ||
-        row.ratio < 0,
-    ) ||
-    (value.detail !== null &&
-      !validText(value.detail, 1, 4000))
-  )
-    return false;
-  if (value.signal === "pass")
-    return (
-      typeof value.median === "number" &&
-      typeof value.minimum_median === "number" &&
-      value.median >= value.minimum_median
-    );
-  if (value.signal === "under_translated")
-    return (
-      typeof value.median === "number" &&
-      typeof value.minimum_median === "number" &&
-      value.median < value.minimum_median
-    );
-  if (value.signal === "pending")
-    return (
-      value.median === null &&
-      value.measured_pages === 0 &&
-      value.minimum_median === null
-    );
-  return (
-    value.median === null &&
-    typeof value.minimum_median === "number"
-  );
-}
-
-function sameCoverage(left, right) {
-  return !!(
-    validCoverage(left) &&
-    validCoverage(right) &&
-    left.signal === right.signal &&
-    left.median === right.median &&
-    left.measured_pages === right.measured_pages &&
-    left.minimum_median === right.minimum_median &&
-    left.detail === right.detail &&
-    left.weakest.length === right.weakest.length &&
-    left.weakest.every(
-      (row, index) =>
-        row.page === right.weakest[index].page &&
-        row.ratio === right.weakest[index].ratio,
-    )
-  );
-}
-
-function validCandidate(value, state) {
-  return !!(
-    exactKeys(value, ["path", "sha256", "size", "pages"]) &&
-    validSelectableSource(
-      value.path,
-      state.slug,
-      state.targetLanguage,
-    ) &&
-    validHash(value.sha256) &&
-    Number.isInteger(value.size) &&
-    value.size > 0 &&
-    Number.isInteger(value.pages) &&
-    value.pages > 0
-  );
-}
-
-function validGate(value, kind = null, state = null) {
-  if (
-    !exactKeys(value, [
-      "kind",
-      "missing_fields",
-      "candidates",
-      "candidates_fingerprint",
-    ]) ||
-    !["source_selection", "configuration_required"].includes(
-      value.kind,
-    ) ||
-    (kind !== null && value.kind !== kind) ||
-    !Array.isArray(value.missing_fields) ||
-    value.missing_fields.length > 8 ||
-    value.missing_fields.some(
-      (field) => !validText(field, 1, 100),
-    ) ||
-    !Array.isArray(value.candidates) ||
-    value.candidates.length > 32 ||
-    (state !== null &&
-      value.candidates.some(
-        (candidate) => !validCandidate(candidate, state),
-      )) ||
-    (value.candidates_fingerprint !== null &&
-      !validHash(value.candidates_fingerprint))
-  )
-    return false;
-  if (value.kind === "configuration_required")
-    return (
-      value.missing_fields.length > 0 &&
-      value.candidates.length === 0 &&
-      value.candidates_fingerprint === null
-    );
-  return (
-    value.missing_fields.length === 0 &&
-    value.candidates.length > 1 &&
-    new Set(value.candidates.map((row) => row.path)).size ===
-      value.candidates.length &&
-    validHash(value.candidates_fingerprint)
-  );
-}
 
 function createState(slug, meta) {
   const langTag = meta.targetLanguage.toLowerCase();
@@ -664,18 +373,6 @@ function rejectedResult(slug, validation, conflict = false) {
   return result;
 }
 
-function runtimeUnknown(receipt, operationKey) {
-  return !!(
-    receipt &&
-    receipt.schema_version ===
-      "quasi.operation.runtime.receipt/0.1" &&
-    receipt.key === operationKey &&
-    receipt.status === "blocked" &&
-    receipt.failure &&
-    receipt.failure.outcome === "unknown"
-  );
-}
-
 function writerMismatch(state, stage, operationKey) {
   return terminal(
     state,
@@ -701,270 +398,6 @@ function reconcileMismatch(state, mode) {
       "unknown",
       "reconcile receipt did not prove the exact generation",
     ),
-  );
-}
-
-function commonReconcileExact(receipt, state, mode) {
-  const requestedSource =
-    mode === "initial" ? state.requestedSource : state.activeInput;
-  return !!(
-    exactKeys(receipt, RECONCILE_KEYS) &&
-    receipt.schema_version ===
-      "quasi.operation.translation.reconcile.receipt/0.1" &&
-    receipt.key === "translation.reconcile" &&
-    receipt.effect === "readonly" &&
-    receipt.attempt === 1 &&
-    Number.isInteger(receipt.generation_attempt) &&
-    receipt.generation_attempt >= 0 &&
-    receipt.generation_attempt <= 2 &&
-    receipt.derivative_key === state.translationKey &&
-    receipt.slug === state.slug &&
-    ["initial", "recovery", "final"].includes(receipt.mode) &&
-    receipt.mode === mode &&
-    receipt.requested_source === requestedSource &&
-    receipt.output_path === state.output &&
-    receipt.manifest_path === state.manifest &&
-    receipt.target_language === state.targetLanguage &&
-    receipt.toc_json === state.tocJson &&
-    receipt.toc_page_side === state.tocPageSide &&
-    BACKENDS.has(receipt.backend) &&
-    SIGNALS.has(receipt.signal) &&
-    Number.isInteger(receipt.source_size) &&
-    receipt.source_size >= 0 &&
-    Number.isInteger(receipt.source_pages) &&
-    receipt.source_pages >= 0 &&
-    Number.isInteger(receipt.output_size) &&
-    receipt.output_size >= 0 &&
-    Number.isInteger(receipt.output_pages) &&
-    receipt.output_pages >= 0 &&
-    Number.isInteger(receipt.toc_entries) &&
-    receipt.toc_entries >= 0 &&
-    Array.isArray(receipt.candidates) &&
-    receipt.candidates.length <= 32 &&
-    (receipt.candidates_fingerprint === null ||
-      validHash(receipt.candidates_fingerprint))
-  );
-}
-
-function strictReconcileReceipt(receipt, state, mode) {
-  if (!commonReconcileExact(receipt, state, mode))
-    return false;
-  if (
-    mode !== "initial" &&
-    (receipt.backend !== state.backend ||
-      receipt.source_path !== state.activeInput)
-  )
-    return false;
-  if (
-    mode === "final" &&
-    (receipt.request_fingerprint !== state.requestFingerprint ||
-      state.expectedGeneration === null ||
-      receipt.output_sha256 !==
-        state.expectedGeneration.outputSha256 ||
-      receipt.manifest_sha256 !==
-        state.expectedGeneration.manifestSha256 ||
-      receipt.output_size !==
-        state.expectedGeneration.outputSize ||
-      receipt.source_pages !==
-        state.expectedGeneration.sourcePages ||
-      receipt.output_pages !==
-        state.expectedGeneration.outputPages ||
-      receipt.toc_entries !==
-        state.expectedGeneration.tocEntries ||
-      !sameCoverage(
-        receipt.coverage,
-        state.expectedGeneration.coverage,
-      ))
-  )
-    return false;
-  if (receipt.signal === "missing")
-    return !!(
-      ["initial", "recovery"].includes(mode) &&
-      receipt.generation_attempt ===
-        (mode === "initial" ? 1 : 2) &&
-      receipt.status === "succeeded" &&
-      validRequestedSource(
-        receipt.source_path,
-        state.slug,
-        state.targetLanguage,
-      ) &&
-      (mode !== "initial" ||
-        state.requestedSource !== null ||
-        validSelectableSource(
-          receipt.source_path,
-          state.slug,
-          state.targetLanguage,
-        )) &&
-      (mode === "initial"
-        ? state.requestedSource === null ||
-          receipt.source_path === state.requestedSource
-        : receipt.source_path === state.activeInput &&
-          (state.activeInputSha256 === null ||
-            receipt.source_sha256 === state.activeInputSha256) &&
-          receipt.request_fingerprint !== state.requestFingerprint) &&
-      validHash(receipt.request_fingerprint) &&
-      validHash(receipt.source_sha256) &&
-      receipt.source_size > 0 &&
-      receipt.source_pages > 0 &&
-      receipt.output_sha256 === null &&
-      receipt.manifest_sha256 === null &&
-      receipt.output_size === 0 &&
-      receipt.output_pages === 0 &&
-      receipt.toc_entries === 0 &&
-      receipt.coverage === null &&
-      receipt.candidates.length === 0 &&
-      (state.sourceDecision === null
-        ? receipt.candidates_fingerprint === null
-        : receipt.candidates_fingerprint ===
-            state.sourceDecision.candidates_fingerprint &&
-          receipt.source_sha256 ===
-            state.sourceDecision.sha256) &&
-      receipt.gate === null &&
-      receipt.failure === null
-    );
-  if (receipt.signal === "reused")
-    return !!(
-      receipt.status === "succeeded" &&
-      [1, 2].includes(receipt.generation_attempt) &&
-      (mode !== "final" ||
-        receipt.generation_attempt ===
-          state.expectedGeneration.attempt) &&
-      validRequestedSource(
-        receipt.source_path,
-        state.slug,
-        state.targetLanguage,
-      ) &&
-      (requestedSourceMatches(receipt, state, mode)) &&
-      validHash(receipt.request_fingerprint) &&
-      validHash(receipt.source_sha256) &&
-      receipt.source_size > 0 &&
-      receipt.source_pages > 0 &&
-      validHash(receipt.output_sha256) &&
-      validHash(receipt.manifest_sha256) &&
-      receipt.output_size > 0 &&
-      receipt.output_pages === receipt.source_pages * 2 &&
-      validCoverage(receipt.coverage) &&
-      ["pass", "not_applicable", "insufficient_evidence"].includes(
-        receipt.coverage.signal,
-      ) &&
-      receipt.candidates.length === 0 &&
-      (mode === "initial" && state.sourceDecision !== null
-        ? receipt.candidates_fingerprint ===
-            state.sourceDecision.candidates_fingerprint &&
-          receipt.source_sha256 ===
-            state.sourceDecision.sha256
-        : receipt.candidates_fingerprint === null) &&
-      receipt.gate === null &&
-      receipt.failure === null
-    );
-  if (receipt.signal === "configuration_required")
-    return !!(
-      mode === "initial" &&
-      receipt.generation_attempt === 0 &&
-      receipt.status === "blocked" &&
-      receipt.output_sha256 === null &&
-      receipt.manifest_sha256 === null &&
-      receipt.output_size === 0 &&
-      receipt.output_pages === 0 &&
-      receipt.coverage === null &&
-      receipt.candidates.length === 0 &&
-      receipt.candidates_fingerprint === null &&
-      validGate(
-        receipt.gate,
-        "configuration_required",
-        state,
-      ) &&
-      validFailure(
-        receipt.failure,
-        "translation.reconcile",
-        "known",
-      ) &&
-      receipt.failure.code ===
-        "translation.configuration_required"
-    );
-  if (receipt.signal === "source_selection")
-    return !!(
-      mode === "initial" &&
-      receipt.generation_attempt === 0 &&
-      state.requestedSource === null &&
-      receipt.status === "blocked" &&
-      receipt.source_path === null &&
-      receipt.request_fingerprint === null &&
-      receipt.source_sha256 === null &&
-      receipt.source_size === 0 &&
-      receipt.source_pages === 0 &&
-      receipt.output_sha256 === null &&
-      receipt.manifest_sha256 === null &&
-      receipt.output_size === 0 &&
-      receipt.output_pages === 0 &&
-      receipt.coverage === null &&
-      receipt.candidates.length > 1 &&
-      new Set(receipt.candidates.map((row) => row.path)).size ===
-        receipt.candidates.length &&
-      receipt.candidates.every(
-        (candidate) => validCandidate(candidate, state),
-      ) &&
-      validHash(receipt.candidates_fingerprint) &&
-      validGate(
-        receipt.gate,
-        "source_selection",
-        state,
-      ) &&
-      receipt.gate.candidates.length ===
-        receipt.candidates.length &&
-      receipt.gate.candidates.every(
-        (candidate, index) =>
-          candidate.path === receipt.candidates[index].path &&
-          candidate.sha256 === receipt.candidates[index].sha256 &&
-          candidate.size === receipt.candidates[index].size &&
-          candidate.pages === receipt.candidates[index].pages,
-      ) &&
-      receipt.gate.candidates_fingerprint ===
-        receipt.candidates_fingerprint &&
-      validFailure(
-        receipt.failure,
-        "translation.reconcile",
-        "known",
-      ) &&
-      receipt.failure.code ===
-        "translation.source_selection_required"
-    );
-  if (receipt.signal === null)
-    return !!(
-      mode === "initial" &&
-      state.requestedSource === null &&
-      receipt.generation_attempt === 0 &&
-      receipt.status === "failed" &&
-      receipt.source_path === null &&
-      receipt.request_fingerprint === null &&
-      receipt.source_sha256 === null &&
-      receipt.source_size === 0 &&
-      receipt.source_pages === 0 &&
-      receipt.output_sha256 === null &&
-      receipt.manifest_sha256 === null &&
-      receipt.output_size === 0 &&
-      receipt.output_pages === 0 &&
-      receipt.toc_entries === 0 &&
-      receipt.coverage === null &&
-      receipt.candidates.length === 0 &&
-      receipt.candidates_fingerprint === null &&
-      receipt.gate === null &&
-      validFailure(
-        receipt.failure,
-        "translation.reconcile",
-        "known",
-      ) &&
-      receipt.failure.code === "translation.source_missing"
-    );
-  return false;
-}
-
-function requestedSourceMatches(receipt, state, mode) {
-  const expected =
-    mode === "initial" ? state.requestedSource : state.activeInput;
-  return (
-    expected === null ||
-    receipt.source_path === expected
   );
 }
 
@@ -998,14 +431,6 @@ function adoptValidation(state, receipt, producer) {
     coverage: receipt.coverage,
   };
   setFinalArtifacts(state, receipt, producer);
-}
-
-function rawReocrFailure(value) {
-  return !!(
-    exactKeys(value, ["code", "message"]) &&
-    validText(value.code, 1, 100) &&
-    validText(value.message, 1, 1000)
-  );
 }
 
 function reocrEnvelope(
@@ -1067,7 +492,7 @@ function recordPendingReocr(state, reconcileReceipt) {
 }
 
 async function reconcile(runtime, state, mode) {
-  const receipt = await runtime.runOperation(
+  const observed = await runtime.operate(
     translationReconcilePrompt(state, mode),
     {
       phase:
@@ -1088,11 +513,17 @@ async function reconcile(runtime, state, mode) {
       artifactRoles: [],
       unknownFailureCode:
         "translation.reconcile_outcome_unknown",
+      contract: TRANSLATION_RECONCILE_CONTRACT,
+      context: { state, mode },
     },
   );
+  const observeReceipt = observed.receipt;
   const pendingRecovery =
     mode === "recovery" && state.pendingReocr !== null;
-  if (!strictReconcileReceipt(receipt, state, mode)) {
+  if (
+    observed.edge === "unknown" ||
+    observed.edge === "mismatch"
+  ) {
     if (pendingRecovery) {
       state.operations.push(
         reocrEnvelope(
@@ -1110,40 +541,38 @@ async function reconcile(runtime, state, mode) {
       );
       state.pendingReocr = null;
     }
-    state.operations.push(receipt);
+    state.operations.push(observeReceipt);
     return { terminal: reconcileMismatch(state, mode) };
   }
-  if (pendingRecovery) recordPendingReocr(state, receipt);
-  state.operations.push(receipt);
-  if (
-    receipt.signal === "configuration_required" ||
-    receipt.signal === "source_selection"
-  ) {
-    state.backend = receipt.backend;
-    state.gate = receipt.gate;
+  if (pendingRecovery)
+    recordPendingReocr(state, observeReceipt);
+  state.operations.push(observeReceipt);
+  if (observed.edge === "blocked") {
+    state.backend = observeReceipt.backend;
+    state.gate = observeReceipt.gate;
     return {
       terminal: terminal(
         state,
         "blocked",
         "reconcile",
-        receipt.failure,
+        observeReceipt.failure,
       ),
     };
   }
-  if (receipt.signal === null)
+  if (observed.edge !== "ok")
     return {
       terminal: terminal(
         state,
         "failed",
         "reconcile",
-        receipt.failure,
+        observeReceipt.failure,
       ),
     };
-  adoptReconcile(state, receipt);
-  if (receipt.signal === "reused") {
+  adoptReconcile(state, observeReceipt);
+  if (observeReceipt.signal === "reused") {
     adoptValidation(
       state,
-      receipt,
+      observeReceipt,
       mode === "initial"
         ? "translation.reconcile:reused"
         : "translation.run",
@@ -1153,146 +582,9 @@ async function reconcile(runtime, state, mode) {
   return { missing: true };
 }
 
-function commonRunExact(receipt, state, inputPath, attempt) {
-  return !!(
-    exactKeys(receipt, RUN_KEYS) &&
-    receipt.schema_version ===
-      "quasi.operation.translation.run.receipt/0.1" &&
-    receipt.key === "translation.run" &&
-    receipt.effect === "writer" &&
-    receipt.attempt === attempt &&
-    receipt.derivative_key === state.translationKey &&
-    receipt.slug === state.slug &&
-    receipt.backend === state.backend &&
-    receipt.input_path === inputPath &&
-    receipt.output_path === state.output &&
-    receipt.manifest_path === state.manifest &&
-    receipt.target_language === state.targetLanguage &&
-    receipt.toc_json === state.tocJson &&
-    receipt.toc_page_side === state.tocPageSide &&
-    receipt.request_fingerprint ===
-      state.requestFingerprint &&
-    receipt.source_sha256 ===
-      state.activeInputSha256 &&
-    Number.isInteger(receipt.output_size) &&
-    receipt.output_size >= 0 &&
-    Number.isInteger(receipt.source_pages) &&
-    receipt.source_pages > 0 &&
-    Number.isInteger(receipt.output_pages) &&
-    receipt.output_pages >= 0 &&
-    Number.isInteger(receipt.toc_entries) &&
-    receipt.toc_entries >= 0 &&
-    typeof receipt.canonical_committed === "boolean" &&
-    typeof receipt.previous_manifest_preserved === "boolean"
-  );
-}
-
-function strictRunReceipt(receipt, state, inputPath, attempt) {
-  if (!commonRunExact(receipt, state, inputPath, attempt))
-    return false;
-  if (receipt.status === "succeeded")
-    return !!(
-      ["created", "replaced", "reconciled"].includes(
-        receipt.disposition,
-      ) &&
-      receipt.canonical_committed === true &&
-      validHash(receipt.output_sha256) &&
-      validHash(receipt.manifest_sha256) &&
-      receipt.output_size > 0 &&
-      receipt.output_pages === receipt.source_pages * 2 &&
-      validCoverage(receipt.coverage) &&
-      ["pass", "not_applicable", "insufficient_evidence"].includes(
-        receipt.coverage.signal,
-      ) &&
-      receipt.gate === null &&
-      receipt.failure === null
-    );
-  if (
-    receipt.status === "failed" &&
-    receipt.failure &&
-    receipt.failure.code ===
-      "translation.under_translated"
-  )
-    return !!(
-      validFailure(
-        receipt.failure,
-        "translation.run",
-        "known",
-      ) &&
-      receipt.disposition === null &&
-      receipt.canonical_committed === false &&
-      receipt.previous_manifest_preserved === true &&
-      receipt.output_sha256 === null &&
-      receipt.manifest_sha256 === null &&
-      receipt.output_size === 0 &&
-      receipt.output_pages === 0 &&
-      validCoverage(receipt.coverage) &&
-      receipt.coverage.signal === "under_translated" &&
-      receipt.gate === null
-    );
-  if (
-    receipt.failure &&
-    receipt.failure.code ===
-      "translation.configuration_required"
-  )
-    return !!(
-      receipt.status === "blocked" &&
-      validFailure(
-        receipt.failure,
-        "translation.run",
-        "known",
-      ) &&
-      receipt.disposition === null &&
-      receipt.canonical_committed === false &&
-      receipt.previous_manifest_preserved === true &&
-      receipt.output_sha256 === null &&
-      receipt.manifest_sha256 === null &&
-      receipt.output_size === 0 &&
-      receipt.output_pages === 0 &&
-      receipt.coverage === null &&
-      validGate(
-        receipt.gate,
-        "configuration_required",
-        state,
-      )
-    );
-  if (receipt.status === "failed")
-    return !!(
-      validFailure(
-        receipt.failure,
-        "translation.run",
-        "known",
-      ) &&
-      receipt.disposition === null &&
-      receipt.canonical_committed === false &&
-      receipt.previous_manifest_preserved === true &&
-      receipt.output_sha256 === null &&
-      receipt.manifest_sha256 === null &&
-      receipt.output_size === 0 &&
-      receipt.output_pages === 0 &&
-      receipt.gate === null
-    );
-  if (receipt.status === "blocked")
-    return !!(
-      validFailure(
-        receipt.failure,
-        "translation.run",
-        "unknown",
-      ) &&
-      receipt.disposition === null &&
-      receipt.canonical_committed === false &&
-      receipt.output_sha256 === null &&
-      receipt.manifest_sha256 === null &&
-      receipt.output_size === 0 &&
-      receipt.output_pages === 0 &&
-      receipt.gate === null
-    );
-  return false;
-}
-
 async function runTranslation(runtime, state, inputPath, attempt) {
   state.budgets.translation_runs.used += 1;
-  const receipt = await runtime.runOperation(
+  const run = await runtime.operate(
     translationRunPrompt(state, inputPath, attempt),
     {
       phase: "Prepare",
@@ -1311,10 +603,13 @@ async function runTranslation(runtime, state, inputPath, attempt) {
       ],
       unknownFailureCode:
         "translation.writer_outcome_unknown",
+      contract: TRANSLATION_RUN_CONTRACT,
+      context: { state, inputPath, attempt },
     },
   );
-  state.operations.push(receipt);
-  if (runtimeUnknown(receipt, "translation.run"))
+  const runReceipt = run.receipt;
+  state.operations.push(runReceipt);
+  if (run.edge === "unknown")
     return {
       terminal: terminal(
         state,
@@ -1328,14 +623,7 @@ async function runTranslation(runtime, state, inputPath, attempt) {
         ),
       ),
     };
-  if (
-    !strictRunReceipt(
-      receipt,
-      state,
-      inputPath,
-      attempt,
-    )
-  )
+  if (run.edge === "mismatch")
     return {
       terminal: writerMismatch(
         state,
@@ -1343,88 +631,54 @@ async function runTranslation(runtime, state, inputPath, attempt) {
         "translation.run",
       ),
     };
-  if (receipt.status === "blocked") {
-    if (receipt.gate) state.gate = receipt.gate;
+  if (run.edge === "blocked") {
+    if (runReceipt.gate) state.gate = runReceipt.gate;
     return {
       terminal: terminal(
         state,
         "blocked",
         "translate",
-        receipt.failure,
+        runReceipt.failure,
       ),
     };
   }
-  if (receipt.status === "failed")
+  if (run.edge !== "ok")
     return {
       underTranslated:
-        receipt.failure.code ===
+        runReceipt.failure.code ===
         "translation.under_translated",
       terminal:
-        receipt.failure.code ===
+        runReceipt.failure.code ===
         "translation.under_translated"
           ? null
           : terminal(
               state,
               "failed",
               "translate",
-              receipt.failure,
+              runReceipt.failure,
             ),
-      receipt,
+      receipt: runReceipt,
     };
   state.disposition =
-    receipt.disposition === "reconciled"
+    runReceipt.disposition === "reconciled"
       ? "reused"
       : "created";
   state.expectedGeneration = {
     attempt,
-    outputSha256: receipt.output_sha256,
-    manifestSha256: receipt.manifest_sha256,
-    outputSize: receipt.output_size,
-    sourcePages: receipt.source_pages,
-    outputPages: receipt.output_pages,
-    tocEntries: receipt.toc_entries,
-    coverage: receipt.coverage,
+    outputSha256: runReceipt.output_sha256,
+    manifestSha256: runReceipt.manifest_sha256,
+    outputSize: runReceipt.output_size,
+    sourcePages: runReceipt.source_pages,
+    outputPages: runReceipt.output_pages,
+    tocEntries: runReceipt.toc_entries,
+    coverage: runReceipt.coverage,
   };
-  return { succeeded: true, receipt };
-}
-
-function strictReocrReceipt(receipt, state) {
-  if (
-    !exactKeys(receipt, REOCR_KEYS) ||
-    receipt.input !== state.sourcePath ||
-    receipt.output !== state.recoverySource ||
-    !Number.isInteger(receipt.exit) ||
-    typeof receipt.exists !== "boolean" ||
-    !Number.isInteger(receipt.size) ||
-    receipt.size < 0
-  )
-    return false;
-  if (receipt.status === "ok")
-    return !!(
-      receipt.exit === 0 &&
-      receipt.exists === true &&
-      receipt.size > 0 &&
-      receipt.failure === null
-    );
-  if (receipt.status === "failed")
-    return !!(
-      receipt.exists === false &&
-      receipt.size === 0 &&
-      rawReocrFailure(receipt.failure)
-    );
-  if (receipt.status === "existing")
-    return !!(
-      receipt.exit === 0 &&
-      receipt.exists === true &&
-      receipt.size > 0 &&
-      receipt.failure === null
-    );
-  return false;
+  return { succeeded: true, receipt: runReceipt };
 }
 
 async function reocr(runtime, state) {
   state.budgets.reocr.used = 1;
-  const receipt = await runtime.runOperation(
+  const recovered = await runtime.operate(
     translationReocrPrompt(state),
     {
       phase: "Prepare",
@@ -1440,10 +694,13 @@ async function reocr(runtime, state) {
       artifactRoles: ["recovery_source"],
       unknownFailureCode:
         "translation.writer_outcome_unknown",
+      contract: TRANSLATION_REOCR_CONTRACT,
+      context: { state },
     },
   );
-  if (runtimeUnknown(receipt, "translation.reocr")) {
-    state.operations.push(receipt);
+  const rawReceipt = recovered.receipt;
+  if (recovered.edge === "unknown") {
+    state.operations.push(rawReceipt);
     return {
       terminal: terminal(
         state,
@@ -1458,11 +715,11 @@ async function reocr(runtime, state) {
       ),
     };
   }
-  if (!strictReocrReceipt(receipt, state)) {
+  if (recovered.edge === "mismatch") {
     state.operations.push(
       reocrEnvelope(
         state,
-        receipt,
+        rawReceipt,
         "blocked",
         null,
         operationFailure(
@@ -1481,7 +738,7 @@ async function reocr(runtime, state) {
       ),
     };
   }
-  if (receipt.status === "existing") {
+  if (recovered.edge === "blocked") {
     const failure = operationFailure(
       "translation.recovery_source_exists",
       "translation.reocr",
@@ -1491,7 +748,7 @@ async function reocr(runtime, state) {
     state.operations.push(
       reocrEnvelope(
         state,
-        receipt,
+        rawReceipt,
         "blocked",
         null,
         failure,
@@ -1506,17 +763,17 @@ async function reocr(runtime, state) {
       ),
     };
   }
-  if (receipt.status === "failed") {
+  if (recovered.edge !== "ok") {
     const failure = operationFailure(
       "translation.reocr_failed",
       "translation.reocr",
       "known",
-      `${receipt.failure.code}: ${receipt.failure.message}`,
+      `${rawReceipt.failure.code}: ${rawReceipt.failure.message}`,
     );
     state.operations.push(
       reocrEnvelope(
         state,
-        receipt,
+        rawReceipt,
         "failed",
         null,
         failure,
@@ -1534,7 +791,7 @@ async function reocr(runtime, state) {
   state.activeInput = state.recoverySource;
   state.activeInputSha256 = null;
   state.recovered = true;
-  state.pendingReocr = receipt;
+  state.pendingReocr = rawReceipt;
   return { succeeded: true };
 }
 

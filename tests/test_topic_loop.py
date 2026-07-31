@@ -623,8 +623,18 @@ def receipt(result: dict[str, Any]) -> dict[str, Any]:
 def assert_flat_schema(schema: Any) -> None:
     assert isinstance(schema, dict)
     assert schema.get("type") == "object"
-    for forbidden in ("oneOf", "allOf", "anyOf"):
+    for forbidden in ("oneOf", "allOf"):
         assert forbidden not in schema
+    if "anyOf" in schema:
+        # Composed writer schemas carry status-branch invariants so the
+        # still-running agent self-repairs its receipt in-invocation.
+        branch_statuses = {
+            branch["properties"]["status"]["const"]
+            for branch in schema["anyOf"]
+        }
+        assert branch_statuses == set(
+            schema["properties"]["status"]["enum"]
+        )
 
 
 def test_recall_only_happy_path_is_ordered_by_dependencies_not_clock_time(

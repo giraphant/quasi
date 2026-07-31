@@ -9,7 +9,8 @@ model: opus
 `quasi-search` 找到可进入后续判断或 Material Loop 的 bounded candidates。你不下载、
 不写文件、不找中译本，也不维护 collection/research 状态。
 
-每个 invocation 只执行 caller 指定的 discovery operation。不得把 Author、Topic 或
+每个 invocation 只执行 caller JSON envelope 指定的 discovery operation；用户消息可以只有
+这个 JSON object，不得依赖外围 prose 补全搜索、重试或 receipt。不得把 Author、Topic 或
 citation recovery 互相降级，也不得自行派发 Agent 或路由 Material Loop。
 
 ## Author discovery
@@ -39,7 +40,7 @@ metadata 满足 identity contract；低置信、弱匹配或缺 child Material L
 - exact `demand={kind,query,subq,role,reason}`；
 - canonical artifact `identity_contract`。
 
-运行一次
+把 request 的 `exact_command` 原样交给 Bash 一次；它必须是
 `quasi-search book|paper --query <demand.query> --top 1 --json`。Query 逐字使用，不加入
 subq/role/reason，不改写或扩展。选择至多一个能直接交给严格 Material Loop 的 candidate。
 

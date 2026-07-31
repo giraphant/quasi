@@ -36,6 +36,7 @@ def test_workflow_source_tree_is_minimal_and_complete() -> None:
         "collections/author.mjs",
         "derivatives/translation.mjs",
         "materials/book.mjs",
+        "materials/member.mjs",
         "materials/batch.mjs",
         "materials/dispatch.mjs",
         "materials/ingress.mjs",

@@ -1,97 +1,60 @@
 import {
-  BOOK_ACQUIRE_SCHEMA,
+  BOOK_ACQUIRE_CONTRACT,
+  BOOK_TEMP_PATH,
   bookAcquirePrompt,
+  bookAcquireSchema,
+  validYearEvidence,
 } from "../operations/acquire.mjs";
 import {
-  CHAPTER_ANALYSE_SCHEMA,
+  CHAPTER_ANALYSE_CONTRACT,
   chapterAnalyseOperationPrompt,
+  chapterAnalyseSchema,
 } from "../operations/analyse.mjs";
 import {
-  BOOK_AUDIT_SCHEMA,
+  BOOK_AUDIT_CONTRACT,
   bookAuditPrompt,
+  bookAuditSchema,
 } from "../operations/audit.mjs";
 import {
+  BOOK_DOCUMENT_OCR_CONTRACT,
+  CHAPTER_ASSESS_CONTRACT,
   CHAPTER_ASSESS_SCHEMA,
-  CHAPTER_EXTRACT_SCHEMA,
+  CHAPTER_EXTRACT_CONTRACT,
+  CHAPTER_PLAN_CONTRACT,
   CHAPTER_PLAN_SCHEMA,
-  BOOK_DOCUMENT_OCR_SCHEMA,
-  READABILITY_SCHEMA,
-  TEXT_EXTRACT_SCHEMA,
+  READABILITY_CONTRACT,
+  TEXT_EXTRACT_CONTRACT,
   chapterAssessOperationPrompt,
   chapterExtractOperationPrompt,
+  chapterExtractSchema,
   chapterPlanOperationPrompt,
   documentOcrOperationPrompt,
+  documentOcrOperationSchema,
   extractTextOperationPrompt,
   readabilityOperationPrompt,
+  readabilitySchema,
+  textExtractSchema,
 } from "../operations/extract.mjs";
 import {
-  BOOK_SYNTHESISE_SCHEMA,
+  BOOK_SYNTHESISE_CONTRACT,
   bookSynthesiseOperationPrompt,
+  bookSynthesiseSchema,
 } from "../operations/synthesise.mjs";
+import {
+  classifyReceipt,
+  exactKeys,
+  optionalText,
+  validText,
+} from "../runtime.mjs";
 
 const MATERIAL_RECEIPT_VERSION = "quasi.material-loop.receipt/0.1";
 const BOOK_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
-const CHAPTER_SLOT = /^\d{2,3}[a-z]{0,2}$/;
-const BOOK_TEMP_PATH =
-  /^\.quasi\/temp\/downloads\/[A-Za-z0-9][A-Za-z0-9._-]{0,220}\.(?:epub|pdf)$/;
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 const CATEGORIES = new Set([
   "monograph",
   "edited-volume",
   "handbook",
   "other",
 ]);
-
-const exactKeys = (value, keys) =>
-  !!(
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === keys.length &&
-    keys.every((key) =>
-      Object.prototype.hasOwnProperty.call(value, key),
-    )
-  );
-
-function sameClosedValue(left, right) {
-  if (Array.isArray(left) || Array.isArray(right))
-    return (
-      Array.isArray(left) &&
-      Array.isArray(right) &&
-      left.length === right.length &&
-      left.every((value, index) =>
-        sameClosedValue(value, right[index]),
-      )
-    );
-  if (
-    left &&
-    right &&
-    typeof left === "object" &&
-    typeof right === "object"
-  ) {
-    const leftKeys = Object.keys(left);
-    const rightKeys = Object.keys(right);
-    return (
-      leftKeys.length === rightKeys.length &&
-      leftKeys.every(
-        (key) =>
-          Object.prototype.hasOwnProperty.call(right, key) &&
-          sameClosedValue(left[key], right[key]),
-      )
-    );
-  }
-  return Object.is(left, right);
-}
-
-const validText = (value, min, max) =>
-  typeof value === "string" &&
-  value === value.trim() &&
-  value.length >= min &&
-  value.length <= max &&
-  !CONTROL_CHARS.test(value);
-
-const optionalText = (value, max) =>
-  value == null || value === "" || validText(value, 1, max);
 
 const operationFailure = (
   code,
@@ -106,55 +69,6 @@ const operationFailure = (
   retryable,
   ...(message ? { message } : {}),
 });
-
-function validFailure(
-  failure,
-  operationKey,
-  { retryable = null, allowMessage = true } = {},
-) {
-  if (
-    !failure ||
-    typeof failure !== "object" ||
-    Array.isArray(failure)
-  )
-    return false;
-  const allowed = [
-    "code",
-    "operation_key",
-    "outcome",
-    "retryable",
-    ...(allowMessage ? ["message"] : []),
-  ];
-  const keys = Object.keys(failure);
-  return (
-    ["code", "operation_key", "outcome", "retryable"].every(
-      (key) => keys.includes(key),
-    ) &&
-    keys.every((key) => allowed.includes(key)) &&
-    validText(failure.code, 1, 200) &&
-    failure.operation_key === operationKey &&
-    ["known", "unknown"].includes(failure.outcome) &&
-    typeof failure.retryable === "boolean" &&
-    (retryable === null || failure.retryable === retryable) &&
-    (failure.message === undefined ||
-      validText(failure.message, 1, 4000))
-  );
-}
-
-const exactRoles = (receipt, roles) =>
-  Array.isArray(receipt && receipt.artifact_roles) &&
-  receipt.artifact_roles.length === roles.length &&
-  roles.every((role, index) => receipt.artifact_roles[index] === role);
-
-const runtimeUnknown = (receipt) =>
-  !!(
-    receipt &&
-    receipt.schema_version ===
-      "quasi.operation.runtime.receipt/0.1" &&
-    receipt.status === "blocked" &&
-    receipt.failure &&
-    receipt.failure.outcome === "unknown"
-  );
 
 function validateBookIdentity(slug, meta) {
   if (typeof slug !== "string" || !BOOK_SLUG.test(slug))
@@ -424,78 +338,6 @@ function mismatchBlocked(state, stage, operationKey) {
   );
 }
 
-function strictAttempt(attempt) {
-  return (
-    exactKeys(attempt, ["source", "status", "error"]) &&
-    validText(attempt.source, 1, 200) &&
-    validText(attempt.status, 1, 200) &&
-    (attempt.error === null ||
-      validText(attempt.error, 1, 4000))
-  );
-}
-
-const nullableYear = (value) =>
-  value === null ||
-  (Number.isInteger(value) && value >= 1000 && value <= 2500);
-
-function strictYearEvidence(evidence, expectedYear) {
-  if (
-    !exactKeys(evidence, [
-      "slug_year",
-      "source_years",
-      "pdf_signals",
-      "recommended_year",
-      "recommendation_reason",
-      "verdict",
-    ]) ||
-    evidence.slug_year !== expectedYear ||
-    !evidence.source_years ||
-    typeof evidence.source_years !== "object" ||
-    Array.isArray(evidence.source_years) ||
-    Object.keys(evidence.source_years).length > 64 ||
-    Object.entries(evidence.source_years).some(
-      ([source, year]) =>
-        !validText(source, 1, 200) || !nullableYear(year) || year === null,
-    ) ||
-    !exactKeys(evidence.pdf_signals, [
-      "first_published",
-      "copyright_year",
-      "original_year",
-      "other_years",
-    ]) ||
-    !nullableYear(evidence.pdf_signals.first_published) ||
-    !nullableYear(evidence.pdf_signals.copyright_year) ||
-    !nullableYear(evidence.pdf_signals.original_year) ||
-    !Array.isArray(evidence.pdf_signals.other_years) ||
-    evidence.pdf_signals.other_years.length > 64 ||
-    evidence.pdf_signals.other_years.some(
-      (year) => !nullableYear(year) || year === null,
-    ) ||
-    !nullableYear(evidence.recommended_year) ||
-    !validText(evidence.recommendation_reason, 1, 4000) ||
-    !["MATCH", "MISMATCH", "AMBIGUOUS"].includes(evidence.verdict)
-  )
-    return false;
-  if (evidence.verdict === "MATCH") {
-    const support = [
-      ...Object.values(evidence.source_years),
-      evidence.pdf_signals.first_published,
-      evidence.pdf_signals.copyright_year,
-      ...evidence.pdf_signals.other_years,
-    ].filter((year) => year === evidence.recommended_year).length;
-    return (
-      evidence.recommended_year === expectedYear &&
-      support >= 2
-    );
-  }
-  if (evidence.verdict === "MISMATCH")
-    return (
-      evidence.recommended_year !== null &&
-      evidence.recommended_year !== expectedYear
-    );
-  return evidence.recommended_year === null;
-}
-
 function validateYearDecision(decision, slug, meta) {
   if (decision == null) return { ok: true, value: null };
   if (
@@ -509,7 +351,7 @@ function validateYearDecision(decision, slug, meta) {
     ) ||
     typeof decision.tmp_path !== "string" ||
     !BOOK_TEMP_PATH.test(decision.tmp_path) ||
-    !strictYearEvidence(
+    !validYearEvidence(
       decision.year_evidence,
       decision.year_evidence &&
         decision.year_evidence.slug_year,
@@ -551,148 +393,6 @@ function validateYearDecision(decision, slug, meta) {
         "use-recommended-year requires an updated canonical slug and metadata year",
     };
   return { ok: true, value: decision };
-}
-
-function strictBookDownloadReceipt(
-  receipt,
-  slug,
-  allowedSources,
-  expectedYear,
-  batchAcceptYear,
-  yearDecision,
-) {
-  if (
-    !exactKeys(receipt, ["acquired", "failed", "per_item"]) ||
-    !Number.isInteger(receipt.acquired) ||
-    receipt.acquired < 0 ||
-    !Number.isInteger(receipt.failed) ||
-    receipt.failed < 0 ||
-    !Array.isArray(receipt.per_item) ||
-    receipt.per_item.length !== 1
-  )
-    return false;
-  const item = receipt.per_item[0];
-  const required = [
-    "kind",
-    "slug",
-    "status",
-    "disposition",
-    "identity_verified",
-    "format",
-    "attempts",
-  ];
-  const allowed = [
-    ...required,
-    "path",
-    "tmp_path",
-    "source",
-    "isbn",
-    "verdict_note",
-    "failure_reason",
-    "year_evidence",
-  ];
-  if (
-    !item ||
-    typeof item !== "object" ||
-    Array.isArray(item) ||
-    !required.every((key) =>
-      Object.prototype.hasOwnProperty.call(item, key),
-    ) ||
-    Object.keys(item).some((key) => !allowed.includes(key)) ||
-    item.kind !== "book" ||
-    item.slug !== slug ||
-    ![
-      "ok",
-      "year_mismatch",
-      "year_ambiguous",
-      "download_failed",
-      "blocked",
-    ].includes(item.status) ||
-    ![null, "created", "reused"].includes(item.disposition) ||
-    typeof item.identity_verified !== "boolean" ||
-    !["epub", "pdf", null].includes(item.format) ||
-    !Array.isArray(item.attempts) ||
-    item.attempts.some((attempt) => !strictAttempt(attempt)) ||
-    (item.isbn !== undefined &&
-      item.isbn !== null &&
-      !validText(item.isbn, 1, 100)) ||
-    (item.verdict_note !== undefined &&
-      !validText(item.verdict_note, 1, 4000))
-  )
-    return false;
-  if (item.status === "ok")
-    return (
-      receipt.acquired === 1 &&
-      receipt.failed === 0 &&
-      ["created", "reused"].includes(item.disposition) &&
-      (!yearDecision ||
-        (item.disposition === "created" &&
-          item.attempts.length > 0)) &&
-      item.identity_verified === true &&
-      allowedSources.some(
-        ({ format, path }) =>
-          item.format === format && item.path === path,
-      ) &&
-      validText(item.source, 1, 200) &&
-      item.tmp_path === undefined &&
-      item.failure_reason === undefined &&
-      (yearDecision
-        ? strictYearEvidence(
-            item.year_evidence,
-            yearDecision.year_evidence.slug_year,
-          ) &&
-          sameClosedValue(
-            item.year_evidence,
-            yearDecision.year_evidence,
-          )
-        : strictYearEvidence(
-            item.year_evidence,
-            expectedYear,
-          ) &&
-          (item.year_evidence.verdict === "MATCH" ||
-            batchAcceptYear === true))
-    );
-  if (item.status === "year_mismatch" || item.status === "year_ambiguous")
-    return (
-      receipt.acquired === 0 &&
-      receipt.failed === 1 &&
-      item.disposition === null &&
-      item.identity_verified === true &&
-      item.format === null &&
-      item.path === undefined &&
-      item.source === undefined &&
-      item.failure_reason === undefined &&
-      typeof item.tmp_path === "string" &&
-      BOOK_TEMP_PATH.test(item.tmp_path) &&
-      allowedSources.some(({ format }) =>
-        item.tmp_path.endsWith(`.${format}`),
-      ) &&
-      strictYearEvidence(item.year_evidence, expectedYear) &&
-      item.year_evidence.verdict ===
-        (item.status === "year_mismatch"
-          ? "MISMATCH"
-          : "AMBIGUOUS")
-    );
-  if (
-    item.disposition !== null ||
-    item.identity_verified !== false ||
-    item.format !== null ||
-    item.path !== undefined ||
-    item.tmp_path !== undefined ||
-    item.source !== undefined ||
-    item.isbn !== undefined ||
-    item.verdict_note !== undefined ||
-    item.year_evidence !== undefined ||
-    !validText(item.failure_reason, 1, 4000)
-  )
-    return false;
-  if (item.status === "download_failed")
-    return (
-      receipt.acquired === 0 &&
-      receipt.failed === 1 &&
-      item.attempts.length > 0
-    );
-  return receipt.acquired === 0 && receipt.failed === 0;
 }
 
 function normaliseBookDownloadReceipt(receipt) {
@@ -753,718 +453,19 @@ function downloadOperation(item, allowedSources) {
   };
 }
 
-function strictExtractText(receipt, input, output) {
-  const keys = [
-    "schema_version",
-    "key",
-    "effect",
-    "status",
-    "attempt",
-    "input_path",
-    "output_path",
-    "artifact_roles",
-    "exit",
-    "exists",
-    "size",
-    "chars",
-    "non_whitespace_chars",
-    "pages",
-    "text_pages",
-    "failure",
-  ];
-  if (
-    !exactKeys(receipt, keys) ||
-    receipt.schema_version !==
-      "quasi.operation.document.extract-text.receipt/0.1" ||
-    receipt.key !== "document.extract-text" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.input_path !== input ||
-    receipt.output_path !== output ||
-    !exactRoles(receipt, ["normalized_text"]) ||
-    !["succeeded", "failed", "blocked"].includes(receipt.status) ||
-    !["exit", "size", "chars", "non_whitespace_chars", "pages", "text_pages"].every(
-      (key) =>
-        Number.isInteger(receipt[key]) &&
-        (key === "exit" || receipt[key] >= 0),
-    ) ||
-    typeof receipt.exists !== "boolean"
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      receipt.exit === 0 &&
-      receipt.exists === true
-    );
-  return (
-    validFailure(receipt.failure, "document.extract-text", {
-      retryable: false,
-    }) &&
-    receipt.failure.outcome ===
-      (receipt.status === "failed" ? "known" : "unknown")
-  );
-}
-
-function strictReadability(receipt, input) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "input_path",
-      "artifact_roles",
-      "signal",
-      "diagnostics",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.document.assess-readability.receipt/0.1" ||
-    receipt.key !== "document.assess-readability" ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    receipt.input_path !== input ||
-    !exactRoles(receipt, ["normalized_text"]) ||
-    !["succeeded", "failed", "blocked"].includes(receipt.status) ||
-    !Array.isArray(receipt.diagnostics) ||
-    receipt.diagnostics.some(
-      (diagnostic) => !validText(diagnostic, 1, 4000),
-    )
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      ["readable", "needs_ocr", "invalid_source"].includes(
-        receipt.signal,
-      )
-    );
-  return (
-    receipt.signal === null &&
-    validFailure(
-      receipt.failure,
-      "document.assess-readability",
-      { retryable: true },
-    ) &&
-    receipt.failure.outcome ===
-      (receipt.status === "failed" ? "known" : "unknown")
-  );
-}
-
-function strictOcr(receipt, input, output) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "input_path",
-      "output_path",
-      "artifact_roles",
-      "exit",
-      "exists",
-      "size",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.document.ocr.receipt/0.1" ||
-    receipt.key !== "document.ocr" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.input_path !== input ||
-    receipt.output_path !== output ||
-    !exactRoles(receipt, ["recovery_source"]) ||
-    !["succeeded", "failed", "blocked"].includes(receipt.status) ||
-    !Number.isInteger(receipt.exit) ||
-    typeof receipt.exists !== "boolean" ||
-    !Number.isInteger(receipt.size) ||
-    receipt.size < 0
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      receipt.exit === 0 &&
-      receipt.exists === true &&
-      receipt.size > 0
-    );
-  if (
-    !validFailure(receipt.failure, "document.ocr", {
-      retryable: false,
-    })
-  )
-    return false;
-  if (receipt.status === "failed")
-    return (
-      receipt.failure.outcome === "known" &&
-      receipt.failure.code === "book.ocr_failed"
-    );
-  if (receipt.failure.outcome !== "unknown") return false;
-  if (receipt.failure.code === "book.writer_receipt_mismatch")
-    return true;
-  return (
-    receipt.failure.code === "output_exists_requires_reconcile" &&
-    receipt.exit === 0 &&
-    receipt.exists === true &&
-    receipt.size > 0
-  );
-}
-
-function strictPlan(receipt, input, normalized) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "input_path",
-      "normalized_path",
-      "artifact_roles",
-      "mode",
-      "chapters",
-      "diagnostics",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.chapter.plan.receipt/0.1" ||
-    receipt.key !== "chapter.plan" ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    receipt.input_path !== input ||
-    receipt.normalized_path !== normalized ||
-    !exactRoles(receipt, ["chapter_plan"]) ||
-    !["succeeded", "failed", "blocked"].includes(receipt.status) ||
-    !Array.isArray(receipt.chapters) ||
-    receipt.chapters.length > 150 ||
-    !Array.isArray(receipt.diagnostics) ||
-    receipt.diagnostics.some(
-      (diagnostic) => !validText(diagnostic, 1, 4000),
-    )
-  )
-    return false;
-  if (receipt.status === "succeeded") {
-    if (
-      receipt.failure !== null ||
-      !["toc", "pattern", "manual"].includes(receipt.mode)
-    )
-      return false;
-    if (receipt.mode !== "manual") return receipt.chapters.length === 0;
-    if (!receipt.chapters.length) return false;
-    let lastEnd = 0;
-    return receipt.chapters.every((chapter) => {
-      if (
-        !exactKeys(chapter, ["title", "start", "end"]) ||
-        !validText(chapter.title, 1, 500) ||
-        !Number.isInteger(chapter.start) ||
-        !Number.isInteger(chapter.end) ||
-        chapter.start < 1 ||
-        chapter.end < chapter.start ||
-        chapter.start <= lastEnd
-      )
-        return false;
-      lastEnd = chapter.end;
-      return true;
-    });
-  }
-  return (
-    receipt.mode === null &&
-    receipt.chapters.length === 0 &&
-    validFailure(receipt.failure, "chapter.plan", {
-      retryable: true,
-    }) &&
-    receipt.failure.outcome ===
-      (receipt.status === "failed" ? "known" : "unknown")
-  );
-}
-
-function validChapterRef(chapter) {
-  const filenameIsSafe =
-    validText(chapter?.filename, 1, 128) &&
-    chapter.filename.startsWith(`${chapter.slot}_`) &&
-    chapter.filename.endsWith(".txt") &&
-    !chapter.filename.includes("/") &&
-    !chapter.filename.includes("\\") &&
-    !chapter.filename.includes("..");
-  if (
-    !exactKeys(chapter, [
-      "slot",
-      "title",
-      "filename",
-      "slug",
-      "word_count",
-      "start_page",
-      "end_page",
-    ]) ||
-    !CHAPTER_SLOT.test(chapter.slot) ||
-    !BOOK_SLUG.test(chapter.slug) ||
-    !filenameIsSafe ||
-    !validText(chapter.title, 1, 500) ||
-    !Number.isInteger(chapter.word_count) ||
-    chapter.word_count < 0
-  )
-    return false;
-  const noPages =
-    chapter.start_page === null && chapter.end_page === null;
-  const startOnly =
-    Number.isInteger(chapter.start_page) &&
-    chapter.start_page >= 1 &&
-    chapter.end_page === null;
-  const pages =
-    Number.isInteger(chapter.start_page) &&
-    Number.isInteger(chapter.end_page) &&
-    chapter.start_page >= 1 &&
-    chapter.end_page >= chapter.start_page;
-  return noPages || startOnly || pages;
-}
-
-function uniqueChapters(chapters) {
-  if (
-    !Array.isArray(chapters) ||
-    !chapters.length ||
-    chapters.length > 150 ||
-    chapters.some((chapter) => !validChapterRef(chapter))
-  )
-    return false;
-  const slots = new Set();
-  const filenames = new Set();
-  const slugs = new Set();
-  return chapters.every((chapter) => {
-    if (
-      slots.has(chapter.slot) ||
-      filenames.has(chapter.filename) ||
-      slugs.has(chapter.slug)
-    )
-      return false;
-    slots.add(chapter.slot);
-    filenames.add(chapter.filename);
-    slugs.add(chapter.slug);
-    return true;
-  });
-}
-
-function strictChapterExtract(
-  receipt,
-  state,
-  input,
-  expectedMode,
-) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "input_path",
-      "output_path",
-      "manifest_path",
-      "artifact_roles",
-      "mode",
-      "disposition",
-      "exit",
-      "manifest_exists",
-      "request_fingerprint",
-      "manifest_fingerprint",
-      "chapter_count",
-      "chapters",
-      "skipped",
-      "removed_files",
-      "limit",
-      "previous_manifest_preserved",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.chapter.extract.receipt/0.1" ||
-    receipt.key !== "chapter.extract" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.input_path !== input ||
-    receipt.output_path !== state.chaptersDir ||
-    receipt.manifest_path !== state.manifest ||
-    !exactRoles(receipt, [
-      "chapter_manifest",
-      "normalized_chapter",
-    ]) ||
-    receipt.mode !== expectedMode ||
-    !["succeeded", "failed", "blocked"].includes(receipt.status) ||
-    !["created", "reused", "replaced", "repaired", null].includes(
-      receipt.disposition,
-    ) ||
-    !Number.isInteger(receipt.exit) ||
-    typeof receipt.manifest_exists !== "boolean" ||
-    (receipt.request_fingerprint !== null &&
-      !validText(receipt.request_fingerprint, 1, 512)) ||
-    (receipt.manifest_fingerprint !== null &&
-      !validText(receipt.manifest_fingerprint, 1, 512)) ||
-    !Number.isInteger(receipt.chapter_count) ||
-    receipt.chapter_count < 0 ||
-    !Array.isArray(receipt.chapters) ||
-    !Array.isArray(receipt.skipped) ||
-    !Array.isArray(receipt.removed_files) ||
-    receipt.removed_files.some(
-      (path) => !validText(path, 1, 2048),
-    ) ||
-    !exactKeys(receipt.limit, ["max_chapters", "exceeded"]) ||
-    !Number.isInteger(receipt.limit.max_chapters) ||
-    receipt.limit.max_chapters < 1 ||
-    typeof receipt.limit.exceeded !== "boolean" ||
-    typeof receipt.previous_manifest_preserved !== "boolean"
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      receipt.exit === 0 &&
-      receipt.manifest_exists === true &&
-      receipt.chapter_count === receipt.chapters.length &&
-      (receipt.chapter_count === 0 ||
-        uniqueChapters(receipt.chapters)) &&
-      receipt.request_fingerprint !== null &&
-      receipt.manifest_fingerprint !== null &&
-      receipt.disposition !== null
-    );
-  return (
-    receipt.chapter_count === receipt.chapters.length &&
-    validFailure(receipt.failure, "chapter.extract", {
-      retryable: false,
-    }) &&
-    receipt.failure.outcome ===
-      (receipt.status === "failed" ? "known" : "unknown")
-  );
-}
-
 const chapterInputPath = (state, chapter) =>
   `${state.chaptersDir}/${chapter.filename}`;
 const chapterOutputPath = (state, chapter) =>
   `vault/books/${state.slug}/ch${chapter.slot}-${chapter.slug}.md`;
 
-function strictBoundaryAssessment(
-  receipt,
-  state,
-  chapters,
-) {
-  const inputPaths = chapters.map((chapter) =>
-    chapterInputPath(state, chapter),
-  );
-  const allowedPaths = new Set([state.manifest, ...inputPaths]);
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "manifest_path",
-      "input_paths",
-      "artifact_roles",
-      "signal",
-      "diagnostics",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.chapter.assess-boundaries.receipt/0.1" ||
-    receipt.key !== "chapter.assess-boundaries" ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    receipt.manifest_path !== state.manifest ||
-    JSON.stringify(receipt.input_paths) !== JSON.stringify(inputPaths) ||
-    !exactRoles(receipt, [
-      "chapter_manifest",
-      "normalized_chapter",
-    ]) ||
-    !["succeeded", "failed", "blocked"].includes(receipt.status) ||
-    !Array.isArray(receipt.diagnostics)
-  )
-    return false;
-  const validDiagnostic = (diagnostic) => {
-    if (
-      !exactKeys(diagnostic, [
-        "path",
-        "kind",
-        "reason",
-        "slot",
-        "title",
-        "start_page",
-        "end_page",
-      ]) ||
-      !allowedPaths.has(diagnostic.path) ||
-      !validText(diagnostic.kind, 1, 200) ||
-      !validText(diagnostic.reason, 1, 4000) ||
-      (diagnostic.slot !== null &&
-        !CHAPTER_SLOT.test(diagnostic.slot)) ||
-      (diagnostic.title !== null &&
-        !validText(diagnostic.title, 1, 500))
-    )
-      return false;
-    const noPages =
-      diagnostic.start_page === null &&
-      diagnostic.end_page === null;
-    const pages =
-      Number.isInteger(diagnostic.start_page) &&
-      Number.isInteger(diagnostic.end_page) &&
-      diagnostic.start_page >= 1 &&
-      diagnostic.end_page >= diagnostic.start_page;
-    return noPages || pages;
-  };
-  if (receipt.diagnostics.some((item) => !validDiagnostic(item)))
-    return false;
-  if (receipt.status === "succeeded") {
-    if (
-      receipt.failure !== null ||
-      ![
-        "ready",
-        "needs_replan",
-        "needs_repair",
-        "needs_ocr",
-        "invalid_source",
-      ].includes(receipt.signal)
-    )
-      return false;
-    if (receipt.signal === "ready")
-      return receipt.diagnostics.length === 0;
-    if (!receipt.diagnostics.length) return false;
-    if (receipt.signal !== "needs_repair") return true;
-    const targets = new Set();
-    return receipt.diagnostics.every((diagnostic) => {
-      const chapter = chapters.find(
-        (candidate) =>
-          diagnostic.path === chapterInputPath(state, candidate),
-      );
-      const valid =
-        chapter &&
-        diagnostic.slot === chapter.slot &&
-        validText(diagnostic.title, 1, 500) &&
-        Number.isInteger(diagnostic.start_page) &&
-        Number.isInteger(diagnostic.end_page) &&
-        !targets.has(diagnostic.path);
-      targets.add(diagnostic.path);
-      return valid;
-    });
-  }
-  return (
-    receipt.signal === null &&
-    validFailure(
-      receipt.failure,
-      "chapter.assess-boundaries",
-      { retryable: true },
-    ) &&
-    receipt.failure.outcome ===
-      (receipt.status === "failed" ? "known" : "unknown")
-  );
-}
-
-function strictChapterAnalyse(
-  receipt,
-  state,
-  chapter,
-  mode,
-) {
-  const input = chapterInputPath(state, chapter);
-  const output = chapterOutputPath(state, chapter);
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "input_path",
-      "output_path",
-      "artifact_roles",
-      "action",
-      "write_state",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.chapter.analyse.receipt/0.1" ||
-    receipt.key !== "chapter.analyse" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.input_path !== input ||
-    receipt.output_path !== output ||
-    !exactRoles(receipt, ["chapter_canonical"]) ||
-    !["succeeded", "failed", "blocked"].includes(receipt.status) ||
-    !["create", "repair", "reconciled"].includes(receipt.action) ||
-    !["written", "not_written", "unknown"].includes(
-      receipt.write_state,
-    )
-  )
-    return false;
-  if (receipt.status === "succeeded") {
-    if (receipt.failure !== null) return false;
-    if (receipt.action === "reconciled")
-      return mode === "repair" && receipt.write_state === "not_written";
-    return (
-      receipt.action === mode && receipt.write_state === "written"
-    );
-  }
-  if (!validFailure(receipt.failure, "chapter.analyse"))
-    return false;
-  if (receipt.status === "failed")
-    return (
-      receipt.failure.outcome === "known" &&
-      receipt.action === mode &&
-      receipt.write_state === "not_written"
-    );
-  if (
-    mode === "create" &&
-    receipt.action === "reconciled" &&
-    receipt.failure.code ===
-      "output_exists_requires_reconcile"
-  )
-    return (
-      receipt.failure.outcome === "unknown" &&
-      receipt.write_state === "not_written"
-    );
-  return (
-    receipt.failure.outcome === "unknown" &&
-    receipt.write_state === "unknown" &&
-    receipt.action === mode &&
-    receipt.failure.code !==
-      "output_exists_requires_reconcile"
-  );
-}
-
-function chapterPresent(receipt, mode) {
-  return (
-    receipt.status === "succeeded" ||
-    (mode === "create" &&
-      receipt.status === "blocked" &&
-      receipt.action === "reconciled" &&
-      receipt.failure.code ===
-        "output_exists_requires_reconcile")
-  );
-}
-
-function strictSynthesis(receipt, state, inputPaths, mode) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "input_paths",
-      "output_path",
-      "artifact_roles",
-      "action",
-      "chapters_analyzed",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.book.synthesise.receipt/0.1" ||
-    receipt.key !== "book.synthesise" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    JSON.stringify(receipt.input_paths) !== JSON.stringify(inputPaths) ||
-    receipt.output_path !== state.canonical ||
-    !exactRoles(receipt, ["canonical"]) ||
-    !["succeeded", "failed", "blocked"].includes(receipt.status) ||
-    !["create", "repair", "reconciled"].includes(receipt.action) ||
-    !Number.isInteger(receipt.chapters_analyzed) ||
-    receipt.chapters_analyzed < 0
-  )
-    return false;
-  if (receipt.status === "succeeded") {
-    if (
-      receipt.failure !== null ||
-      receipt.chapters_analyzed !== inputPaths.length
-    )
-      return false;
-    return mode === "create"
-      ? receipt.action === "create"
-      : ["repair", "reconciled"].includes(receipt.action);
-  }
-  if (
-    !validFailure(receipt.failure, "book.synthesise", {
-      retryable: false,
-    })
-  )
-    return false;
-  if (receipt.status === "failed")
-    return (
-      receipt.failure.outcome === "known" &&
-      receipt.action === mode
-    );
-  if (receipt.failure.outcome !== "unknown") return false;
-  if (
-    mode === "create" &&
-    receipt.action === "reconciled"
-  )
-    return (
-      receipt.failure.code ===
-      "output_exists_requires_reconcile"
-    );
-  return (
-    receipt.action === mode &&
-    receipt.failure.code !==
-      "output_exists_requires_reconcile"
-  );
-}
-
-function strictAudit(receipt, state) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "target_path",
-      "remaining_violations",
-      "escalated",
-      "mutated_paths",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.book.audit.receipt/0.1" ||
-    receipt.key !== "book.audit" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    receipt.target_path !== `vault/books/${state.slug}` ||
-    !["clean", "partial", "error"].includes(receipt.status) ||
-    !Number.isInteger(receipt.remaining_violations) ||
-    receipt.remaining_violations < 0 ||
-    !Array.isArray(receipt.escalated) ||
-    !Array.isArray(receipt.mutated_paths) ||
-    new Set(receipt.mutated_paths).size !==
-      receipt.mutated_paths.length ||
-    receipt.mutated_paths.some(
-      (path) => !validText(path, 1, 2048),
-    ) ||
-    receipt.escalated.some(
-      (diagnostic) =>
-        !exactKeys(diagnostic, ["path", "kind", "reason"]) ||
-        !validText(diagnostic.path, 1, 2048) ||
-        !validText(diagnostic.kind, 1, 200) ||
-        !validText(diagnostic.reason, 1, 4000),
-    )
-  )
-    return false;
-  if (receipt.status === "clean")
-    return (
-      receipt.remaining_violations === 0 &&
-      receipt.escalated.length === 0
-    );
-  if (receipt.status === "partial")
-    return (
-      receipt.remaining_violations > 0 &&
-      receipt.escalated.length === receipt.remaining_violations
-    );
-  return true;
-}
-
 async function extractAndAssess(runtime, state, input, output) {
-  const extraction = await runtime.runOperation(
+  const extraction = await runtime.operate(
     extractTextOperationPrompt(state.materialKey, input, output),
     {
       phase: "Prepare",
       agentType: "general-purpose",
       label: `${state.slug}:extract-text`,
-      schema: TEXT_EXTRACT_SCHEMA,
+      schema: textExtractSchema({ input, output }),
     },
     {
       key: "document.extract-text",
@@ -1473,19 +474,24 @@ async function extractAndAssess(runtime, state, input, output) {
       replay: "idempotent",
       artifactRoles: ["normalized_text"],
       unknownFailureCode: "document.writer_outcome_unknown",
+      contract: TEXT_EXTRACT_CONTRACT,
+      context: { input, output },
     },
   );
-  state.operations.push(extraction);
-  if (runtimeUnknown(extraction))
+  state.operations.push(extraction.receipt);
+  if (
+    extraction.edge === "unknown" ||
+    extraction.edge === "blocked"
+  )
     return {
       terminal: blocked(
         state,
         "extract-text",
         "document.extract-text",
-        extraction,
+        extraction.receipt,
       ),
     };
-  if (!strictExtractText(extraction, input, output))
+  if (extraction.edge === "mismatch")
     return {
       terminal: mismatchBlocked(
         state,
@@ -1493,17 +499,8 @@ async function extractAndAssess(runtime, state, input, output) {
         "document.extract-text",
       ),
     };
-  if (extraction.status === "blocked")
-    return {
-      terminal: blocked(
-        state,
-        "extract-text",
-        "document.extract-text",
-        extraction,
-      ),
-    };
-  if (extraction.status !== "succeeded")
-    return { failure: extraction.failure };
+  if (extraction.edge !== "ok")
+    return { failure: extraction.receipt.failure };
   state.artifacts.push({
     role: "normalized_document",
     path: output,
@@ -1512,17 +509,17 @@ async function extractAndAssess(runtime, state, input, output) {
     producer: "document.extract-text",
   });
 
-  const assessment = await runtime.runOperation(
+  const assessment = await runtime.operate(
     readabilityOperationPrompt(
       state.materialKey,
       output,
-      extraction,
+      extraction.receipt,
     ),
     {
       phase: "Prepare",
       agentType: "general-purpose",
       label: `${state.slug}:assess-readability`,
-      schema: READABILITY_SCHEMA,
+      schema: readabilitySchema({ input: output }),
     },
     {
       key: "document.assess-readability",
@@ -1531,31 +528,32 @@ async function extractAndAssess(runtime, state, input, output) {
       replay: "safe",
       artifactRoles: ["normalized_text"],
       unknownFailureCode: "document.readonly_outcome_unknown",
+      contract: READABILITY_CONTRACT,
+      context: { input: output },
     },
   );
-  state.operations.push(assessment);
-  if (!strictReadability(assessment, output))
+  state.operations.push(assessment.receipt);
+  if (assessment.edge === "mismatch")
     return {
       failure:
-        (assessment &&
-          assessment.failure &&
-          assessment.failure.outcome === "unknown" &&
-          assessment.failure) ||
+        (assessment.receipt.failure &&
+          assessment.receipt.failure.outcome === "unknown" &&
+          assessment.receipt.failure) ||
         operationFailure(
           "document.assess_readability_failed",
           "document.assess-readability",
         ),
     };
-  if (assessment.status !== "succeeded")
-    return { failure: assessment.failure };
+  if (assessment.edge !== "ok")
+    return { failure: assessment.receipt.failure };
   state.artifacts[state.artifacts.length - 1].usable =
-    assessment.signal === "readable";
-  return { signal: assessment.signal, input: output };
+    assessment.receipt.signal === "readable";
+  return { signal: assessment.receipt.signal, input: output };
 }
 
 async function runOcr(runtime, state) {
   state.budgets.ocr.used += 1;
-  const receipt = await runtime.runOperation(
+  const ocr = await runtime.operate(
     documentOcrOperationPrompt(
       state.materialKey,
       state.source,
@@ -1566,7 +564,10 @@ async function runOcr(runtime, state) {
       phase: "Prepare",
       agentType: "general-purpose",
       label: `${state.slug}:ocr`,
-      schema: BOOK_DOCUMENT_OCR_SCHEMA,
+      schema: documentOcrOperationSchema("book", {
+        input: state.source,
+        output: state.ocrSource,
+      }),
     },
     {
       key: "document.ocr",
@@ -1575,19 +576,21 @@ async function runOcr(runtime, state) {
       replay: "blocked",
       artifactRoles: ["recovery_source"],
       unknownFailureCode: "document.writer_outcome_unknown",
+      contract: BOOK_DOCUMENT_OCR_CONTRACT,
+      context: { input: state.source, output: state.ocrSource },
     },
   );
-  state.operations.push(receipt);
-  if (runtimeUnknown(receipt))
+  state.operations.push(ocr.receipt);
+  if (ocr.edge === "unknown" || ocr.edge === "blocked")
     return {
       terminal: blocked(
         state,
         "ocr",
         "document.ocr",
-        receipt,
+        ocr.receipt,
       ),
     };
-  if (!strictOcr(receipt, state.source, state.ocrSource))
+  if (ocr.edge === "mismatch")
     return {
       terminal: mismatchBlocked(
         state,
@@ -1595,23 +598,9 @@ async function runOcr(runtime, state) {
         "document.ocr",
       ),
     };
-  const existing =
-    receipt.status === "blocked" &&
-    receipt.failure.code ===
-      "output_exists_requires_reconcile" &&
-    receipt.exists === true &&
-    receipt.size > 0;
-  if (receipt.status === "blocked" && !existing)
-    return {
-      terminal: blocked(
-        state,
-        "ocr",
-        "document.ocr",
-        receipt,
-      ),
-    };
-  if (receipt.status === "failed")
-    return { failure: receipt.failure };
+  if (ocr.edge !== "ok" && ocr.edge !== "reconcile")
+    return { failure: ocr.receipt.failure };
+  const existing = ocr.edge === "reconcile";
   state.artifacts.push({
     role: "recovery_source",
     path: state.ocrSource,
@@ -1631,7 +620,7 @@ async function runPlan(
   normalized,
   diagnostics = [],
 ) {
-  const receipt = await runtime.runOperation(
+  const plan = await runtime.operate(
     chapterPlanOperationPrompt(
       state.materialKey,
       input,
@@ -1651,19 +640,21 @@ async function runPlan(
       replay: "safe",
       artifactRoles: ["chapter_plan"],
       unknownFailureCode: "document.readonly_outcome_unknown",
+      contract: CHAPTER_PLAN_CONTRACT,
+      context: { input, normalized },
     },
   );
-  state.operations.push(receipt);
-  if (!strictPlan(receipt, input, normalized))
+  state.operations.push(plan.receipt);
+  if (plan.edge === "unknown" || plan.edge === "mismatch")
     return {
       failure: operationFailure(
         "chapter.plan_receipt_invalid",
         "chapter.plan",
       ),
     };
-  if (receipt.status !== "succeeded")
-    return { failure: receipt.failure };
-  return { receipt };
+  if (plan.edge !== "ok")
+    return { failure: plan.receipt.failure };
+  return { receipt: plan.receipt };
 }
 
 async function runChapterExtract(
@@ -1678,7 +669,7 @@ async function runChapterExtract(
     label = "extract",
   },
 ) {
-  const receipt = await runtime.runOperation(
+  const extraction = await runtime.operate(
     chapterExtractOperationPrompt({
       materialKey: state.materialKey,
       input,
@@ -1692,7 +683,12 @@ async function runChapterExtract(
       phase: "Prepare",
       agentType: "general-purpose",
       label: `${state.slug}:${label}`,
-      schema: CHAPTER_EXTRACT_SCHEMA,
+      schema: chapterExtractSchema({
+        input,
+        outputDir: state.chaptersDir,
+        manifest: state.manifest,
+        mode,
+      }),
     },
     {
       key: "chapter.extract",
@@ -1704,19 +700,29 @@ async function runChapterExtract(
         "normalized_chapter",
       ],
       unknownFailureCode: "document.writer_outcome_unknown",
+      contract: CHAPTER_EXTRACT_CONTRACT,
+      context: {
+        input,
+        outputDir: state.chaptersDir,
+        manifest: state.manifest,
+        mode,
+      },
     },
   );
-  state.operations.push(receipt);
-  if (runtimeUnknown(receipt))
+  state.operations.push(extraction.receipt);
+  if (
+    extraction.edge === "unknown" ||
+    extraction.edge === "blocked"
+  )
     return {
       terminal: blocked(
         state,
         "chapter-extract",
         "chapter.extract",
-        receipt,
+        extraction.receipt,
       ),
     };
-  if (!strictChapterExtract(receipt, state, input, mode))
+  if (extraction.edge === "mismatch")
     return {
       terminal: mismatchBlocked(
         state,
@@ -1724,17 +730,9 @@ async function runChapterExtract(
         "chapter.extract",
       ),
     };
-  if (receipt.status === "blocked")
-    return {
-      terminal: blocked(
-        state,
-        "chapter-extract",
-        "chapter.extract",
-        receipt,
-      ),
-    };
-  if (receipt.status !== "succeeded")
-    return { failure: receipt.failure };
+  if (extraction.edge !== "ok")
+    return { failure: extraction.receipt.failure };
+  const receipt = extraction.receipt;
   state.artifacts = state.artifacts.filter(
     (artifact) =>
       !["chapter_manifest", "normalized_chapter"].includes(
@@ -1760,7 +758,7 @@ async function runChapterExtract(
 }
 
 async function assessBoundaries(runtime, state, extraction) {
-  const receipt = await runtime.runOperation(
+  const assessment = await runtime.operate(
     chapterAssessOperationPrompt(
       state.materialKey,
       state.manifest,
@@ -1789,19 +787,30 @@ async function assessBoundaries(runtime, state, extraction) {
         "normalized_chapter",
       ],
       unknownFailureCode: "document.readonly_outcome_unknown",
+      contract: CHAPTER_ASSESS_CONTRACT,
+      context: {
+        manifest: state.manifest,
+        chapters: extraction.chapters.map((chapter) => ({
+          slot: chapter.slot,
+          path: chapterInputPath(state, chapter),
+        })),
+      },
     },
   );
-  state.operations.push(receipt);
-  if (!strictBoundaryAssessment(receipt, state, extraction.chapters))
+  state.operations.push(assessment.receipt);
+  if (
+    assessment.edge === "unknown" ||
+    assessment.edge === "mismatch"
+  )
     return {
       failure: operationFailure(
         "chapter.assessment_receipt_invalid",
         "chapter.assess-boundaries",
       ),
     };
-  if (receipt.status !== "succeeded")
-    return { failure: receipt.failure };
-  return { receipt };
+  if (assessment.edge !== "ok")
+    return { failure: assessment.receipt.failure };
+  return { receipt: assessment.receipt };
 }
 
 async function analyseChapter(
@@ -1812,13 +821,15 @@ async function analyseChapter(
   diagnostics = [],
   label = null,
 ) {
-  const receipt = await runtime.runOperation(
+  const input = chapterInputPath(state, chapter);
+  const output = chapterOutputPath(state, chapter);
+  const analysis = await runtime.operate(
     chapterAnalyseOperationPrompt(
       state.slug,
       state.meta,
       chapter,
-      chapterInputPath(state, chapter),
-      chapterOutputPath(state, chapter),
+      input,
+      output,
       mode,
       diagnostics,
     ),
@@ -1829,7 +840,7 @@ async function analyseChapter(
         label ||
         `ch${chapter.slot}:${mode === "repair" ? "repair" : "analyse"}`
       }`,
-      schema: CHAPTER_ANALYSE_SCHEMA,
+      schema: chapterAnalyseSchema({ mode, input, output }),
     },
     {
       key: "chapter.analyse",
@@ -1838,19 +849,24 @@ async function analyseChapter(
       replay: mode === "repair" ? "reconciled" : "blocked",
       artifactRoles: ["chapter_canonical"],
       unknownFailureCode: "material.writer_outcome_unknown",
+      contract: CHAPTER_ANALYSE_CONTRACT,
+      context: { mode, input, output },
     },
   );
-  state.operations.push(receipt);
-  if (runtimeUnknown(receipt))
+  state.operations.push(analysis.receipt);
+  if (
+    analysis.edge === "unknown" ||
+    analysis.edge === "blocked"
+  )
     return {
       terminal: blocked(
         state,
         "chapter-analyse",
         "chapter.analyse",
-        receipt,
+        analysis.receipt,
       ),
     };
-  if (!strictChapterAnalyse(receipt, state, chapter, mode))
+  if (analysis.edge === "mismatch")
     return {
       terminal: mismatchBlocked(
         state,
@@ -1858,19 +874,11 @@ async function analyseChapter(
         "chapter.analyse",
       ),
     };
-  if (
-    receipt.status === "blocked" &&
-    !chapterPresent(receipt, mode)
-  )
-    return {
-      terminal: blocked(
-        state,
-        "chapter-analyse",
-        "chapter.analyse",
-        receipt,
-      ),
-    };
-  return { receipt };
+  return {
+    receipt: analysis.receipt,
+    present:
+      analysis.edge === "ok" || analysis.edge === "reconcile",
+  };
 }
 
 async function synthesise(
@@ -1880,7 +888,7 @@ async function synthesise(
   mode = "create",
   diagnostics = [],
 ) {
-  const receipt = await runtime.runOperation(
+  const synthesis = await runtime.operate(
     bookSynthesiseOperationPrompt(
       state.slug,
       state.meta,
@@ -1894,7 +902,11 @@ async function synthesise(
       label: `${state.slug}:${
         mode === "repair" ? "synthesise-repair" : "synthesise"
       }`,
-      schema: BOOK_SYNTHESISE_SCHEMA,
+      schema: bookSynthesiseSchema({
+        inputPaths,
+        mode,
+        output: state.canonical,
+      }),
     },
     {
       key: "book.synthesise",
@@ -1903,10 +915,16 @@ async function synthesise(
       replay: mode === "repair" ? "reconciled" : "blocked",
       artifactRoles: ["canonical"],
       unknownFailureCode: "material.writer_outcome_unknown",
+      contract: BOOK_SYNTHESISE_CONTRACT,
+      context: { mode, inputPaths, output: state.canonical },
     },
   );
+  const receipt = synthesis.receipt;
   state.operations.push(receipt);
-  if (runtimeUnknown(receipt))
+  if (
+    synthesis.edge === "unknown" ||
+    synthesis.edge === "blocked"
+  )
     return {
       terminal: blocked(
         state,
@@ -1915,7 +933,7 @@ async function synthesise(
         receipt,
       ),
     };
-  if (!strictSynthesis(receipt, state, inputPaths, mode))
+  if (synthesis.edge === "mismatch")
     return {
       terminal: mismatchBlocked(
         state,
@@ -1923,20 +941,7 @@ async function synthesise(
         "book.synthesise",
       ),
     };
-  const createCollision =
-    mode === "create" &&
-    receipt.status === "blocked" &&
-    receipt.action === "reconciled";
-  if (receipt.status === "blocked" && !createCollision)
-    return {
-      terminal: blocked(
-        state,
-        "synthesise",
-        "book.synthesise",
-        receipt,
-      ),
-    };
-  if (receipt.status === "failed")
+  if (synthesis.edge === "failed")
     return {
       terminal: result(
         state,
@@ -1946,6 +951,7 @@ async function synthesise(
         receipt.failure,
       ),
     };
+  const createCollision = synthesis.edge === "reconcile";
   state.artifacts = state.artifacts.filter(
     (artifact) => artifact.role !== "canonical",
   );
@@ -1976,13 +982,15 @@ async function synthesise(
 
 async function audit(runtime, state, pass, owners) {
   state.budgets.auditPasses.used += 1;
-  const receipt = await runtime.runOperation(
+  const auditRun = await runtime.operate(
     bookAuditPrompt(state.slug, pass),
     {
       phase: "Audit",
       agentType: "quasi:audit-agent",
       label: `${state.slug}:audit${pass === 1 ? "" : `-${pass}`}`,
-      schema: BOOK_AUDIT_SCHEMA,
+      schema: bookAuditSchema({
+        target: `vault/books/${state.slug}`,
+      }),
     },
     {
       key: "book.audit",
@@ -1991,10 +999,13 @@ async function audit(runtime, state, pass, owners) {
       replay: "reconciled",
       artifactRoles: ["canonical"],
       unknownFailureCode: "material.writer_outcome_unknown",
+      contract: BOOK_AUDIT_CONTRACT,
+      context: { target: `vault/books/${state.slug}` },
     },
   );
+  const receipt = auditRun.receipt;
   state.operations.push(receipt);
-  if (runtimeUnknown(receipt))
+  if (auditRun.edge === "unknown")
     return {
       terminal: blocked(
         state,
@@ -2003,7 +1014,7 @@ async function audit(runtime, state, pass, owners) {
         receipt,
       ),
     };
-  if (!strictAudit(receipt, state))
+  if (auditRun.edge === "mismatch")
     return {
       terminal: mismatchBlocked(
         state,
@@ -2043,7 +1054,7 @@ async function audit(runtime, state, pass, owners) {
         ),
       ),
     };
-  if (receipt.status === "error")
+  if (auditRun.edge === "failed")
     return {
       terminal: result(
         state,
@@ -2085,7 +1096,11 @@ async function processValidatedBook(runtime, slug, meta, opts) {
   phase("Acquire");
   const state = createBookState(slug, meta);
 
-  const download = normaliseBookDownloadReceipt(await runOperation(
+  const acquireSchema = bookAcquireSchema({
+    slug,
+    allowedSources: state.allowedSources,
+  });
+  const rawDownload = await runOperation(
     bookAcquirePrompt(
       slug,
       meta,
@@ -2096,7 +1111,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
       phase: "Acquire",
       agentType: "quasi:download-agent",
       label: `${slug}:acquire`,
-      schema: BOOK_ACQUIRE_SCHEMA,
+      schema: acquireSchema,
     },
     {
       key: "book.acquire",
@@ -2106,34 +1121,37 @@ async function processValidatedBook(runtime, slug, meta, opts) {
       artifactRoles: ["source"],
       unknownFailureCode: "material.writer_outcome_unknown",
     },
-  ));
-  if (runtimeUnknown(download)) {
-    state.operations.push(download);
+  );
+  const download = classifyReceipt(
+    normaliseBookDownloadReceipt(rawDownload),
+    BOOK_ACQUIRE_CONTRACT,
+    {
+      slug,
+      allowedSources: state.allowedSources,
+      expectedYear: meta.year,
+      batchAcceptYear: opts.batchYear === true,
+      yearDecision: opts.yearDecision,
+    },
+    acquireSchema,
+  );
+  if (download.edge === "unknown") {
+    state.operations.push(download.receipt);
     return blocked(
       state,
       "download",
       "book.acquire",
-      download,
+      download.receipt,
     );
   }
-  if (
-    !strictBookDownloadReceipt(
-      download,
-      slug,
-      state.allowedSources,
-      meta.year,
-      opts.batchYear === true,
-      opts.yearDecision,
-    )
-  ) {
-    state.operations.push(download);
+  if (download.edge === "mismatch") {
+    state.operations.push(download.receipt);
     return mismatchBlocked(
       state,
       "download",
       "book.acquire",
     );
   }
-  const item = download.per_item[0];
+  const item = download.receipt.per_item[0];
   const downloadReceipt = downloadOperation(
     item,
     state.allowedSources,
@@ -2505,11 +1523,12 @@ async function processValidatedBook(runtime, slug, meta, opts) {
   const presentSlots = new Set();
   for (let index = 0; index < chapters.length; index += 1) {
     const chapter = chapters[index];
-    const receipt = firstPass[index].receipt;
-    if (chapterPresent(receipt, "create")) {
+    const entry = firstPass[index];
+    if (entry.present) {
       presentSlots.add(chapter.slot);
       continue;
     }
+    const receipt = entry.receipt;
     if (
       receipt.status === "failed" &&
       receipt.failure.outcome === "known" &&
@@ -2536,7 +1555,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
     for (let index = 0; index < refillResults.length; index += 1) {
       const entry = refillResults[index];
       if (entry.terminal) return entry.terminal;
-      if (chapterPresent(entry.receipt, "create"))
+      if (entry.present)
         presentSlots.add(refill[index].slot);
     }
   }

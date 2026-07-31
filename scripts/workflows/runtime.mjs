@@ -3,6 +3,233 @@
 
 export const OVERWRITE = "\noverwrite: true";
 
+export const RUNTIME_RECEIPT_VERSION =
+  "quasi.operation.runtime.receipt/0.1";
+
+const CONTROL_CHARS = new RegExp("[\\u0000-\\u001f\\u007f-\\u009f]");
+
+// Shared receipt-text primitives. Operation contracts and identity validators
+// import these instead of keeping per-graph copies.
+export const validText = (value, min, max) =>
+  typeof value === "string" &&
+  value === value.trim() &&
+  value.length >= min &&
+  value.length <= max &&
+  !CONTROL_CHARS.test(value);
+
+export const optionalText = (value, max) =>
+  value == null || value === "" || validText(value, 1, max);
+
+export const exactKeys = (value, keys) =>
+  !!(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === keys.length &&
+    keys.every((key) =>
+      Object.prototype.hasOwnProperty.call(value, key),
+    )
+  );
+
+export function sameClosedValue(left, right) {
+  if (Array.isArray(left) || Array.isArray(right))
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) =>
+        sameClosedValue(value, right[index]),
+      )
+    );
+  if (
+    left &&
+    right &&
+    typeof left === "object" &&
+    typeof right === "object"
+  ) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key) =>
+          Object.prototype.hasOwnProperty.call(right, key) &&
+          sameClosedValue(left[key], right[key]),
+      )
+    );
+  }
+  return Object.is(left, right);
+}
+
+const matchesType = (value, type) => {
+  if (Array.isArray(type))
+    return type.some((entry) => matchesType(value, entry));
+  switch (type) {
+    case "null":
+      return value === null;
+    case "array":
+      return Array.isArray(value);
+    case "object":
+      return (
+        !!value && typeof value === "object" && !Array.isArray(value)
+      );
+    case "string":
+      return typeof value === "string";
+    case "boolean":
+      return typeof value === "boolean";
+    case "integer":
+      return Number.isInteger(value);
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    default:
+      return false;
+  }
+};
+
+// Backstop validator for the same StructuredOutput schema handed to the host.
+// Hosts with full JSON Schema enforcement make this a no-op; hosts with weaker
+// --output-schema support still converge on one shared verdict here. Covers the
+// closed keyword subset the operation receipt schemas are allowed to use.
+export function validateSchema(schema, value) {
+  if (!schema || typeof schema !== "object") return true;
+  if (
+    schema.anyOf !== undefined &&
+    !schema.anyOf.some((entry) => validateSchema(entry, value))
+  )
+    return false;
+  if (schema.not !== undefined && validateSchema(schema.not, value))
+    return false;
+  if (schema.type !== undefined && !matchesType(value, schema.type))
+    return false;
+  if (
+    schema.const !== undefined &&
+    !sameClosedValue(value, schema.const)
+  )
+    return false;
+  if (schema.enum !== undefined && !schema.enum.includes(value))
+    return false;
+  if (typeof value === "string") {
+    if (
+      schema.pattern !== undefined &&
+      !new RegExp(schema.pattern).test(value)
+    )
+      return false;
+    if (
+      schema.minLength !== undefined &&
+      value.length < schema.minLength
+    )
+      return false;
+    if (
+      schema.maxLength !== undefined &&
+      value.length > schema.maxLength
+    )
+      return false;
+  }
+  if (typeof value === "number") {
+    if (schema.minimum !== undefined && value < schema.minimum)
+      return false;
+    if (schema.maximum !== undefined && value > schema.maximum)
+      return false;
+  }
+  if (Array.isArray(value)) {
+    if (
+      schema.minItems !== undefined &&
+      value.length < schema.minItems
+    )
+      return false;
+    if (
+      schema.maxItems !== undefined &&
+      value.length > schema.maxItems
+    )
+      return false;
+    if (schema.uniqueItems === true) {
+      const seen = new Set(
+        value.map((entry) => JSON.stringify(entry)),
+      );
+      if (seen.size !== value.length) return false;
+    }
+    if (
+      schema.items !== undefined &&
+      !value.every((entry) => validateSchema(schema.items, entry))
+    )
+      return false;
+  }
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  ) {
+    const properties = schema.properties || {};
+    if (
+      Array.isArray(schema.required) &&
+      !schema.required.every((key) =>
+        Object.prototype.hasOwnProperty.call(value, key),
+      )
+    )
+      return false;
+    for (const [key, entry] of Object.entries(value)) {
+      if (
+        !Object.prototype.hasOwnProperty.call(properties, key)
+      ) {
+        if (schema.additionalProperties === false) return false;
+        continue;
+      }
+      if (!validateSchema(properties[key], entry)) return false;
+    }
+  }
+  return true;
+}
+
+const DEFAULT_EDGES = {
+  succeeded: "ok",
+  failed: "failed",
+  blocked: "blocked",
+};
+
+// One shared receipt verdict for every Operation call. A contract lives beside
+// its schema in scripts/workflows/operations/ and owns the status invariants;
+// the graph consumes only the closed edge algebra:
+//   unknown   — runtime receipt, the worker outcome was never observed
+//   mismatch  — receipt failed schema, echo, or a status invariant
+//   reconcile — worker proved an existing output instead of writing
+//   blocked   — typed unknown writer outcome, resume/reconcile territory
+//   failed    — typed known failure
+//   ok        — proven success
+export function classifyReceipt(
+  receipt,
+  contract,
+  context = {},
+  hostSchema = null,
+) {
+  if (
+    !receipt ||
+    typeof receipt !== "object" ||
+    Array.isArray(receipt)
+  )
+    return { edge: "unknown", receipt };
+  if (receipt.schema_version === RUNTIME_RECEIPT_VERSION)
+    return { edge: "unknown", receipt };
+  if (!validateSchema(hostSchema || contract.schema, receipt))
+    return { edge: "mismatch", receipt };
+  if (contract.echo && contract.echo(receipt, context) !== true)
+    return { edge: "mismatch", receipt };
+  const status = contract.status
+    ? contract.status(receipt)
+    : receipt.status;
+  if (contract.statuses) {
+    const invariant = contract.statuses[status];
+    if (!invariant || invariant(receipt, context) !== true)
+      return { edge: "mismatch", receipt };
+  }
+  if (
+    contract.reconcile &&
+    contract.reconcile(receipt, context) === true
+  )
+    return { edge: "reconcile", receipt };
+  const edge = (contract.edges || DEFAULT_EDGES)[status];
+  return edge ? { edge, receipt } : { edge: "mismatch", receipt };
+}
+
 export const AGENT_TIMEOUT_MS = 45 * 60 * 1000;
 
 const UNKNOWN_AGENT_STATUSES = new Set([
@@ -80,7 +307,7 @@ export function createRuntime({ agent, parallel, phase, log }) {
   };
 
   const unknownReceipt = (spec, effect) => ({
-    schema_version: "quasi.operation.runtime.receipt/0.1",
+    schema_version: RUNTIME_RECEIPT_VERSION,
     key: spec.key,
     effect,
     status: effect === "writer" ? "blocked" : "failed",
@@ -136,6 +363,19 @@ export function createRuntime({ agent, parallel, phase, log }) {
     return unknownReceipt(spec, effect);
   };
 
+  // runOperation plus the shared contract verdict. spec.contract names the
+  // operation's receipt contract; spec.context carries the call's exact
+  // identity (paths, mode, slug) consumed by echo and status invariants.
+  const operate = async (prompt, opts, spec) => {
+    const receipt = await runOperation(prompt, opts, spec);
+    return classifyReceipt(
+      receipt,
+      spec.contract,
+      spec.context || {},
+      opts.schema || null,
+    );
+  };
+
   const coalesce = (key, identity, task, onConflict) => {
     const current = coalesced.get(key);
     if (current) {
@@ -152,6 +392,7 @@ export function createRuntime({ agent, parallel, phase, log }) {
     coalesce,
     guard,
     log,
+    operate,
     parallel,
     phase,
     retryNull,

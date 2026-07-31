@@ -1,92 +1,33 @@
 import {
-  PAPER_ACQUIRE_SCHEMA,
+  PAPER_ACQUIRE_CONTRACT,
   paperAcquirePrompt,
+  paperAcquireSchema,
 } from "../operations/acquire.mjs";
 import {
-  PAPER_ANALYSE_SCHEMA,
+  PAPER_ANALYSE_CONTRACT,
   paperAnalyseOperationPrompt,
+  paperAnalyseSchema,
 } from "../operations/analyse.mjs";
 import {
-  PAPER_AUDIT_SCHEMA,
+  PAPER_AUDIT_CONTRACT,
   paperAuditPrompt,
+  paperAuditSchema,
 } from "../operations/audit.mjs";
 import {
-  DOCUMENT_OCR_SCHEMA,
-  READABILITY_SCHEMA,
-  TEXT_EXTRACT_SCHEMA,
+  DOCUMENT_OCR_CONTRACT,
+  READABILITY_CONTRACT,
+  TEXT_EXTRACT_CONTRACT,
   documentOcrOperationPrompt,
+  documentOcrOperationSchema,
   extractTextOperationPrompt,
-  readabilityOperationPrompt,
+  readabilitySchema,
+  textExtractSchema,
 } from "../operations/extract.mjs";
+import { readabilityOperationPrompt } from "../operations/extract.mjs";
+import { optionalText, validText } from "../runtime.mjs";
 
 const MATERIAL_RECEIPT_VERSION = "quasi.material-loop.receipt/0.1";
-const OPERATION_RECEIPT_VERSION = {
-  extract: "quasi.operation.document.extract-text.receipt/0.1",
-  assess:
-    "quasi.operation.document.assess-readability.receipt/0.1",
-  ocr: "quasi.operation.document.ocr.receipt/0.1",
-  analyse: "quasi.operation.paper.analyse.receipt/0.1",
-};
 const PAPER_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
-
-const exactKeys = (value, keys) =>
-  !!(
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === keys.length &&
-    keys.every((key) =>
-      Object.prototype.hasOwnProperty.call(value, key),
-    )
-  );
-
-const validOperationFailure = (
-  failure,
-  operationKey,
-  retryable,
-  allowMessage = false,
-) => {
-  if (
-    !failure ||
-    typeof failure !== "object" ||
-    Array.isArray(failure)
-  )
-    return false;
-  const keys = Object.keys(failure);
-  const allowed = [
-    "code",
-    "operation_key",
-    "outcome",
-    "retryable",
-    ...(allowMessage ? ["message"] : []),
-  ];
-  if (
-    !["code", "operation_key", "outcome", "retryable"].every(
-      (key) => keys.includes(key),
-    ) ||
-    keys.some((key) => !allowed.includes(key))
-  )
-    return false;
-  return (
-    validText(failure.code, 1, 200) &&
-    failure.operation_key === operationKey &&
-    ["known", "unknown"].includes(failure.outcome) &&
-    failure.retryable === retryable &&
-    (failure.message === undefined ||
-      validText(failure.message, 1, 4000))
-  );
-};
-
-const validText = (value, min, max) =>
-  typeof value === "string" &&
-  value === value.trim() &&
-  value.length >= min &&
-  value.length <= max &&
-  !CONTROL_CHARS.test(value);
-
-const optionalText = (value, max) =>
-  value == null || value === "" || validText(value, 1, max);
 
 function validatePaperIdentity(slug, meta) {
   if (typeof slug !== "string" || !PAPER_SLUG.test(slug))
@@ -191,328 +132,6 @@ const operationFailure = (
   ...(message ? { message } : {}),
 });
 
-const hasExactRole = (receipt, role) =>
-  Array.isArray(receipt && receipt.artifact_roles) &&
-  receipt.artifact_roles.length === 1 &&
-  receipt.artifact_roles[0] === role;
-
-const isUnknownWriter = (receipt) =>
-  !!(
-    receipt &&
-    (receipt.status === "blocked" ||
-      (receipt.failure && receipt.failure.outcome === "unknown"))
-  );
-
-function exactOperation(
-  receipt,
-  {
-    version,
-    key,
-    effect,
-    input,
-    output,
-    role,
-  },
-) {
-  return !!(
-    receipt &&
-    receipt.schema_version === version &&
-    receipt.key === key &&
-    receipt.effect === effect &&
-    receipt.attempt === 1 &&
-    receipt.input_path === input &&
-    (output === undefined || receipt.output_path === output) &&
-    hasExactRole(receipt, role)
-  );
-}
-
-function strictAnalyseReceipt(receipt, mode) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "input_path",
-      "output_path",
-      "artifact_roles",
-      "action",
-      "failure",
-    ]) ||
-    !["succeeded", "failed", "blocked"].includes(
-      receipt.status,
-    ) ||
-    !["create", "repair", "reconciled"].includes(
-      receipt.action,
-    ) ||
-    !["create", "repair"].includes(mode)
-  )
-    return false;
-  if (
-    mode === "create" &&
-    receipt.status === "blocked" &&
-    receipt.action === "reconciled"
-  )
-    return (
-      validOperationFailure(
-        receipt.failure,
-        "paper.analyse",
-        false,
-      ) &&
-      receipt.failure.outcome === "known" &&
-      receipt.failure.code ===
-        "output_exists_requires_reconcile"
-    );
-  if (receipt.status === "succeeded") {
-    if (receipt.failure !== null) return false;
-    return mode === "create"
-      ? receipt.action === "create"
-      : ["repair", "reconciled"].includes(receipt.action);
-  }
-  if (
-    !validOperationFailure(
-      receipt.failure,
-      "paper.analyse",
-      false,
-    )
-  )
-    return false;
-  if (
-    receipt.status === "failed" &&
-    (receipt.failure.outcome !== "known" ||
-      receipt.action !== mode)
-  )
-    return false;
-  if (
-    receipt.status === "blocked" &&
-    receipt.failure.outcome !== "unknown"
-  )
-    return false;
-  if (
-    mode === "create" &&
-    receipt.action === "reconciled"
-  )
-    return (
-      receipt.status === "blocked" &&
-      receipt.failure.code ===
-        "output_exists_requires_reconcile"
-    );
-  if (
-    receipt.failure.code ===
-    "output_exists_requires_reconcile"
-  )
-    return false;
-  return receipt.action === mode;
-}
-
-function strictOcrReceipt(receipt) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "input_path",
-      "output_path",
-      "artifact_roles",
-      "exit",
-      "exists",
-      "size",
-      "failure",
-    ]) ||
-    receipt.schema_version !== OPERATION_RECEIPT_VERSION.ocr ||
-    receipt.key !== "document.ocr" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    !hasExactRole(receipt, "recovery_source") ||
-    !["succeeded", "failed", "blocked"].includes(receipt.status) ||
-    !Number.isInteger(receipt.exit) ||
-    typeof receipt.exists !== "boolean" ||
-    !Number.isInteger(receipt.size) ||
-    receipt.size < 0
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      receipt.exit === 0 &&
-      receipt.exists === true &&
-      receipt.size > 0
-    );
-  if (
-    !validOperationFailure(
-      receipt.failure,
-      "document.ocr",
-      false,
-      true,
-    )
-  )
-    return false;
-  if (receipt.status === "failed")
-    return (
-      receipt.failure.outcome === "known" &&
-      receipt.failure.code === "paper.ocr_failed"
-    );
-  if (receipt.failure.outcome !== "unknown") return false;
-  if (receipt.failure.code === "paper.writer_receipt_mismatch")
-    return true;
-  return (
-    receipt.failure.code ===
-      "output_exists_requires_reconcile" &&
-    receipt.exit === 0 &&
-    receipt.exists === true &&
-    receipt.size > 0
-  );
-}
-
-function strictExtractReceipt(receipt) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "input_path",
-      "output_path",
-      "artifact_roles",
-      "exit",
-      "exists",
-      "size",
-      "chars",
-      "non_whitespace_chars",
-      "pages",
-      "text_pages",
-      "failure",
-    ]) ||
-    receipt.schema_version !== OPERATION_RECEIPT_VERSION.extract ||
-    receipt.key !== "document.extract-text" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    !hasExactRole(receipt, "normalized_text") ||
-    !["succeeded", "failed", "blocked"].includes(receipt.status) ||
-    !["exit", "size", "chars", "non_whitespace_chars", "pages", "text_pages"].every(
-      (key) =>
-        Number.isInteger(receipt[key]) &&
-        (key === "exit" || receipt[key] >= 0),
-    ) ||
-    typeof receipt.exists !== "boolean"
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      receipt.exit === 0 &&
-      receipt.exists === true
-    );
-  if (
-    !validOperationFailure(
-      receipt.failure,
-      "document.extract-text",
-      false,
-      true,
-    )
-  )
-    return false;
-  return receipt.status === "failed"
-    ? receipt.failure.outcome === "known"
-    : receipt.failure.outcome === "unknown";
-}
-
-function strictReadabilityReceipt(receipt) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "input_path",
-      "artifact_roles",
-      "signal",
-      "diagnostics",
-      "failure",
-    ]) ||
-    receipt.schema_version !== OPERATION_RECEIPT_VERSION.assess ||
-    receipt.key !== "document.assess-readability" ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    !hasExactRole(receipt, "normalized_text") ||
-    !["succeeded", "failed", "blocked"].includes(receipt.status) ||
-    !Array.isArray(receipt.diagnostics) ||
-    receipt.diagnostics.some(
-      (diagnostic) => !validText(diagnostic, 1, 4000),
-    )
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      ["readable", "needs_ocr", "invalid_source"].includes(
-        receipt.signal,
-      )
-    );
-  if (
-    receipt.signal !== null ||
-    !validOperationFailure(
-      receipt.failure,
-      "document.assess-readability",
-      true,
-      true,
-    )
-  )
-    return false;
-  return receipt.status === "failed"
-    ? receipt.failure.outcome === "known"
-    : receipt.failure.outcome === "unknown";
-}
-
-function strictAuditReceipt(receipt) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "target_path",
-      "remaining_violations",
-      "escalated",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.paper.audit.agent-receipt/0.1" ||
-    receipt.key !== "paper.audit" ||
-    receipt.effect !== "writer" ||
-    receipt.attempt !== 1 ||
-    !["clean", "partial", "error"].includes(receipt.status) ||
-    !Number.isInteger(receipt.remaining_violations) ||
-    receipt.remaining_violations < 0 ||
-    !Array.isArray(receipt.escalated) ||
-    receipt.escalated.some(
-      (diagnostic) =>
-        !exactKeys(diagnostic, ["path", "kind", "reason"]) ||
-        !validText(diagnostic.path, 1, 2048) ||
-        !validText(diagnostic.kind, 1, 200) ||
-        !validText(diagnostic.reason, 1, 4000),
-    )
-  )
-    return false;
-  if (receipt.status === "clean")
-    return (
-      receipt.remaining_violations === 0 &&
-      receipt.escalated.length === 0
-    );
-  if (receipt.status === "partial")
-    return (
-      receipt.remaining_violations > 0 &&
-      receipt.escalated.length > 0 &&
-      receipt.remaining_violations === receipt.escalated.length
-    );
-  return receipt.status === "error";
-}
-
 function auditOperation(receipt, output, pass) {
   const escalated = Array.isArray(receipt && receipt.escalated)
     ? receipt.escalated
@@ -575,97 +194,6 @@ function downloadOperation(item, output) {
           blockedOutcome ? "unknown" : "known",
         ),
   };
-}
-
-function strictDownloadAttempt(attempt) {
-  return !!(
-    exactKeys(attempt, ["source", "status", "error"]) &&
-    validText(attempt.source, 1, 200) &&
-    validText(attempt.status, 1, 200) &&
-    (attempt.error === null ||
-      validText(attempt.error, 1, 4000))
-  );
-}
-
-function strictPaperDownloadReceipt(receipt, slug, output) {
-  if (
-    !exactKeys(receipt, ["acquired", "failed", "per_item"]) ||
-    !Number.isInteger(receipt.acquired) ||
-    receipt.acquired < 0 ||
-    !Number.isInteger(receipt.failed) ||
-    receipt.failed < 0 ||
-    !Array.isArray(receipt.per_item) ||
-    receipt.per_item.length !== 1
-  )
-    return false;
-  const item = receipt.per_item[0];
-  const required = [
-    "kind",
-    "slug",
-    "status",
-    "disposition",
-    "identity_verified",
-    "source",
-    "attempts",
-  ];
-  const allowed = [
-    ...required,
-    "path",
-    "source",
-    "doi",
-    "verdict_note",
-    "failure_reason",
-  ];
-  if (
-    !item ||
-    typeof item !== "object" ||
-    Array.isArray(item) ||
-    !required.every((key) =>
-      Object.prototype.hasOwnProperty.call(item, key),
-    ) ||
-    Object.keys(item).some((key) => !allowed.includes(key)) ||
-    item.kind !== "paper" ||
-    item.slug !== slug ||
-    !["ok", "download_failed", "blocked"].includes(item.status) ||
-    ![null, "created", "reused"].includes(item.disposition) ||
-    typeof item.identity_verified !== "boolean" ||
-    !Array.isArray(item.attempts) ||
-    item.attempts.some((attempt) => !strictDownloadAttempt(attempt)) ||
-    (item.doi !== undefined &&
-      item.doi !== null &&
-      !validText(item.doi, 1, 300)) ||
-    (item.verdict_note !== undefined &&
-      !validText(item.verdict_note, 1, 4000))
-  )
-    return false;
-  if (item.status === "ok")
-    return (
-      receipt.acquired === 1 &&
-      receipt.failed === 0 &&
-      ["created", "reused"].includes(item.disposition) &&
-      item.identity_verified === true &&
-      item.path === output &&
-      validText(item.source, 1, 200) &&
-      item.failure_reason === undefined
-    );
-  if (
-    item.disposition !== null ||
-    item.identity_verified !== false ||
-    item.path !== undefined ||
-    !(
-      item.source === null ||
-      validText(item.source, 1, 200)
-    ) ||
-    !validText(item.failure_reason, 1, 4000)
-  )
-    return false;
-  if (item.status === "download_failed")
-    return (
-      receipt.acquired === 0 &&
-      receipt.failed === 1 &&
-      item.attempts.length > 0
-    );
-  return receipt.acquired === 0 && receipt.failed === 0;
 }
 
 function createPaperState(slug) {
@@ -801,13 +329,13 @@ function mismatchBlocked(state, stage, operationKey) {
 }
 
 async function extractAndAssess(runtime, state, input, output) {
-  const extraction = await runtime.runOperation(
+  const extraction = await runtime.operate(
     extractTextOperationPrompt(state.materialKey, input, output),
     {
       phase: "Prepare",
       agentType: "general-purpose",
       label: `${state.slug}:extract-text`,
-      schema: TEXT_EXTRACT_SCHEMA,
+      schema: textExtractSchema({ input, output }),
     },
     {
       key: "document.extract-text",
@@ -815,34 +343,21 @@ async function extractAndAssess(runtime, state, input, output) {
       retry: "forbidden",
       replay: "idempotent",
       artifactRoles: ["normalized_text"],
+      contract: TEXT_EXTRACT_CONTRACT,
+      context: { input, output },
     },
   );
-  state.operations.push(extraction);
-  if (
-    extraction &&
-    extraction.schema_version ===
-      "quasi.operation.runtime.receipt/0.1" &&
-    isUnknownWriter(extraction)
-  )
+  state.operations.push(extraction.receipt);
+  if (extraction.edge === "unknown" || extraction.edge === "blocked")
     return {
       terminal: blocked(
         state,
         "extract-text",
         "document.extract-text",
-        extraction,
+        extraction.receipt,
       ),
     };
-  if (
-    !strictExtractReceipt(extraction) ||
-    !exactOperation(extraction, {
-      version: OPERATION_RECEIPT_VERSION.extract,
-      key: "document.extract-text",
-      effect: "writer",
-      input,
-      output,
-      role: "normalized_text",
-    })
-  )
+  if (extraction.edge === "mismatch")
     return {
       terminal: mismatchBlocked(
         state,
@@ -850,23 +365,10 @@ async function extractAndAssess(runtime, state, input, output) {
         "document.extract-text",
       ),
     };
-  if (extraction.status === "blocked")
-    return {
-      terminal: blocked(
-        state,
-        "extract-text",
-        "document.extract-text",
-        extraction,
-      ),
-    };
-  if (
-    extraction.status !== "succeeded" ||
-    extraction.exit !== 0 ||
-    extraction.exists !== true
-  )
+  if (extraction.edge !== "ok")
     return {
       failure:
-        extraction.failure ||
+        extraction.receipt.failure ||
         operationFailure(
           "document.extract_text_failed",
           "document.extract-text",
@@ -880,13 +382,17 @@ async function extractAndAssess(runtime, state, input, output) {
     usable: null,
     producer: "document.extract-text",
   });
-  const assessment = await runtime.runOperation(
-    readabilityOperationPrompt(state.materialKey, output, extraction),
+  const assessment = await runtime.operate(
+    readabilityOperationPrompt(
+      state.materialKey,
+      output,
+      extraction.receipt,
+    ),
     {
       phase: "Prepare",
       agentType: "general-purpose",
       label: `${state.slug}:assess-readability`,
-      schema: READABILITY_SCHEMA,
+      schema: readabilitySchema({ input: output }),
     },
     {
       key: "document.assess-readability",
@@ -894,35 +400,27 @@ async function extractAndAssess(runtime, state, input, output) {
       retry: "safe",
       replay: "safe",
       artifactRoles: ["normalized_text"],
+      contract: READABILITY_CONTRACT,
+      context: { input: output },
     },
   );
-  state.operations.push(assessment);
-  if (
-    !strictReadabilityReceipt(assessment) ||
-    !exactOperation(assessment, {
-      version: OPERATION_RECEIPT_VERSION.assess,
-      key: "document.assess-readability",
-      effect: "readonly",
-      input: output,
-      role: "normalized_text",
-    })
-  )
+  state.operations.push(assessment.receipt);
+  if (assessment.edge === "mismatch")
     return {
       failure:
-        (assessment &&
-          assessment.failure &&
-          assessment.failure.outcome === "unknown" &&
-          assessment.failure) ||
+        (assessment.receipt.failure &&
+          assessment.receipt.failure.outcome === "unknown" &&
+          assessment.receipt.failure) ||
         operationFailure(
           "document.assess_readability_failed",
           "document.assess-readability",
         ),
     };
-  if (assessment.status !== "succeeded")
-    return { failure: assessment.failure };
+  if (assessment.edge !== "ok")
+    return { failure: assessment.receipt.failure };
   state.artifacts[state.artifacts.length - 1].usable =
-    assessment.signal === "readable";
-  return { signal: assessment.signal, input: output };
+    assessment.receipt.signal === "readable";
+  return { signal: assessment.receipt.signal, input: output };
 }
 
 async function analyse(
@@ -933,7 +431,7 @@ async function analyse(
   mode = "create",
   diagnostics = [],
 ) {
-  const receipt = await runtime.runOperation(
+  const analysis = await runtime.operate(
     paperAnalyseOperationPrompt(
       state.slug,
       meta,
@@ -945,7 +443,11 @@ async function analyse(
       phase: "Analyse",
       agentType: "quasi:analyse-agent",
       label: `${state.slug}:analyse`,
-      schema: PAPER_ANALYSE_SCHEMA,
+      schema: paperAnalyseSchema({
+        mode,
+        input,
+        output: state.canonical,
+      }),
     },
     {
       key: "paper.analyse",
@@ -953,15 +455,13 @@ async function analyse(
       retry: "forbidden",
       replay: mode === "repair" ? "reconciled" : "blocked",
       artifactRoles: ["canonical"],
+      contract: PAPER_ANALYSE_CONTRACT,
+      context: { mode, input, output: state.canonical },
     },
   );
+  const receipt = analysis.receipt;
   state.operations.push(receipt);
-  if (
-    receipt &&
-    receipt.schema_version ===
-      "quasi.operation.runtime.receipt/0.1" &&
-    isUnknownWriter(receipt)
-  )
+  if (analysis.edge === "unknown" || analysis.edge === "blocked")
     return {
       terminal: blocked(
         state,
@@ -970,7 +470,7 @@ async function analyse(
         receipt,
       ),
     };
-  if (!strictAnalyseReceipt(receipt, mode))
+  if (analysis.edge === "mismatch")
     return {
       terminal: mismatchBlocked(
         state,
@@ -978,40 +478,8 @@ async function analyse(
         "paper.analyse",
       ),
     };
-  if (
-    !exactOperation(receipt, {
-      version: OPERATION_RECEIPT_VERSION.analyse,
-      key: "paper.analyse",
-      effect: "writer",
-      input,
-      output: state.canonical,
-      role: "canonical",
-    })
-  )
-    return {
-      terminal: mismatchBlocked(
-        state,
-        "analyse",
-        "paper.analyse",
-      ),
-    };
-  if (
-    mode === "create" &&
-    receipt.status === "blocked" &&
-    receipt.action === "reconciled" &&
-    receipt.failure.code === "output_exists_requires_reconcile"
-  )
-    return { reconcile: true };
-  if (isUnknownWriter(receipt))
-    return {
-      terminal: blocked(
-        state,
-        "analyse",
-        "paper.analyse",
-        receipt,
-      ),
-    };
-  if (receipt.status !== "succeeded")
+  if (analysis.edge === "reconcile") return { reconcile: true };
+  if (analysis.edge !== "ok")
     return {
       terminal: result(
         state,
@@ -1049,13 +517,13 @@ async function analyse(
 }
 
 async function audit(runtime, state, pass) {
-  const receipt = await runtime.runOperation(
+  const auditRun = await runtime.operate(
     paperAuditPrompt(state.slug, pass),
     {
       phase: "Audit",
       agentType: "quasi:audit-agent",
       label: `${state.slug}:audit`,
-      schema: PAPER_AUDIT_SCHEMA,
+      schema: paperAuditSchema({ target: state.canonical }),
     },
     {
       key: "paper.audit",
@@ -1063,14 +531,12 @@ async function audit(runtime, state, pass) {
       retry: "forbidden",
       replay: "reconciled",
       artifactRoles: ["canonical"],
+      contract: PAPER_AUDIT_CONTRACT,
+      context: { target: state.canonical },
     },
   );
-  if (
-    receipt &&
-    receipt.schema_version ===
-      "quasi.operation.runtime.receipt/0.1" &&
-    isUnknownWriter(receipt)
-  ) {
+  const receipt = auditRun.receipt;
+  if (auditRun.edge === "unknown") {
     state.operations.push(receipt);
     return {
       terminal: blocked(
@@ -1081,10 +547,7 @@ async function audit(runtime, state, pass) {
       ),
     };
   }
-  if (
-    !strictAuditReceipt(receipt) ||
-    receipt.target_path !== state.canonical
-  ) {
+  if (auditRun.edge === "mismatch") {
     state.operations.push(receipt);
     state.audit = receipt || null;
     return {
@@ -1098,7 +561,7 @@ async function audit(runtime, state, pass) {
   const operation = auditOperation(receipt, state.canonical, pass);
   state.operations.push(operation);
   state.audit = receipt;
-  if (receipt.status === "error")
+  if (auditRun.edge !== "ok")
     return {
       terminal: result(
         state,
@@ -1108,9 +571,7 @@ async function audit(runtime, state, pass) {
         operation.failure,
       ),
     };
-  const escalated = Array.isArray(receipt && receipt.escalated)
-    ? receipt.escalated
-    : [];
+  const escalated = receipt.escalated;
   const clean =
     receipt.status === "clean" &&
     escalated.length === 0 &&
@@ -1119,17 +580,20 @@ async function audit(runtime, state, pass) {
 }
 
 async function processValidatedPaper(runtime, slug, meta) {
-  const { log, phase, runOperation } = runtime;
+  const { log, phase } = runtime;
   phase("Acquire");
   const state = createPaperState(slug);
 
-  const download = await runOperation(
+  const download = await runtime.operate(
     paperAcquirePrompt(slug, meta),
     {
       phase: "Acquire",
       agentType: "quasi:download-agent",
       label: `${slug}:acquire`,
-      schema: PAPER_ACQUIRE_SCHEMA,
+      schema: paperAcquireSchema({
+        slug,
+        output: state.source,
+      }),
     },
     {
       key: "paper.acquire",
@@ -1137,48 +601,38 @@ async function processValidatedPaper(runtime, slug, meta) {
       retry: "forbidden",
       replay: "blocked",
       artifactRoles: ["source"],
+      contract: PAPER_ACQUIRE_CONTRACT,
+      context: { slug, output: state.source },
     },
   );
-  if (
-    download &&
-    download.schema_version ===
-      "quasi.operation.runtime.receipt/0.1" &&
-    isUnknownWriter(download)
-  ) {
-    state.operations.push(download);
+  if (download.edge === "unknown") {
+    state.operations.push(download.receipt);
     return blocked(
       state,
       "download",
       "paper.acquire",
-      download,
+      download.receipt,
     );
   }
-  if (
-    !strictPaperDownloadReceipt(
-      download,
-      slug,
-      state.source,
-    )
-  ) {
-    state.operations.push(download);
+  if (download.edge === "mismatch") {
+    state.operations.push(download.receipt);
     return mismatchBlocked(
       state,
       "download",
       "paper.acquire",
     );
   }
-  const item =
-    download.per_item[0];
+  const item = download.receipt.per_item[0];
   const downloadReceipt = downloadOperation(item, state.source);
   state.operations.push(downloadReceipt);
-  if (item.status === "blocked")
+  if (download.edge === "blocked")
     return blocked(
       state,
       "download",
       "paper.acquire",
       downloadReceipt,
     );
-  if (item.status === "download_failed") {
+  if (download.edge !== "ok") {
     return result(
       state,
       "download_failed",
@@ -1232,7 +686,7 @@ async function processValidatedPaper(runtime, slug, meta) {
 
   if (normalized.signal === "needs_ocr") {
     log(`${slug}: typed readability signal requests one OCR recovery`);
-    const ocr = await runOperation(
+    const ocr = await runtime.operate(
       documentOcrOperationPrompt(
         state.materialKey,
         state.source,
@@ -1242,7 +696,10 @@ async function processValidatedPaper(runtime, slug, meta) {
         phase: "Prepare",
         agentType: "general-purpose",
         label: `${slug}:ocr`,
-        schema: DOCUMENT_OCR_SCHEMA,
+        schema: documentOcrOperationSchema("paper", {
+          input: state.source,
+          output: state.ocrSource,
+        }),
       },
       {
         key: "document.ocr",
@@ -1250,53 +707,29 @@ async function processValidatedPaper(runtime, slug, meta) {
         retry: "forbidden",
         replay: "blocked",
         artifactRoles: ["recovery_source"],
+        contract: DOCUMENT_OCR_CONTRACT,
+        context: { input: state.source, output: state.ocrSource },
       },
     );
-    state.operations.push(ocr);
-    const ocrExact = exactOperation(ocr, {
-        version: OPERATION_RECEIPT_VERSION.ocr,
-        key: "document.ocr",
-        effect: "writer",
-        input: state.source,
-        output: state.ocrSource,
-        role: "recovery_source",
-      });
-    if (
-      ocr &&
-      ocr.schema_version ===
-        "quasi.operation.runtime.receipt/0.1" &&
-      isUnknownWriter(ocr)
-    )
-      return blocked(state, "ocr", "document.ocr", ocr);
-    if (!ocrExact || !strictOcrReceipt(ocr))
+    state.operations.push(ocr.receipt);
+    if (ocr.edge === "unknown" || ocr.edge === "blocked")
+      return blocked(state, "ocr", "document.ocr", ocr.receipt);
+    if (ocr.edge === "mismatch")
       return mismatchBlocked(
         state,
         "ocr",
         "document.ocr",
       );
-    const existingRecovery =
-      ocr.status === "blocked" &&
-      ocr.exit === 0 &&
-      ocr.exists === true &&
-      ocr.size > 0 &&
-      ocr.failure.code === "output_exists_requires_reconcile";
-    if (isUnknownWriter(ocr) && !existingRecovery)
-      return blocked(state, "ocr", "document.ocr", ocr);
-    if (
-      !existingRecovery &&
-      (ocr.status !== "succeeded" ||
-        ocr.exit !== 0 ||
-        ocr.exists !== true ||
-        ocr.size <= 0)
-    )
+    if (ocr.edge !== "ok" && ocr.edge !== "reconcile")
       return result(
         state,
         "ocr_failed",
         "ocr",
         {},
-        ocr.failure ||
+        ocr.receipt.failure ||
           operationFailure("paper.ocr_failed", "document.ocr"),
       );
+    const existingRecovery = ocr.edge === "reconcile";
     if (existingRecovery)
       state.warnings.push(
         "existing OCR output was recovered through extract and typed readability assessment",
