@@ -570,7 +570,7 @@ async function runResolvedIngress(
     );
   const picked = yearAdjusted.picked;
   const resolved = search.local_owner;
-  if (resolved.identity_slug !== picked.slug)
+  if (resolved !== null && resolved.identity_slug !== picked.slug)
     return terminal(
       request,
       operations,
@@ -583,7 +583,7 @@ async function runResolvedIngress(
         "Search did not resolve the selected canonical slug",
       ),
     );
-  const slug = resolved.vault_slug || picked.slug;
+  const slug = (resolved && resolved.vault_slug) || picked.slug;
   const meta = resolvedMeta(request, picked);
   const identity = { slug, meta };
   const lower = await next(slug, meta);

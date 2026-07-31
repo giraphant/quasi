@@ -115,6 +115,17 @@ if (schema.properties.operation.const !== "talk.prepare")
   throw new Error("wrong operation");
 if (schema.properties.stage.const !== "Prepare")
   throw new Error("wrong stage");
+for (const key of ["source_sha256", "request_fingerprint", "canonical_sha256"]) {
+  const hash = schema.properties[key];
+  if (Object.hasOwn(hash, "type") || Object.hasOwn(hash, "pattern"))
+    throw new Error(`${key} must isolate the nullable branch`);
+  if (!Array.isArray(hash.anyOf) || hash.anyOf.length !== 2)
+    throw new Error(`${key} must have two explicit branches`);
+  const nullBranch = hash.anyOf.find((row) => row.type === "null");
+  const digestBranch = hash.anyOf.find((row) => row.type === "string");
+  if (!nullBranch || digestBranch?.pattern !== "^[a-f0-9]{64}$")
+    throw new Error(`${key} has the wrong nullable digest contract`);
+}
 """
     completed = subprocess.run(
         ["node", "--input-type=module", "-e", script],
@@ -124,6 +135,12 @@ if (schema.properties.stage.const !== "Prepare")
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_transcribe_agent_reports_only_real_canonical_hashes() -> None:
+    contract = text(TRANSCRIBE)
+    assert "`canonical_exists:false` 和 JSON `null`" in contract
+    assert "存在时才回显其实际 SHA-256" in contract
 
 
 def test_silent_product_remains_one_exact_writer_operation() -> None:

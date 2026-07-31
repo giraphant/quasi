@@ -112,12 +112,16 @@ def search_receipt(
         "confidence": "high",
     }
     confidence = "high"
-    local_owner: dict[str, Any] | None = {
-        "identity_slug": selected_slug,
-        "vault_slug": owner,
-        "path": f"vault/papers/{owner}.md" if owner else None,
-        "match": "doi" if owner else None,
-    }
+    local_owner: dict[str, Any] | None = (
+        {
+            "identity_slug": selected_slug,
+            "vault_slug": owner,
+            "path": f"vault/papers/{owner}.md",
+            "match": "doi",
+        }
+        if owner
+        else None
+    )
     candidate = identity
     if status != "complete":
         identity = None
@@ -281,7 +285,7 @@ def test_search_identity_conflict_preserves_candidate_and_question(
 def test_search_owner_observation_must_bind_selected_identity(
     tmp_path: Path,
 ) -> None:
-    receipt = search_receipt()
+    receipt = search_receipt(owner="existing-safety-paper-2024")
     receipt["local_owner"]["identity_slug"] = "another-paper-2024"
     report = run_ingress(
         tmp_path,
@@ -294,6 +298,24 @@ def test_search_owner_observation_must_bind_selected_identity(
     assert ingress["stage"] == "resolve"
     assert ingress["failure"]["code"] == "material.search_owner_mismatch"
     assert len(report["trace"]) == 1
+
+
+def test_search_complete_with_no_local_owner_uses_selected_identity(
+    tmp_path: Path,
+) -> None:
+    receipt = search_receipt(selected_slug="selected-canonical-paper-2024")
+    assert receipt["local_owner"] is None
+    report = run_ingress(
+        tmp_path,
+        paper_request(),
+        {f"{SLUG}:search": [receipt]},
+    )
+
+    assert report["result"]["slug"] == "selected-canonical-paper-2024"
+    assert report["result"]["ingress_receipt"]["status"] == "resolved"
+    assert report["result"]["ingress_receipt"]["identity"]["slug"] == (
+        "selected-canonical-paper-2024"
+    )
 
 
 def test_search_complete_with_non_null_issue_is_rejected_by_schema(

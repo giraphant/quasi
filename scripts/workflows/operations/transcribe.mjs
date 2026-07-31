@@ -9,6 +9,15 @@ import {
 
 const TALK_HASH_PATTERN = "^[a-f0-9]{64}$";
 
+// Claude StructuredOutput may apply a sibling `pattern` to the null arm of a
+// type union. Keep absence and a verified digest in separate schema branches.
+const nullableHashSchema = {
+  anyOf: [
+    { type: "null" },
+    { type: "string", pattern: TALK_HASH_PATTERN },
+  ],
+};
+
 const failureSchema = (operationKey) => ({
   type: ["object", "null"],
   additionalProperties: false,
@@ -261,14 +270,8 @@ export const talkPrepareStageSchema = ({
     properties: {
       slug: { const: slug },
       source_path: { const: media },
-      source_sha256: {
-        type: ["string", "null"],
-        pattern: TALK_HASH_PATTERN,
-      },
-      request_fingerprint: {
-        type: ["string", "null"],
-        pattern: TALK_HASH_PATTERN,
-      },
+      source_sha256: nullableHashSchema,
+      request_fingerprint: nullableHashSchema,
       manifest_path: { const: manifest },
       classification: {
         type: ["string", "null"],
@@ -276,10 +279,7 @@ export const talkPrepareStageSchema = ({
       },
       transcript_changed: { type: "boolean" },
       canonical_exists: { type: "boolean" },
-      canonical_sha256: {
-        type: ["string", "null"],
-        pattern: TALK_HASH_PATTERN,
-      },
+      canonical_sha256: nullableHashSchema,
       artifacts: {
         type: "array",
         maxItems: 8,

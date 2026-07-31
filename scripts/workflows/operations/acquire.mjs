@@ -675,6 +675,9 @@ export const materialSearchStageSchema = (request) =>
   });
 
 const validLocalOwner = (owner, kind) => {
+  // A required JSON null is the explicit observation that the selected
+  // identity has no existing vault owner. An object proves an exact hit.
+  if (owner === null) return true;
   if (!owner) return false;
   if (owner.vault_slug === null)
     return owner.path === null && owner.match === null;

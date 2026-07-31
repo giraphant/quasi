@@ -527,6 +527,38 @@ def test_prepare_complete_reproves_every_manifest_chapter(tmp_path: Path) -> Non
     )
 
 
+def test_epub_prepare_accepts_exact_manifest_titles_with_tabs(
+    tmp_path: Path,
+) -> None:
+    slug = "book-stage-epub-tab-title"
+    rows = chapters(slug)
+    rows[0]["title"] = "1\tArtificial Communication? Algorithms as Partners"
+    receipt = prepare(slug, members=rows)
+    receipt["normalized_path"] = paths(slug)["text"]
+    receipt["artifacts"].extend(
+        [
+            {
+                "role": "normalized_document",
+                "path": paths(slug)["text"],
+                "exists": False,
+                "usable": None,
+            },
+            {
+                "role": "recovery_source",
+                "path": paths(slug)["ocr"],
+                "exists": False,
+                "usable": None,
+            },
+        ]
+    )
+    responses = happy(slug)
+    responses["book.prepare"] = [reply(receipt)]
+    report = run_book(tmp_path, slug, responses)
+
+    assert report["result"]["status"] == "ok"
+    assert report["result"]["material_receipt"]["status"] == "complete"
+
+
 def test_known_missing_chapter_refills_only_that_member(tmp_path: Path) -> None:
     slug = "book-stage-refill"
     responses = happy(slug)

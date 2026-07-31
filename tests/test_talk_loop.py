@@ -464,6 +464,18 @@ def test_complete_prepare_must_prove_exact_transcript_artifacts() -> None:
     )
 
 
+def test_missing_canonical_rejects_a_fabricated_zero_hash() -> None:
+    slug = "stage-talk-zero-hash"
+    receipt = prepare_stage(slug)
+    receipt["canonical_sha256"] = "0" * 64
+    report = run_talk(slug, {"talk.prepare": [response(receipt)]})
+    assert report["result"]["status"] == "blocked"
+    assert report["result"]["material_receipt"]["failure"]["code"] == (
+        "talk.writer_receipt_mismatch"
+    )
+    assert operations(report) == ["talk.prepare"]
+
+
 def test_exact_audit_diagnostic_gets_one_product_repair_and_reaudit() -> None:
     slug = "stage-talk-repair"
     responses = happy_responses(slug)

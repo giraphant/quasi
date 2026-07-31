@@ -56,7 +56,7 @@ const chapterRefSchema = {
   ],
   properties: {
     slot: { type: "string" },
-    title: { type: "string" },
+    title: { type: "string", minLength: 1, maxLength: 500 },
     filename: { type: "string" },
     slug: { type: "string" },
     word_count: { type: "integer", minimum: 0 },
@@ -81,7 +81,9 @@ const validChapterRef = (chapter) => {
     !CHAPTER_SLOT.test(chapter.slot) ||
     !CHAPTER_SLUG.test(chapter.slug) ||
     !filenameIsSafe ||
-    !validText(chapter.title, 1, 500)
+    typeof chapter.title !== "string" ||
+    chapter.title.length < 1 ||
+    chapter.title.length > 500
   )
     return false;
   const noPages =

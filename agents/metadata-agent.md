@@ -34,9 +34,10 @@ Request 提供 material key、kind、用户已有的题名、作者、年份、D
 得到，identifier 与 access URL 是否真正属于它。Slug 使用首列作者姓、短题名与年份组成的
 canonical kebab-case。
 
-选定身份后，用 vault resolver 查询该完整身份。命中时回显 helper 给出的 exact owner；
-未命中时使用真正的 JSON `null`。`local_owner.identity_slug` 是实际交给 resolver 的 selected
-identity slug，不是用户线索推导出的 provisional slug。本阶段只读，不创建 metadata 文件。
+选定身份后，用 vault resolver 查询该完整身份。未命中时 `local_owner` 使用真正的 JSON
+`null`；命中时回显 helper 给出的 exact owner object，其中 `identity_slug` 是实际交给 resolver
+的 selected identity slug，而不是用户线索推导出的 provisional slug。本阶段只读，不创建
+metadata 文件。
 
 ## 阶段判断
 

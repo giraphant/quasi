@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.23** (2026-07-31): **修复三个由 StructuredOutput schema 与 Graph 完成谓词漂移造成的假阻断。**
+  - Talk Prepare 的 nullable SHA-256 改为显式 `null | constrained string` schema 分支，避免 Claude 把缺失 canonical 的 JSON null 生成为字符串 `"null"`。Graph 仍只接受真实文件 hash；`canonical_exists:false` 搭配全零伪 hash 会明确失败。
+  - `material.search` 现在按既有 schema/Agent 语义接受 `local_owner:null` 为“已检查且无本地 owner”，并沿 Search 选出的 canonical identity 进入 Acquire；exact owner object 仍须绑定同一 identity 与 canonical vault path。
+  - Book Prepare 不再用通用控制字符规则否决逐字来自 EPUB manifest 的章节标题。内部 Tab 等 TOC 排版字符可随完整有序章节表进入 Analyse；manifest、slot、filename、slug、成员路径及唯一性证明保持严格。Esposito 的真实 12 章 receipt 已直接重放为 complete；缺失的 EPUB 聚合 `source.txt` 仍是合法的非必需观察。生成 bundle 为 292,632 bytes；全库 773 项回归通过。
+
 - **0.52.22** (2026-07-31): **Stage 回执成为真正的闭合终态，Search canonical identity 不再被 provisional slug 反向否决。**
   - 统一 Stage receipt 升至 `quasi.stage.receipt/0.2`：必填 `terminal` 是嵌套的 `complete|needs_input|blocked|failed` 联合结构，`complete` 只能携带 `issue:null`，`needs_input` 必须给出可回答的问题；Search 的人工卡点还逐字保留候选 identity 与冲突字段。Claude StructuredOutput、Graph backstop、Codex strictifier 和 GUI driver 因而消费同一份完整性合同，不再依赖 Graph 猜测互相矛盾的顶层字段。
   - `material.search` 选出的 canonical slug 现在是 vault owner 查询和下游路径交接的唯一键。题名规范化、副标题补全或 canonical slug 改进可正常进入 Acquire；作者、作品、年份、identifier、edition 或 publication type 的实质冲突则作为 typed `needs_input` 返回，不再伪装成 owner mismatch。

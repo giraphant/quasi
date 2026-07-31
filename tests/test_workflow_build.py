@@ -247,12 +247,7 @@ function harness() {{
             journal: 'Parity Review',
             confidence: 'high',
           }},
-          local_owner: {{
-            identity_slug: 'parity-paper',
-            vault_slug: null,
-            path: null,
-            match: null,
-          }},
+          local_owner: null,
           confidence: 'high',
           observations: [{{
             source: 'Crossref',
@@ -357,12 +352,7 @@ const primitives = {{
           category: 'monograph',
           confidence: 'high',
         }},
-        local_owner: {{
-          identity_slug: 'legacy-book',
-          vault_slug: null,
-          path: null,
-          match: null,
-        }},
+        local_owner: null,
         confidence: 'high',
         observations: [{{
           source: 'catalog',
