@@ -438,7 +438,7 @@ def book_ingress_responses(
                 + str(evidence["recommended_year"])
             )
         recalls.append(reply({
-            "schema_version": "quasi.operation.material.recall.receipt/0.1",
+            "schema_version": "quasi.operation.material.recall.receipt/0.2",
             "key": "material.recall",
             "effect": "readonly",
             "status": "succeeded",
@@ -446,9 +446,9 @@ def book_ingress_responses(
             "request_key": request_key,
             "kind": "book",
             "requested_slug": slug,
-            "vault_slug": None,
-            "path": None,
-            "match": None,
+            "vault_slug": "__none__",
+            "path": "__none__",
+            "match": "none",
             "failure": None,
         }))
         searches.append(reply({
@@ -468,7 +468,7 @@ def book_ingress_responses(
             "failure": None,
         }))
         resolves.append(reply({
-            "schema_version": "quasi.operation.material.resolve.receipt/0.1",
+            "schema_version": "quasi.operation.material.resolve.receipt/0.2",
             "key": "material.resolve",
             "effect": "readonly",
             "status": "succeeded",
@@ -476,9 +476,9 @@ def book_ingress_responses(
             "request_key": request_key,
             "kind": "book",
             "requested_slug": resolved_slug,
-            "vault_slug": None,
-            "path": None,
-            "match": None,
+            "vault_slug": "__none__",
+            "path": "__none__",
+            "match": "none",
             "failure": None,
         }))
     return {
@@ -1297,6 +1297,31 @@ def test_book_identity_preserves_publisher_and_category_ingress(
     ] == ["existing_file", "anna_archive", "doi_cascade"]
     assert synth_identity["publisher"] == "Exact Academic Publisher"
     assert synth_identity["category"] == "edited-volume"
+
+
+def test_book_success_ignores_cli_temp_observation_after_accept(
+    tmp_path: Path,
+) -> None:
+    slug = "book-success-temp-observation"
+    responses = happy_responses(slug)
+    raw_download = download_receipt(slug)
+    raw_download["per_item"][0]["tmp_path"] = (
+        f"/private/tmp/{slug}.epub"
+    )
+    responses["book.acquire"] = [reply(raw_download)]
+
+    report = run_book_module(
+        tmp_path,
+        slug=slug,
+        responses=responses,
+    )
+
+    assert_material_complete(report["result"], slug)
+    acquire = report["result"]["material_receipt"]["operations"][0]
+    assert acquire["key"] == "book.acquire"
+    assert acquire["status"] == "succeeded"
+    assert acquire["output_path"] == f"sources/{slug}.epub"
+    assert "tmp_path" not in acquire
 
 
 @pytest.mark.parametrize("bundle", [False, True], ids=["source", "bundle"])

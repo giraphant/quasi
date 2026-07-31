@@ -468,7 +468,7 @@ def material_ingress_responses(
     def lookup(operation: str) -> dict[str, Any]:
         return {
             "schema_version": (
-                f"quasi.operation.{operation}.receipt/0.1"
+                f"quasi.operation.{operation}.receipt/0.2"
             ),
             "key": operation,
             "effect": "readonly",
@@ -477,9 +477,9 @@ def material_ingress_responses(
             "request_key": request_key,
             "kind": kind,
             "requested_slug": slug,
-            "vault_slug": None,
-            "path": None,
-            "match": None,
+            "vault_slug": "__none__",
+            "path": "__none__",
+            "match": "none",
             "failure": None,
         }
 

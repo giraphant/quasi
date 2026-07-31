@@ -85,10 +85,10 @@ def lookup_receipt(
         if kind == "book" and vault_slug
         else f"vault/papers/{vault_slug}.md"
         if vault_slug
-        else None
+        else "__none__"
     )
     return {
-        "schema_version": f"quasi.operation.{operation}.receipt/0.1",
+        "schema_version": f"quasi.operation.{operation}.receipt/0.2",
         "key": operation,
         "effect": "readonly",
         "status": "succeeded",
@@ -96,11 +96,11 @@ def lookup_receipt(
         "request_key": request_key,
         "kind": kind,
         "requested_slug": requested_slug,
-        "vault_slug": vault_slug,
+        "vault_slug": vault_slug or "__none__",
         "path": path,
         "match": "doi" if kind == "paper" and vault_slug else "isbn"
         if vault_slug
-        else None,
+        else "none",
         "failure": None,
     }
 
@@ -215,7 +215,7 @@ def test_title_request_runs_recall_search_resolve_before_acquire(
     assert "quasi-search paper" in report["trace"][1]["prompt"]
 
 
-def test_lookup_string_null_sentinels_are_normalised_before_search(
+def test_lookup_miss_sentinels_are_normalised_before_search(
     tmp_path: Path,
 ) -> None:
     slug = "example-a-safety-paper-2024"
@@ -226,11 +226,6 @@ def test_lookup_string_null_sentinels_are_normalised_before_search(
         "paper",
         slug,
     )
-    recall.update({
-        "vault_slug": "null",
-        "path": "null",
-        "match": None,
-    })
     responses = {
         f"{slug}:recall": [recall],
         f"{slug}:search": [paper_search(paper_query())],

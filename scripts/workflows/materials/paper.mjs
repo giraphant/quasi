@@ -249,6 +249,21 @@ function strictAnalyseReceipt(receipt, mode) {
     !["create", "repair"].includes(mode)
   )
     return false;
+  if (
+    mode === "create" &&
+    receipt.status === "blocked" &&
+    receipt.action === "reconciled"
+  )
+    return (
+      validOperationFailure(
+        receipt.failure,
+        "paper.analyse",
+        false,
+      ) &&
+      receipt.failure.outcome === "known" &&
+      receipt.failure.code ===
+        "output_exists_requires_reconcile"
+    );
   if (receipt.status === "succeeded") {
     if (receipt.failure !== null) return false;
     return mode === "create"

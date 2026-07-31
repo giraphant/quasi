@@ -36,7 +36,9 @@ Envelope 包含：
 ## 输出协议
 
 Receipt 逐字回显 caller 要求的 key 和 paths。Create 遇到已有 output 时不覆盖，返回
-`blocked/reconciled` 和 operation 的 `output_exists_requires_reconcile` collision；
+`blocked/reconciled` 和 operation 的 `output_exists_requires_reconcile` collision；该分支
+没有尝试写入，failure 固定为 `outcome: known, retryable: false`，由 caller 观察并审计
+现有产物；
 repair 发现现有产物已满足全部 diagnostics 时返回 `succeeded/reconciled`，不再写入。
 
 `create|repair` action 只表示已确认写入。写入前可确认的失败返回 known failure；写入结果

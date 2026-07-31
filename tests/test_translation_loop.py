@@ -1486,7 +1486,7 @@ def paper_responses(slug: str) -> dict[str, list[dict[str, Any]]]:
                 step(
                     {
                         "schema_version": (
-                            "quasi.operation.material.recall.receipt/0.1"
+                            "quasi.operation.material.recall.receipt/0.2"
                         ),
                         "key": "material.recall",
                         "effect": "readonly",
@@ -1495,9 +1495,9 @@ def paper_responses(slug: str) -> dict[str, list[dict[str, Any]]]:
                         "request_key": f"paper:{slug}",
                         "kind": "paper",
                         "requested_slug": slug,
-                        "vault_slug": None,
-                        "path": None,
-                        "match": None,
+                        "vault_slug": "__none__",
+                        "path": "__none__",
+                        "match": "none",
                         "failure": None,
                     }
                 )
@@ -1547,7 +1547,7 @@ def paper_responses(slug: str) -> dict[str, list[dict[str, Any]]]:
                 step(
                     {
                         "schema_version": (
-                            "quasi.operation.material.resolve.receipt/0.1"
+                            "quasi.operation.material.resolve.receipt/0.2"
                         ),
                         "key": "material.resolve",
                         "effect": "readonly",
@@ -1556,9 +1556,9 @@ def paper_responses(slug: str) -> dict[str, list[dict[str, Any]]]:
                         "request_key": f"paper:{slug}",
                         "kind": "paper",
                         "requested_slug": slug,
-                        "vault_slug": None,
-                        "path": None,
-                        "match": None,
+                        "vault_slug": "__none__",
+                        "path": "__none__",
+                        "match": "none",
                         "failure": None,
                     }
                 )

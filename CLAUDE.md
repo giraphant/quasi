@@ -152,6 +152,8 @@ writer receipt is an unknown outcome and must block rather than retry.
 
 Public skill routing separates material intake from topic research. `collect-material` owns paper, book, author, Talk, and Translation; `precise-topic` owns vault recall, outline steering, evidence cards, human seed gates, and topic synthesis. Both still call `workflows/process-material.mjs`, so topic candidates reuse the same paper/book router without duplicating graph nodes. Draft proofreading and citation closure use `finalise-draft`.
 
+One user request containing 2–32 top-level Books/Papers enters `process-material.mjs` once as `{kind:"batch",items:[...]}`. The batch coordinator shares one runtime across independent material loops, preserves input order, coalesces duplicate identities before any duplicate writer, and returns `quasi.collection.material-batch.receipt/0.1`. Do not expand a batch into one Workflow invocation per item; that produces multiple top-level UI graphs and prevents aggregate progress management.
+
 For a single Book or Paper request, `collect-material` passes only bounded user-provided hints into the graph. The graph runs `material.recall`, `material.search`, and `material.resolve` through `metadata-agent` before constructing a writable material path. Search owns author order, year, identifiers, venue/publisher, access URLs, and canonical slug; resolve may replace that slug only with an exact existing vault owner. Author/Topic candidate finding uses `discovery-agent`; Chinese-edition matching uses `localisation-agent`. The skill main process must not dispatch metadata workers, run vault recall, or substitute generic web/browser search before graph startup. A failed download must preserve `failure_reason` and per-source `attempts` in the graph result.
 
 Paper metadata merging treats Crossref as the authority for the journal container title and decodes its HTML entities at the adapter boundary. Do not let asynchronous adapter completion order choose `venue`; OpenAlex may omit meaningful punctuation from the same journal name.
@@ -234,4 +236,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.18.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.19.

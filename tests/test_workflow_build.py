@@ -36,6 +36,7 @@ def test_workflow_source_tree_is_minimal_and_complete() -> None:
         "collections/author.mjs",
         "derivatives/translation.mjs",
         "materials/book.mjs",
+        "materials/batch.mjs",
         "materials/dispatch.mjs",
         "materials/ingress.mjs",
         "materials/paper.mjs",
@@ -223,7 +224,7 @@ function harness() {{
       }})
       if (options.label === 'parity-paper:recall')
         return {{
-          schema_version: 'quasi.operation.material.recall.receipt/0.1',
+          schema_version: 'quasi.operation.material.recall.receipt/0.2',
           key: 'material.recall',
           effect: 'readonly',
           status: 'succeeded',
@@ -231,9 +232,9 @@ function harness() {{
           request_key: 'paper:parity-paper',
           kind: 'paper',
           requested_slug: 'parity-paper',
-          vault_slug: null,
-          path: null,
-          match: null,
+          vault_slug: '__none__',
+          path: '__none__',
+          match: 'none',
           failure: null,
         }}
       if (options.label === 'parity-paper:search')
@@ -274,7 +275,7 @@ function harness() {{
         }}
       if (options.label === 'parity-paper:resolve')
         return {{
-          schema_version: 'quasi.operation.material.resolve.receipt/0.1',
+          schema_version: 'quasi.operation.material.resolve.receipt/0.2',
           key: 'material.resolve',
           effect: 'readonly',
           status: 'succeeded',
@@ -282,9 +283,9 @@ function harness() {{
           request_key: 'paper:parity-paper',
           kind: 'paper',
           requested_slug: 'parity-paper',
-          vault_slug: null,
-          path: null,
-          match: null,
+          vault_slug: '__none__',
+          path: '__none__',
+          match: 'none',
           failure: null,
         }}
       return {{
@@ -366,7 +367,7 @@ const primitives = {{
     calls.push({{ label: options.label }})
     if (options.label === 'legacy-book:recall')
       return {{
-        schema_version: 'quasi.operation.material.recall.receipt/0.1',
+        schema_version: 'quasi.operation.material.recall.receipt/0.2',
         key: 'material.recall',
         effect: 'readonly',
         status: 'succeeded',
@@ -374,9 +375,9 @@ const primitives = {{
         request_key: 'book:legacy-book',
         kind: 'book',
         requested_slug: 'legacy-book',
-        vault_slug: null,
-        path: null,
-        match: null,
+        vault_slug: '__none__',
+        path: '__none__',
+        match: 'none',
         failure: null,
       }}
     if (options.label === 'legacy-book:search')
@@ -416,7 +417,7 @@ const primitives = {{
       }}
     if (options.label === 'legacy-book:resolve')
       return {{
-        schema_version: 'quasi.operation.material.resolve.receipt/0.1',
+        schema_version: 'quasi.operation.material.resolve.receipt/0.2',
         key: 'material.resolve',
         effect: 'readonly',
         status: 'succeeded',
@@ -424,9 +425,9 @@ const primitives = {{
         request_key: 'book:legacy-book',
         kind: 'book',
         requested_slug: 'legacy-book',
-        vault_slug: null,
-        path: null,
-        match: null,
+        vault_slug: '__none__',
+        path: '__none__',
+        match: 'none',
         failure: null,
       }}
     return {{

@@ -695,6 +695,28 @@ function strictBookDownloadReceipt(
   return receipt.acquired === 0 && receipt.failed === 0;
 }
 
+function normaliseBookDownloadReceipt(receipt) {
+  if (
+    !receipt ||
+    typeof receipt !== "object" ||
+    Array.isArray(receipt) ||
+    !Array.isArray(receipt.per_item) ||
+    receipt.per_item.length !== 1
+  )
+    return receipt;
+  const item = receipt.per_item[0];
+  if (
+    !item ||
+    typeof item !== "object" ||
+    Array.isArray(item) ||
+    item.status !== "ok" ||
+    !Object.prototype.hasOwnProperty.call(item, "tmp_path")
+  )
+    return receipt;
+  const { tmp_path: _acceptedTempPath, ...accepted } = item;
+  return { ...receipt, per_item: [accepted] };
+}
+
 function downloadOperation(item, allowedSources) {
   const succeeded = item.status === "ok";
   const unknown = item.status === "blocked";
@@ -2063,7 +2085,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
   phase("Acquire");
   const state = createBookState(slug, meta);
 
-  const download = await runOperation(
+  const download = normaliseBookDownloadReceipt(await runOperation(
     bookAcquirePrompt(
       slug,
       meta,
@@ -2084,7 +2106,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
       artifactRoles: ["source"],
       unknownFailureCode: "material.writer_outcome_unknown",
     },
-  );
+  ));
   if (runtimeUnknown(download)) {
     state.operations.push(download);
     return blocked(

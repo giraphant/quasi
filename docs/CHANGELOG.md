@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.19** (2026-07-31): **批量材料共用一张处理图，并修复三处原生 Workflow 合同接缝。**
+  - 同一请求中的 2–32 个 Book/Paper 现在作为一个 `kind:"batch"` envelope 进入一次 Workflow，共享同一 runtime，按输入顺序并行推进 `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`。顶层返回 `quasi.collection.material-batch.receipt/0.1`，逐项汇总 `complete|needs_input|blocked|failed`；一个卡点不取消其它材料，也不再在 Claude Code UI 中展开成 N 张同名图。
+  - `material.recall` / `material.resolve` 升到 receipt 0.2，以无歧义的 `__none__` / `match:"none"` 表达 miss，再由 Graph 边界归一化为内部 null。这样绕开 Claude StructuredOutput 对 nullable path 的 `"null"` 字符串与 pattern 重试问题，同时保持 hit 的 canonical path、slug 和 identity 严格校验。
+  - Book acquisition 在 `status:"ok"` 后丢弃不再具有语义的临时下载路径观察；最终 source path、identity、format、year evidence、source 和 attempts 仍按原严格矩阵验证。Paper create collision 则明确视为“未写入且 outcome known”，必须通过随后 exact audit 才能把既有 canonical 标为 reused。
+  - 唯一生成 bundle 为 398,688 bytes，低于 Claude Code 的 512 KiB 上限；全库 980 项回归通过。
+
 - **0.52.18** (2026-07-31): **修复材料未命中时 `"null"` 字符串阻断 metadata ingress。**
   - Claude StructuredOutput 在 `material.recall` 的 nullable string 字段上可能把要求的 JSON `null` 写成字符串 `"null"`。它满足了宽松的 `string|null` schema，却被 Graph 的严格 Recall validator 拒绝，导致批量材料在 Search 前全部 `metadata_failed`。
   - Recall/Resolve schema 现在优先声明 null、约束 canonical vault path，operation prompt 与 `metadata-agent` 明确要求无引号的 JSON null。Graph 只在 readonly lookup 的三个 miss 字段全部为 null sentinel 时确定性归一化，随后照常执行严格校验；hit、identity 和所有 writer receipt 均不放宽。

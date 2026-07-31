@@ -193,6 +193,24 @@ def test_collect_material_has_no_skill_side_recall_or_inline_metadata_json():
     assert "<<'${delimiter}'" in acquire
 
 
+def test_collect_material_batches_multiple_books_and_papers_into_one_workflow():
+    skill = (
+        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    entry = source_file("process-material.entry.mjs")
+    batch = source_file("materials/batch.mjs")
+
+    assert 'wf_args = {"kind": "batch", "items": items}' in skill
+    assert "只调用\n  **一次** Workflow" in skill
+    assert "禁止 `for item: Workflow(...)`" in skill
+    assert "do not loop over run_graph" in skill
+    assert 'if (args.kind === "batch")' in entry
+    assert "processMaterialBatch(" in entry
+    assert "runtime.parallel(" in batch
+    assert "quasi.collection.material-batch.receipt/0.1" in batch
+    assert "MAX_BATCH_ITEMS = 32" in batch
+
+
 def test_metadata_agent_book_picked_requires_evidence_backed_identity():
     skill = (
         PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"

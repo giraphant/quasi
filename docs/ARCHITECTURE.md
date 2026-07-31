@@ -81,6 +81,14 @@ pinned esbuild dependency to produce the committed
 `workflows/process-material.mjs`; `npm run check:workflows` rejects a stale
 bundle or forbidden runtime imports.
 
+Top-level requests containing 2–32 Books/Papers use one material-batch
+coordinator inside that same Workflow invocation. It shares the runtime and
+coalescing map with every child Material Loop, runs independent items through
+`parallel`, preserves input order in the aggregate receipt, and never creates a
+second Workflow per item. `quasi.collection.material-batch.receipt/0.1`
+summarises per-item progress without flattening or replacing the child ingress
+and MaterialReceipts.
+
 The Paper loop is the first Operation-based vertical slice. Its edge order is:
 acquire/reconcile → deterministic text normalisation → semantic readability
 assessment → bounded OCR recovery when required → the common `analyse-agent`

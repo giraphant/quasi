@@ -64,3 +64,5 @@ outcome 无法确认时返回 blocked/unknown。每次 invocation 只处理这�
 request 中的 `exact_output` 或所选 `allowed_outputs[].path`，不得把 CLI 的路径表示抄回。
 每个 `status: ok` item 还必须提供非空 `source`，标明实际证明该 artifact 的稳定来源；
 对已存在且重新核验通过的 exact output 固定写 `source: "existing_file"`。
+`status: ok` 已经完成 accept/reuse，必须省略只属于未接受候选或人工年份卡点的
+`tmp_path`；CLI 即使打印过 staging path，也不得把它带进成功分支。

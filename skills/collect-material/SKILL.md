@@ -15,6 +15,8 @@ description: Use when the user wants to process or collect one or more papers, a
 
 - Book：`title|isbn` 至少一个；可带 `authors/year/publisher/category/format`。
 - Paper：`title|doi` 至少一个；可带 `authors/year/journal/oa_url/url`。
+- Batch：同一用户请求中的 2–32 个 Book/Paper；可混合两种 kind，每项保留自己的
+  原始字段和可选 derivative 参数。
 - Author：`name` 与 `meta{full_name,topic,maxBooks,maxPapers}`。
 - Talk：完整读取并执行 [`references/talk.md`](references/talk.md)。
 - Translation：`slug`、可选 exact `source_file`、`target_language`，以及可选
@@ -30,6 +32,8 @@ Paper 可带 `translate:true`，在同一次图执行中请求独立 Translation
 
 - 收到 Book/Paper 请求后立即启动图。不要在图前 dispatch metadata Agent、运行
   `quasi-helpers vault resolve`、做 rg 模糊查重或按文件存在提前返回。
+- 同一请求含 2–32 个 Book/Paper 时，必须构造一个 `kind:"batch"` envelope 并只调用
+  **一次** Workflow。禁止 `for item: Workflow(...)`，禁止把一批材料展开成多张同名图。
 - 不用通用 WebSearch、WebFetch 或 browser 替代 quasi 的 metadata/acquisition 合同。
 - Skill 不解释 Agent 内部步骤，也不从 prose 猜成功。只消费
   `ingress_receipt`、`material_receipt`、`collection_receipt` 或
@@ -47,6 +51,8 @@ Paper 可带 `translate:true`，在同一次图执行中请求独立 Translation
 - `quasi.material-ingress.receipt/0.1` 记录原始请求如何变成 canonical identity。
 - Paper/Book 使用 `quasi.material-loop.receipt/0.1`；Author 使用 collection receipt；
   Translation 使用 `quasi.derivative.translation.receipt/0.1`。
+- Batch 使用 `quasi.collection.material-batch.receipt/0.1`，按输入顺序记录每项
+  `complete|needs_input|blocked|failed`；一个卡点不取消其它材料。
 - Paper 的 `material_receipt` 与可选 Translation derivative 相互独立；Derivative 失败
   不改写已经证明 complete 的 Paper MaterialReceipt。
 - 用户决定只通过下一次 Workflow args 进入图，不修改旧 receipt。
@@ -75,7 +81,7 @@ Paper 可带 `translate:true`，在同一次图执行中请求独立 Translation
   ├─ Skill：识别 kind，保留原始提示
   │
   ▼
-Workflow
+一次 Workflow（单项或 2–32 项 batch）
   Recall       本地只读召回；不把存在性当完成
   Search       规范 metadata，并用完整身份 resolve canonical owner
   Acquire      获取或核验 exact source
@@ -85,7 +91,7 @@ Workflow
   Audit        验证 exact schema；按 producer owner 做一次有界修复
   │
   ▼
-Skill：展示完成结果，或解释 needs_input / blocked / failed
+Skill：汇总整批进度与产物，集中展示 needs_input / blocked / failed
 ```
 
 Author/Topic 图内已经产生 verified child identity 时，可直接进入 child Material Loop；
@@ -94,16 +100,52 @@ Author/Topic 图内已经产生 verified child identity 时，可直接进入 ch
 ## 执行流程
 
 ```python
-request = parse_user_request()
-if request.kind not in ("book", "paper", "author", "talk", "translate"):
+requests = parse_user_requests()
+if not requests:
+    report("没有可处理的材料")
+    return
+if any(
+    request.kind not in ("book", "paper", "author", "talk", "translate")
+    for request in requests
+):
     report(f"未知材料类型: {request.kind}")
     return
+
+if len(requests) > 1:
+    if len(requests) > 32 or any(
+        request.kind not in ("book", "paper")
+        for request in requests
+    ):
+        report("批量入口只接受 2–32 个 Book/Paper")
+        return
+    items = []
+    for request in requests:
+        raw = project_only_known_fields(request)
+        item = {"kind": request.kind, "request": raw}
+        if request.explicit_slug:
+            item["slug"] = request.explicit_slug
+        for field in (
+            "translate",
+            "target_language",
+            "toc_json",
+            "toc_page_side",
+        ):
+            if request.get(field) is not None:
+                item[field] = request[field]
+        items.append(item)
+    # One batch request means exactly one Workflow row in Claude Code.
+    wf_args = {"kind": "batch", "items": items}
+    request = {"kind": "batch"}
+else:
+    request = requests[0]
 
 if request.kind == "talk":
     follow_reference("references/talk.md")
     return
 
-if request.kind in ("book", "paper"):
+if request.kind == "batch":
+    pass  # wf_args was built above; do not loop over run_graph.
+elif request.kind in ("book", "paper"):
     raw = project_only_known_fields(request)
     wf_args = {"kind": request.kind, "request": raw}
     if request.explicit_slug:
@@ -169,6 +211,43 @@ def run_graph(args):
     )
 
 result = run_graph(wf_args)
+
+# Batch is one Workflow with independently progressing material loops. Interpret every child from
+# the correlated `results[index]`; never rediscover paths or launch one Workflow per failed item.
+if request.kind == "batch":
+    batch = result.get("batch_receipt")
+    entries = result.get("results")
+    if (
+        not batch
+        or batch.get("schema_version")
+            != "quasi.collection.material-batch.receipt/0.1"
+        or not isinstance(entries, list)
+        or len(entries) != batch.get("total")
+    ):
+        report("批量回执缺失或无法与输入逐项对账")
+        return
+    report_batch_progress(
+        counts=batch["counts"],
+        items=batch["items"],
+    )
+    for entry in entries:
+        child = entry.get("result") or {}
+        if entry.get("status") == "complete":
+            report_completed_artifacts(child)
+            maybe_localise_completed_books(child)
+        elif entry.get("status") in (
+            "needs_input",
+            "blocked",
+            "failed",
+        ):
+            report_batch_item_gate_or_failure(
+                request_id=entry.get("request_id"),
+                status=entry.get("status"),
+                result=child,
+            )
+    # Any follow-up decisions are collected first, then submitted as one new batch containing
+    # only affected original items. Never call run_graph separately inside this loop.
+    return
 
 # 顶层 Book/Paper 身份入口。
 ingress = result.get("ingress_receipt")
@@ -249,6 +328,8 @@ if translation and translation.get("status") == "blocked":
         return
 
 typed = (
+    result.get("batch_receipt")
+    or
     result.get("translation_receipt")
     or result.get("collection_receipt")
     or result.get("material_receipt")
@@ -274,6 +355,8 @@ best_effort_open_primary_artifact(result)
 
 | 状态 | Skill 行为 |
 | --- | --- |
+| Batch `partial` | 报告所有 item 状态；集中收集决定，下一次只把受影响项组成一张新 batch 图 |
+| Batch `blocked|failed` | 保留已完成项，逐项报告 failure；不重新运行整批或单独重投 writer |
 | ingress `needs_input` | 展示 query 与缺失/冲突证据；用户修正请求后开启新 run |
 | ingress `blocked` | 报告 exact operation/failure/resume；不在当前 run 重投 |
 | Book `year_mismatch|year_ambiguous` | 展示原始 evidence；仅把用户选择放进 `year_decision` 新 run |

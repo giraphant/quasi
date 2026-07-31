@@ -20,6 +20,7 @@ const CATEGORIES = new Set([
   "handbook",
   "other",
 ]);
+const LOOKUP_MISS = "__none__";
 
 const exactKeys = (value, keys) =>
   !!(
@@ -323,19 +324,17 @@ function canonicalPath(kind, slug) {
     : `vault/papers/${slug}.md`;
 }
 
-function normaliseLookupNullSentinels(receipt) {
+function normaliseLookupReceipt(receipt) {
   if (
     !receipt ||
     typeof receipt !== "object" ||
     Array.isArray(receipt)
   )
     return receipt;
-  const nullSentinel = (value) =>
-    value === null || value === "null";
   if (
-    nullSentinel(receipt.vault_slug) &&
-    nullSentinel(receipt.path) &&
-    nullSentinel(receipt.match)
+    receipt.vault_slug === LOOKUP_MISS &&
+    receipt.path === LOOKUP_MISS &&
+    receipt.match === "none"
   )
     return {
       ...receipt,
@@ -363,7 +362,7 @@ function strictLookup(receipt, key, request) {
       "failure",
     ]) ||
     receipt.schema_version !==
-      `quasi.operation.${key}.receipt/0.1` ||
+      `quasi.operation.${key}.receipt/0.2` ||
     receipt.key !== key ||
     receipt.effect !== "readonly" ||
     receipt.attempt !== 1 ||
@@ -745,7 +744,7 @@ async function runResolvedIngress(
     request.requestedSlug,
     request.query,
   );
-  const recall = normaliseLookupNullSentinels(
+  const recall = normaliseLookupReceipt(
     await runtime.runOperation(
       materialRecallPrompt(recallRequest),
       {
@@ -868,7 +867,7 @@ async function runResolvedIngress(
     picked.slug,
     picked,
   );
-  const resolved = normaliseLookupNullSentinels(
+  const resolved = normaliseLookupReceipt(
     await runtime.runOperation(
       materialResolvePrompt(resolveRequest),
       {

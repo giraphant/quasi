@@ -161,18 +161,7 @@ const MATERIAL_IDENTITY_FAILURE_SCHEMA = {
   },
 };
 
-const MATERIAL_VAULT_SLUG_SCHEMA = {
-  type: ["null", "string"],
-  maxLength: 80,
-  pattern: "^[a-z0-9][a-z0-9-]{0,79}$",
-};
-
-const MATERIAL_VAULT_PATH_SCHEMA = {
-  type: ["null", "string"],
-  maxLength: 2048,
-  pattern:
-    "^vault/(?:books/[a-z0-9][a-z0-9-]{0,79}/00-overview\\.md|papers/[a-z0-9][a-z0-9-]{0,79}\\.md)$",
-};
+const MATERIAL_LOOKUP_MISS = "__none__";
 
 const materialLookupSchema = (key) => ({
   type: "object",
@@ -193,7 +182,7 @@ const materialLookupSchema = (key) => ({
   ],
   properties: {
     schema_version: {
-      const: `quasi.operation.${key}.receipt/0.1`,
+      const: `quasi.operation.${key}.receipt/0.2`,
     },
     key: { const: key },
     effect: { const: "readonly" },
@@ -202,11 +191,11 @@ const materialLookupSchema = (key) => ({
     request_key: { type: "string" },
     kind: { type: "string", enum: ["book", "paper"] },
     requested_slug: { type: "string" },
-    vault_slug: MATERIAL_VAULT_SLUG_SCHEMA,
-    path: MATERIAL_VAULT_PATH_SCHEMA,
+    vault_slug: { type: "string", maxLength: 80 },
+    path: { type: "string", maxLength: 2048 },
     match: {
-      type: ["string", "null"],
-      enum: ["slug", "isbn", "doi", "title", null],
+      type: "string",
+      enum: ["none", "slug", "isbn", "doi", "title"],
     },
     failure: MATERIAL_IDENTITY_FAILURE_SCHEMA,
   },
@@ -810,6 +799,7 @@ export const BOOK_ACQUISITION_POLICY = {
     known_exhaustion: "download_failed",
     uncertain_identity_path_or_writer: "blocked",
     success_source_required: true,
+    success_omits: ["tmp_path"],
     success_source_examples: ["existing_file", "anna_archive", "doi_cascade"],
     path_echo: {
       source: "request.allowed_outputs[].path",
@@ -911,7 +901,8 @@ export function bookAcquirePrompt(
 For a succeeded item, receipt path must echo the chosen request.allowed_outputs[].path
 byte-for-byte. An absolute/resolved path printed by quasi-download is observation evidence only;
 never copy that rendering into the receipt. Every succeeded item must also name the stable source
-that proved the artifact, using source="existing_file" for verified reuse.
+that proved the artifact, using source="existing_file" for verified reuse. Once a candidate is
+accepted or reused, omit tmp_path from the succeeded item.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}
 \`\`\``;
@@ -997,11 +988,13 @@ ${delimiter}
 
 The helper must return exactly one row for the request. Project it to the closed receipt fields
 request_key, kind, requested_slug, vault_slug, path and match without inferring a hit. A helper
-error or a missing, extra, foreign, or malformed row is a known failed receipt. A miss is a
-successful receipt with vault_slug/path/match all JSON null. JSON null is the bare token null:
-never emit the strings "null" or "None", and never use an empty string as a null sentinel.
+error or a missing, extra, foreign, or malformed row is a known failed receipt. Native
+StructuredOutput cannot reliably represent the helper's nullable path fields, so encode a miss
+exactly as vault_slug="${MATERIAL_LOOKUP_MISS}", path="${MATERIAL_LOOKUP_MISS}", match="none".
+For a hit, copy the helper's three non-null values byte-for-byte. Never mix hit values and miss
+sentinels. A known failed receipt also uses the same three miss sentinels.
 
-Return only a closed quasi.operation.${operation}.receipt/0.1 object with key="${operation}",
+Return only a closed quasi.operation.${operation}.receipt/0.2 object with key="${operation}",
 effect="readonly", attempt=1, status succeeded|failed, and failure=null on success or
 {code,operation_key:"${operation}",outcome:"known",retryable:false,message} on known failure.
 \`\`\`json

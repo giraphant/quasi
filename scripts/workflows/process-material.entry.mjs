@@ -4,6 +4,7 @@ import {
   translationDependencyFailure,
 } from "./derivatives/translation.mjs";
 import { createMaterialDispatch } from "./materials/dispatch.mjs";
+import { processMaterialBatch } from "./materials/batch.mjs";
 import { processBook } from "./materials/book.mjs";
 import { processPaper } from "./materials/paper.mjs";
 import { processTalk } from "./materials/talk.mjs";
@@ -77,82 +78,97 @@ export async function run(primitives, inputArgs) {
     }
   }
 
-  const args = inputArgs || {};
-  if (!args.kind)
-    throw new Error(
-      "process-material: 需要 args.kind(book|paper|talk|translate|author|topic)",
-    );
-  const entryOpts = {
-    ...(["book", "paper"].includes(args.kind)
+  const entryOptions = (kind, args) => ({
+    ...(["book", "paper"].includes(kind)
       ? { resolveIdentity: true }
       : {}),
-    ...(args.kind === "book" &&
+    ...(kind === "book" &&
     Object.prototype.hasOwnProperty.call(args, "year_decision")
       ? { yearDecision: args.year_decision }
       : {}),
-  };
-  let result = await router(args.kind, args, entryOpts);
-  if (
-    args.kind === "paper" &&
-    args.translate === true &&
-    result &&
-    result.status === "ok"
-  ) {
-    const receipt = result.material_receipt;
-    const resolvedSlug = result.slug;
-    const sources =
-      receipt &&
-      receipt.schema_version ===
-        "quasi.material-loop.receipt/0.1" &&
-      receipt.material_key === `paper:${resolvedSlug}` &&
-      receipt.kind === "paper" &&
-      receipt.id === resolvedSlug &&
-      receipt.status === "complete" &&
-      Array.isArray(receipt.artifacts)
-        ? receipt.artifacts.filter(
-            (artifact) =>
-              artifact &&
-              artifact.role === "source" &&
-              artifact.exists === true &&
-              artifact.path === `sources/${resolvedSlug}.pdf`,
-          )
-        : [];
-    const translationMeta = {
-      source_file:
-        sources.length === 1 ? sources[0].path : null,
-      target_language:
-        args.target_language || "zh-CN",
-      toc_json: args.toc_json || null,
-      toc_page_side:
-        args.toc_page_side || "original",
-      source_decision: args.source_decision || null,
-    };
-    const translation =
-      sources.length === 1
-        ? await processTranslation(
-            runtime,
-            resolvedSlug,
-            translationMeta,
-          )
-        : translationDependencyFailure(
-            resolvedSlug,
-            translationMeta,
-            "translation.paper_source_missing",
-            "Paper MaterialReceipt did not contain one exact source artifact",
-          );
-    result = {
-      ...result,
-      translation,
-      translation_status: translation.status,
-      translation_receipt:
-        translation.translation_receipt,
-    };
+  });
+
+  async function runOne(kind, args) {
+    let result = await router(
+      kind,
+      args,
+      entryOptions(kind, args),
+    );
+    if (
+      kind === "paper" &&
+      args.translate === true &&
+      result &&
+      result.status === "ok"
+    ) {
+      const receipt = result.material_receipt;
+      const resolvedSlug = result.slug;
+      const sources =
+        receipt &&
+        receipt.schema_version ===
+          "quasi.material-loop.receipt/0.1" &&
+        receipt.material_key === `paper:${resolvedSlug}` &&
+        receipt.kind === "paper" &&
+        receipt.id === resolvedSlug &&
+        receipt.status === "complete" &&
+        Array.isArray(receipt.artifacts)
+          ? receipt.artifacts.filter(
+              (artifact) =>
+                artifact &&
+                artifact.role === "source" &&
+                artifact.exists === true &&
+                artifact.path === `sources/${resolvedSlug}.pdf`,
+            )
+          : [];
+      const translationMeta = {
+        source_file:
+          sources.length === 1 ? sources[0].path : null,
+        target_language:
+          args.target_language || "zh-CN",
+        toc_json: args.toc_json || null,
+        toc_page_side:
+          args.toc_page_side || "original",
+        source_decision: args.source_decision || null,
+      };
+      const translation =
+        sources.length === 1
+          ? await processTranslation(
+              runtime,
+              resolvedSlug,
+              translationMeta,
+            )
+          : translationDependencyFailure(
+              resolvedSlug,
+              translationMeta,
+              "translation.paper_source_missing",
+              "Paper MaterialReceipt did not contain one exact source artifact",
+            );
+      result = {
+        ...result,
+        translation,
+        translation_status: translation.status,
+        translation_receipt:
+          translation.translation_receipt,
+      };
+    }
+    const id =
+      result &&
+      (result.slug || result.name || args.slug || args.name);
+    runtime.log(
+      `process-material result: kind=${kind} id=${id || "unknown"} status=${(result && result.status) || "unknown"}`,
+    );
+    return result;
   }
-  const id =
-    result &&
-    (result.slug || result.name || args.slug || args.name);
-  runtime.log(
-    `process-material result: kind=${args.kind} id=${id || "unknown"} status=${(result && result.status) || "unknown"}`,
-  );
-  return result;
+
+  const args = inputArgs || {};
+  if (!args.kind)
+    throw new Error(
+      "process-material: 需要 args.kind(batch|book|paper|talk|translate|author|topic)",
+    );
+  if (args.kind === "batch")
+    return processMaterialBatch(
+      runtime,
+      args.items,
+      (item) => runOne(item.kind, item),
+    );
+  return runOne(args.kind, args);
 }
