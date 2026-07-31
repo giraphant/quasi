@@ -43,6 +43,7 @@ request 要求时准备为 exact media output；已有且与 source generation �
 ## 输出
 
 最后只返回 caller StructuredOutput schema 的 JSON。`attempt:1` 表示本次 Agent invocation；
-内部可以依材料状态调用多项能力。`artifacts` 逐字采用 CLI receipt 的 path/hash/size，`steps`
-概括实际工作，`transcript_changed` 告诉下一阶段 canonical 是否需要刷新。你不写 `talk.md`、
+内部可以依材料状态调用多项能力。交付前选择一个 `terminal` 分支并对照 schema 检查完整性；
+complete 的 issue 为 null，其他分支使用 typed issue。`artifacts` 逐字采用 CLI receipt 的
+path/hash/size，`steps` 概括实际工作，`transcript_changed` 告诉下一阶段 canonical 是否需要刷新。你不写 `talk.md`、
 不执行 analyse/audit，也不发现另一份媒体。

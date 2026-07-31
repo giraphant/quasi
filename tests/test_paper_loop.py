@@ -109,12 +109,11 @@ def paths(slug: str) -> dict[str, str]:
 
 def search(slug: str) -> dict[str, Any]:
     return {
-        "schema_version": "quasi.stage.receipt/0.1",
+        "schema_version": "quasi.stage.receipt/0.2",
         "operation": "material.search",
         "stage": "Search",
         "material_key": f"paper:{slug}",
         "effect": "readonly",
-        "status": "complete",
         "attempt": 1,
         "kind": "paper",
         "identity": {
@@ -129,7 +128,7 @@ def search(slug: str) -> dict[str, Any]:
             "confidence": "high",
         },
         "local_owner": {
-            "requested_slug": slug,
+            "identity_slug": slug,
             "vault_slug": None,
             "path": None,
             "match": None,
@@ -138,7 +137,7 @@ def search(slug: str) -> dict[str, Any]:
         "observations": [
             {"source": "crossref", "query": "10.1000/example", "summary": "exact"}
         ],
-        "issue": None,
+        "terminal": {"status": "complete", "issue": None},
     }
 
 
@@ -187,12 +186,11 @@ def prepare(
     p = paths(slug)
     completed = status == "complete"
     return {
-        "schema_version": "quasi.stage.receipt/0.1",
+        "schema_version": "quasi.stage.receipt/0.2",
         "operation": "paper.prepare",
         "stage": "Prepare",
         "material_key": f"paper:{slug}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "source_path": p["source"],
         "selected_input": selected or p["text"] if completed else None,
@@ -216,19 +214,22 @@ def prepare(
             }
         ],
         "diagnostics": [] if completed else ["body text remained unreadable"],
-        "issue": (
-            None
-            if completed
-            else stage_issue(
-                "paper.prepare",
-                "paper.text_not_readable",
-                question=(
-                    "Can you provide another source PDF?"
-                    if status == "needs_input"
-                    else None
-                ),
-            )
-        ),
+        "terminal": {
+            "status": status,
+            "issue": (
+                None
+                if completed
+                else stage_issue(
+                    "paper.prepare",
+                    "paper.text_not_readable",
+                    question=(
+                        "Can you provide another source PDF?"
+                        if status == "needs_input"
+                        else None
+                    ),
+                )
+            ),
+        },
     }
 
 

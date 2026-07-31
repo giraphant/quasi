@@ -101,10 +101,16 @@ import { TALK_PREPARE_STAGE_CONTRACT } from "./scripts/workflows/operations/tran
 const schema = TALK_PREPARE_STAGE_CONTRACT.schema;
 if (schema.type !== "object" || schema.additionalProperties !== false)
   throw new Error("stage root must be closed");
-for (const key of ["schema_version", "operation", "stage", "material_key", "effect", "status", "attempt", "artifacts", "steps", "diagnostics", "issue"])
+for (const key of ["schema_version", "operation", "stage", "material_key", "effect", "attempt", "artifacts", "steps", "diagnostics", "terminal"])
   if (!schema.required.includes(key)) throw new Error(`missing ${key}`);
 for (const key of ["oneOf", "allOf", "anyOf", "if", "then"])
   if (Object.hasOwn(schema, key)) throw new Error(`top-level ${key}`);
+const branches = schema.properties.terminal.anyOf;
+if (branches.length !== 4) throw new Error("wrong terminal branch count");
+if (branches[0].properties.status.const !== "complete")
+  throw new Error("missing complete terminal");
+if (branches[0].properties.issue.type !== "null")
+  throw new Error("complete must carry issue:null");
 if (schema.properties.operation.const !== "talk.prepare")
   throw new Error("wrong operation");
 if (schema.properties.stage.const !== "Prepare")
@@ -190,7 +196,7 @@ def test_public_talk_skill_is_one_shared_workflow_ingress() -> None:
     assert "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" in skill
     assert '"kind": "talk"' in skill
     assert skill.count("return Workflow(") == 1
-    assert "quasi.stage.receipt/0.1" in skill
+    assert "quasi.stage.receipt/0.2" in skill
     assert "Talk Prepare specialist" in skill
     assert "typed MaterialReceipt" in skill
     assert 'Agent("quasi:analyse-agent"' not in skill

@@ -29,7 +29,7 @@
 ## 状态
 
 图内的 Talk 状态由 `quasi.material-loop.receipt/0.1` 表达。Prepare specialist 使用
-`quasi.stage.receipt/0.1`，terminal 为
+`quasi.stage.receipt/0.2`，terminal 为
 `complete|needs_input|blocked|failed`。
 
 主要 artifacts：

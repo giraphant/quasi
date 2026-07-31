@@ -8,6 +8,7 @@ import {
   validTranslationHash,
 } from "../operations/translate.mjs";
 import { exactKeys, validText } from "../runtime.mjs";
+import { stageIssue } from "../stage.mjs";
 
 const RECEIPT_VERSION =
   "quasi.derivative.translation.receipt/0.1";
@@ -374,7 +375,7 @@ function writerMismatch(state, stage, operationKey) {
 }
 
 function prepareFailure(receipt, outcome = "known") {
-  const issue = receipt && receipt.issue;
+  const issue = stageIssue(receipt);
   return operationFailure(
     (issue && issue.code) || "translation.prepare_failed",
     "translation.prepare",

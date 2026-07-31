@@ -47,5 +47,6 @@ reconcile 观察，而不是在本次 invocation 盲写。
 
 最后只返回 caller StructuredOutput schema 的 JSON。`attempt:1` 是 Agent invocation；`steps`
 记录内部 observe/run/recovery 的实际结果，`validation` 保留最终 generation 的可核验证据，
-`issue` 与 `gate` 支持外层 Skill 和用户沟通。你只写 CLI contract 命名的 translation/recovery
+交付前选择一个 `terminal` 分支并对照 schema 检查完整性；complete 的 issue 为 null，其他
+分支使用 typed issue，`gate` 支持外层 Skill 和用户沟通。你只写 CLI contract 命名的 translation/recovery
 产物，不修改原 source，也不管理图状态。

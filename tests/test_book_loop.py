@@ -300,12 +300,11 @@ def prepare(
             for row in rows
         )
     return {
-        "schema_version": "quasi.stage.receipt/0.1",
+        "schema_version": "quasi.stage.receipt/0.2",
         "operation": "book.prepare",
         "stage": "Prepare",
         "material_key": f"book:{slug}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "format": extension,
         "output_dir": p["root"],
@@ -326,14 +325,17 @@ def prepare(
             }
         ],
         "diagnostics": [] if complete else ["no stable chapter boundaries"],
-        "issue": issue(
-            status,
-            question=(
-                "Which of the two observed tables of contents should define the book?"
-                if status == "needs_input"
-                else None
+        "terminal": {
+            "status": status,
+            "issue": issue(
+                status,
+                question=(
+                    "Which of the two observed tables of contents should define the book?"
+                    if status == "needs_input"
+                    else None
+                ),
             ),
-        ),
+        },
     }
 
 

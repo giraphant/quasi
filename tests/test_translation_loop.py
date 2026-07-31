@@ -207,12 +207,11 @@ def prepare_stage(
             "pages": 3,
         }
     return {
-        "schema_version": "quasi.stage.receipt/0.1",
+        "schema_version": "quasi.stage.receipt/0.2",
         "operation": "translation.prepare",
         "stage": "Prepare",
         "material_key": f"translation:paper:{slug}:zh-CN",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "slug": slug,
         "target_language": "zh-CN",
@@ -230,7 +229,7 @@ def prepare_stage(
             "summary": "prepared one coherent translated generation",
         }],
         "diagnostics": [],
-        "issue": stage_issue,
+        "terminal": {"status": status, "issue": stage_issue},
     }
 
 

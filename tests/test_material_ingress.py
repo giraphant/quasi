@@ -97,10 +97,11 @@ def search_receipt(
     status: str = "complete",
     owner: str | None = None,
     retryable: bool = False,
+    selected_slug: str = SLUG,
 ) -> dict[str, Any]:
     issue = None
     identity: dict[str, Any] | None = {
-        "slug": SLUG,
+        "slug": selected_slug,
         "title": "A Safety Paper",
         "authors": ["Ada Example"],
         "year": 2024,
@@ -112,11 +113,12 @@ def search_receipt(
     }
     confidence = "high"
     local_owner: dict[str, Any] | None = {
-        "requested_slug": SLUG,
+        "identity_slug": selected_slug,
         "vault_slug": owner,
         "path": f"vault/papers/{owner}.md" if owner else None,
         "match": "doi" if owner else None,
     }
+    candidate = identity
     if status != "complete":
         identity = None
         confidence = "low"
@@ -126,19 +128,21 @@ def search_receipt(
             "operation": "material.search",
             "summary": "Structured providers and stable pages did not establish one identity",
             "user_question": (
-                "Which DOI or stable journal page identifies this paper?"
+                "Should this request use the evidence-backed candidate identity?"
                 if status == "needs_input"
                 else None
             ),
             "retryable": retryable,
         }
+    terminal: dict[str, Any] = {"status": status, "issue": issue}
+    if status == "needs_input":
+        terminal.update({"candidates": [candidate], "conflicts": ["authors"]})
     return {
-        "schema_version": "quasi.stage.receipt/0.1",
+        "schema_version": "quasi.stage.receipt/0.2",
         "operation": "material.search",
         "stage": "Search",
         "material_key": KEY,
         "effect": "readonly",
-        "status": status,
         "attempt": 1,
         "kind": "paper",
         "identity": identity,
@@ -151,7 +155,7 @@ def search_receipt(
                 "summary": "No exact record" if status != "complete" else "Exact DOI record",
             }
         ],
-        "issue": issue,
+        "terminal": terminal,
     }
 
 
@@ -213,6 +217,20 @@ def test_search_complete_may_select_exact_existing_owner(tmp_path: Path) -> None
     assert report["result"]["ingress_receipt"]["identity"]["slug"] == owner
 
 
+def test_search_selected_canonical_slug_replaces_provisional_hint(
+    tmp_path: Path,
+) -> None:
+    selected = "example-safety-paper-canonical-2024"
+    responses = {
+        f"{SLUG}:search": [search_receipt(selected_slug=selected)],
+        f"{selected}:acquire": [download_failed(selected)],
+    }
+    report = run_ingress(tmp_path, paper_request(), responses)
+
+    assert report["result"]["slug"] == selected
+    assert report["result"]["ingress_receipt"]["identity"]["slug"] == selected
+
+
 @pytest.mark.parametrize("retryable", [False, True])
 def test_schema_valid_search_failure_is_not_reclassified_as_invalid(
     tmp_path: Path,
@@ -232,16 +250,76 @@ def test_schema_valid_search_failure_is_not_reclassified_as_invalid(
     assert "receipt_invalid" not in ingress["failure"]["code"]
 
 
-def test_search_needs_input_preserves_specialist_question(tmp_path: Path) -> None:
+def test_search_identity_conflict_preserves_candidate_and_question(
+    tmp_path: Path,
+) -> None:
+    receipt = search_receipt(status="needs_input")
+    receipt["terminal"]["issue"]["code"] = "material.identity_conflict"
+    receipt["terminal"]["candidates"][0].update(
+        {
+            "slug": "example-a-different-author-paper-2024",
+            "authors": ["Bea Different"],
+        }
+    )
     responses = {
-        f"{SLUG}:search": [search_receipt(status="needs_input")],
+        f"{SLUG}:search": [receipt],
     }
     report = run_ingress(tmp_path, paper_request(), responses)
 
     assert report["result"]["status"] == "needs_input"
     ingress = report["result"]["ingress_receipt"]
     assert ingress["stage"] == "search"
-    assert "Which DOI" in ingress["failure"]["message"]
+    assert ingress["failure"]["code"] == "material.identity_conflict"
+    assert "evidence-backed candidate" in ingress["failure"]["message"]
+    search = ingress["operations"][0]
+    assert search["terminal"]["conflicts"] == ["authors"]
+    assert search["terminal"]["candidates"][0]["authors"] == [
+        "Bea Different"
+    ]
+
+
+def test_search_owner_observation_must_bind_selected_identity(
+    tmp_path: Path,
+) -> None:
+    receipt = search_receipt()
+    receipt["local_owner"]["identity_slug"] = "another-paper-2024"
+    report = run_ingress(
+        tmp_path,
+        paper_request(),
+        {f"{SLUG}:search": [receipt]},
+    )
+
+    assert report["result"]["status"] == "metadata_failed"
+    ingress = report["result"]["ingress_receipt"]
+    assert ingress["stage"] == "resolve"
+    assert ingress["failure"]["code"] == "material.search_owner_mismatch"
+    assert len(report["trace"]) == 1
+
+
+def test_search_complete_with_non_null_issue_is_rejected_by_schema(
+    tmp_path: Path,
+) -> None:
+    malformed = search_receipt()
+    malformed["terminal"] = {
+        "status": "complete",
+        "issue": {
+            "code": "none",
+            "operation": "material.search",
+            "summary": "This explanatory issue is incompatible with complete",
+            "user_question": None,
+            "retryable": False,
+        },
+    }
+    report = run_ingress(
+        tmp_path,
+        paper_request(),
+        {f"{SLUG}:search": [malformed]},
+    )
+
+    assert report["result"]["status"] == "metadata_failed"
+    assert report["result"]["ingress_receipt"]["failure"]["code"] == (
+        "material.search_receipt_invalid"
+    )
 
 
 def test_malformed_search_receipt_stops_before_acquire(tmp_path: Path) -> None:

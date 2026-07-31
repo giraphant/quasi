@@ -204,12 +204,11 @@ def prepare_stage(
 ) -> dict[str, Any]:
     p = paths(slug)
     return {
-        "schema_version": "quasi.stage.receipt/0.1",
+        "schema_version": "quasi.stage.receipt/0.2",
         "operation": "talk.prepare",
         "stage": "Prepare",
         "material_key": f"talk:{slug}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "slug": slug,
         "source_path": p["media"],
@@ -229,7 +228,7 @@ def prepare_stage(
             }
         ],
         "diagnostics": [],
-        "issue": stage_issue,
+        "terminal": {"status": status, "issue": stage_issue},
     }
 
 

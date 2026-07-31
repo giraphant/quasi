@@ -179,12 +179,11 @@ def paper_prepare_receipt(
             },
         )
     return {
-        "schema_version": "quasi.stage.receipt/0.1",
+        "schema_version": "quasi.stage.receipt/0.2",
         "operation": "paper.prepare",
         "stage": "Prepare",
         "material_key": f"paper:{slug}",
         "effect": "writer",
-        "status": "complete",
         "attempt": 1,
         "source_path": paths["source"],
         "selected_input": selected,
@@ -197,7 +196,7 @@ def paper_prepare_receipt(
             }
         ],
         "diagnostics": [],
-        "issue": None,
+        "terminal": {"status": "complete", "issue": None},
     }
 
 
@@ -345,12 +344,11 @@ def book_prepare_receipt(slug: str) -> dict[str, Any]:
     output_dir = f"processing/chapters/{slug}"
     manifest = f"{output_dir}/manifest.json"
     return {
-        "schema_version": "quasi.stage.receipt/0.1",
+        "schema_version": "quasi.stage.receipt/0.2",
         "operation": "book.prepare",
         "stage": "Prepare",
         "material_key": f"book:{slug}",
         "effect": "writer",
-        "status": "complete",
         "attempt": 1,
         "format": "epub",
         "output_dir": output_dir,
@@ -387,7 +385,7 @@ def book_prepare_receipt(slug: str) -> dict[str, Any]:
             }
         ],
         "diagnostics": [],
-        "issue": None,
+        "terminal": {"status": "complete", "issue": None},
     }
 
 
@@ -525,17 +523,16 @@ def material_ingress_responses(
         f"{slug}:search": [
             reply(
                 {
-                    "schema_version": "quasi.stage.receipt/0.1",
+                    "schema_version": "quasi.stage.receipt/0.2",
                     "operation": "material.search",
                     "stage": "Search",
                     "material_key": request_key,
                     "effect": "readonly",
-                    "status": "complete",
                     "attempt": 1,
                     "kind": kind,
                     "identity": picked,
                     "local_owner": {
-                        "requested_slug": slug,
+                        "identity_slug": slug,
                         "vault_slug": None,
                         "path": None,
                         "match": None,
@@ -548,7 +545,7 @@ def material_ingress_responses(
                             "summary": "verified fixture identity",
                         }
                     ],
-                    "issue": None,
+                    "terminal": {"status": "complete", "issue": None},
                 }
             )
         ],

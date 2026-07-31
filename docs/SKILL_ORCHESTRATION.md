@@ -77,11 +77,13 @@ Evidence      Facts already established by earlier stages.
 Receipt       One StructuredOutput schema and its terminal meanings.
 ```
 
-The shared receipt is `quasi.stage.receipt/0.1`:
+The shared receipt is `quasi.stage.receipt/0.2`. Its required `terminal` is a
+closed status union, so a success receipt cannot also carry a failure issue:
 
 - `complete`: the specialist established the exact postcondition consumed by
   the next stage.
-- `needs_input`: one concrete user answer can change the outcome.
+- `needs_input`: one concrete user answer can change the outcome; the terminal
+  carries the evidence-backed candidates and exact identity conflict fields.
 - `blocked`: the current capability boundary or an unknown writer outcome
   prevents a trustworthy continuation.
 - `failed`: the specialist exhausted useful approaches and reached a known

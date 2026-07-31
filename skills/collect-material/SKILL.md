@@ -43,12 +43,12 @@ artifacts、failure 和 resume。Skill 只保留本次用户意图与用户随�
 - 一批材料：`quasi.collection.material-batch.receipt/0.1`，并保持输入顺序。
 - Author：collection receipt。
 - Translation：`quasi.derivative.translation.receipt/0.1`。
-- Specialist Stage：`quasi.stage.receipt/0.1`，terminal 为
+- Specialist Stage：`quasi.stage.receipt/0.2`，terminal 为
   `complete|needs_input|blocked|failed`。
 
-`complete` 证明了本阶段交给下一阶段的 exact artifacts；`needs_input` 带一个用户可以回答
-的问题；`blocked` 表示现有能力或 writer outcome 无法可靠继续；`failed` 是 specialist 已经
-尽力调查后的确定失败。
+`complete` 证明了本阶段交给下一阶段的 exact artifacts；`needs_input` 带一个用户可以回答的
+问题，Search 还带候选身份与冲突字段；`blocked` 表示现有能力或 writer outcome 无法可靠继续；
+`failed` 是 specialist 已经尽力调查后的确定失败。
 
 ## Agent / Helper 合同
 

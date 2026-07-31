@@ -183,12 +183,11 @@ def failed_search(
     query: dict[str, Any],
 ) -> dict[str, Any]:
     return {
-        "schema_version": "quasi.stage.receipt/0.1",
+        "schema_version": "quasi.stage.receipt/0.2",
         "operation": "material.search",
         "stage": "Search",
         "material_key": request_key,
         "effect": "readonly",
-        "status": "failed",
         "attempt": 1,
         "kind": kind,
         "identity": None,
@@ -199,12 +198,15 @@ def failed_search(
             "query": query["title"],
             "summary": "No defensible identity was established.",
         }],
-        "issue": {
-            "code": "material.identity_not_resolved",
-            "operation": "material.search",
-            "summary": "no complete identity",
-            "user_question": None,
-            "retryable": False,
+        "terminal": {
+            "status": "failed",
+            "issue": {
+                "code": "material.identity_not_resolved",
+                "operation": "material.search",
+                "summary": "no complete identity",
+                "user_question": None,
+                "retryable": False,
+            },
         },
     }
 
@@ -241,12 +243,11 @@ def successful_paper_search(
 ) -> dict[str, Any]:
     query = paper_query()
     return {
-        "schema_version": "quasi.stage.receipt/0.1",
+        "schema_version": "quasi.stage.receipt/0.2",
         "operation": "material.search",
         "stage": "Search",
         "material_key": request_key,
         "effect": "readonly",
-        "status": "complete",
         "attempt": 1,
         "kind": "paper",
         "identity": {
@@ -261,7 +262,7 @@ def successful_paper_search(
             "confidence": "high",
         },
         "local_owner": {
-            "requested_slug": slug,
+            "identity_slug": slug,
             "vault_slug": None,
             "path": None,
             "match": None,
@@ -272,7 +273,7 @@ def successful_paper_search(
             "query": query["doi"],
             "summary": "DOI and bibliographic fields agree.",
         }],
-        "issue": None,
+        "terminal": {"status": "complete", "issue": None},
     }
 
 

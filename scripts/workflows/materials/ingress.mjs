@@ -3,6 +3,7 @@ import {
   materialSearchStageSchema,
   materialSearchPrompt,
 } from "../operations/acquire.mjs";
+import { stageIssue } from "../stage.mjs";
 
 const INGRESS_RECEIPT_VERSION =
   "quasi.material-ingress.receipt/0.1";
@@ -250,7 +251,7 @@ function operationFailure(
 }
 
 function stageFailure(receipt, outcome = "known") {
-  const issue = receipt && receipt.issue;
+  const issue = stageIssue(receipt);
   return operationFailure(
     (issue && issue.code) || "material.search_failed",
     "material.search",
@@ -569,7 +570,7 @@ async function runResolvedIngress(
     );
   const picked = yearAdjusted.picked;
   const resolved = search.local_owner;
-  if (resolved.requested_slug !== picked.slug)
+  if (resolved.identity_slug !== picked.slug)
     return terminal(
       request,
       operations,

@@ -19,6 +19,7 @@ import {
   paperPrepareStageSchema,
 } from "../operations/extract.mjs";
 import { optionalText, validText } from "../runtime.mjs";
+import { stageIssue } from "../stage.mjs";
 
 const MATERIAL_RECEIPT_VERSION = "quasi.material-loop.receipt/0.1";
 const PAPER_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
@@ -331,7 +332,7 @@ function mismatchBlocked(state, stage, operationKey) {
 }
 
 function prepareFailure(receipt, outcome = "known") {
-  const issue = receipt && receipt.issue;
+  const issue = stageIssue(receipt);
   return operationFailure(
     (issue && issue.code) || "paper.prepare_failed",
     "paper.prepare",
@@ -407,7 +408,7 @@ async function prepare(runtime, state) {
         state,
         "needs_input",
         "prepare",
-        { question: run.receipt.issue.user_question },
+        { question: stageIssue(run.receipt).user_question },
         prepareFailure(run.receipt),
       ),
     };

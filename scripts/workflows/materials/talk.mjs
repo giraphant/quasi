@@ -17,6 +17,7 @@ import {
   talkPrepareStageSchema,
 } from "../operations/transcribe.mjs";
 import { validText } from "../runtime.mjs";
+import { stageIssue } from "../stage.mjs";
 
 const MATERIAL_RECEIPT_VERSION =
   "quasi.material-loop.receipt/0.1";
@@ -394,7 +395,7 @@ function analysisInputs(state) {
 }
 
 function prepareFailure(receipt, outcome = "known") {
-  const issue = receipt && receipt.issue;
+  const issue = stageIssue(receipt);
   return operationFailure(
     (issue && issue.code) || "talk.prepare_failed",
     "talk.prepare",
@@ -469,7 +470,7 @@ async function prepareTalk(runtime, state) {
         "needs_input",
         "prepare",
         prepareFailure(run.receipt),
-        { question: run.receipt.issue.user_question },
+        { question: stageIssue(run.receipt).user_question },
       ),
     };
   if (run.edge === "failed")

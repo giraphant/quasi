@@ -229,12 +229,11 @@ function harness() {{
       }})
       if (options.label === 'parity-paper:search')
         return {{
-          schema_version: 'quasi.stage.receipt/0.1',
+          schema_version: 'quasi.stage.receipt/0.2',
           operation: 'material.search',
           stage: 'Search',
           material_key: 'paper:parity-paper',
           effect: 'readonly',
-          status: 'complete',
           attempt: 1,
           kind: 'paper',
           identity: {{
@@ -249,7 +248,7 @@ function harness() {{
             confidence: 'high',
           }},
           local_owner: {{
-            requested_slug: 'parity-paper',
+            identity_slug: 'parity-paper',
             vault_slug: null,
             path: null,
             match: null,
@@ -260,7 +259,7 @@ function harness() {{
             query: '10.1000/parity',
             summary: 'exact DOI fixture',
           }}],
-          issue: null,
+          terminal: {{ status: 'complete', issue: null }},
         }}
       return {{
         acquired: 0,
@@ -341,12 +340,11 @@ const primitives = {{
     calls.push({{ label: options.label }})
     if (options.label === 'legacy-book:search')
       return {{
-        schema_version: 'quasi.stage.receipt/0.1',
+        schema_version: 'quasi.stage.receipt/0.2',
         operation: 'material.search',
         stage: 'Search',
         material_key: 'book:legacy-book',
         effect: 'readonly',
-        status: 'complete',
         attempt: 1,
         kind: 'book',
         identity: {{
@@ -360,7 +358,7 @@ const primitives = {{
           confidence: 'high',
         }},
         local_owner: {{
-          requested_slug: 'legacy-book',
+          identity_slug: 'legacy-book',
           vault_slug: null,
           path: null,
           match: null,
@@ -371,7 +369,7 @@ const primitives = {{
           query: 'Legacy Book A. Author',
           summary: 'publisher and year agree',
         }}],
-        issue: null,
+        terminal: {{ status: 'complete', issue: null }},
       }}
     return {{
       acquired: 0,

@@ -3,7 +3,7 @@
 // one of four honest terminal judgements. The Workflow supplies boundaries,
 // validates this one receipt shape, and routes the resulting edge.
 
-export const STAGE_RECEIPT_VERSION = "quasi.stage.receipt/0.1";
+export const STAGE_RECEIPT_VERSION = "quasi.stage.receipt/0.2";
 
 export const STAGE_STATUSES = [
   "complete",
@@ -12,8 +12,11 @@ export const STAGE_STATUSES = [
   "failed",
 ];
 
-export const stageIssueSchema = (operation) => ({
-  type: ["object", "null"],
+const stageIssueObjectSchema = (
+  operation,
+  { questionRequired = false } = {},
+) => ({
+  type: "object",
   additionalProperties: false,
   required: [
     "code",
@@ -27,11 +30,49 @@ export const stageIssueSchema = (operation) => ({
     operation: { const: operation },
     summary: { type: "string", minLength: 1, maxLength: 4000 },
     user_question: {
-      type: ["string", "null"],
+      type: questionRequired ? "string" : ["string", "null"],
+      ...(questionRequired ? { minLength: 1 } : {}),
       maxLength: 4000,
     },
     retryable: { type: "boolean" },
   },
+});
+
+const terminalPayload = (payloads, status) => {
+  const payload = payloads && payloads[status];
+  return payload && typeof payload === "object" ? payload : {};
+};
+
+const stageTerminalBranch = (
+  operation,
+  status,
+  payloads,
+) => {
+  const payload = terminalPayload(payloads, status);
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["status", "issue", ...(payload.required || [])],
+    properties: {
+      status: { const: status },
+      issue:
+        status === "complete"
+          ? { type: "null" }
+          : stageIssueObjectSchema(operation, {
+              questionRequired: status === "needs_input",
+            }),
+      ...(payload.properties || {}),
+    },
+  };
+};
+
+// Claude rejects top-level schema combinators, so the discriminated union lives
+// inside one required property. The host can now reject hybrid terminals (for
+// example complete plus a non-null issue) before the receipt reaches the Graph.
+export const stageTerminalSchema = (operation, payloads = {}) => ({
+  anyOf: STAGE_STATUSES.map((status) =>
+    stageTerminalBranch(operation, status, payloads),
+  ),
 });
 
 export function stageReceiptSchema({
@@ -41,6 +82,7 @@ export function stageReceiptSchema({
   effect,
   required = [],
   properties = {},
+  terminalPayloads = {},
 }) {
   return {
     type: "object",
@@ -51,10 +93,9 @@ export function stageReceiptSchema({
       "stage",
       "material_key",
       "effect",
-      "status",
       "attempt",
       ...required,
-      "issue",
+      "terminal",
     ],
     properties: {
       schema_version: { const: STAGE_RECEIPT_VERSION },
@@ -62,10 +103,9 @@ export function stageReceiptSchema({
       stage: { const: stage },
       material_key: { const: materialKey },
       effect: { const: effect },
-      status: { type: "string", enum: STAGE_STATUSES },
       attempt: { type: "integer", const: 1 },
       ...properties,
-      issue: stageIssueSchema(operation),
+      terminal: stageTerminalSchema(operation, terminalPayloads),
     },
   };
 }
@@ -77,18 +117,13 @@ export function stageReceiptSchema({
 export function stageContract({ schema, complete }) {
   return {
     schema,
-    status: (receipt) => receipt.status,
+    status: (receipt) => receipt.terminal.status,
     statuses: {
       complete: (receipt, context) =>
-        receipt.issue === null && complete(receipt, context) === true,
-      needs_input: (receipt) =>
-        !!(
-          receipt.issue &&
-          typeof receipt.issue.user_question === "string" &&
-          receipt.issue.user_question.length > 0
-        ),
-      blocked: (receipt) => !!receipt.issue,
-      failed: (receipt) => !!receipt.issue,
+        complete(receipt, context) === true,
+      needs_input: () => true,
+      blocked: () => true,
+      failed: () => true,
     },
     edges: {
       complete: "ok",
@@ -99,15 +134,8 @@ export function stageContract({ schema, complete }) {
   };
 }
 
-export const stageIssue = (
-  operation,
-  code,
-  summary,
-  { userQuestion = null, retryable = false } = {},
-) => ({
-  code,
-  operation,
-  summary,
-  user_question: userQuestion,
-  retryable,
-});
+export const stageStatus = (receipt) =>
+  receipt && receipt.terminal ? receipt.terminal.status : null;
+
+export const stageIssue = (receipt) =>
+  receipt && receipt.terminal ? receipt.terminal.issue : null;

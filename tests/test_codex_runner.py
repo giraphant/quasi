@@ -89,7 +89,7 @@ console.log(JSON.stringify(strictSchema(TRANSLATION_PREPARE_STAGE_CONTRACT.schem
     assert any(branch.get("type") == "number" for branch in median["anyOf"])
 
 
-def test_codex_runner_strictifies_nullable_failure_objects() -> None:
+def test_codex_runner_strictifies_stage_terminal_branches() -> None:
     script = f"""
 import {{ strictSchema }} from {json.dumps(RUNNER.as_uri())}
 import {{
@@ -105,15 +105,22 @@ console.log(JSON.stringify(strictSchema(PAPER_PREPARE_STAGE_CONTRACT.schema)))
         check=True,
     )
     schema = json.loads(proc.stdout)
-    issue = schema["properties"]["issue"]
-
-    assert set(issue["type"]) == {"object", "null"}
-    assert issue["additionalProperties"] is False
-    assert set(issue["required"]) == set(issue["properties"])
-    assert set(issue["properties"]["user_question"]["type"]) == {
-        "string",
-        "null",
-    }
+    branches = schema["properties"]["terminal"]["anyOf"]
+    assert [branch["properties"]["status"]["const"] for branch in branches] == [
+        "complete",
+        "needs_input",
+        "blocked",
+        "failed",
+    ]
+    assert branches[0]["properties"]["issue"] == {"type": "null"}
+    for branch in branches[1:]:
+        issue = branch["properties"]["issue"]
+        assert issue["additionalProperties"] is False
+        assert set(issue["required"]) == set(issue["properties"])
+        assert issue["properties"]["user_question"]["type"] in (
+            "string",
+            ["string", "null"],
+        )
 
 
 def test_codex_runner_executes_graph_through_codex_cli_contract(

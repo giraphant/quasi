@@ -35,7 +35,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 ### Stage Unit model
 
 - A non-trivial stage is one goal-owning Agent invocation with a self-contained envelope: goal, exact inputs/outputs, bounded identity, available capabilities, and one output schema.
-- The shared Stage receipt is `quasi.stage.receipt/0.1` with `complete|needs_input|blocked|failed`. `complete` proves only the exact artifacts required by the next stage; the other terminals carry one typed issue and, for `needs_input`, a concrete user question.
+- The shared Stage receipt is `quasi.stage.receipt/0.2`. Its required `terminal` is a closed `complete|needs_input|blocked|failed` union: `complete` proves only the exact artifacts required by the next stage and requires `issue:null`; the other terminals carry one typed issue, while `needs_input` also carries concrete candidates, conflict fields, and a user question.
 - The Agent owns professional method and stopping judgement. Do not encode query counts, provider cascades, text-readability heuristics, OCR decisions, chapter replanning, or translation recovery as Graph branches merely to control the Agent. A hard bound belongs in the Graph only when it protects a real shared resource or writer boundary.
 - The Workflow validates the same schema sent to StructuredOutput, then checks exact ownership and cross-artifact joins. Do not add a second, stricter handwritten interpretation of a schema-valid failure receipt.
 - Single-action producer Operations such as Analyse, Synthesise, and Audit may keep their operation receipts. Stage Units are for work that naturally requires specialist investigation or local recovery, not a requirement to make every Agent invocation large.
@@ -162,7 +162,7 @@ capabilities, not separate Workflow nodes. The graph sees the resulting exact
 artifacts, then invokes the single-action Analyse/Synthesise/Audit producers.
 
 Receipt validation is centralised in `runtime.mjs::operate`. For a Stage Unit,
-the host and runtime validate the same closed `quasi.stage.receipt/0.1` schema,
+the host and runtime validate the same closed `quasi.stage.receipt/0.2` schema,
 then the Stage contract checks only the exact postcondition needed by the next
 stage. Schema-valid `needs_input|blocked|failed` terminals are routed as their
 declared meaning; the graph must not reinterpret them as malformed because it
@@ -278,4 +278,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.20.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.22.

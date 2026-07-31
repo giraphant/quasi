@@ -62,7 +62,7 @@ def test_skill_orchestration_guide_describes_the_three_owners() -> None:
     assert "The Workflow is a stage board" in text
     assert "An Agent is a goal-owning specialist" in text
     assert "deterministic CLI remains responsible" in text
-    assert "quasi.stage.receipt/0.1" in text
+    assert "quasi.stage.receipt/0.2" in text
     assert "complete" in text and "needs_input" in text
 
 
@@ -152,17 +152,28 @@ const schema = materialSearchStageSchema({{
 console.log(JSON.stringify({{
   root: schema.type,
   identity: schema.properties.identity.type,
-  issue: schema.properties.issue.type,
-  status: schema.properties.status.enum,
+  terminalBranches: schema.properties.terminal.anyOf.map(branch => ({{
+    status: branch.properties.status.const,
+    issue: branch.properties.issue.type,
+    required: branch.required,
+  }})),
   required: schema.required,
 }}))
 """
     )
     assert result["root"] == "object"
     assert result["identity"] == ["object", "null"]
-    assert result["issue"] == ["object", "null"]
-    assert result["status"] == ["complete", "needs_input", "blocked", "failed"]
+    assert [branch["status"] for branch in result["terminalBranches"]] == [
+        "complete",
+        "needs_input",
+        "blocked",
+        "failed",
+    ]
+    assert result["terminalBranches"][0]["issue"] == "null"
+    needs_input = result["terminalBranches"][1]
+    assert {"candidates", "conflicts"} <= set(needs_input["required"])
     assert "identity" in result["required"]
+    assert "terminal" in result["required"]
 
 
 def test_ingress_uses_one_search_stage_for_identity_and_local_owner() -> None:

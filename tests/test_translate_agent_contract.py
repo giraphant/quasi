@@ -87,15 +87,18 @@ import { TRANSLATION_PREPARE_STAGE_CONTRACT } from "./scripts/workflows/operatio
 const schema = TRANSLATION_PREPARE_STAGE_CONTRACT.schema;
 if (schema.type !== "object" || schema.additionalProperties !== false)
   throw new Error("stage root must be closed");
-for (const key of ["schema_version", "operation", "stage", "material_key", "effect", "status", "attempt", "source", "validation", "gate", "steps", "issue"])
+for (const key of ["schema_version", "operation", "stage", "material_key", "effect", "attempt", "source", "validation", "gate", "steps", "terminal"])
   if (!schema.required.includes(key)) throw new Error(`missing ${key}`);
 for (const key of ["oneOf", "allOf", "anyOf", "if", "then"])
   if (Object.hasOwn(schema, key)) throw new Error(`top-level ${key}`);
 if (schema.properties.operation.const !== "translation.prepare")
   throw new Error("wrong operation");
-const issue = schema.properties.issue;
-if (!Array.isArray(issue.type) || !issue.type.includes("object") || !issue.type.includes("null"))
-  throw new Error("issue must be nullable object");
+const branches = schema.properties.terminal.anyOf;
+if (branches.length !== 4) throw new Error("wrong terminal branch count");
+if (branches[0].properties.status.const !== "complete" || branches[0].properties.issue.type !== "null")
+  throw new Error("complete terminal must require issue:null");
+if (branches[1].properties.status.const !== "needs_input" || branches[1].properties.issue.type !== "object")
+  throw new Error("needs_input terminal must require an issue object");
 const median = schema.properties.validation.properties.coverage.properties.median;
 if (!Array.isArray(median.anyOf) || !median.anyOf.some(row => row.type === "null"))
   throw new Error("coverage median must preserve explicit null");

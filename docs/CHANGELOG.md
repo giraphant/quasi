@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.22** (2026-07-31): **Stage 回执成为真正的闭合终态，Search canonical identity 不再被 provisional slug 反向否决。**
+  - 统一 Stage receipt 升至 `quasi.stage.receipt/0.2`：必填 `terminal` 是嵌套的 `complete|needs_input|blocked|failed` 联合结构，`complete` 只能携带 `issue:null`，`needs_input` 必须给出可回答的问题；Search 的人工卡点还逐字保留候选 identity 与冲突字段。Claude StructuredOutput、Graph backstop、Codex strictifier 和 GUI driver 因而消费同一份完整性合同，不再依赖 Graph 猜测互相矛盾的顶层字段。
+  - `material.search` 选出的 canonical slug 现在是 vault owner 查询和下游路径交接的唯一键。题名规范化、副标题补全或 canonical slug 改进可正常进入 Acquire；作者、作品、年份、identifier、edition 或 publication type 的实质冲突则作为 typed `needs_input` 返回，不再伪装成 owner mismatch。
+  - Metadata/Prepare specialist 在交付前按 schema 选择并自检一个 terminal 分支。524 等宿主/API 中断仍诚实终止当前 run，没有新增 Graph 自动重投、provider 次数表或文献个案分支。生成 bundle 为 292,508 bytes；全库 769 项回归通过。
+
 - **0.52.21** (2026-07-31): **Workflow 收敛为阶段看板，specialist Agent 接回专业方法与局部恢复。**
   - Search、Paper/Book Prepare、Talk Prepare 与 Translation Prepare 现在各由一次 goal-owning specialist invocation 完成。Workflow 只注入目标、capabilities、exact refs 与统一 `quasi.stage.receipt/0.1` schema，并按 `complete|needs_input|blocked|failed` 推进；查询、证据交叉核验、OCR、章节规划与局部恢复由对应 Agent 根据实际材料判断。
   - 单本 Book/Paper ingress 删除了重复的独立 `material.recall` worker。`material.search` 在同一次调查中先核定 identity，再通过 vault resolver 核对 exact local owner；Recall 仅保留为请求归一化与 same-run coalesce 的 UI 阶段，不再产生第二份 nullable lookup receipt。

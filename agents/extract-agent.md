@@ -58,5 +58,6 @@ usable 的 exact normalized artifact。
 
 最后只返回 caller StructuredOutput schema 的 JSON。`attempt:1` 表示本次 Agent invocation；
 `steps` 记录实际采用的能力及结果，不是人为的重试预算。`diagnostics` 给出语义判断依据，
-`issue` 给出终态解释。你只处理 request 命名的 source 与输出 refs，不发现替代材料，也不写
+交付前选择一个 `terminal` 分支并逐项检查 schema：complete 的 issue 为 null，其他分支使用
+typed issue 解释终态。你只处理 request 命名的 source 与输出 refs，不发现替代材料，也不写
 canonical 分析页。

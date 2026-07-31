@@ -94,7 +94,8 @@ The shared graph presents progress as
 Non-trivial work such as bibliographic investigation, readable-text recovery,
 chapter preparation, Talk transcription, and Translation validation is a Stage
 Unit: one specialist receives a goal, exact refs, declared capabilities, and a
-closed `quasi.stage.receipt/0.1` schema. The specialist owns method and local
+closed `quasi.stage.receipt/0.2` schema. The terminal is a discriminated union,
+so complete and non-complete evidence cannot be mixed. The specialist owns method and local
 recovery; the graph checks only the exact artifacts needed by the next stage.
 Single-product Analyse/Synthesise/Audit operations remain narrow. Unknown writer
 outcomes block instead of racing a second writer.
