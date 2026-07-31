@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.21** (2026-07-31): **Workflow 收敛为阶段看板，specialist Agent 接回专业方法与局部恢复。**
+  - Search、Paper/Book Prepare、Talk Prepare 与 Translation Prepare 现在各由一次 goal-owning specialist invocation 完成。Workflow 只注入目标、capabilities、exact refs 与统一 `quasi.stage.receipt/0.1` schema，并按 `complete|needs_input|blocked|failed` 推进；查询、证据交叉核验、OCR、章节规划与局部恢复由对应 Agent 根据实际材料判断。
+  - 单本 Book/Paper ingress 删除了重复的独立 `material.recall` worker。`material.search` 在同一次调查中先核定 identity，再通过 vault resolver 核对 exact local owner；Recall 仅保留为请求归一化与 same-run coalesce 的 UI 阶段，不再产生第二份 nullable lookup receipt。
+  - Graph 不再因 schema-valid specialist failure 不符合隐藏策略而改判 receipt invalid，也不会在 readonly Stage outcome 未知时自动启动第二个 specialist。Exact artifact ownership、writer no-replay、batch phase admission 和 collection join 仍保持严格。
+
 - **0.52.20** (2026-07-31): **把 Workflow 收敛为 Operation 图：回执校验进入 Schema/Runtime，Agent 接回稳定执行合同。**
   - Writer 的 exact path、ordered inputs、status matrix 与 closed failure 现在由每次调用的 composed StructuredOutput schema 直接约束；仍在运行的原 Agent 会被宿主要求修正不合格 receipt，Graph 只消费 `unknown|mismatch|reconcile|blocked|failed|ok` 闭合边，不再复制一套细粒度验证或在 unknown writer outcome 后重投。
   - `runtime.mjs::operate` 用同一个 host schema 做统一 backstop；跨字段计数、年份证据、人类决定 replay、reconcile 解释等 JSON Schema 无法表达的少量语义留在 Operation contract。Author/Topic 的 child MaterialReceipt join 继续严格重证 identity、canonical artifact 与 final audit，host-pluggable dispatch seam 不被错误信任。

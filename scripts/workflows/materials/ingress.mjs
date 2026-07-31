@@ -1,10 +1,6 @@
 import {
-  MATERIAL_RECALL_SCHEMA,
-  MATERIAL_RESOLVE_SCHEMA,
-  MATERIAL_SEARCH_BOOK_SCHEMA,
-  MATERIAL_SEARCH_PAPER_SCHEMA,
-  materialRecallPrompt,
-  materialResolvePrompt,
+  MATERIAL_SEARCH_STAGE_CONTRACT,
+  materialSearchStageSchema,
   materialSearchPrompt,
 } from "../operations/acquire.mjs";
 
@@ -20,8 +16,6 @@ const CATEGORIES = new Set([
   "handbook",
   "other",
 ]);
-const LOOKUP_MISS = "__none__";
-
 const exactKeys = (value, keys) =>
   !!(
     value &&
@@ -39,39 +33,6 @@ const validText = (value, min, max) =>
   value.length >= min &&
   value.length <= max &&
   !CONTROL_CHARS.test(value);
-
-const optionalText = (value, max) =>
-  value === null || validText(value, 1, max);
-
-function sameClosedValue(left, right) {
-  if (Array.isArray(left) || Array.isArray(right))
-    return (
-      Array.isArray(left) &&
-      Array.isArray(right) &&
-      left.length === right.length &&
-      left.every((value, index) =>
-        sameClosedValue(value, right[index]),
-      )
-    );
-  if (
-    left &&
-    right &&
-    typeof left === "object" &&
-    typeof right === "object"
-  ) {
-    const leftKeys = Object.keys(left);
-    const rightKeys = Object.keys(right);
-    return (
-      leftKeys.length === rightKeys.length &&
-      leftKeys.every(
-        (key) =>
-          Object.prototype.hasOwnProperty.call(right, key) &&
-          sameClosedValue(left[key], right[key]),
-      )
-    );
-  }
-  return Object.is(left, right);
-}
 
 function cleanText(value) {
   if (value == null || value === "") return null;
@@ -277,266 +238,34 @@ function operationFailure(
   operationKey,
   outcome,
   message,
+  retryable = false,
 ) {
   return {
     code,
     operation_key: operationKey,
     outcome,
-    retryable: false,
+    retryable,
     message,
   };
 }
 
-function validFailure(failure, key) {
-  return !!(
-    exactKeys(failure, [
-      "code",
-      "operation_key",
-      "outcome",
-      "retryable",
-      "message",
-    ]) &&
-    validText(failure.code, 1, 200) &&
-    failure.operation_key === key &&
-    ["known", "unknown"].includes(failure.outcome) &&
-    failure.retryable === false &&
-    optionalText(failure.message, 4000)
+function stageFailure(receipt, outcome = "known") {
+  const issue = receipt && receipt.issue;
+  return operationFailure(
+    (issue && issue.code) || "material.search_failed",
+    "material.search",
+    outcome,
+    (issue && (issue.user_question || issue.summary)) ||
+      "Metadata Search did not complete",
+    !!(issue && issue.retryable),
   );
-}
-
-function runtimeUnknown(receipt, key) {
-  return !!(
-    receipt &&
-    receipt.schema_version ===
-      "quasi.operation.runtime.receipt/0.1" &&
-    receipt.key === key &&
-    receipt.effect === "readonly" &&
-    receipt.status === "failed" &&
-    receipt.failure &&
-    receipt.failure.operation_key === key &&
-    receipt.failure.outcome === "unknown"
-  );
-}
-
-function canonicalPath(kind, slug) {
-  return kind === "book"
-    ? `vault/books/${slug}/00-overview.md`
-    : `vault/papers/${slug}.md`;
-}
-
-function normaliseLookupReceipt(receipt) {
-  if (
-    !receipt ||
-    typeof receipt !== "object" ||
-    Array.isArray(receipt)
-  )
-    return receipt;
-  if (
-    receipt.vault_slug === LOOKUP_MISS &&
-    receipt.path === LOOKUP_MISS &&
-    receipt.match === "none"
-  )
-    return {
-      ...receipt,
-      vault_slug: null,
-      path: null,
-      match: null,
-    };
-  return receipt;
-}
-
-function strictLookup(receipt, key, request) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "request_key",
-      "kind",
-      "requested_slug",
-      "vault_slug",
-      "path",
-      "match",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      `quasi.operation.${key}.receipt/0.2` ||
-    receipt.key !== key ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    receipt.request_key !== request.request_key ||
-    receipt.kind !== request.kind ||
-    receipt.requested_slug !== request.requested_slug ||
-    !["succeeded", "failed"].includes(receipt.status)
-  )
-    return false;
-  if (receipt.status === "failed")
-    return (
-      receipt.vault_slug === null &&
-      receipt.path === null &&
-      receipt.match === null &&
-      validFailure(receipt.failure, key) &&
-      receipt.failure.outcome === "known"
-    );
-  if (receipt.failure !== null) return false;
-  if (receipt.vault_slug === null)
-    return receipt.path === null && receipt.match === null;
-  const allowedMatches =
-    request.kind === "book"
-      ? ["slug", "isbn", "title"]
-      : ["slug", "doi", "title"];
-  return (
-    SLUG.test(receipt.vault_slug) &&
-    receipt.path ===
-      canonicalPath(request.kind, receipt.vault_slug) &&
-    allowedMatches.includes(receipt.match)
-  );
-}
-
-function validBookPicked(picked) {
-  return !!(
-    exactKeys(picked, [
-      "slug",
-      "title",
-      "authors",
-      "year",
-      "isbn",
-      "publisher",
-      "category",
-      "confidence",
-    ]) &&
-    SLUG.test(picked.slug) &&
-    validText(picked.title, 1, 500) &&
-    Array.isArray(picked.authors) &&
-    picked.authors.length >= 1 &&
-    picked.authors.length <= 32 &&
-    picked.authors.every((author) =>
-      validText(author, 1, 200),
-    ) &&
-    Number.isInteger(picked.year) &&
-    picked.year >= 1500 &&
-    picked.year <= 2030 &&
-    optionalText(picked.isbn, 100) &&
-    validText(picked.publisher, 2, 500) &&
-    CATEGORIES.has(picked.category) &&
-    ["high", "medium"].includes(picked.confidence)
-  );
-}
-
-function validPaperPicked(picked) {
-  return !!(
-    exactKeys(picked, [
-      "slug",
-      "title",
-      "authors",
-      "year",
-      "doi",
-      "oa_url",
-      "url",
-      "journal",
-      "confidence",
-    ]) &&
-    SLUG.test(picked.slug) &&
-    validText(picked.title, 1, 500) &&
-    Array.isArray(picked.authors) &&
-    picked.authors.length >= 1 &&
-    picked.authors.length <= 32 &&
-    picked.authors.every((author) =>
-      validText(author, 1, 200),
-    ) &&
-    Number.isInteger(picked.year) &&
-    picked.year >= 1500 &&
-    picked.year <= 2030 &&
-    optionalText(picked.doi, 300) &&
-    optionalText(picked.oa_url, 2048) &&
-    optionalText(picked.url, 2048) &&
-    validText(picked.journal, 1, 500) &&
-    ["high", "medium"].includes(picked.confidence)
-  );
-}
-
-function strictSearch(receipt, request) {
-  if (
-    !exactKeys(receipt, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "request_key",
-      "kind",
-      "query",
-      "picked",
-      "confidence",
-      "sources_hit",
-      "conflicts",
-      "notes",
-      "failure",
-    ]) ||
-    receipt.schema_version !==
-      "quasi.operation.material.search.receipt/0.1" ||
-    receipt.key !== "material.search" ||
-    receipt.effect !== "readonly" ||
-    receipt.attempt !== 1 ||
-    receipt.request_key !== request.requestKey ||
-    receipt.kind !== request.kind ||
-    !sameClosedValue(receipt.query, request.query) ||
-    !Array.isArray(receipt.sources_hit) ||
-    receipt.sources_hit.length > 24 ||
-    receipt.sources_hit.some(
-      (source) => !validText(source, 1, 200),
-    ) ||
-    !Array.isArray(receipt.conflicts) ||
-    receipt.conflicts.length > 32 ||
-    receipt.conflicts.some(
-      (conflict) => !validText(conflict, 1, 1000),
-    ) ||
-    !validText(receipt.notes, 0, 4000)
-  )
-    return false;
-  if (receipt.status === "succeeded")
-    return (
-      receipt.failure === null &&
-      ["high", "medium"].includes(receipt.confidence) &&
-      receipt.picked &&
-      receipt.picked.confidence === receipt.confidence &&
-      (request.kind === "book"
-        ? validBookPicked(receipt.picked)
-        : validPaperPicked(receipt.picked))
-    );
-  return (
-    receipt.status === "failed" &&
-    receipt.picked === null &&
-    receipt.confidence === "low" &&
-    validFailure(receipt.failure, "material.search") &&
-    receipt.failure.outcome === "known"
-  );
-}
-
-function lookupRequest(key, requestKey, kind, requestedSlug, identity) {
-  return {
-    schema_version: `quasi.operation.${key}.request/0.1`,
-    operation: key,
-    effect: "readonly",
-    request_key: requestKey,
-    kind,
-    requested_slug: requestedSlug,
-    identity: {
-      title: identity.title,
-      authors: [...identity.authors],
-      isbn: kind === "book" ? identity.isbn : null,
-      doi: kind === "paper" ? identity.doi : null,
-    },
-  };
 }
 
 function operationSpec(key) {
   return {
     key,
     effect: "readonly",
-    retry: "safe",
+    retry: "forbidden",
     artifactRoles: [],
     replay: "safe",
     unknownFailureCode: "material.readonly_outcome_unknown",
@@ -565,7 +294,7 @@ function ingressReceipt(
     failure,
     resume:
       status === "blocked"
-        ? { operation_key: "material.recall" }
+        ? { operation_key: "material.search" }
         : status === "needs_input"
           ? { operation_key: "material.user-gate" }
           : null,
@@ -602,10 +331,10 @@ function invalidTerminal(kind, args, message) {
     fallback,
     [],
     "needs_input",
-    "recall",
+    "search",
     operationFailure(
       "material.request_invalid",
-      "material.recall",
+      "material.search",
       "known",
       message,
     ),
@@ -622,7 +351,7 @@ function unknownTerminal(request, operations, stage, key) {
       "material.readonly_outcome_unknown",
       key,
       "unknown",
-      `${key} did not return after its bounded readonly retry`,
+      `${key} outcome was not observed`,
     ),
   );
 }
@@ -658,6 +387,12 @@ function applyBookYearDecision(picked, decision) {
   )
     return { ok: true, picked };
   const evidence = decision.year_evidence;
+  if (
+    evidence &&
+    picked.year === evidence.recommended_year &&
+    picked.slug.endsWith(`-${evidence.recommended_year}`)
+  )
+    return { ok: true, picked };
   if (
     !evidence ||
     evidence.verdict !== "MISMATCH" ||
@@ -737,87 +472,44 @@ async function runResolvedIngress(
 ) {
   const operations = [];
   runtime.phase("Recall");
-  const recallRequest = lookupRequest(
-    "material.recall",
-    request.requestKey,
-    request.kind,
-    request.requestedSlug,
-    request.query,
-  );
-  const recall = normaliseLookupReceipt(
-    await runtime.runOperation(
-      materialRecallPrompt(recallRequest),
-      {
-        phase: "Recall",
-        agentType: "quasi:metadata-agent",
-        label: `${request.requestedSlug}:recall`,
-        schema: MATERIAL_RECALL_SCHEMA,
-      },
-      operationSpec("material.recall"),
-    ),
-  );
-  operations.push(recall);
-  if (runtimeUnknown(recall, "material.recall"))
-    return unknownTerminal(
-      request,
-      operations,
-      "recall",
-      "material.recall",
-    );
-  if (!strictLookup(recall, "material.recall", recallRequest))
-    return terminal(
-      request,
-      operations,
-      "metadata_failed",
-      "recall",
-      operationFailure(
-        "material.recall_receipt_invalid",
-        "material.recall",
-        "known",
-        "Recall did not return the exact readonly contract",
-      ),
-    );
-  if (recall.status === "failed")
-    return terminal(
-      request,
-      operations,
-      "metadata_failed",
-      "recall",
-      recall.failure,
-    );
-
   runtime.phase("Search");
   const searchRequest = {
     schema_version:
-      "quasi.operation.material.search.request/0.1",
+      "quasi.stage.material-search.request/0.1",
     operation: "material.search",
+    stage: "Search",
     effect: "readonly",
     request_key: request.requestKey,
     kind: request.kind,
+    requested_slug: request.requestedSlug,
     query: request.query,
+    year_decision:
+      request.kind === "book" ? options.yearDecision || null : null,
   };
-  const search = await runtime.runOperation(
+  const searchSchema = materialSearchStageSchema(searchRequest);
+  const searchRun = await runtime.operate(
     materialSearchPrompt(searchRequest),
     {
       phase: "Search",
       agentType: "quasi:metadata-agent",
       label: `${request.requestedSlug}:search`,
-      schema:
-        request.kind === "book"
-          ? MATERIAL_SEARCH_BOOK_SCHEMA
-          : MATERIAL_SEARCH_PAPER_SCHEMA,
+      schema: searchSchema,
     },
-    operationSpec("material.search"),
+    {
+      ...operationSpec("material.search"),
+      contract: MATERIAL_SEARCH_STAGE_CONTRACT,
+    },
   );
+  const search = searchRun.receipt;
   operations.push(search);
-  if (runtimeUnknown(search, "material.search"))
+  if (searchRun.edge === "unknown")
     return unknownTerminal(
       request,
       operations,
       "search",
       "material.search",
     );
-  if (!strictSearch(search, request))
+  if (searchRun.edge === "mismatch")
     return terminal(
       request,
       operations,
@@ -830,22 +522,38 @@ async function runResolvedIngress(
         "Search did not return the exact identity contract",
       ),
     );
-  if (search.status === "failed")
+  if (searchRun.edge === "blocked")
+    return terminal(
+      request,
+      operations,
+      "blocked",
+      "search",
+      stageFailure(search, "unknown"),
+    );
+  if (searchRun.edge === "needs_input")
     return terminal(
       request,
       operations,
       "needs_input",
       "search",
-      search.failure,
+      stageFailure(search),
+    );
+  if (searchRun.edge === "failed")
+    return terminal(
+      request,
+      operations,
+      "metadata_failed",
+      "search",
+      stageFailure(search),
     );
 
   const yearAdjusted =
     request.kind === "book"
       ? applyBookYearDecision(
-          search.picked,
+          search.identity,
           options.yearDecision,
         )
-      : { ok: true, picked: search.picked };
+      : { ok: true, picked: search.identity };
   if (!yearAdjusted.ok)
     return terminal(
       request,
@@ -860,71 +568,20 @@ async function runResolvedIngress(
       ),
     );
   const picked = yearAdjusted.picked;
-  const resolveRequest = lookupRequest(
-    "material.resolve",
-    request.requestKey,
-    request.kind,
-    picked.slug,
-    picked,
-  );
-  const resolved = normaliseLookupReceipt(
-    await runtime.runOperation(
-      materialResolvePrompt(resolveRequest),
-      {
-        phase: "Search",
-        agentType: "quasi:metadata-agent",
-        label: `${picked.slug}:resolve`,
-        schema: MATERIAL_RESOLVE_SCHEMA,
-      },
-      operationSpec("material.resolve"),
-    ),
-  );
-  operations.push(resolved);
-  if (runtimeUnknown(resolved, "material.resolve"))
-    return unknownTerminal(
-      request,
-      operations,
-      "resolve",
-      "material.resolve",
-    );
-  if (!strictLookup(resolved, "material.resolve", resolveRequest))
+  const resolved = search.local_owner;
+  if (resolved.requested_slug !== picked.slug)
     return terminal(
       request,
       operations,
       "metadata_failed",
       "resolve",
       operationFailure(
-        "material.resolve_receipt_invalid",
-        "material.resolve",
+        "material.search_owner_mismatch",
+        "material.search",
         "known",
-        "Canonical resolve did not return the exact readonly contract",
+        "Search did not resolve the selected canonical slug",
       ),
     );
-  if (resolved.status === "failed")
-    return terminal(
-      request,
-      operations,
-      "metadata_failed",
-      "resolve",
-      resolved.failure,
-    );
-  if (
-    recall.vault_slug !== null &&
-    resolved.vault_slug !== recall.vault_slug
-  )
-    return terminal(
-      request,
-      operations,
-      "needs_input",
-      "resolve",
-      operationFailure(
-        "material.recall_identity_conflict",
-        "material.resolve",
-        "known",
-        "Raw recall and verified metadata resolve to different local works",
-      ),
-    );
-
   const slug = resolved.vault_slug || picked.slug;
   const meta = resolvedMeta(request, picked);
   const identity = { slug, meta };
@@ -933,7 +590,7 @@ async function runResolvedIngress(
     ...lower,
     ingress_receipt: ingressReceipt(request, operations, {
       status: "resolved",
-      stage: "resolve",
+      stage: "search",
       identity,
     }),
   };
@@ -960,10 +617,10 @@ export function processMaterialIngress(
         request,
         [],
         "needs_input",
-        "recall",
+        "search",
         operationFailure(
           "book.year_decision_invalid",
-          "material.recall",
+          "material.search",
           "known",
           "year_decision is not one exact prior Book gate",
         ),
@@ -982,10 +639,10 @@ export function processMaterialIngress(
         request,
         [],
         "needs_input",
-        "recall",
+        "search",
         operationFailure(
           "material.request_identity_conflict",
-          "material.recall",
+          "material.search",
           "known",
           "same-run raw requests share one request key but disagree",
         ),

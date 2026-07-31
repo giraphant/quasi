@@ -1,5 +1,5 @@
 import { validText } from "../runtime.mjs";
-import { composedSchema } from "./extract.mjs";
+import { composedSchema } from "./shared.mjs";
 
 export const AU_SCHEMA = {
   type: "object",

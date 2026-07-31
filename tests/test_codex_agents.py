@@ -54,9 +54,9 @@ def test_codex_agent_sync_generates_native_roles_from_canonical_markdown(
     )
     assert download["name"] == "quasi_download"
     assert download["description"].startswith(
-        "Worker for reconciling or acquiring one exact Book/Paper source"
+        "Acquisition specialist that reconciles or obtains one exact Book/Paper source"
     )
-    assert "你是 quasi 的单材料 acquisition writer" in download[
+    assert "你负责把一个已经建立的 Book 或 Paper identity" in download[
         "developer_instructions"
     ]
     assert "Do not spawn subagents." in download["developer_instructions"]

@@ -20,9 +20,9 @@ const config = JSON.parse(process.argv[1])
 const indexes = new Map()
 const trace = []
 let clock = 0
-let recallsStarted = 0
-let releaseRecalls
-const recallsReady = new Promise(resolve => { releaseRecalls = resolve })
+let searchesStarted = 0
+let releaseSearches
+const searchesReady = new Promise(resolve => { releaseSearches = resolve })
 
 const primitives = {
   agent: async (prompt, options) => {
@@ -38,10 +38,10 @@ const primitives = {
       end: null,
     }
     trace.push(call)
-    if (config.recall_barrier && label.endsWith(":recall")) {
-      recallsStarted += 1
-      if (recallsStarted === config.recall_barrier) releaseRecalls()
-      await recallsReady
+    if (config.search_barrier && label.endsWith(":search")) {
+      searchesStarted += 1
+      if (searchesStarted === config.search_barrier) releaseSearches()
+      await searchesReady
     }
     const steps = config.responses[label] || []
     if (index >= steps.length)
@@ -74,7 +74,7 @@ def run_batch(
     args: dict[str, Any],
     responses: dict[str, list[dict[str, Any]]],
     *,
-    recall_barrier: int = 0,
+    search_barrier: int = 0,
 ) -> dict[str, Any]:
     node = shutil.which("node")
     if not node:
@@ -89,7 +89,7 @@ def run_batch(
             json.dumps({
                 "args": args,
                 "responses": responses,
-                "recall_barrier": recall_barrier,
+                "search_barrier": search_barrier,
             }),
         ],
         cwd=tmp_path,
@@ -177,53 +177,34 @@ def book_request() -> dict[str, Any]:
     }
 
 
-def lookup_receipt(
-    operation: str,
-    request_key: str,
-    kind: str,
-    slug: str,
-) -> dict[str, Any]:
-    return {
-        "schema_version": f"quasi.operation.{operation}.receipt/0.2",
-        "key": operation,
-        "effect": "readonly",
-        "status": "succeeded",
-        "attempt": 1,
-        "request_key": request_key,
-        "kind": kind,
-        "requested_slug": slug,
-        "vault_slug": "__none__",
-        "path": "__none__",
-        "match": "none",
-        "failure": None,
-    }
-
-
 def failed_search(
     request_key: str,
     kind: str,
     query: dict[str, Any],
 ) -> dict[str, Any]:
     return {
-        "schema_version": "quasi.operation.material.search.receipt/0.1",
-        "key": "material.search",
+        "schema_version": "quasi.stage.receipt/0.1",
+        "operation": "material.search",
+        "stage": "Search",
+        "material_key": request_key,
         "effect": "readonly",
         "status": "failed",
         "attempt": 1,
-        "request_key": request_key,
         "kind": kind,
-        "query": query,
-        "picked": None,
+        "identity": None,
+        "local_owner": None,
         "confidence": "low",
-        "sources_hit": [],
-        "conflicts": [],
-        "notes": "no complete identity",
-        "failure": {
+        "observations": [{
+            "source": "structured providers",
+            "query": query["title"],
+            "summary": "No defensible identity was established.",
+        }],
+        "issue": {
             "code": "material.identity_not_resolved",
-            "operation_key": "material.search",
-            "outcome": "known",
+            "operation": "material.search",
+            "summary": "no complete identity",
+            "user_question": None,
             "retryable": False,
-            "message": "no complete identity",
         },
     }
 
@@ -260,15 +241,15 @@ def successful_paper_search(
 ) -> dict[str, Any]:
     query = paper_query()
     return {
-        "schema_version": "quasi.operation.material.search.receipt/0.1",
-        "key": "material.search",
+        "schema_version": "quasi.stage.receipt/0.1",
+        "operation": "material.search",
+        "stage": "Search",
+        "material_key": request_key,
         "effect": "readonly",
-        "status": "succeeded",
+        "status": "complete",
         "attempt": 1,
-        "request_key": request_key,
         "kind": "paper",
-        "query": query,
-        "picked": {
+        "identity": {
             "slug": slug,
             "title": query["title"],
             "authors": query["authors"],
@@ -279,11 +260,19 @@ def successful_paper_search(
             "journal": "Parallel Studies",
             "confidence": "high",
         },
+        "local_owner": {
+            "requested_slug": slug,
+            "vault_slug": None,
+            "path": None,
+            "match": None,
+        },
         "confidence": "high",
-        "sources_hit": ["crossref"],
-        "conflicts": [],
-        "notes": "DOI match",
-        "failure": None,
+        "observations": [{
+            "source": "Crossref",
+            "query": query["doi"],
+            "summary": "DOI and bibliographic fields agree.",
+        }],
+        "issue": None,
     }
 
 
@@ -315,22 +304,6 @@ def test_batch_is_one_parallel_run_with_ordered_item_progress(
     paper_slug = "example-parallel-paper-2024"
     book_slug = "writer-parallel-book-2023"
     responses = {
-        f"{paper_slug}:recall": [
-            lookup_receipt(
-                "material.recall",
-                f"paper:{paper_slug}",
-                "paper",
-                paper_slug,
-            ),
-        ],
-        f"{book_slug}:recall": [
-            lookup_receipt(
-                "material.recall",
-                f"book:{book_slug}",
-                "book",
-                book_slug,
-            ),
-        ],
         f"{paper_slug}:search": [
             failed_search(
                 f"paper:{paper_slug}",
@@ -353,20 +326,20 @@ def test_batch_is_one_parallel_run_with_ordered_item_progress(
             "items": [paper_request(), book_request()],
         },
         responses,
-        recall_barrier=2,
+        search_barrier=2,
     )
 
     result = report["result"]
-    assert result["status"] == "partial"
+    assert result["status"] == "failed"
     assert result["batch_receipt"] == {
         "schema_version": "quasi.collection.material-batch.receipt/0.1",
-        "status": "partial",
+        "status": "failed",
         "total": 2,
         "counts": {
             "complete": 0,
-            "needs_input": 2,
+            "needs_input": 0,
             "blocked": 0,
-            "failed": 0,
+            "failed": 2,
         },
         "items": result["batch_receipt"]["items"],
         "failure": None,
@@ -375,16 +348,16 @@ def test_batch_is_one_parallel_run_with_ordered_item_progress(
         (item["index"], item["kind"], item["status"])
         for item in result["results"]
     ] == [
-        (0, "paper", "needs_input"),
-        (1, "book", "needs_input"),
+        (0, "paper", "failed"),
+        (1, "book", "failed"),
     ]
-    recall_calls = [
+    search_calls = [
         call for call in report["trace"]
-        if call["label"].endswith(":recall")
+        if call["label"].endswith(":search")
     ]
-    assert len(recall_calls) == 2
-    assert max(call["start"] for call in recall_calls) < min(
-        call["end"] for call in recall_calls
+    assert len(search_calls) == 2
+    assert max(call["start"] for call in search_calls) < min(
+        call["end"] for call in search_calls
     )
 
 
@@ -393,14 +366,6 @@ def test_invalid_batch_item_does_not_stop_valid_sibling(
 ) -> None:
     slug = "example-parallel-paper-2024"
     responses = {
-        f"{slug}:recall": [
-            lookup_receipt(
-                "material.recall",
-                f"paper:{slug}",
-                "paper",
-                slug,
-            ),
-        ],
         f"{slug}:search": [
             failed_search(
                 f"paper:{slug}",
@@ -421,17 +386,17 @@ def test_invalid_batch_item_does_not_stop_valid_sibling(
         responses,
     )
 
-    assert report["result"]["status"] == "partial"
+    assert report["result"]["status"] == "failed"
     assert report["result"]["batch_receipt"]["counts"] == {
         "complete": 0,
-        "needs_input": 1,
+        "needs_input": 0,
         "blocked": 0,
-        "failed": 1,
+        "failed": 2,
     }
     assert [
         item["status"]
         for item in report["result"]["results"]
-    ] == ["failed", "needs_input"]
+    ] == ["failed", "failed"]
     assert all(
         call["label"].startswith(slug)
         for call in report["trace"]
@@ -444,14 +409,8 @@ def test_duplicate_batch_requests_share_one_material_loop(
     slug = "example-parallel-paper-2024"
     key = f"paper:{slug}"
     responses = {
-        f"{slug}:recall": [
-            lookup_receipt("material.recall", key, "paper", slug),
-        ],
         f"{slug}:search": [
             successful_paper_search(key, slug),
-        ],
-        f"{slug}:resolve": [
-            lookup_receipt("material.resolve", key, "paper", slug),
         ],
         f"{slug}:acquire": [paper_download_failed(slug)],
     }
@@ -466,7 +425,7 @@ def test_duplicate_batch_requests_share_one_material_loop(
 
     assert report["result"]["status"] == "failed"
     assert report["result"]["batch_receipt"]["counts"]["failed"] == 2
-    for suffix in ("recall", "search", "resolve", "acquire"):
+    for suffix in ("search", "acquire"):
         assert sum(
             call["label"] == f"{slug}:{suffix}"
             for call in report["trace"]

@@ -25,6 +25,7 @@ const primitives = {
       phase: options.phase,
       agentType: options.agentType,
       prompt: String(prompt),
+      schema: options.schema,
     })
     const steps = config.responses[options.label] || []
     const index = indexes.get(options.label) || 0
@@ -57,10 +58,13 @@ def run_ingress(
         pytest.skip("node not on PATH")
     script = NODE_HARNESS.replace("__ENTRY__", json.dumps(ENTRY.as_uri()))
     proc = subprocess.run(
-        [node, "--input-type=module", "-e", script, json.dumps({
-            "args": args,
-            "responses": responses,
-        })],
+        [
+            node,
+            "--input-type=module",
+            "-e",
+            script,
+            json.dumps({"args": args, "responses": responses}),
+        ],
         cwd=tmp_path,
         text=True,
         capture_output=True,
@@ -72,320 +76,185 @@ def run_ingress(
     return report
 
 
-def lookup_receipt(
-    operation: str,
-    request_key: str,
-    kind: str,
-    requested_slug: str,
-    *,
-    vault_slug: str | None = None,
-) -> dict[str, Any]:
-    path = (
-        f"vault/books/{vault_slug}/00-overview.md"
-        if kind == "book" and vault_slug
-        else f"vault/papers/{vault_slug}.md"
-        if vault_slug
-        else "__none__"
-    )
+SLUG = "example-a-safety-paper-2024"
+KEY = f"paper:{SLUG}"
+
+
+def paper_request() -> dict[str, Any]:
     return {
-        "schema_version": f"quasi.operation.{operation}.receipt/0.2",
-        "key": operation,
-        "effect": "readonly",
-        "status": "succeeded",
-        "attempt": 1,
-        "request_key": request_key,
-        "kind": kind,
-        "requested_slug": requested_slug,
-        "vault_slug": vault_slug or "__none__",
-        "path": path,
-        "match": "doi" if kind == "paper" and vault_slug else "isbn"
-        if vault_slug
-        else "none",
-        "failure": None,
+        "kind": "paper",
+        "request": {
+            "title": "A Safety Paper",
+            "authors": ["Ada Example"],
+            "year": 2024,
+            "doi": "10.1000/safety",
+        },
     }
 
 
-def paper_query() -> dict[str, Any]:
-    return {
-        "slug": None,
+def search_receipt(
+    *,
+    status: str = "complete",
+    owner: str | None = None,
+    retryable: bool = False,
+) -> dict[str, Any]:
+    issue = None
+    identity: dict[str, Any] | None = {
+        "slug": SLUG,
         "title": "A Safety Paper",
         "authors": ["Ada Example"],
         "year": 2024,
         "doi": "10.1000/safety",
         "oa_url": None,
         "url": None,
-        "journal": None,
-    }
-
-
-def paper_search(
-    query: dict[str, Any],
-    *,
-    slug: str = "example-a-safety-paper-2024",
-) -> dict[str, Any]:
-    return {
-        "schema_version": "quasi.operation.material.search.receipt/0.1",
-        "key": "material.search",
-        "effect": "readonly",
-        "status": "succeeded",
-        "attempt": 1,
-        "request_key": "paper:example-a-safety-paper-2024",
-        "kind": "paper",
-        "query": query,
-        "picked": {
-            "slug": slug,
-            "title": "A Safety Paper",
-            "authors": ["Ada Example"],
-            "year": 2024,
-            "doi": "10.1000/safety",
-            "oa_url": None,
-            "url": None,
-            "journal": "Safety Studies",
-            "confidence": "high",
-        },
+        "journal": "Safety Studies",
         "confidence": "high",
-        "sources_hit": ["crossref"],
-        "conflicts": [],
-        "notes": "DOI match",
-        "failure": None,
+    }
+    confidence = "high"
+    local_owner: dict[str, Any] | None = {
+        "requested_slug": SLUG,
+        "vault_slug": owner,
+        "path": f"vault/papers/{owner}.md" if owner else None,
+        "match": "doi" if owner else None,
+    }
+    if status != "complete":
+        identity = None
+        confidence = "low"
+        local_owner = None
+        issue = {
+            "code": "material.identity_not_resolved",
+            "operation": "material.search",
+            "summary": "Structured providers and stable pages did not establish one identity",
+            "user_question": (
+                "Which DOI or stable journal page identifies this paper?"
+                if status == "needs_input"
+                else None
+            ),
+            "retryable": retryable,
+        }
+    return {
+        "schema_version": "quasi.stage.receipt/0.1",
+        "operation": "material.search",
+        "stage": "Search",
+        "material_key": KEY,
+        "effect": "readonly",
+        "status": status,
+        "attempt": 1,
+        "kind": "paper",
+        "identity": identity,
+        "local_owner": local_owner,
+        "confidence": confidence,
+        "observations": [
+            {
+                "source": "crossref",
+                "query": "10.1000/safety",
+                "summary": "No exact record" if status != "complete" else "Exact DOI record",
+            }
+        ],
+        "issue": issue,
     }
 
 
-def paper_download_failed(slug: str) -> dict[str, Any]:
+def download_failed(slug: str) -> dict[str, Any]:
     return {
         "acquired": 0,
         "failed": 1,
-        "per_item": [{
-            "kind": "paper",
-            "slug": slug,
-            "status": "download_failed",
-            "disposition": None,
-            "identity_verified": False,
-            "source": None,
-            "doi": "10.1000/safety",
-            "failure_reason": "not available",
-            "attempts": [{"source": "oa", "status": "failed", "error": "404"}],
-        }],
+        "per_item": [
+            {
+                "kind": "paper",
+                "slug": slug,
+                "status": "download_failed",
+                "disposition": None,
+                "identity_verified": False,
+                "source": None,
+                "doi": "10.1000/safety",
+                "failure_reason": "not available",
+                "attempts": [
+                    {"source": "oa", "status": "failed", "error": "404"}
+                ],
+            }
+        ],
     }
 
 
-def test_title_request_runs_recall_search_resolve_before_acquire(
+def test_search_stage_owns_investigation_and_local_resolution(
     tmp_path: Path,
 ) -> None:
-    slug = "example-a-safety-paper-2024"
-    key = f"paper:{slug}"
     responses = {
-        f"{slug}:recall": [
-            lookup_receipt("material.recall", key, "paper", slug),
-        ],
-        f"{slug}:search": [paper_search(paper_query())],
-        f"{slug}:resolve": [
-            lookup_receipt("material.resolve", key, "paper", slug),
-        ],
-        f"{slug}:acquire": [paper_download_failed(slug)],
+        f"{SLUG}:search": [search_receipt()],
+        f"{SLUG}:acquire": [download_failed(SLUG)],
     }
-
-    report = run_ingress(
-        tmp_path,
-        {
-            "kind": "paper",
-            "request": {
-                "title": "A Safety Paper",
-                "authors": ["Ada Example"],
-                "year": 2024,
-                "doi": "10.1000/safety",
-            },
-        },
-        responses,
-    )
+    report = run_ingress(tmp_path, paper_request(), responses)
 
     assert report["result"]["status"] == "download_failed"
-    assert report["result"]["slug"] == slug
     assert report["result"]["ingress_receipt"]["status"] == "resolved"
     assert [
         (call["label"], call["phase"], call["agentType"])
         for call in report["trace"]
     ] == [
-        (f"{slug}:recall", "Recall", "quasi:metadata-agent"),
-        (f"{slug}:search", "Search", "quasi:metadata-agent"),
-        (f"{slug}:resolve", "Search", "quasi:metadata-agent"),
-        (f"{slug}:acquire", "Acquire", "quasi:download-agent"),
+        (f"{SLUG}:search", "Search", "quasi:metadata-agent"),
+        (f"{SLUG}:acquire", "Acquire", "quasi:download-agent"),
     ]
-    assert "quasi-helpers vault resolve --items-file -" in report["trace"][0]["prompt"]
-    assert "quasi-search paper" in report["trace"][1]["prompt"]
+    prompt = json.loads(report["trace"][0]["prompt"])
+    assert prompt["objective"].startswith("Establish the most defensible")
+    assert len(prompt["capabilities"]) == 3
+    assert "number and order" in prompt["method"]
 
 
-def test_lookup_miss_sentinels_are_normalised_before_search(
-    tmp_path: Path,
-) -> None:
-    slug = "example-a-safety-paper-2024"
-    key = f"paper:{slug}"
-    recall = lookup_receipt(
-        "material.recall",
-        key,
-        "paper",
-        slug,
-    )
+def test_search_complete_may_select_exact_existing_owner(tmp_path: Path) -> None:
+    owner = "example-safety-paper-2023"
     responses = {
-        f"{slug}:recall": [recall],
-        f"{slug}:search": [paper_search(paper_query())],
-        f"{slug}:resolve": [
-            lookup_receipt("material.resolve", key, "paper", slug),
-        ],
-        f"{slug}:acquire": [paper_download_failed(slug)],
+        f"{SLUG}:search": [search_receipt(owner=owner)],
+        f"{owner}:acquire": [download_failed(owner)],
     }
+    report = run_ingress(tmp_path, paper_request(), responses)
 
-    report = run_ingress(
-        tmp_path,
-        {
-            "kind": "paper",
-            "request": {
-                "title": "A Safety Paper",
-                "authors": ["Ada Example"],
-                "year": 2024,
-                "doi": "10.1000/safety",
-            },
-        },
-        responses,
-    )
-
-    assert report["result"]["status"] == "download_failed"
-    normalised = report["result"]["ingress_receipt"]["operations"][0]
-    assert normalised["vault_slug"] is None
-    assert normalised["path"] is None
-    assert normalised["match"] is None
-    assert [call["phase"] for call in report["trace"]] == [
-        "Recall",
-        "Search",
-        "Search",
-        "Acquire",
-    ]
+    assert report["result"]["slug"] == owner
+    assert report["result"]["ingress_receipt"]["identity"]["slug"] == owner
 
 
-def test_verified_identity_resolves_to_existing_canonical_owner(
+@pytest.mark.parametrize("retryable", [False, True])
+def test_schema_valid_search_failure_is_not_reclassified_as_invalid(
     tmp_path: Path,
+    retryable: bool,
 ) -> None:
-    searched = "example-a-safety-paper-2024"
-    existing = "example-safety-paper-2023"
-    key = f"paper:{searched}"
     responses = {
-        f"{searched}:recall": [
-            lookup_receipt("material.recall", key, "paper", searched),
-        ],
-        f"{searched}:search": [paper_search(paper_query(), slug=searched)],
-        f"{searched}:resolve": [
-            lookup_receipt(
-                "material.resolve",
-                key,
-                "paper",
-                searched,
-                vault_slug=existing,
-            ),
-        ],
-        f"{existing}:acquire": [paper_download_failed(existing)],
-    }
-
-    report = run_ingress(
-        tmp_path,
-        {
-            "kind": "paper",
-            "request": {
-                "title": "A Safety Paper",
-                "authors": ["Ada Example"],
-                "year": 2024,
-                "doi": "10.1000/safety",
-            },
-        },
-        responses,
-    )
-
-    assert report["result"]["slug"] == existing
-    identity = report["result"]["ingress_receipt"]["identity"]
-    assert identity["slug"] == existing
-    assert report["trace"][-1]["label"] == f"{existing}:acquire"
-
-
-def test_unresolved_metadata_becomes_user_gate_without_acquire(
-    tmp_path: Path,
-) -> None:
-    slug = "example-a-safety-paper-2024"
-    key = f"paper:{slug}"
-    query = paper_query()
-    failed_search = {
-        **paper_search(query),
-        "status": "failed",
-        "picked": None,
-        "confidence": "low",
-        "failure": {
-            "code": "material.identity_not_resolved",
-            "operation_key": "material.search",
-            "outcome": "known",
-            "retryable": False,
-            "message": "no complete identity",
-        },
-    }
-    responses = {
-        f"{slug}:recall": [
-            lookup_receipt("material.recall", key, "paper", slug),
-        ],
-        f"{slug}:search": [failed_search],
-    }
-
-    report = run_ingress(
-        tmp_path,
-        {
-            "kind": "paper",
-            "request": {
-                "title": "A Safety Paper",
-                "authors": ["Ada Example"],
-                "year": 2024,
-                "doi": "10.1000/safety",
-            },
-        },
-        responses,
-    )
-
-    assert report["result"]["status"] == "needs_input"
-    assert report["result"]["ingress_receipt"]["stage"] == "search"
-    assert [call["phase"] for call in report["trace"]] == ["Recall", "Search"]
-
-
-@pytest.mark.parametrize("bad_stage", ["recall", "search"])
-def test_malformed_readonly_receipt_fails_before_writers(
-    tmp_path: Path,
-    bad_stage: str,
-) -> None:
-    slug = "example-a-safety-paper-2024"
-    key = f"paper:{slug}"
-    responses: dict[str, list[dict[str, Any]]] = {
-        f"{slug}:recall": [
-            {"status": "succeeded"}
-            if bad_stage == "recall"
-            else lookup_receipt("material.recall", key, "paper", slug),
+        f"{SLUG}:search": [
+            search_receipt(status="failed", retryable=retryable)
         ],
     }
-    if bad_stage == "search":
-        responses[f"{slug}:search"] = [{"status": "succeeded"}]
-
-    report = run_ingress(
-        tmp_path,
-        {
-            "kind": "paper",
-            "request": {
-                "title": "A Safety Paper",
-                "authors": ["Ada Example"],
-                "year": 2024,
-                "doi": "10.1000/safety",
-            },
-        },
-        responses,
-    )
+    report = run_ingress(tmp_path, paper_request(), responses)
 
     assert report["result"]["status"] == "metadata_failed"
-    assert all(
-        not call["label"].endswith(":acquire")
-        for call in report["trace"]
+    ingress = report["result"]["ingress_receipt"]
+    assert ingress["failure"]["code"] == "material.identity_not_resolved"
+    assert ingress["failure"]["retryable"] is retryable
+    assert "receipt_invalid" not in ingress["failure"]["code"]
+
+
+def test_search_needs_input_preserves_specialist_question(tmp_path: Path) -> None:
+    responses = {
+        f"{SLUG}:search": [search_receipt(status="needs_input")],
+    }
+    report = run_ingress(tmp_path, paper_request(), responses)
+
+    assert report["result"]["status"] == "needs_input"
+    ingress = report["result"]["ingress_receipt"]
+    assert ingress["stage"] == "search"
+    assert "Which DOI" in ingress["failure"]["message"]
+
+
+def test_malformed_search_receipt_stops_before_acquire(tmp_path: Path) -> None:
+    responses = {
+        f"{SLUG}:search": [{"status": "complete"}],
+    }
+    report = run_ingress(tmp_path, paper_request(), responses)
+
+    assert report["result"]["status"] == "metadata_failed"
+    assert report["result"]["ingress_receipt"]["failure"]["code"] == (
+        "material.search_receipt_invalid"
     )
+    assert all(not call["label"].endswith(":acquire") for call in report["trace"])
 
 
 def test_invalid_raw_request_starts_no_agent(tmp_path: Path) -> None:
@@ -394,9 +263,5 @@ def test_invalid_raw_request_starts_no_agent(tmp_path: Path) -> None:
         {"kind": "book", "request": {"title": ""}},
         {},
     )
-
     assert report["result"]["status"] == "needs_input"
-    assert report["result"]["ingress_receipt"]["failure"]["code"] == (
-        "material.request_invalid"
-    )
     assert report["trace"] == []

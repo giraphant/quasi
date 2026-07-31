@@ -23,15 +23,16 @@ core/            # 极小运行时地基(path/frontmatter/json/module loading)
 producer/search 所需的 canonical projection 注入 Workflow，typecheck、audit 和 migration
 则直接消费同一 registry。历史 aliases 只出现在 audit/migration 投影中。
 
-Skill 写作 schema 的维护者约定见 `docs/SKILL_ORCHESTRATION.md`:skill 主进程
-owns state,agent 只做专业工种,每个 phase 必须有明确的 skip/failure/human gate。
-active skill 正文只保留运行时需要的信息。
+Skill 写作 schema 的维护者约定见 `docs/SKILL_ORCHESTRATION.md`：Skill 负责用户沟通，
+Workflow 负责阶段和状态，Agent 负责专业判断，CLI 负责确定性 I/O。Active skill 正文只
+保留运行时需要的信息。
 
 Claude Workflow 的源码只在 `scripts/workflows/**/*.mjs` 维护；运行
 `npm run build:workflows` 会确定性生成并提交
-`workflows/process-material.mjs`，不要直接修改生成文件。当前 Paper 是第一条
-Operation vertical slice：所有来源先标准化成 text，再由只读 Agent 判断语义可读性，
-必要时沿图进入一次 OCR 恢复，最后由同一个 `analyse-agent` 接收 Paper artifact contract。
+`workflows/process-material.mjs`，不要直接修改生成文件。材料图是阶段看板：
+`Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`。Search 和 Prepare
+等需要调查或局部恢复的阶段由一个 goal-owning specialist 完成；Workflow 只注入 goal、
+capabilities、exact refs 和 receipt schema，再根据 typed terminal 推进。
 根目录 `settings.json` 还为 quasi 子代理提供紧凑状态行，其他子代理保持 Claude Code
 默认显示。
 
@@ -70,19 +71,20 @@ acquisition 等非产物结构的行为，由所属 `scripts/workflows/operation
 
 | Agent | 职责 |
 |---|---|
-| `metadata-agent` | 将一份已知 Book/Paper 请求解析为 canonical 书目身份 |
+| `metadata-agent` | 调查一份 Book/Paper 请求并核定 canonical 书目身份与本地 owner |
 | `discovery-agent` | 为 Author、Topic demand 或缺失引文发现 bounded candidates |
 | `localisation-agent` | 为一份 canonical Book 核验中文版本关系 |
 | `steer-agent` | topic 掌舵:维护 02-outline 研究大纲,返回子问题定向候选 |
 | `webcard-agent` | topic 圈外证据卡:一条 web 任务 → 一张核验过的 cards/*.md |
 | `download-agent` | 文件获取、候选判断、接受入库 |
-| `extract-agent` | EPUB/PDF/OCR/章节切分编排 |
+| `extract-agent` | 完成 Paper/Book Prepare：可读文本、OCR 恢复与可靠章节 generation |
 | `analyse-agent` | 论文/章节/讲座转写分析 |
 | `synthesis-agent` | book/author/topic 综合报告 |
 | `audit-agent` | vault consistency 检查和可修复项处理 |
 | `proofread-agent` | draft 局部校对 |
 | `citecheck-agent` | 引文 context-fit 审查 |
-| `translate-agent` | 双语翻译 |
+| `transcribe-agent` | 完成 Talk Prepare：媒体、transcript generation 与语义分类 |
+| `translate-agent` | 完成 Translation Prepare：source、翻译 generation、恢复与验证 |
 
 ### CLI
 
@@ -143,9 +145,9 @@ Silicon 本地）。需要时设 `QUASI_DSOCR2_MODEL` 指向本地 BF16 模型�
 `/api/paas/v4`、`/v1beta/openai` 或 `/openai/v1`。不要包含
 `/chat/completions`。
 
-普通 born-digital PDF 走 pdf2zh **不需要** DS OCR2 或 MinerU。只有 coverage
-闸发现源文字层过碎、报 `Under-translated` 时，translate agent 才会执行一次
-`quasi-extract ocr --layout` 后重试：DS OCR2 需要 Apple Silicon，MinerU2.5-Pro
+普通 born-digital PDF 走 pdf2zh **不需要** DS OCR2 或 MinerU。Translate specialist
+会结合 coverage 与源文字层证据判断是否使用 caller-scoped
+`quasi-extract ocr --layout` recovery：DS OCR2 需要 Apple Silicon，MinerU2.5-Pro
 只负责段落分组；两者由 `uvx`/Hugging Face 首次下载，可分别用
 `QUASI_DSOCR2_MODEL`、`QUASI_MINERU_MODEL` 指向本地模型。DS OCR2 不可用会
 fail-soft 到 tesseract，MinerU 不可用会退回逐行文本层，因此扫描书的恢复质量会下降。

@@ -202,7 +202,9 @@ export function strictChildResult(result, demand) {
     receipt.material_key !== demand.material_key ||
     receipt.kind !== demand.kind ||
     receipt.id !== demand.id ||
-    !["complete", "blocked", "failed"].includes(receipt.status) ||
+    !["complete", "needs_input", "blocked", "failed"].includes(
+      receipt.status,
+    ) ||
     !Array.isArray(receipt.artifacts) ||
     !Array.isArray(receipt.operations) ||
     receipt.operations.some(
@@ -271,6 +273,12 @@ export function strictChildResult(result, demand) {
     receipt.disposition !== null ||
     !validMaterialFailure(receipt.failure) ||
     (receipt.status === "failed" && receipt.resume !== null) ||
+    (receipt.status === "needs_input" &&
+      !(
+        receipt.resume &&
+        typeof receipt.resume === "object" &&
+        !Array.isArray(receipt.resume)
+      )) ||
     (receipt.status === "blocked" &&
       !(
         receipt.resume === null ||

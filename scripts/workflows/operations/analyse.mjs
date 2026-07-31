@@ -3,7 +3,7 @@ import {
   PAPER_ARTIFACT_CONTRACT,
   TALK_ARTIFACT_CONTRACT,
 } from "../artifact-contracts/generated.mjs";
-import { composedSchema } from "./extract.mjs";
+import { composedSchema } from "./shared.mjs";
 
 export const PAPER_ANALYSE_SCHEMA = {
   type: "object",

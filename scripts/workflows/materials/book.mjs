@@ -16,24 +16,9 @@ import {
   bookAuditSchema,
 } from "../operations/audit.mjs";
 import {
-  BOOK_DOCUMENT_OCR_CONTRACT,
-  CHAPTER_ASSESS_CONTRACT,
-  CHAPTER_ASSESS_SCHEMA,
-  CHAPTER_EXTRACT_CONTRACT,
-  CHAPTER_PLAN_CONTRACT,
-  CHAPTER_PLAN_SCHEMA,
-  READABILITY_CONTRACT,
-  TEXT_EXTRACT_CONTRACT,
-  chapterAssessOperationPrompt,
-  chapterExtractOperationPrompt,
-  chapterExtractSchema,
-  chapterPlanOperationPrompt,
-  documentOcrOperationPrompt,
-  documentOcrOperationSchema,
-  extractTextOperationPrompt,
-  readabilityOperationPrompt,
-  readabilitySchema,
-  textExtractSchema,
+  BOOK_PREPARE_STAGE_CONTRACT,
+  bookPrepareStagePrompt,
+  bookPrepareStageSchema,
 } from "../operations/extract.mjs";
 import {
   BOOK_SYNTHESISE_CONTRACT,
@@ -191,8 +176,6 @@ function createBookState(slug, meta) {
     chapterInventory: null,
     yearEvidence: null,
     budgets: {
-      ocr: { used: 0, limit: 1 },
-      planRecovery: { used: 0, limit: 1 },
       refill: { used: 0, limit: 1 },
       auditRepair: { used: 0, limit: 1 },
       auditPasses: { used: 0, limit: 2 },
@@ -247,7 +230,13 @@ function materialReceipt(
                   ? "human-year-decision-or-correct-request"
                   : "caller-correct-request",
             }
-        : null,
+        : status === "needs_input"
+          ? {
+              operation_key: "book.user-gate",
+              stage,
+              policy: "answer-the-stage-question",
+            }
+          : null,
   };
 }
 
@@ -263,6 +252,8 @@ function result(
     terminalOverride ||
     (publicStatus === "ok"
       ? "complete"
+      : publicStatus === "needs_input"
+        ? "needs_input"
       : publicStatus === "blocked" ||
           publicStatus === "year_mismatch" ||
           publicStatus === "year_ambiguous"
@@ -453,365 +444,134 @@ function downloadOperation(item, allowedSources) {
   };
 }
 
+function prepareFailure(receipt, outcome = "known") {
+  const issue = receipt && receipt.issue;
+  return operationFailure(
+    (issue && issue.code) || "book.prepare_failed",
+    "book.prepare",
+    outcome,
+    !!(issue && issue.retryable),
+    (issue && issue.summary) || "Book Prepare did not complete",
+  );
+}
+
+async function prepareBook(runtime, state) {
+  const context = {
+    outputDir: state.chaptersDir,
+    manifest: state.manifest,
+    normalized: state.sourceText,
+    recoverySource: state.ocrSource,
+    recoveryText: state.ocrText,
+  };
+  const schema = bookPrepareStageSchema({
+    materialKey: state.materialKey,
+    source: state.source,
+    format: state.meta.format,
+    normalized: state.sourceText,
+    recoverySource: state.ocrSource,
+    recoveryText: state.ocrText,
+    outputDir: state.chaptersDir,
+    manifest: state.manifest,
+  });
+  const run = await runtime.operate(
+    bookPrepareStagePrompt({
+      materialKey: state.materialKey,
+      identity: state.meta,
+      source: state.source,
+      format: state.meta.format,
+      normalized: state.sourceText,
+      recoverySource: state.ocrSource,
+      recoveryText: state.ocrText,
+      outputDir: state.chaptersDir,
+      manifest: state.manifest,
+    }),
+    {
+      phase: "Prepare",
+      agentType: "quasi:extract-agent",
+      label: `${state.slug}:prepare`,
+      schema,
+    },
+    {
+      key: "book.prepare",
+      effect: "writer",
+      retry: "forbidden",
+      replay: "blocked",
+      artifactRoles: [
+        "normalized_document",
+        "recovery_source",
+        "chapter_manifest",
+        "normalized_chapter",
+      ],
+      unknownFailureCode: "material.writer_outcome_unknown",
+      contract: BOOK_PREPARE_STAGE_CONTRACT,
+      context,
+    },
+  );
+  state.operations.push(run.receipt);
+  if (run.edge === "unknown")
+    return {
+      terminal: blocked(
+        state,
+        "prepare",
+        "book.prepare",
+        run.receipt,
+      ),
+    };
+  if (run.edge === "blocked")
+    return {
+      terminal: result(
+        state,
+        "blocked",
+        "prepare",
+        { problems: run.receipt.diagnostics },
+        prepareFailure(run.receipt, "unknown"),
+      ),
+    };
+  if (run.edge === "mismatch")
+    return {
+      terminal: mismatchBlocked(state, "prepare", "book.prepare"),
+    };
+  if (run.edge === "needs_input")
+    return {
+      terminal: result(
+        state,
+        "needs_input",
+        "prepare",
+        { question: run.receipt.issue.user_question },
+        prepareFailure(run.receipt),
+      ),
+    };
+  if (run.edge === "failed")
+    return {
+      terminal: result(
+        state,
+        "extract_failed",
+        "prepare",
+        { problems: run.receipt.diagnostics },
+        prepareFailure(run.receipt),
+      ),
+    };
+  state.artifacts = state.artifacts.filter(
+    (artifact) =>
+      ![
+        "normalized_document",
+        "recovery_source",
+        "chapter_manifest",
+        "normalized_chapter",
+      ].includes(artifact.role),
+  );
+  for (const artifact of run.receipt.artifacts)
+    state.artifacts.push({
+      ...artifact,
+      producer: "book.prepare",
+    });
+  return { receipt: run.receipt };
+}
+
 const chapterInputPath = (state, chapter) =>
   `${state.chaptersDir}/${chapter.filename}`;
 const chapterOutputPath = (state, chapter) =>
   `vault/books/${state.slug}/ch${chapter.slot}-${chapter.slug}.md`;
-
-async function extractAndAssess(runtime, state, input, output) {
-  const extraction = await runtime.operate(
-    extractTextOperationPrompt(state.materialKey, input, output),
-    {
-      phase: "Prepare",
-      agentType: "general-purpose",
-      label: `${state.slug}:extract-text`,
-      schema: textExtractSchema({ input, output }),
-    },
-    {
-      key: "document.extract-text",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "idempotent",
-      artifactRoles: ["normalized_text"],
-      unknownFailureCode: "document.writer_outcome_unknown",
-      contract: TEXT_EXTRACT_CONTRACT,
-      context: { input, output },
-    },
-  );
-  state.operations.push(extraction.receipt);
-  if (
-    extraction.edge === "unknown" ||
-    extraction.edge === "blocked"
-  )
-    return {
-      terminal: blocked(
-        state,
-        "extract-text",
-        "document.extract-text",
-        extraction.receipt,
-      ),
-    };
-  if (extraction.edge === "mismatch")
-    return {
-      terminal: mismatchBlocked(
-        state,
-        "extract-text",
-        "document.extract-text",
-      ),
-    };
-  if (extraction.edge !== "ok")
-    return { failure: extraction.receipt.failure };
-  state.artifacts.push({
-    role: "normalized_document",
-    path: output,
-    exists: true,
-    usable: null,
-    producer: "document.extract-text",
-  });
-
-  const assessment = await runtime.operate(
-    readabilityOperationPrompt(
-      state.materialKey,
-      output,
-      extraction.receipt,
-    ),
-    {
-      phase: "Prepare",
-      agentType: "general-purpose",
-      label: `${state.slug}:assess-readability`,
-      schema: readabilitySchema({ input: output }),
-    },
-    {
-      key: "document.assess-readability",
-      effect: "readonly",
-      retry: "safe",
-      replay: "safe",
-      artifactRoles: ["normalized_text"],
-      unknownFailureCode: "document.readonly_outcome_unknown",
-      contract: READABILITY_CONTRACT,
-      context: { input: output },
-    },
-  );
-  state.operations.push(assessment.receipt);
-  if (assessment.edge === "mismatch")
-    return {
-      failure:
-        (assessment.receipt.failure &&
-          assessment.receipt.failure.outcome === "unknown" &&
-          assessment.receipt.failure) ||
-        operationFailure(
-          "document.assess_readability_failed",
-          "document.assess-readability",
-        ),
-    };
-  if (assessment.edge !== "ok")
-    return { failure: assessment.receipt.failure };
-  state.artifacts[state.artifacts.length - 1].usable =
-    assessment.receipt.signal === "readable";
-  return { signal: assessment.receipt.signal, input: output };
-}
-
-async function runOcr(runtime, state) {
-  state.budgets.ocr.used += 1;
-  const ocr = await runtime.operate(
-    documentOcrOperationPrompt(
-      state.materialKey,
-      state.source,
-      state.ocrSource,
-      "book",
-    ),
-    {
-      phase: "Prepare",
-      agentType: "general-purpose",
-      label: `${state.slug}:ocr`,
-      schema: documentOcrOperationSchema("book", {
-        input: state.source,
-        output: state.ocrSource,
-      }),
-    },
-    {
-      key: "document.ocr",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "blocked",
-      artifactRoles: ["recovery_source"],
-      unknownFailureCode: "document.writer_outcome_unknown",
-      contract: BOOK_DOCUMENT_OCR_CONTRACT,
-      context: { input: state.source, output: state.ocrSource },
-    },
-  );
-  state.operations.push(ocr.receipt);
-  if (ocr.edge === "unknown" || ocr.edge === "blocked")
-    return {
-      terminal: blocked(
-        state,
-        "ocr",
-        "document.ocr",
-        ocr.receipt,
-      ),
-    };
-  if (ocr.edge === "mismatch")
-    return {
-      terminal: mismatchBlocked(
-        state,
-        "ocr",
-        "document.ocr",
-      ),
-    };
-  if (ocr.edge !== "ok" && ocr.edge !== "reconcile")
-    return { failure: ocr.receipt.failure };
-  const existing = ocr.edge === "reconcile";
-  state.artifacts.push({
-    role: "recovery_source",
-    path: state.ocrSource,
-    exists: true,
-    usable: null,
-    producer: existing
-      ? "document.ocr:reconciled"
-      : "document.ocr",
-  });
-  return { input: state.ocrSource };
-}
-
-async function runPlan(
-  runtime,
-  state,
-  input,
-  normalized,
-  diagnostics = [],
-) {
-  const plan = await runtime.operate(
-    chapterPlanOperationPrompt(
-      state.materialKey,
-      input,
-      normalized,
-      diagnostics,
-    ),
-    {
-      phase: "Prepare",
-      agentType: "quasi:extract-agent",
-      label: `${state.slug}:plan-chapters`,
-      schema: CHAPTER_PLAN_SCHEMA,
-    },
-    {
-      key: "chapter.plan",
-      effect: "readonly",
-      retry: "safe",
-      replay: "safe",
-      artifactRoles: ["chapter_plan"],
-      unknownFailureCode: "document.readonly_outcome_unknown",
-      contract: CHAPTER_PLAN_CONTRACT,
-      context: { input, normalized },
-    },
-  );
-  state.operations.push(plan.receipt);
-  if (plan.edge === "unknown" || plan.edge === "mismatch")
-    return {
-      failure: operationFailure(
-        "chapter.plan_receipt_invalid",
-        "chapter.plan",
-      ),
-    };
-  if (plan.edge !== "ok")
-    return { failure: plan.receipt.failure };
-  return { receipt: plan.receipt };
-}
-
-async function runChapterExtract(
-  runtime,
-  state,
-  {
-    input,
-    mode,
-    plan = [],
-    expectedManifestFingerprint = null,
-    repair = null,
-    label = "extract",
-  },
-) {
-  const extraction = await runtime.operate(
-    chapterExtractOperationPrompt({
-      materialKey: state.materialKey,
-      input,
-      outputDir: state.chaptersDir,
-      mode,
-      plan,
-      expectedManifestFingerprint,
-      repair,
-    }),
-    {
-      phase: "Prepare",
-      agentType: "general-purpose",
-      label: `${state.slug}:${label}`,
-      schema: chapterExtractSchema({
-        input,
-        outputDir: state.chaptersDir,
-        manifest: state.manifest,
-        mode,
-      }),
-    },
-    {
-      key: "chapter.extract",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "blocked",
-      artifactRoles: [
-        "chapter_manifest",
-        "normalized_chapter",
-      ],
-      unknownFailureCode: "document.writer_outcome_unknown",
-      contract: CHAPTER_EXTRACT_CONTRACT,
-      context: {
-        input,
-        outputDir: state.chaptersDir,
-        manifest: state.manifest,
-        mode,
-      },
-    },
-  );
-  state.operations.push(extraction.receipt);
-  if (
-    extraction.edge === "unknown" ||
-    extraction.edge === "blocked"
-  )
-    return {
-      terminal: blocked(
-        state,
-        "chapter-extract",
-        "chapter.extract",
-        extraction.receipt,
-      ),
-    };
-  if (extraction.edge === "mismatch")
-    return {
-      terminal: mismatchBlocked(
-        state,
-        "chapter-extract",
-        "chapter.extract",
-      ),
-    };
-  if (extraction.edge !== "ok")
-    return { failure: extraction.receipt.failure };
-  const receipt = extraction.receipt;
-  state.artifacts = state.artifacts.filter(
-    (artifact) =>
-      !["chapter_manifest", "normalized_chapter"].includes(
-        artifact.role,
-      ),
-  );
-  state.artifacts.push({
-    role: "chapter_manifest",
-    path: state.manifest,
-    exists: true,
-    usable: null,
-    producer: `chapter.extract:${receipt.disposition}`,
-  });
-  for (const chapter of receipt.chapters)
-    state.artifacts.push({
-      role: "normalized_chapter",
-      path: chapterInputPath(state, chapter),
-      exists: true,
-      usable: null,
-      producer: "chapter.extract",
-    });
-  return { receipt };
-}
-
-async function assessBoundaries(runtime, state, extraction) {
-  const assessment = await runtime.operate(
-    chapterAssessOperationPrompt(
-      state.materialKey,
-      state.manifest,
-      extraction.chapters,
-      {
-        chapter_count: extraction.chapter_count,
-        skipped: extraction.skipped,
-        removed_files: extraction.removed_files,
-        limit: extraction.limit,
-        disposition: extraction.disposition,
-      },
-    ),
-    {
-      phase: "Prepare",
-      agentType: "quasi:extract-agent",
-      label: `${state.slug}:assess-chapters`,
-      schema: CHAPTER_ASSESS_SCHEMA,
-    },
-    {
-      key: "chapter.assess-boundaries",
-      effect: "readonly",
-      retry: "safe",
-      replay: "safe",
-      artifactRoles: [
-        "chapter_manifest",
-        "normalized_chapter",
-      ],
-      unknownFailureCode: "document.readonly_outcome_unknown",
-      contract: CHAPTER_ASSESS_CONTRACT,
-      context: {
-        manifest: state.manifest,
-        chapters: extraction.chapters.map((chapter) => ({
-          slot: chapter.slot,
-          path: chapterInputPath(state, chapter),
-        })),
-      },
-    },
-  );
-  state.operations.push(assessment.receipt);
-  if (
-    assessment.edge === "unknown" ||
-    assessment.edge === "mismatch"
-  )
-    return {
-      failure: operationFailure(
-        "chapter.assessment_receipt_invalid",
-        "chapter.assess-boundaries",
-      ),
-    };
-  if (assessment.edge !== "ok")
-    return { failure: assessment.receipt.failure };
-  return { receipt: assessment.receipt };
-}
 
 async function analyseChapter(
   runtime,
@@ -1204,312 +964,12 @@ async function processValidatedBook(runtime, slug, meta, opts) {
         : "book.acquire",
   });
 
-  let selectedSource = state.source;
-  let normalizedPath = null;
-  if (meta.format === "pdf") {
-    let normalized = await extractAndAssess(
-      runtime,
-      state,
-      state.source,
-      state.sourceText,
-    );
-    if (normalized.terminal) return normalized.terminal;
-    if (normalized.failure)
-      return result(
-        state,
-        "extract_failed",
-        "extract-text",
-        { problems: [normalized.failure.code] },
-        normalized.failure,
-      );
-    if (normalized.signal === "invalid_source")
-      return result(
-        state,
-        "extract_failed",
-        "assess-readability",
-        { problems: ["book.invalid_source"] },
-        operationFailure(
-          "book.invalid_source",
-          "document.assess-readability",
-        ),
-      );
-    if (normalized.signal === "needs_ocr") {
-      const ocr = await runOcr(runtime, state);
-      if (ocr.terminal) return ocr.terminal;
-      if (ocr.failure)
-        return result(
-          state,
-          "extract_failed",
-          "ocr",
-          { problems: [ocr.failure.code] },
-          ocr.failure,
-        );
-      selectedSource = state.ocrSource;
-      normalized = await extractAndAssess(
-        runtime,
-        state,
-        state.ocrSource,
-        state.ocrText,
-      );
-      if (normalized.terminal) return normalized.terminal;
-      if (
-        normalized.failure ||
-        normalized.signal !== "readable"
-      )
-        return result(
-          state,
-          "extract_failed",
-          "assess-readability",
-          {
-            problems: [
-              normalized.failure
-                ? normalized.failure.code
-                : "book.ocr_insufficient",
-            ],
-          },
-          normalized.failure ||
-            operationFailure(
-              "book.ocr_insufficient",
-              "document.assess-readability",
-            ),
-        );
-    }
-    normalizedPath = normalized.input;
-  }
-
-  let plan = null;
-  if (meta.format === "pdf") {
-    const planned = await runPlan(
-      runtime,
-      state,
-      selectedSource,
-      normalizedPath,
-    );
-    if (planned.failure)
-      return result(
-        state,
-        "extract_failed",
-        "chapter-plan",
-        { problems: [planned.failure.code] },
-        planned.failure,
-      );
-    plan = planned.receipt;
-  }
-
-  let extractionResult = await runChapterExtract(runtime, state, {
-    input: selectedSource,
-    mode: meta.format === "epub" ? "epub" : plan.mode,
-    plan: plan ? plan.chapters : [],
-    label: "extract",
-  });
-  if (extractionResult.terminal) return extractionResult.terminal;
-  if (extractionResult.failure)
-    return result(
-      state,
-      "extract_failed",
-      "chapter-extract",
-      { problems: [extractionResult.failure.code] },
-      extractionResult.failure,
-    );
-  let extraction = extractionResult.receipt;
-  if (!extraction.chapters.length)
-    return result(
-      state,
-      "no_chapters",
-      "chapter-extract",
-      { problems: ["book.no_chapters"] },
-      operationFailure("book.no_chapters", "chapter.extract"),
-    );
-
-  let assessed = await assessBoundaries(runtime, state, extraction);
-  if (assessed.failure)
-    return result(
-      state,
-      "extract_failed",
-      "chapter-assess",
-      { problems: [assessed.failure.code] },
-      assessed.failure,
-    );
-  let boundary = assessed.receipt;
-  if (boundary.signal !== "ready") {
-    if (
-      boundary.signal === "invalid_source" ||
-      (boundary.signal === "needs_ocr" &&
-        (meta.format === "epub" ||
-          state.budgets.ocr.used >= state.budgets.ocr.limit))
-    )
-      return result(
-        state,
-        "extract_failed",
-        "chapter-assess",
-        { problems: boundary.diagnostics },
-        operationFailure(
-          boundary.signal === "needs_ocr"
-            ? "book.ocr_insufficient"
-            : "book.invalid_source",
-          "chapter.assess-boundaries",
-        ),
-      );
-    if (
-      state.budgets.planRecovery.used >=
-      state.budgets.planRecovery.limit
-    )
-      return result(
-        state,
-        "extract_failed",
-        "chapter-recovery",
-        { problems: boundary.diagnostics },
-        operationFailure(
-          "book.chapter_recovery_exhausted",
-          "chapter.assess-boundaries",
-        ),
-      );
-    state.budgets.planRecovery.used += 1;
-
-    if (boundary.signal === "needs_ocr") {
-      const ocr = await runOcr(runtime, state);
-      if (ocr.terminal) return ocr.terminal;
-      if (ocr.failure)
-        return result(
-          state,
-          "extract_failed",
-          "ocr",
-          { problems: [ocr.failure.code] },
-          ocr.failure,
-        );
-      selectedSource = state.ocrSource;
-      const normalized = await extractAndAssess(
-        runtime,
-        state,
-        state.ocrSource,
-        state.ocrText,
-      );
-      if (normalized.terminal) return normalized.terminal;
-      if (
-        normalized.failure ||
-        normalized.signal !== "readable"
-      )
-        return result(
-          state,
-          "extract_failed",
-          "assess-readability",
-          {
-            problems: [
-              normalized.failure
-                ? normalized.failure.code
-                : "book.ocr_insufficient",
-            ],
-          },
-          normalized.failure ||
-            operationFailure(
-              "book.ocr_insufficient",
-              "document.assess-readability",
-            ),
-        );
-      normalizedPath = normalized.input;
-    }
-
-    if (
-      boundary.signal === "needs_replan" ||
-      boundary.signal === "needs_ocr"
-    ) {
-      const replanned = await runPlan(
-        runtime,
-        state,
-        selectedSource,
-        normalizedPath,
-        boundary.diagnostics.map(
-          (diagnostic) =>
-            `${diagnostic.path}: ${diagnostic.kind}: ${diagnostic.reason}`,
-        ),
-      );
-      if (replanned.failure)
-        return result(
-          state,
-          "extract_failed",
-          "chapter-plan",
-          { problems: [replanned.failure.code] },
-          replanned.failure,
-        );
-      plan = replanned.receipt;
-      extractionResult = await runChapterExtract(runtime, state, {
-        input: selectedSource,
-        mode: plan.mode,
-        plan: plan.chapters,
-        expectedManifestFingerprint:
-          extraction.manifest_fingerprint,
-        label: "replan",
-      });
-      if (extractionResult.terminal) return extractionResult.terminal;
-      if (extractionResult.failure)
-        return result(
-          state,
-          "extract_failed",
-          "chapter-replan",
-          { problems: [extractionResult.failure.code] },
-          extractionResult.failure,
-        );
-      extraction = extractionResult.receipt;
-    } else if (boundary.signal === "needs_repair") {
-      for (const diagnostic of boundary.diagnostics) {
-        extractionResult = await runChapterExtract(runtime, state, {
-          input: selectedSource,
-          mode: "repair",
-          expectedManifestFingerprint:
-            extraction.manifest_fingerprint,
-          repair: diagnostic,
-          label: `repair-extract-${diagnostic.slot}`,
-        });
-        if (extractionResult.terminal)
-          return extractionResult.terminal;
-        if (extractionResult.failure)
-          return result(
-            state,
-            "extract_failed",
-            "chapter-repair",
-            { problems: [extractionResult.failure.code] },
-            extractionResult.failure,
-          );
-        extraction = extractionResult.receipt;
-      }
-    } else {
-      return result(
-        state,
-        "extract_failed",
-        "chapter-assess",
-        { problems: boundary.diagnostics },
-        operationFailure(
-          "book.chapter_assessment_failed",
-          "chapter.assess-boundaries",
-        ),
-      );
-    }
-
-    assessed = await assessBoundaries(runtime, state, extraction);
-    if (assessed.failure)
-      return result(
-        state,
-        "extract_failed",
-        "chapter-assess",
-        { problems: [assessed.failure.code] },
-        assessed.failure,
-      );
-    boundary = assessed.receipt;
-    if (boundary.signal !== "ready")
-      return result(
-        state,
-        "extract_failed",
-        "chapter-recovery",
-        { problems: boundary.diagnostics },
-        operationFailure(
-          "book.chapter_recovery_exhausted",
-          "chapter.assess-boundaries",
-        ),
-      );
-  }
-
-  const chapters = extraction.chapters;
+  phase("Prepare");
+  const prepared = await prepareBook(runtime, state);
+  if (prepared.terminal) return prepared.terminal;
+  const chapters = prepared.receipt.chapters;
   log(`${slug}: validated ${chapters.length} exact chapters`);
+  phase("Analyse");
   const firstPass = await parallel(
     chapters.map(
       (chapter) => () =>
@@ -1605,6 +1065,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
       producer: "chapter.analyse",
     });
 
+  phase("Synthesise");
   const synthesis = await synthesise(
     runtime,
     state,
@@ -1613,6 +1074,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
   if (synthesis.terminal) return synthesis.terminal;
 
   const owners = ownerMap(state, chapters);
+  phase("Audit");
   let audited = await audit(runtime, state, 1, owners);
   if (audited.terminal) return audited.terminal;
   if (audited.receipt.mutated_paths.length)
@@ -1652,6 +1114,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
     .filter((entry) => entry.diagnostics.length);
   let chapterChanged = false;
   if (chapterRepairs.length) {
+    phase("Analyse");
     const repaired = await parallel(
       chapterRepairs.map(
         ({ chapter, diagnostics }) => () =>
@@ -1703,6 +1166,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
               "an audited chapter or overview changed after synthesis",
           },
         ];
+    phase("Synthesise");
     const repairedSynthesis = await synthesise(
       runtime,
       state,
@@ -1722,6 +1186,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
       );
   }
 
+  phase("Audit");
   audited = await audit(runtime, state, 2, owners);
   if (audited.terminal) return audited.terminal;
   if (audited.receipt.mutated_paths.length)

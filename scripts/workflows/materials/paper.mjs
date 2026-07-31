@@ -14,16 +14,10 @@ import {
   paperAuditSchema,
 } from "../operations/audit.mjs";
 import {
-  DOCUMENT_OCR_CONTRACT,
-  READABILITY_CONTRACT,
-  TEXT_EXTRACT_CONTRACT,
-  documentOcrOperationPrompt,
-  documentOcrOperationSchema,
-  extractTextOperationPrompt,
-  readabilitySchema,
-  textExtractSchema,
+  PAPER_PREPARE_STAGE_CONTRACT,
+  paperPrepareStagePrompt,
+  paperPrepareStageSchema,
 } from "../operations/extract.mjs";
-import { readabilityOperationPrompt } from "../operations/extract.mjs";
 import { optionalText, validText } from "../runtime.mjs";
 
 const MATERIAL_RECEIPT_VERSION = "quasi.material-loop.receipt/0.1";
@@ -248,7 +242,9 @@ function materialReceipt(
     resume:
       status === "blocked"
         ? { operation_key: "paper.reconcile" }
-        : null,
+        : status === "needs_input"
+          ? { operation_key: "paper.user-gate", stage }
+          : null,
   };
 }
 
@@ -289,7 +285,13 @@ function rejectedPaperResult(slug, validation, code = null) {
 
 function result(state, status, stage, extra = {}, failure = null) {
   const terminal =
-    status === "ok" ? "complete" : status === "blocked" ? "blocked" : "failed";
+    status === "ok"
+      ? "complete"
+      : status === "blocked"
+        ? "blocked"
+        : status === "needs_input"
+          ? "needs_input"
+          : "failed";
   return {
     slug: state.slug,
     status,
@@ -328,99 +330,103 @@ function mismatchBlocked(state, stage, operationKey) {
   );
 }
 
-async function extractAndAssess(runtime, state, input, output) {
-  const extraction = await runtime.operate(
-    extractTextOperationPrompt(state.materialKey, input, output),
+function prepareFailure(receipt, outcome = "known") {
+  const issue = receipt && receipt.issue;
+  return operationFailure(
+    (issue && issue.code) || "paper.prepare_failed",
+    "paper.prepare",
+    outcome,
+    (issue && issue.summary) || "Paper Prepare did not complete",
+  );
+}
+
+async function prepare(runtime, state) {
+  const schema = paperPrepareStageSchema({
+    materialKey: state.materialKey,
+    source: state.source,
+    normalized: state.sourceText,
+    recoverySource: state.ocrSource,
+    recoveryText: state.ocrText,
+  });
+  const run = await runtime.operate(
+    paperPrepareStagePrompt({
+      materialKey: state.materialKey,
+      source: state.source,
+      normalized: state.sourceText,
+      recoverySource: state.ocrSource,
+      recoveryText: state.ocrText,
+    }),
     {
       phase: "Prepare",
-      agentType: "general-purpose",
-      label: `${state.slug}:extract-text`,
-      schema: textExtractSchema({ input, output }),
+      agentType: "quasi:extract-agent",
+      label: `${state.slug}:prepare`,
+      schema,
     },
     {
-      key: "document.extract-text",
+      key: "paper.prepare",
       effect: "writer",
       retry: "forbidden",
-      replay: "idempotent",
-      artifactRoles: ["normalized_text"],
-      contract: TEXT_EXTRACT_CONTRACT,
-      context: { input, output },
+      replay: "blocked",
+      artifactRoles: ["normalized_text", "recovery_source"],
+      unknownFailureCode: "material.writer_outcome_unknown",
+      contract: PAPER_PREPARE_STAGE_CONTRACT,
+      context: {
+        normalized: state.sourceText,
+        recoverySource: state.ocrSource,
+        recoveryText: state.ocrText,
+      },
     },
   );
-  state.operations.push(extraction.receipt);
-  if (extraction.edge === "unknown" || extraction.edge === "blocked")
+  state.operations.push(run.receipt);
+  if (run.edge === "unknown")
     return {
       terminal: blocked(
         state,
-        "extract-text",
-        "document.extract-text",
-        extraction.receipt,
+        "prepare",
+        "paper.prepare",
+        run.receipt,
       ),
     };
-  if (extraction.edge === "mismatch")
+  if (run.edge === "blocked")
     return {
-      terminal: mismatchBlocked(
+      terminal: result(
         state,
-        "extract-text",
-        "document.extract-text",
+        "blocked",
+        "prepare",
+        { diagnostics: run.receipt.diagnostics },
+        prepareFailure(run.receipt, "unknown"),
       ),
     };
-  if (extraction.edge !== "ok")
+  if (run.edge === "mismatch")
     return {
-      failure:
-        extraction.receipt.failure ||
-        operationFailure(
-          "document.extract_text_failed",
-          "document.extract-text",
-        ),
+      terminal: mismatchBlocked(state, "prepare", "paper.prepare"),
     };
-
-  state.artifacts.push({
-    role: "normalized_text",
-    path: output,
-    exists: true,
-    usable: null,
-    producer: "document.extract-text",
-  });
-  const assessment = await runtime.operate(
-    readabilityOperationPrompt(
-      state.materialKey,
-      output,
-      extraction.receipt,
-    ),
-    {
-      phase: "Prepare",
-      agentType: "general-purpose",
-      label: `${state.slug}:assess-readability`,
-      schema: readabilitySchema({ input: output }),
-    },
-    {
-      key: "document.assess-readability",
-      effect: "readonly",
-      retry: "safe",
-      replay: "safe",
-      artifactRoles: ["normalized_text"],
-      contract: READABILITY_CONTRACT,
-      context: { input: output },
-    },
-  );
-  state.operations.push(assessment.receipt);
-  if (assessment.edge === "mismatch")
+  if (run.edge === "needs_input")
     return {
-      failure:
-        (assessment.receipt.failure &&
-          assessment.receipt.failure.outcome === "unknown" &&
-          assessment.receipt.failure) ||
-        operationFailure(
-          "document.assess_readability_failed",
-          "document.assess-readability",
-        ),
+      terminal: result(
+        state,
+        "needs_input",
+        "prepare",
+        { question: run.receipt.issue.user_question },
+        prepareFailure(run.receipt),
+      ),
     };
-  if (assessment.edge !== "ok")
-    return { failure: assessment.receipt.failure };
-  state.artifacts[state.artifacts.length - 1].usable =
-    assessment.receipt.signal === "readable";
-  return { signal: assessment.receipt.signal, input: output };
+  if (run.edge === "failed")
+    return {
+      terminal: result(
+        state,
+        "analyse_failed",
+        "prepare",
+        { diagnostics: run.receipt.diagnostics },
+        prepareFailure(run.receipt),
+      ),
+    };
+  for (const artifact of run.receipt.artifacts)
+    state.artifacts.push({
+      ...artifact,
+      producer: "paper.prepare",
+    });
+  return { input: run.receipt.selected_input };
 }
 
 async function analyse(
@@ -580,7 +586,7 @@ async function audit(runtime, state, pass) {
 }
 
 async function processValidatedPaper(runtime, slug, meta) {
-  const { log, phase } = runtime;
+  const { phase } = runtime;
   phase("Acquire");
   const state = createPaperState(slug);
 
@@ -657,128 +663,16 @@ async function processValidatedPaper(runtime, slug, meta) {
         : "paper.acquire",
   });
 
-  let normalized = await extractAndAssess(
-    runtime,
-    state,
-    state.source,
-    state.sourceText,
-  );
-  if (normalized.terminal) return normalized.terminal;
-  if (normalized.failure)
-    return result(
-      state,
-      "analyse_failed",
-      "extract-text",
-      {},
-      normalized.failure,
-    );
-  if (normalized.signal === "invalid_source")
-    return result(
-      state,
-      "analyse_failed",
-      "assess-readability",
-      {},
-      operationFailure(
-        "paper.invalid_source",
-        "document.assess-readability",
-      ),
-    );
+  phase("Prepare");
+  const prepared = await prepare(runtime, state);
+  if (prepared.terminal) return prepared.terminal;
 
-  if (normalized.signal === "needs_ocr") {
-    log(`${slug}: typed readability signal requests one OCR recovery`);
-    const ocr = await runtime.operate(
-      documentOcrOperationPrompt(
-        state.materialKey,
-        state.source,
-        state.ocrSource,
-      ),
-      {
-        phase: "Prepare",
-        agentType: "general-purpose",
-        label: `${slug}:ocr`,
-        schema: documentOcrOperationSchema("paper", {
-          input: state.source,
-          output: state.ocrSource,
-        }),
-      },
-      {
-        key: "document.ocr",
-        effect: "writer",
-        retry: "forbidden",
-        replay: "blocked",
-        artifactRoles: ["recovery_source"],
-        contract: DOCUMENT_OCR_CONTRACT,
-        context: { input: state.source, output: state.ocrSource },
-      },
-    );
-    state.operations.push(ocr.receipt);
-    if (ocr.edge === "unknown" || ocr.edge === "blocked")
-      return blocked(state, "ocr", "document.ocr", ocr.receipt);
-    if (ocr.edge === "mismatch")
-      return mismatchBlocked(
-        state,
-        "ocr",
-        "document.ocr",
-      );
-    if (ocr.edge !== "ok" && ocr.edge !== "reconcile")
-      return result(
-        state,
-        "ocr_failed",
-        "ocr",
-        {},
-        ocr.receipt.failure ||
-          operationFailure("paper.ocr_failed", "document.ocr"),
-      );
-    const existingRecovery = ocr.edge === "reconcile";
-    if (existingRecovery)
-      state.warnings.push(
-        "existing OCR output was recovered through extract and typed readability assessment",
-      );
-    state.artifacts.push({
-      role: "recovery_source",
-      path: state.ocrSource,
-      exists: true,
-      usable: null,
-      producer: existingRecovery
-        ? "document.ocr:reconciled"
-        : "document.ocr",
-    });
-
-    normalized = await extractAndAssess(
-      runtime,
-      state,
-      state.ocrSource,
-      state.ocrText,
-    );
-    if (normalized.terminal) return normalized.terminal;
-    if (normalized.failure)
-      return result(
-        state,
-        "ocr_failed",
-        "extract-text",
-        {},
-        normalized.failure,
-      );
-    if (normalized.signal !== "readable")
-      return result(
-        state,
-        "ocr_failed",
-        "assess-readability",
-        {},
-        operationFailure(
-          normalized.signal === "needs_ocr"
-            ? "paper.ocr_insufficient"
-            : "paper.invalid_recovery_source",
-          "document.assess-readability",
-        ),
-      );
-  }
-
+  phase("Analyse");
   const analysisResult = await analyse(
     runtime,
     state,
     meta,
-    normalized.input,
+    prepared.input,
   );
   if (analysisResult.terminal) return analysisResult.terminal;
   if (analysisResult.reconcile) {
@@ -795,6 +689,7 @@ async function processValidatedPaper(runtime, slug, meta) {
     });
   }
 
+  phase("Audit");
   let auditResult = await audit(runtime, state, 1);
   if (auditResult.terminal) return auditResult.terminal;
   if (!auditResult.clean) {
@@ -826,15 +721,17 @@ async function processValidatedPaper(runtime, slug, meta) {
         ),
       );
 
+    phase("Analyse");
     const repairResult = await analyse(
       runtime,
       state,
       meta,
-      normalized.input,
+      prepared.input,
       "repair",
       exactDiagnostics,
     );
     if (repairResult.terminal) return repairResult.terminal;
+    phase("Audit");
     auditResult = await audit(runtime, state, 2);
     if (auditResult.terminal) return auditResult.terminal;
     if (!auditResult.clean)

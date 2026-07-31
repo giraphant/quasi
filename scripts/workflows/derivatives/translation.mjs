@@ -1,14 +1,8 @@
 import {
-  TRANSLATION_RECONCILE_CONTRACT,
-  TRANSLATION_RECONCILE_SCHEMA,
-  TRANSLATION_REOCR_CONTRACT,
-  TRANSLATION_REOCR_SCHEMA,
-  TRANSLATION_RUN_CONTRACT,
-  TRANSLATION_RUN_SCHEMA,
+  TRANSLATION_PREPARE_STAGE_CONTRACT,
   normalizeLanguage,
-  translationReconcilePrompt,
-  translationReocrPrompt,
-  translationRunPrompt,
+  translationPrepareStagePrompt,
+  translationPrepareStageSchema,
   validRequestedSource,
   validSelectableSource,
   validTranslationHash,
@@ -180,7 +174,6 @@ function createState(slug, meta) {
     requestedSource: meta.requestedSource,
     sourceDecision: meta.sourceDecision,
     sourcePath: null,
-    activeInput: null,
     tocJson: meta.tocJson,
     tocPageSide: meta.tocPageSide,
     output: `processing/translations/${slug}-${langTag}.pdf`,
@@ -188,11 +181,9 @@ function createState(slug, meta) {
     recoverySource:
       `processing/translations/${slug}-${langTag}-reocr.pdf`,
     backend: null,
-    requestFingerprint: null,
     sourceSha256: null,
     sourceSize: 0,
     sourcePages: 0,
-    activeInputSha256: null,
     artifacts: [],
     operations: [],
     validation: null,
@@ -200,12 +191,6 @@ function createState(slug, meta) {
     failure: null,
     disposition: null,
     recovered: false,
-    pendingReocr: null,
-    expectedGeneration: null,
-    budgets: {
-      reocr: { limit: 1, used: 0 },
-      translation_runs: { limit: 2, used: 0 },
-    },
   };
 }
 
@@ -235,7 +220,7 @@ function setSourceArtifact(state) {
     artifact(
       "source",
       state.sourcePath,
-      "translation.reconcile",
+      "translation.prepare",
       state.sourceSha256,
       state.sourceSize,
       state.sourcePages,
@@ -294,13 +279,14 @@ function receipt(state, status, stage, failure = null) {
     artifacts: state.artifacts,
     operations: state.operations,
     validation: state.validation,
-    budgets: state.budgets,
     gate: state.gate,
     failure,
     resume:
       status === "blocked"
         ? { operation_key: "translation.reconcile" }
-        : null,
+        : status === "needs_input"
+          ? { operation_key: "translation.user-gate", stage }
+          : null,
   };
 }
 
@@ -387,470 +373,119 @@ function writerMismatch(state, stage, operationKey) {
   );
 }
 
-function reconcileMismatch(state, mode) {
-  return terminal(
-    state,
-    "blocked",
-    mode === "initial" ? "reconcile" : "validation",
-    operationFailure(
-      "translation.reconcile_receipt_invalid",
-      "translation.reconcile",
-      "unknown",
-      "reconcile receipt did not prove the exact generation",
-    ),
+function prepareFailure(receipt, outcome = "known") {
+  const issue = receipt && receipt.issue;
+  return operationFailure(
+    (issue && issue.code) || "translation.prepare_failed",
+    "translation.prepare",
+    outcome,
+    (issue && issue.summary) || "Translation Prepare did not complete",
   );
 }
 
-function adoptReconcile(state, receipt) {
-  if (state.sourcePath === null) {
-    state.sourcePath = receipt.source_path;
-    state.sourceSha256 = receipt.source_sha256;
-    state.sourceSize = receipt.source_size;
-    state.sourcePages = receipt.source_pages;
-    setSourceArtifact(state);
-  }
-  state.backend = receipt.backend;
-  state.requestFingerprint = receipt.request_fingerprint;
-  state.activeInput = receipt.source_path;
-  state.activeInputSha256 = receipt.source_sha256;
-}
-
-function adoptValidation(state, receipt, producer) {
-  state.validation = {
-    status: "clean",
-    backend: receipt.backend,
-    input_path: receipt.source_path,
-    input_sha256: receipt.source_sha256,
-    output_path: state.output,
-    output_sha256: receipt.output_sha256,
-    manifest_path: state.manifest,
-    manifest_sha256: receipt.manifest_sha256,
-    source_pages: receipt.source_pages,
-    output_pages: receipt.output_pages,
-    toc_entries: receipt.toc_entries,
-    coverage: receipt.coverage,
-  };
-  setFinalArtifacts(state, receipt, producer);
-}
-
-function reocrEnvelope(
-  state,
-  raw,
-  status,
-  sha256,
-  failure,
-) {
-  return {
-    schema_version:
-      "quasi.operation.translation.reocr.receipt/0.1",
-    key: "translation.reocr",
-    effect: "writer",
-    status,
-    attempt: 1,
-    derivative_key: state.translationKey,
-    input_path: state.sourcePath,
-    output_path: state.recoverySource,
-    artifact_roles: ["recovery_source"],
-    exit: Number.isInteger(raw?.exit) ? raw.exit : null,
-    exists:
-      typeof raw?.exists === "boolean"
-        ? raw.exists
-        : false,
-    size:
-      Number.isInteger(raw?.size) && raw.size >= 0
-        ? raw.size
-        : 0,
-    sha256,
-    action: status === "succeeded" ? "created" : null,
-    failure,
-  };
-}
-
-function recordPendingReocr(state, reconcileReceipt) {
-  if (!state.pendingReocr) return;
-  const raw = state.pendingReocr;
-  state.operations.push(
-    reocrEnvelope(
-      state,
-      raw,
-      "succeeded",
-      reconcileReceipt.source_sha256,
-      null,
-    ),
-  );
-  state.artifacts.push(
-    artifact(
-      "recovery_source",
-      state.recoverySource,
-      "translation.reocr:reconciled",
-      reconcileReceipt.source_sha256,
-      reconcileReceipt.source_size,
-      reconcileReceipt.source_pages,
-    ),
-  );
-  state.pendingReocr = null;
-}
-
-async function reconcile(runtime, state, mode) {
-  const observed = await runtime.operate(
-    translationReconcilePrompt(state, mode),
-    {
-      phase:
-        mode === "initial"
-          ? "Recall"
-          : mode === "final"
-            ? "Audit"
-            : "Prepare",
-      agentType: "quasi:translate-agent",
-      label: `${state.slug}:reconcile-${mode}`,
-      schema: TRANSLATION_RECONCILE_SCHEMA,
-    },
-    {
-      key: "translation.reconcile",
-      effect: "readonly",
-      retry: "safe",
-      replay: "idempotent",
-      artifactRoles: [],
-      unknownFailureCode:
-        "translation.reconcile_outcome_unknown",
-      contract: TRANSLATION_RECONCILE_CONTRACT,
-      context: { state, mode },
-    },
-  );
-  const observeReceipt = observed.receipt;
-  const pendingRecovery =
-    mode === "recovery" && state.pendingReocr !== null;
-  if (
-    observed.edge === "unknown" ||
-    observed.edge === "mismatch"
-  ) {
-    if (pendingRecovery) {
-      state.operations.push(
-        reocrEnvelope(
-          state,
-          state.pendingReocr,
-          "blocked",
-          null,
-          operationFailure(
-            "translation.recovery_reconcile_failed",
-            "translation.reocr",
-            "unknown",
-            "layout OCR output could not be reconciled",
-          ),
-        ),
-      );
-      state.pendingReocr = null;
-    }
-    state.operations.push(observeReceipt);
-    return { terminal: reconcileMismatch(state, mode) };
-  }
-  if (pendingRecovery)
-    recordPendingReocr(state, observeReceipt);
-  state.operations.push(observeReceipt);
-  if (observed.edge === "blocked") {
-    state.backend = observeReceipt.backend;
-    state.gate = observeReceipt.gate;
-    return {
-      terminal: terminal(
-        state,
-        "blocked",
-        "reconcile",
-        observeReceipt.failure,
-      ),
-    };
-  }
-  if (observed.edge !== "ok")
-    return {
-      terminal: terminal(
-        state,
-        "failed",
-        "reconcile",
-        observeReceipt.failure,
-      ),
-    };
-  adoptReconcile(state, observeReceipt);
-  if (observeReceipt.signal === "reused") {
-    adoptValidation(
-      state,
-      observeReceipt,
-      mode === "initial"
-        ? "translation.reconcile:reused"
-        : "translation.run",
-    );
-    return { reused: true };
-  }
-  return { missing: true };
-}
-
-async function runTranslation(runtime, state, inputPath, attempt) {
-  state.budgets.translation_runs.used += 1;
+async function processStrict(runtime, state) {
+  runtime.phase("Prepare");
+  const schema = translationPrepareStageSchema({
+    derivativeKey: state.translationKey,
+    slug: state.slug,
+    targetLanguage: state.targetLanguage,
+    output: state.output,
+    manifest: state.manifest,
+  });
   const run = await runtime.operate(
-    translationRunPrompt(state, inputPath, attempt),
+    translationPrepareStagePrompt(state),
     {
       phase: "Prepare",
       agentType: "quasi:translate-agent",
-      label: `${state.slug}:translate-${attempt}`,
-      schema: TRANSLATION_RUN_SCHEMA,
+      label: `${state.slug}:prepare`,
+      schema,
     },
     {
-      key: "translation.run",
+      key: "translation.prepare",
       effect: "writer",
       retry: "forbidden",
       replay: "blocked",
       artifactRoles: [
+        "source",
+        "recovery_source",
         "translated_pdf",
         "translation_manifest",
       ],
-      unknownFailureCode:
-        "translation.writer_outcome_unknown",
-      contract: TRANSLATION_RUN_CONTRACT,
-      context: { state, inputPath, attempt },
+      unknownFailureCode: "translation.writer_outcome_unknown",
+      contract: TRANSLATION_PREPARE_STAGE_CONTRACT,
+      context: {
+        slug: state.slug,
+        targetLanguage: state.targetLanguage,
+        requestedSource: state.requestedSource,
+        output: state.output,
+        manifest: state.manifest,
+        recoverySource: state.recoverySource,
+      },
     },
   );
-  const runReceipt = run.receipt;
-  state.operations.push(runReceipt);
-  if (run.edge === "unknown")
-    return {
-      terminal: terminal(
-        state,
-        "blocked",
-        "translate",
-        operationFailure(
-          "translation.writer_outcome_unknown",
-          "translation.run",
-          "unknown",
-          "translation writer outcome is unknown",
-        ),
-      ),
-    };
+  state.operations.push(run.receipt);
+  if (run.edge === "unknown" || run.edge === "blocked")
+    return terminal(
+      state,
+      "blocked",
+      "prepare",
+      prepareFailure(run.receipt, "unknown"),
+    );
   if (run.edge === "mismatch")
-    return {
-      terminal: writerMismatch(
-        state,
-        "translate",
-        "translation.run",
-      ),
-    };
-  if (run.edge === "blocked") {
-    if (runReceipt.gate) state.gate = runReceipt.gate;
-    return {
-      terminal: terminal(
-        state,
-        "blocked",
-        "translate",
-        runReceipt.failure,
-      ),
-    };
+    return writerMismatch(
+      state,
+      "prepare",
+      "translation.prepare",
+    );
+  if (run.edge === "needs_input") {
+    state.gate = run.receipt.gate;
+    return terminal(
+      state,
+      "needs_input",
+      "prepare",
+      prepareFailure(run.receipt),
+    );
   }
-  if (run.edge !== "ok")
-    return {
-      underTranslated:
-        runReceipt.failure.code ===
-        "translation.under_translated",
-      terminal:
-        runReceipt.failure.code ===
-        "translation.under_translated"
-          ? null
-          : terminal(
-              state,
-              "failed",
-              "translate",
-              runReceipt.failure,
-            ),
-      receipt: runReceipt,
-    };
-  state.disposition =
-    runReceipt.disposition === "reconciled"
-      ? "reused"
-      : "created";
-  state.expectedGeneration = {
-    attempt,
-    outputSha256: runReceipt.output_sha256,
-    manifestSha256: runReceipt.manifest_sha256,
-    outputSize: runReceipt.output_size,
-    sourcePages: runReceipt.source_pages,
-    outputPages: runReceipt.output_pages,
-    tocEntries: runReceipt.toc_entries,
-    coverage: runReceipt.coverage,
+  if (run.edge === "failed")
+    return terminal(
+      state,
+      "failed",
+      "prepare",
+      prepareFailure(run.receipt),
+    );
+
+  const stageReceipt = run.receipt;
+  state.backend = stageReceipt.backend;
+  state.sourcePath = stageReceipt.source.path;
+  state.sourceSha256 = stageReceipt.source.sha256;
+  state.sourceSize = stageReceipt.source.size;
+  state.sourcePages = stageReceipt.source.pages;
+  state.disposition = stageReceipt.disposition;
+  state.recovered = stageReceipt.recovered;
+  setSourceArtifact(state);
+  state.validation = {
+    status: "clean",
+    backend: stageReceipt.backend,
+    input_path: stageReceipt.source.path,
+    input_sha256: stageReceipt.source.sha256,
+    output_path: state.output,
+    output_sha256: stageReceipt.validation.output_sha256,
+    manifest_path: state.manifest,
+    manifest_sha256: stageReceipt.validation.manifest_sha256,
+    source_pages: stageReceipt.validation.source_pages,
+    output_pages: stageReceipt.validation.output_pages,
+    toc_entries: stageReceipt.validation.toc_entries,
+    coverage: stageReceipt.validation.coverage,
   };
-  return { succeeded: true, receipt: runReceipt };
-}
-
-async function reocr(runtime, state) {
-  state.budgets.reocr.used = 1;
-  const recovered = await runtime.operate(
-    translationReocrPrompt(state),
-    {
-      phase: "Prepare",
-      agentType: "quasi:translate-agent",
-      label: `${state.slug}:reocr`,
-      schema: TRANSLATION_REOCR_SCHEMA,
-    },
-    {
-      key: "translation.reocr",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "blocked",
-      artifactRoles: ["recovery_source"],
-      unknownFailureCode:
-        "translation.writer_outcome_unknown",
-      contract: TRANSLATION_REOCR_CONTRACT,
-      context: { state },
-    },
-  );
-  const rawReceipt = recovered.receipt;
-  if (recovered.edge === "unknown") {
-    state.operations.push(rawReceipt);
-    return {
-      terminal: terminal(
-        state,
-        "blocked",
-        "reocr",
-        operationFailure(
-          "translation.writer_outcome_unknown",
-          "translation.reocr",
-          "unknown",
-          "layout OCR writer outcome is unknown",
-        ),
-      ),
-    };
-  }
-  if (recovered.edge === "mismatch") {
-    state.operations.push(
-      reocrEnvelope(
-        state,
-        rawReceipt,
-        "blocked",
-        null,
-        operationFailure(
-          "translation.writer_receipt_mismatch",
-          "translation.reocr",
-          "unknown",
-          "raw layout OCR receipt did not prove the exact output",
-        ),
-      ),
-    );
-    return {
-      terminal: writerMismatch(
-        state,
-        "reocr",
-        "translation.reocr",
-      ),
-    };
-  }
-  if (recovered.edge === "blocked") {
-    const failure = operationFailure(
-      "translation.recovery_source_exists",
-      "translation.reocr",
-      "unknown",
-      "existing recovery source has no provenance for this request",
-    );
-    state.operations.push(
-      reocrEnvelope(
-        state,
-        rawReceipt,
-        "blocked",
-        null,
-        failure,
-      ),
-    );
-    return {
-      terminal: terminal(
-        state,
-        "blocked",
-        "reocr",
-        failure,
-      ),
-    };
-  }
-  if (recovered.edge !== "ok") {
-    const failure = operationFailure(
-      "translation.reocr_failed",
-      "translation.reocr",
-      "known",
-      `${rawReceipt.failure.code}: ${rawReceipt.failure.message}`,
-    );
-    state.operations.push(
-      reocrEnvelope(
-        state,
-        rawReceipt,
-        "failed",
-        null,
-        failure,
-      ),
-    );
-    return {
-      terminal: terminal(
-        state,
-        "failed",
-        "reocr",
-        failure,
-      ),
-    };
-  }
-  state.activeInput = state.recoverySource;
-  state.activeInputSha256 = null;
-  state.recovered = true;
-  state.pendingReocr = rawReceipt;
-  return { succeeded: true };
-}
-
-async function processStrict(runtime, state) {
-  runtime.phase("Recall");
-  const observed = await reconcile(runtime, state, "initial");
-  if (observed.terminal) return observed.terminal;
-  if (observed.reused) {
-    state.disposition = "reused";
-    return terminal(state, "complete", "validation");
-  }
-
-  let translated = await runTranslation(
-    runtime,
+  setFinalArtifacts(
     state,
-    state.sourcePath,
-    1,
+    {
+      ...stageReceipt.validation,
+      output_path: state.output,
+      manifest_path: state.manifest,
+    },
+    "translation.prepare",
   );
-  if (translated.terminal) return translated.terminal;
-  if (translated.underTranslated) {
-    const recovered = await reocr(runtime, state);
-    if (recovered.terminal) return recovered.terminal;
-    const recoveryObserved = await reconcile(
-      runtime,
-      state,
-      "recovery",
-    );
-    if (recoveryObserved.terminal)
-      return recoveryObserved.terminal;
-    if (!recoveryObserved.missing)
-      return reconcileMismatch(state, "recovery");
-    translated = await runTranslation(
-      runtime,
-      state,
-      state.recoverySource,
-      2,
-    );
-    if (translated.terminal) return translated.terminal;
-    if (translated.underTranslated)
-      return terminal(
-        state,
-        "failed",
-        "translate",
-        operationFailure(
-          "translation.recovery_exhausted",
-          "translation.run",
-          "known",
-          "translation remained under-translated after one layout OCR recovery",
-        ),
-      );
-  }
-
-  const verified = await reconcile(runtime, state, "final");
-  if (verified.terminal) return verified.terminal;
-  if (!verified.reused)
-    return reconcileMismatch(state, "final");
-  state.disposition = state.recovered
-    ? "recovered"
-    : state.disposition || "created";
   return terminal(state, "complete", "validation");
 }
 

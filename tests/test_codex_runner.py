@@ -59,9 +59,9 @@ def test_codex_runner_preserves_explicit_nullable_scalar_branches() -> None:
     script = f"""
 import {{ strictSchema }} from {json.dumps(RUNNER.as_uri())}
 import {{
-  TRANSLATION_RECONCILE_SCHEMA,
+  TRANSLATION_PREPARE_STAGE_CONTRACT,
 }} from "./scripts/workflows/operations/translate.mjs"
-console.log(JSON.stringify(strictSchema(TRANSLATION_RECONCILE_SCHEMA)))
+console.log(JSON.stringify(strictSchema(TRANSLATION_PREPARE_STAGE_CONTRACT.schema)))
 """
     proc = subprocess.run(
         [node(), "--input-type=module", "-e", script],
@@ -76,28 +76,26 @@ console.log(JSON.stringify(strictSchema(TRANSLATION_RECONCILE_SCHEMA)))
     assert "anyOf" not in schema
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == set(schema["properties"])
-    for field in (
-        "requested_source",
-        "source_path",
-        "toc_json",
-        "request_fingerprint",
-        "source_sha256",
-        "output_sha256",
-        "manifest_sha256",
-        "candidates_fingerprint",
-    ):
-        branches = schema["properties"][field]["anyOf"]
-        assert any(branch == {"type": "null"} for branch in branches)
-        assert any(branch.get("type") == "string" for branch in branches)
+    assert set(schema["properties"]["backend"]["type"]) == {"string", "null"}
+    gate_fingerprint = schema["properties"]["gate"]["properties"][
+        "candidates_fingerprint"
+    ]
+    assert any(branch == {"type": "null"} for branch in gate_fingerprint["anyOf"])
+    assert any(branch.get("type") == "string" for branch in gate_fingerprint["anyOf"])
+    median = schema["properties"]["validation"]["properties"]["coverage"][
+        "properties"
+    ]["median"]
+    assert any(branch == {"type": "null"} for branch in median["anyOf"])
+    assert any(branch.get("type") == "number" for branch in median["anyOf"])
 
 
 def test_codex_runner_strictifies_nullable_failure_objects() -> None:
     script = f"""
 import {{ strictSchema }} from {json.dumps(RUNNER.as_uri())}
 import {{
-  BOOK_DOCUMENT_OCR_SCHEMA,
+  PAPER_PREPARE_STAGE_CONTRACT,
 }} from "./scripts/workflows/operations/extract.mjs"
-console.log(JSON.stringify(strictSchema(BOOK_DOCUMENT_OCR_SCHEMA)))
+console.log(JSON.stringify(strictSchema(PAPER_PREPARE_STAGE_CONTRACT.schema)))
 """
     proc = subprocess.run(
         [node(), "--input-type=module", "-e", script],
@@ -107,12 +105,15 @@ console.log(JSON.stringify(strictSchema(BOOK_DOCUMENT_OCR_SCHEMA)))
         check=True,
     )
     schema = json.loads(proc.stdout)
-    failure = schema["properties"]["failure"]
+    issue = schema["properties"]["issue"]
 
-    assert set(failure["type"]) == {"object", "null"}
-    assert failure["additionalProperties"] is False
-    assert set(failure["required"]) == set(failure["properties"])
-    assert set(failure["properties"]["message"]["type"]) == {"string", "null"}
+    assert set(issue["type"]) == {"object", "null"}
+    assert issue["additionalProperties"] is False
+    assert set(issue["required"]) == set(issue["properties"])
+    assert set(issue["properties"]["user_question"]["type"]) == {
+        "string",
+        "null",
+    }
 
 
 def test_codex_runner_executes_graph_through_codex_cli_contract(

@@ -75,7 +75,9 @@ function materialReceipt(result) {
     ["book", "paper"].includes(receipt.kind) &&
     typeof receipt.id === "string" &&
     receipt.material_key === `${receipt.kind}:${receipt.id}` &&
-    ["complete", "blocked", "failed"].includes(receipt.status)
+    ["complete", "needs_input", "blocked", "failed"].includes(
+      receipt.status,
+    )
     ? receipt
     : null;
 }
@@ -123,7 +125,8 @@ function classifyResult(item, result, error = null) {
   if (
     publicStatus === "year_mismatch" ||
     publicStatus === "year_ambiguous" ||
-    (ingress && ingress.status === "needs_input")
+    (ingress && ingress.status === "needs_input") ||
+    (material && material.status === "needs_input")
   )
     return {
       status: "needs_input",

@@ -50,14 +50,13 @@ def test_common_role_is_small_and_least_privilege() -> None:
     assert metadata["name"] == "analyse-agent"
     assert metadata["tools"] == "Read, Write"
     assert len(text.splitlines()) < 50
-    assert "完整的 operation envelope" in text
-    assert "一个或多个有序 input refs，以及唯一 output ref" in text
+    assert "Caller\n提供材料身份、exact input refs、唯一 output" in text
     assert "artifact_contract" in text
     assert "frontmatter_seed" in text
-    assert "均以实际读到的 inputs 为证据" in text
-    assert "通用执行流程" in text
-    assert "output_exists_requires_reconcile" in text
-    assert "StructuredOutput schema" in text
+    assert "关键判断回到实际\ninput" in text
+    assert "Create 先观察 exact output" in text
+    assert "reconciled collision" in text
+    assert "caller StructuredOutput schema" in text
 
 
 def test_common_role_does_not_duplicate_operation_catalog_or_migration_history() -> None:
@@ -186,5 +185,5 @@ def test_operation_prompts_keep_exact_refs_and_no_flow_control() -> None:
     ):
         assert token in text
 
-    assert "output_exists_requires_reconcile" in agent_text()
+    assert "已经存在时返回 reconciled collision" in agent_text()
     assert "needs_ocr" not in text

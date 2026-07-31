@@ -15,8 +15,8 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 ### Layer ownership
 
 - `skills/` are thin user-facing coordinators: they identify intent, start the graph, present typed human gates, and explain blocked or failed results.
-- `workflows/` owns host-neutral deterministic graphs, including material input normalisation, Recall/Search identity resolution, path ownership, skip/reconcile rules, and dispatch order. Graphs use only the injected `agent`, `parallel`, `phase`, `log`, and `args` primitives.
-- `agents/` are specialist workers. They call only the public `quasi-*` CLI or read/write the exact local artifact named in their contract. The sole remote-tool exception is `webcard-agent`, which may `WebFetch` the exact URLs returned by `quasi-search kagi` for its one assigned evidence card.
+- `workflows/` owns host-neutral stage coordination: input normalisation, exact refs, phase order, concurrency, coalescing, typed terminal routing, and joins. It describes what a specialist receives and what the next stage needs, rather than reproducing the specialist's method. Graphs use only the injected `agent`, `parallel`, `phase`, `log`, and `args` primitives.
+- `agents/` are goal-owning specialist workers. A Stage Unit Agent may investigate, choose among its declared `quasi-*` capabilities, and perform local recovery until it can make an honest terminal judgement. It reads or writes only the exact artifacts in its request. The sole remote-tool exception is `webcard-agent`, which may `WebFetch` the exact URLs returned by `quasi-search kagi` for its one assigned evidence card.
 - `bin/quasi-*` is the stable shell surface exposed to agents and skills.
 - `scripts/` contains deterministic capability entrypoints and build-only sources;
   `scripts/workflows/` is the editable host-neutral graph source.
@@ -30,7 +30,16 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 - Workflow phases describe processing progress, never router branches or material kinds. The shared order is `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`.
 - Every `agent()` call must carry its exact stage through `opts.phase`; do not use `Paper`, `Book`, `Author`, `Talk`, `Topic`, or `Translation` as a phase.
 - Agent labels begin with the stable material slug or collection key, followed by the operation, so parallel work remains identifiable when the UI truncates long labels.
-- `Recall` observes local state and resolves existing membership; `Search` discovers or verifies external records; `Acquire` accepts a source artifact; `Prepare` converts or structures inputs; the remaining stages produce, combine, and validate canonical artifacts.
+- `Recall` normalises and coalesces material requests; the single `Search` specialist invocation investigates external records and resolves its selected identity against the vault. `Acquire` accepts a source artifact; `Prepare` converts or structures inputs; the remaining stages produce, combine, and validate canonical artifacts.
+
+### Stage Unit model
+
+- A non-trivial stage is one goal-owning Agent invocation with a self-contained envelope: goal, exact inputs/outputs, bounded identity, available capabilities, and one output schema.
+- The shared Stage receipt is `quasi.stage.receipt/0.1` with `complete|needs_input|blocked|failed`. `complete` proves only the exact artifacts required by the next stage; the other terminals carry one typed issue and, for `needs_input`, a concrete user question.
+- The Agent owns professional method and stopping judgement. Do not encode query counts, provider cascades, text-readability heuristics, OCR decisions, chapter replanning, or translation recovery as Graph branches merely to control the Agent. A hard bound belongs in the Graph only when it protects a real shared resource or writer boundary.
+- The Workflow validates the same schema sent to StructuredOutput, then checks exact ownership and cross-artifact joins. Do not add a second, stricter handwritten interpretation of a schema-valid failure receipt.
+- Single-action producer Operations such as Analyse, Synthesise, and Audit may keep their operation receipts. Stage Units are for work that naturally requires specialist investigation or local recovery, not a requirement to make every Agent invocation large.
+- Unknown writer outcomes still stop the current run. Agent autonomy does not permit duplicate writers, path discovery outside the envelope, or replay after an ambiguous write.
 
 ### Path roots
 
@@ -79,7 +88,7 @@ Current userConfig mapping:
 - The graph owns material identity and processing state. The skill main process owns only user decisions and explicitly skill-scoped sidecars; it must not maintain a second metadata, recall, or writer-success state machine.
 - `metadata-agent`, `discovery-agent`, and `localisation-agent` return JSON and do not write files.
 - `download-agent` accepts or rejects candidates through `quasi-download`; it returns `DOWNLOAD_RESULT.per_item` and does not own caller manifests.
-- `extract-agent` only plans or assesses the exact chapter set named by the caller; deterministic `quasi-extract` transactions own chapter files and `processing/chapters/{slug}/manifest.json`.
+- `extract-agent` owns Paper/Book Prepare judgement and local recovery over caller-named refs. It invokes deterministic `quasi-extract` transactions; those CLI transactions own chapter files and `processing/chapters/{slug}/manifest.json`.
 - `analyse-agent`, `synthesis-agent`, `proofread-agent`, and `citecheck-agent` write only the exact product path assigned by the caller.
 - `steer-agent` owns `vault/topics/{slug}/02-outline.md` (the topic research outline; users may hand-edit it between runs) and returns sub-question-targeted candidates; it writes nothing else.
 - `webcard-agent` turns one topic `web_task` into one evidence card at the caller-named `vault/topics/{slug}/cards/{card-slug}.md`; it writes nothing else, and returns `status: empty` rather than writing a card it could not verify. Cards are not vault analysis products: they travel on their own `cards` channel (outline `subquestions[].cards`, synth `card_paths`) and never enter the `book|paper|talk` corpus table.
@@ -126,63 +135,46 @@ Artifact writing has three ownership layers:
   dynamic frontmatter seeds, and operation-only evidence rules. It must not
   duplicate artifact structure.
 
-For an operation with a named owner Agent, the prompt boundary should be a
-self-contained JSON envelope whenever prose adds no operation-specific value.
-The Agent contract owns stable command-relay or transaction discipline, JSON
-fidelity, and the prohibition on retries, alternate commands, and graph-edge
-selection. The operation request owns business vocabulary, exact commands and
-refs, mode, diagnostics, and evidence policy. The host-facing schema owns the
-closed receipt fields, exact `const` echoes, ordered inputs, and status matrix.
-Do not repeat any of those generic contracts as surrounding prompt prose; a
-JSON-only user message must remain sufficient for the Agent to execute safely.
+For an Agent-owned boundary, prefer a self-contained JSON envelope: goal,
+bounded identity, exact refs, available capabilities, and the receipt schema.
+The Agent contract owns stable professional method and epistemic discipline.
+The envelope owns this invocation's vocabulary, paths, dynamic metadata, and
+evidence target. The host-facing schema owns the closed receipt fields and
+exact echoes. Do not surround a sufficient JSON envelope with a second prose
+contract.
 
 Edit `scripts/schemas/` when changing a Paper, Chapter, Book overview, or Talk
 output structure, then run `npm run build:workflows`. The build updates
 `scripts/workflows/artifact-contracts/generated.mjs` and
 `workflows/process-material.mjs`; both are generated artifacts and must not be
 hand-edited. Non-artifact behavior such as acquisition policy is structured
-inside its owning `scripts/workflows/operations/*.mjs` request rather than kept
-as a prose prompt pack. `npm run check:workflows` verifies
+inside its owning `scripts/workflows/operations/*.mjs` request. It should state
+the goal and available capabilities without transcribing the specialist's
+decision tree. `npm run check:workflows` verifies
 schema/projection/operation/bundle parity.
 
-The Paper loop is the first Operation-based vertical slice: it normalises every
-source through `quasi-extract text`, asks a read-only Agent to judge semantic
-readability, follows a bounded OCR recovery edge when needed, and gives one
-common `analyse-agent` a Paper-specific operation envelope. Writer receipts are
-strictly reconciled against exact target identity; a malformed or ambiguous
-writer receipt is an unknown outcome and must block rather than retry.
+Paper and Book now use goal-owning Prepare Stage Units. `paper.prepare` asks
+`extract-agent` to establish one readable normalized text from the exact
+accepted source; `book.prepare` asks it to establish one coherent, semantically
+usable chapter generation. OCR, readability judgement, chapter planning, and
+local repair are specialist method over deterministic `quasi-extract`
+capabilities, not separate Workflow nodes. The graph sees the resulting exact
+artifacts, then invokes the single-action Analyse/Synthesise/Audit producers.
 
-Receipt validation is centralised, not per-graph. Each Operation exports a
-receipt contract next to its schema in `scripts/workflows/operations/` and
-`runtime.mjs::operate` enforces it once before the graph sees a closed edge:
-`unknown | mismatch | reconcile | blocked | failed | ok`. Graphs branch only
-on that edge algebra and must not re-derive receipt invariants inline.
+Receipt validation is centralised in `runtime.mjs::operate`. For a Stage Unit,
+the host and runtime validate the same closed `quasi.stage.receipt/0.1` schema,
+then the Stage contract checks only the exact postcondition needed by the next
+stage. Schema-valid `needs_input|blocked|failed` terminals are routed as their
+declared meaning; the graph must not reinterpret them as malformed because it
+disagrees with the specialist's internal method. Single-action producer
+Operations retain operation-specific receipts and exact ownership checks.
+Unknown writer outcomes always stop the current run and are never replayed.
 
-Writer operations are Claude-first: status invariants and exact path echoes
-ride the host-facing schema itself, as per-call composed schemas
-(`textExtractSchema`, `paperAnalyseSchema`, `chapterExtractSchema`,
-`bookAcquireSchema`, `talkRenderSilentSchema`,
-`topicOverviewSynthesiseSchema`, … built from base + `anyOf` status branches
-+ `const` echoes, including deep-equality consts for ordered input lists).
-The StructuredOutput layer then bounces an invalid receipt back to the
-still-running agent — the only place a retry is ever safe for a writer —
-before the graph is involved. `classifyReceipt` validates the same composed
-schema object as a backstop, so harnesses that do not enforce
-StructuredOutput converge on the same verdict, and the contract keeps only
-what a JSON Schema cannot express (count arithmetic like
-`remaining_violations === escalated.length`, year-evidence semantics and
-human year-decision replay for Book acquisition, reconcile-edge detection,
-non-default status accessors). Book acquisition builds its composed schema
-once and hands the same object to both the host layer and its direct
-`classifyReceipt` call, because the graph normalises an accepted item's
-`tmp_path` away between the two. This deliberately drops the earlier
-composition-free schema constraint that existed for Codex `--output-schema`
-compatibility; the Codex worker path is no longer guaranteed to pre-enforce
-these schemas and relies on the runtime backstop alone. Read-only operations
-(chapter plan/assess, observe, classify, recall, membership, discovery), the
-arithmetic-heavy `talk.transcribe`, and the Translation/steer command relays
-still carry predicate-style contracts: a wrong writer receipt blocks a
-material, so writers got the self-repair loop first.
+StructuredOutput may ask a still-running Agent to repair malformed output.
+That provider-level correction is distinct from graph replay: after an Agent
+invocation returns, the graph classifies its receipt once. Cross-field checks
+that JSON Schema cannot express stay small and concrete, such as an exact path
+join, count equality, or coherent manifest generation.
 
 Child MaterialReceipt admission at collection/research joins stays strict on
 purpose — the dispatch seam is host-pluggable, so a join re-proves identity,
@@ -204,15 +196,15 @@ Public skill routing separates material intake from topic research. `collect-mat
 
 One user request containing 2–32 top-level Books/Papers enters `process-material.mjs` once as `{kind:"batch",items:[...]}`. The batch coordinator shares one runtime across independent material loops, preserves input order, coalesces duplicate identities before any duplicate writer, and returns `quasi.collection.material-batch.receipt/0.1`. Do not expand a batch into one Workflow invocation per item; that produces multiple top-level UI graphs and prevents aggregate progress management.
 
-For a single Book or Paper request, `collect-material` passes only bounded user-provided hints into the graph. The graph runs `material.recall`, `material.search`, and `material.resolve` through `metadata-agent` before constructing a writable material path. Search owns author order, year, identifiers, venue/publisher, access URLs, and canonical slug; resolve may replace that slug only with an exact existing vault owner. Author/Topic candidate finding uses `discovery-agent`; Chinese-edition matching uses `localisation-agent`. The skill main process must not dispatch metadata workers, run vault recall, or substitute generic web/browser search before graph startup. A failed download must preserve `failure_reason` and per-source `attempts` in the graph result.
+For a single Book or Paper request, `collect-material` passes only user-provided hints into the graph. Recall normalises and coalesces the request without starting a worker. One `material.search` Stage Unit gives `metadata-agent` both search and vault-resolution capabilities, so the specialist establishes the canonical identity and exact existing owner in one investigation. Search owns author order, year, identifiers, venue/publisher, access URLs, and canonical slug. Author/Topic candidate finding uses `discovery-agent`; Chinese-edition matching uses `localisation-agent`. The skill main process starts the graph before doing metadata work. A failed download preserves `failure_reason` and per-source `attempts` in the graph result.
 
 Paper metadata merging treats Crossref as the authority for the journal container title and decodes its HTML entities at the adapter boundary. Do not let asynchronous adapter completion order choose `venue`; OpenAlex may omit meaningful punctuation from the same journal name.
 
 Codex does not inject Claude plugin Configure options, and a native subagent may not inherit the coordinator's plugin hook. Every Python-facing `quasi-*` shim therefore sources `scripts/load-keychain-env.sh`, which fills missing `QUASI_*` values at runtime from the existing encrypted `Claude Code-credentials` Keychain record. On macOS the PreToolUse hook uses the same `--keychain-exports` helper for coordinator commands, including Claude-hosted commands whose `CLAUDE_PLUGIN_OPTION_*` values are visible only to the hook. Command argv contains only helper paths, never secret values; explicit `QUASI_*` values take precedence because the helper fills only missing keys. This is also the config source used by the Pi bridge; secrets are not written to request envelopes or plugin data. Non-macOS currently keeps the older direct-export hook fallback because it has no shared Keychain provider.
 
-`quasi-translate` has two interchangeable backends behind one output contract (`processing/translations/{slug}-{full-target-tag-lower}.pdf`, for example `-zh-cn.pdf`; alternating original/translated pages, bookmarks): `immersive` (default, Immersive Translate Zotero API) and `pdf2zh` (local `pdf2zh-next` via uvx, driving a user-supplied OpenAI-compatible endpoint). Backend selection is user config (`translate_backend`), not an agent decision — strict `observe`/`run` reject a caller backend override, while the legacy prose entry still accepts `--backend` as a compatibility adapter into the same transaction. For pdf2zh, a root-only `translate_base_url` gets `/v1` appended; any explicit path is preserved because compatible providers also use paths such as `/api/paas/v4` and `/openai/v1`. The pdf2zh path uses `--use-alternating-pages-dual`, which emits the same page layout Immersive produces *after* `split_dual_pdf()`, so the TOC helpers are shared verbatim. Strict and legacy public entries reject free backend arguments; provider credentials stay out of argv. Because pdf2zh-next exits 0 on a mangled translation, the transaction gates on output pages == 2× source pages, then ToUnicode repair and coverage, before manifest-last publication. Rejected or uncertain generations remain in their fenced `processing/translations/.{stem}.translate-*` directory and never become canonical output.
+`quasi-translate` has two interchangeable backends behind one output contract (`processing/translations/{slug}-{full-target-tag-lower}.pdf`, for example `-zh-cn.pdf`; alternating original/translated pages, bookmarks): `immersive` (default, Immersive Translate Zotero API) and `pdf2zh` (local `pdf2zh-next` via uvx, driving a user-supplied OpenAI-compatible endpoint). Backend selection is user config (`translate_backend`), not a free caller argument. `translate-agent` owns the Translation Prepare Stage: it observes candidates, runs the configured backend, interprets validation, and may use layout OCR recovery when the evidence calls for it. The deterministic CLI still owns fenced generation, manifest-last publication, page-count, ToUnicode, and coverage checks. For pdf2zh, a root-only `translate_base_url` gets `/v1` appended; any explicit path is preserved because compatible providers also use paths such as `/api/paas/v4` and `/openai/v1`. The pdf2zh path uses `--use-alternating-pages-dual`, which emits the same page layout Immersive produces *after* `split_dual_pdf()`, so the TOC helpers are shared verbatim. Provider credentials stay out of argv. Rejected or uncertain generations remain in their fenced `processing/translations/.{stem}.translate-*` directory and never become canonical output.
 
-Both backends also gate on translation coverage (`scripts/translate/coverage.py`), because a structurally perfect dual PDF — right page count, exit 0, no warning — can still be missing most of its body text: when the source's own text layer is fragmented, BabelDOC's layout model stops recognising paragraphs as translatable blocks and leaves them as untouched scan. Translated Han characters per source Latin letter separates the two cleanly (0.30–0.36 on every healthy page measured; 0.15 median, 0.01 at worst on a book that came out 43% translated), so the gate is the per-page median against `MIN_MEDIAN`. It is a median, not a mean or a per-page rule, so one plate or part-title page cannot reject a complete book; the cost is that a single dead page inside a good book passes. Only Chinese targets are scored. The check must run *after* `tounicode.py::repair_pdf`, and does in both backends: an unrepaired book extracts as mojibake in the CJK extension-A block, which the counter deliberately does not count, so a healthy 368-page translation scored 0.17 before repair and 0.31 after. Run the script standalone to audit PDFs translated before this existed — repair first. The Translation Graph consumes this typed failure and owns the single bounded `quasi-extract ocr --layout` recovery edge; `agents/translate-agent.md` only relays the one command selected for the current operation.
+Both backends also gate on translation coverage (`scripts/translate/coverage.py`), because a structurally perfect dual PDF — right page count, exit 0, no warning — can still be missing most of its body text: when the source's own text layer is fragmented, BabelDOC's layout model stops recognising paragraphs as translatable blocks and leaves them as untouched scan. Translated Han characters per source Latin letter separates the two cleanly (0.30–0.36 on every healthy page measured; 0.15 median, 0.01 at worst on a book that came out 43% translated), so the gate is the per-page median against `MIN_MEDIAN`. It is a median, not a mean or a per-page rule, so one plate or part-title page cannot reject a complete book; the cost is that a single dead page inside a good book passes. Only Chinese targets are scored. The check must run *after* `tounicode.py::repair_pdf`, and does in both backends: an unrepaired book extracts as mojibake in the CJK extension-A block, which the counter deliberately does not count, so a healthy 368-page translation scored 0.17 before repair and 0.31 after. Run the script standalone to audit PDFs translated before this existed — repair first. `translate-agent` interprets this evidence inside the Prepare Stage and may choose the caller-scoped `quasi-extract ocr --layout` recovery capability; the Workflow sees only the final Stage terminal and verified generation.
 
 Both backends run `scripts/translate/tounicode.py::repair_pdf` on the finished PDF. BabelDOC — which Immersive Translate's PDF pipeline also uses, same font stack — emits a `/ToUnicode` CMap holding a couple of dozen entries instead of one per glyph once a run exceeds a few translated pages. The pages render correctly but copy/paste and in-PDF search return mojibake, because the reader falls back to reading the raw CID as a codepoint. The subset fonts are Identity-H with original glyph numbering, so the map is rebuilt from the cached original TTF under `~/.cache/babeldoc/fonts` (override with `QUASI_BABELDOC_FONT_DIR`); every rebuild is cross-checked against the entries BabelDOC got right and a font that disagrees is skipped rather than corrupted. Run the script standalone to repair PDFs translated before this existed.
 

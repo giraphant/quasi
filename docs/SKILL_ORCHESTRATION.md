@@ -1,167 +1,148 @@
 # Skill Orchestration Schema
 
-date: 2026-05-18
+date: 2026-07-31
 status: maintainer contract
 
-This document defines how quasi skills are written and maintained. It is a
-maintainer schema, not a runtime framework and not a document that active
-`SKILL.md` files should cite.
-
-## Runtime vs Maintainer
-
-`SKILL.md` is runtime instruction. It should contain only what the executing
-model needs to run the workflow: task, input normalisation, hard constraints,
-state, worker contracts, phases, resume rules, and outputs.
-
-This document, `AGENTS.md`, and `CLAUDE.md` are maintainer instruction. They
-describe how to create or refactor skills. Do not put "follow
-docs/SKILL_ORCHESTRATION.md" into active skills; that adds maintenance context
-to the runtime task without improving execution.
+This document describes how quasi skills coordinate a graph. It is maintainer
+guidance; active `SKILL.md` files contain only the runtime guidance needed by the
+executing model.
 
 ## Principle
 
-A skill is the main-process workflow owner. It turns a user request into a
-small state machine, dispatches specialist agents, calls deterministic CLI
-helpers, writes workflow state, and decides when to ask the user.
+A skill is the user-facing coordinator. It recognises intent, starts the graph,
+understands typed terminals, presents real human decisions, and explains what
+happened. It does not duplicate the graph's material state or a specialist's
+professional method.
 
-Agents are specialist workers. They should not own global workflow state.
+The Workflow is a stage board. It controls phase order, exact envelopes,
+concurrency, coalescing, ownership boundaries, and typed routing. It should be
+easy to answer “which material is at which stage?” without reading specialist
+reasoning.
 
-## Skill File Schema
+An Agent is a goal-owning specialist. Given exact scope and declared
+capabilities, it may investigate, compare evidence, and perform local recovery
+until it can honestly return `complete`, `needs_input`, `blocked`, or `failed`.
+The deterministic CLI remains responsible for I/O mechanics, locks, staging,
+fingerprints, and atomic publication.
 
-Active skills should use these landmarks. Extra domain sections are allowed
-when they make execution clearer, but the core shape should stay recognisable.
+## Active Skill Shape
 
-```text
-任务                 One short positive sentence: the work this skill performs.
-输入                 User-provided facts to extract; not derived workflow state.
-硬约束               Short list of rules the executing model must not violate.
-状态                 Manifest/cache/decision files, status enum, and state ownership.
-Agent / Helper 合同  The local worker contracts this skill actually calls.
-工作流               Phase diagram or concise phase list.
-执行流程             Concrete pseudocode when needed.
-断点续跑             Skip conditions for each phase.
-输出                 Final and important intermediate artifacts.
-```
-
-`wrap-up` is allowed to be longer because it contains human review, but it
-should still follow the same ownership rules.
-
-## Frontmatter Description
-
-Frontmatter `description` is a routing hint, not a mini README.
-
-Skill descriptions are user-intent facing:
+Use these landmarks when they help the executing model:
 
 ```text
-Use when the user wants to {core task} from/with {likely inputs}.
+任务
+输入
+状态
+Agent / Helper 合同
+工作流
+执行流程
+断点续跑
+输出
 ```
 
-Agent descriptions are worker-facing:
+`任务` is one positive sentence. `输入` records facts that can come from the
+user. `状态` names authoritative receipts and ownership. `执行流程` is concise
+pseudocode only when prose would leave host or batch behaviour ambiguous.
 
-```text
-Worker for {single specialist action}. Reads/writes/returns {main contract}.
-```
-
-Keep descriptions short. Do not put phase names, historical rename notes, long
-trigger-word lists, or detailed workflow steps in frontmatter.
-
-`任务` should not explain orchestration, state, worker ownership, or negative
-scope. Those belong in later sections. For example: "搜索、下载和分析用户提供的
-论文。" is enough for a paper skill.
-
-`输入` should describe facts available in the user's request, such as title,
-author, DOI, ISBN, source path, topic, flags, or rough search query. Do not put
-phase behavior, status branches, or derived canonical IDs there unless the user
-can realistically provide them.
-
-Avoid a `调用方式` section unless a skill has a real machine-facing invocation
-surface. In normal plugin use, users trigger skills through natural language and
-the frontmatter description; the skill body should normalise inputs rather than
-document slash-command syntax.
+Frontmatter `description` is a short routing hint describing user intent. It is
+not a trigger-word list, phase walkthrough, history note, or miniature README.
 
 ## Ownership
 
-- The skill main process owns workflow state files:
-  `manifest.json`, `decisions.json`, recovery files, temporary search caches,
-  and any `.quasi/<domain>/...` orchestration artifacts.
-- A deterministic CLI may write an artifact only when that is its explicit
-  contract, such as `quasi-helpers citation parse -o ...`.
-- An agent may write only its assigned local product:
-  `analyse-agent` writes the requested analysis file, `synthesis-agent` writes
-  the requested synthesis file, `proofread-agent` edits the requested draft
-  section, and `citecheck-agent` writes its `verdict_out`.
-- `metadata-agent`, `discovery-agent`, and `localisation-agent` never write files. They return curated evidence to the
-  skill, and the skill decides whether and where to persist them.
-- Agents must not mutate manifests, decisions, caches, or other workflow state
-  unless their agent contract names that exact output path.
+- The graph owns canonical identity, phase state, exact artifacts, and material
+  or collection receipts.
+- The Skill owns the current user request, explicit user decisions, and
+  skill-scoped completion sidecars.
+- A Stage Unit Agent owns its professional judgement within the request
+  envelope. Read-only specialists return evidence; producer specialists write
+  only caller-named products.
+- A deterministic CLI writes only outputs named by its command contract.
+- Artifact schemas own frontmatter and body structure; Workflow Operations own
+  dynamic refs and evidence requirements.
 
-## Phase Contract
+This split leaves one source of truth for each concern. In particular, the
+Skill does not keep a second recall/metadata/writer-success state machine, and
+the Graph does not reproduce an Agent's search strategy or recovery dialogue.
 
-Each non-trivial phase should make these points explicit:
+## Stage Unit Contract
 
-```text
-Goal          Why this phase exists.
-Skip if       The artifact or state value that makes the phase resumable.
-Reads         Files/state consumed.
-Writes        Files/state produced.
-Calls         Agents or CLI helpers invoked.
-Success       State transition or expected artifact.
-Failure       Retry, mark failed, regenerate upstream, or ask user.
-Concurrency   foreground, background fan-out, or strictly serial.
-Human gate    Whether the user must decide before continuing.
-```
-
-The phase may be written as prose or pseudocode, but these facts should be
-recoverable without reading another skill.
-
-## Concurrency
-
-- Blocking setup, downloads, extraction, synthesis, and audit are foreground
-  unless the skill explicitly states otherwise.
-- Map-reduce work may run in background, but the skill must wait by polling
-  stable artifacts with `Glob` or by using foreground dispatch. Do not use
-  fragile task-output inspection as the source of truth.
-- If multiple workers write the same file, run them serially. This is why
-  proofread sections run one at a time: all sections append to one draft record
-  block.
-
-## State
-
-Any skill with a manifest must define a status enum and the transition rule for
-each status. A status is not just a label; it controls which downstream phase
-may consume the item.
-
-Recommended shape:
+A Stage Unit request should answer:
 
 ```text
-discovered       known but not enough metadata to acquire
-metadata_found   enough metadata for download / processing
-acquired         source file is available at a stable path
-analysed         vault analysis file exists
-done             terminal success, if the workflow needs it
-failed           terminal failure with failure_note
+Goal          What useful state this specialist must establish.
+Identity      The bounded material or collection identity.
+Exact refs    Inputs it may inspect and outputs it may create.
+Capabilities The public quasi commands or exact reads/writes it may use.
+Evidence      Facts already established by earlier stages.
+Receipt       One StructuredOutput schema and its terminal meanings.
 ```
 
-Domain-specific warning fields such as `year_review`, `year_warning`, or
-`needs_human_review` should not replace `status` if the source file is already
-usable by downstream phases.
+The shared receipt is `quasi.stage.receipt/0.1`:
 
-## Human Gates
+- `complete`: the specialist established the exact postcondition consumed by
+  the next stage.
+- `needs_input`: one concrete user answer can change the outcome.
+- `blocked`: the current capability boundary or an unknown writer outcome
+  prevents a trustworthy continuation.
+- `failed`: the specialist exhausted useful approaches and reached a known
+  failure.
 
-User decisions belong in the skill main process. An agent can provide evidence
-or a recommendation, but the skill asks the user, writes the decision, and then
-continues or stops.
+StructuredOutput and Graph validation use the same schema. Graph-side checks
+may re-prove exact path ownership and joins between artifacts, but should not
+reinterpret a schema-valid failure as malformed because of a hidden policy.
 
-Examples:
+An Agent chooses its own useful number of queries, comparisons, or diagnostic
+steps. A numerical budget belongs in the Graph when it protects a shared
+resource, prevents duplicate writers, or bounds a collection fan-out—not as a
+proxy for professional judgement.
 
-- `process-book` asks the user what to do with book year ambiguity.
-- `wrap-up` asks the user to review suspicious citations and missing sources.
-- `translate-agent` may remain active because translation QA can become a real
-  specialist judgment step; the workflow should still keep final state writes
-  in the calling skill.
+## Workflow and Batch Behaviour
 
-## Forbidden Active Contracts
+The shared UI phases are:
 
-Active skills must not rely on removed or old contracts. The canonical list is
-kept in `tests/test_dead_names.py` so the forbidden spellings do not need to be
-repeated in prose.
+```text
+Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit
+```
+
+Agent labels begin with the stable material key and then the operation. One
+request containing 2–32 Books/Papers enters one batch Workflow. Phase-local
+FIFO admission allows items to pipeline independently while keeping one
+aggregate graph and one correlated result list.
+
+Single-action Operations may remain small. Analyse, Synthesise, and Audit often
+have one exact product and one clear postcondition; a Stage Unit is useful where
+the work naturally needs investigation or local recovery, not as a reason to
+make every Agent large.
+
+## Human Gates and Recovery
+
+The specialist formulates a concrete question and returns `needs_input`; the
+Skill presents it and records the user's answer in a new graph request. The new
+graph observes durable artifacts again rather than relying on an old JavaScript
+cursor.
+
+Unknown writer outcomes remain suspended for the current run. A later explicit
+request re-enters the graph: Search observes the exact local owner again and
+the receiving production Stage reconciles its durable artifact before any new
+write. Neither Agent autonomy nor Skill recovery creates a concurrent duplicate
+writer.
+
+For a batch, the Skill reports all item terminals together and gathers user
+answers before submitting one follow-up batch containing the affected original
+items.
+
+## Review Checklist
+
+When changing a skill or stage:
+
+1. Identify one owner for user state, graph state, specialist judgement, CLI
+   effects, and artifact shape.
+2. Confirm the request is self-contained and every writable path is exact.
+3. Confirm StructuredOutput and runtime validation share one schema.
+4. Check that negative prose is limited to genuine safety or ownership
+   boundaries; describe the desired work positively.
+5. Keep phases progress-oriented and labels material-oriented.
+6. Update tests that assert receipts, routing, source/bundle parity, or removed
+   names.
+7. Rebuild `workflows/process-material.mjs` from `scripts/workflows/` and run
+   the focused plus full test suites.

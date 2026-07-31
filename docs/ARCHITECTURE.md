@@ -10,8 +10,8 @@ the layer directly below them.
 ## Layers
 
 ```text
-L5 skills/          user-facing state machines and human gates
-L4 scripts/workflows/ modular source for host-neutral deterministic graphs
+L5 skills/          user-facing coordinators and human gates
+L4 scripts/workflows/ modular source for host-neutral stage graphs
 L4 workflows/       generated, host-loadable workflow entries
 L3 agents/          specialist LLM workers, only calls quasi-* bins
 L2 bin/             stable command surface
@@ -89,13 +89,15 @@ second Workflow per item. `quasi.collection.material-batch.receipt/0.1`
 summarises per-item progress without flattening or replacing the child ingress
 and MaterialReceipts.
 
-The Paper loop is the first Operation-based vertical slice. Its edge order is:
-acquire/reconcile → deterministic text normalisation → semantic readability
-assessment → bounded OCR recovery when required → the common `analyse-agent`
-with the Paper artifact-schema projection → audit/reconciliation. Each edge has one handler and a
-strict receipt; unknown writer outcomes block instead of racing a second writer.
-The existing Book and collection/research routes remain behavioural baselines
-for later slices.
+The shared graph presents progress as
+`Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`.
+Non-trivial work such as bibliographic investigation, readable-text recovery,
+chapter preparation, Talk transcription, and Translation validation is a Stage
+Unit: one specialist receives a goal, exact refs, declared capabilities, and a
+closed `quasi.stage.receipt/0.1` schema. The specialist owns method and local
+recovery; the graph checks only the exact artifacts needed by the next stage.
+Single-product Analyse/Synthesise/Audit operations remain narrow. Unknown writer
+outcomes block instead of racing a second writer.
 
 Root `settings.json` supplies a plugin-default `subagentStatusLine`. The
 zero-dependency `scripts/subagent-statusline.py` renders only quasi task rows,
@@ -105,19 +107,20 @@ so unrelated subagents retain Claude Code's default row.
 
 | agent | depends on |
 |---|---|
-| `metadata-agent` | `quasi-search book|paper` → one canonical identity |
+| `metadata-agent` | `quasi-search` + vault resolve → one canonical identity and local owner |
 | `discovery-agent` | `quasi-search book|paper` → bounded Author/Topic/citation candidates |
 | `localisation-agent` | `quasi-search book` localisation sidecar |
 | `steer-agent` | topic outline page + `quasi-search` |
 | `webcard-agent` | `quasi-search kagi` + WebFetch → topic `cards/` page |
 | `download-agent` | `quasi-download`, direct AA search import |
-| `extract-agent` | `quasi-extract` |
+| `extract-agent` | `quasi-extract` capabilities → Paper/Book Prepare Stage |
 | `analyse-agent` | vault/source files |
 | `synthesis-agent` | vault analysis files |
 | `audit-agent` | `quasi-audit` |
 | `proofread-agent` | draft sections prepared by `quasi-helpers` |
 | `citecheck-agent` | citation manifest prepared by `quasi-helpers` |
-| `translate-agent` | `quasi-translate` |
+| `transcribe-agent` | `quasi-transcribe` capabilities → Talk Prepare Stage |
+| `translate-agent` | `quasi-translate` + optional layout OCR → Translation Prepare Stage |
 
 Deprecated agents live under `deprecated/agents/` and must not be dispatched by
 active skills.
@@ -139,11 +142,11 @@ be a thin collection loop over Paper receipts.
 
 ## Material Loops
 
-Concrete materials are bounded loops, not product categories layered above a
-separate library executor. A Material Loop reconciles persisted artifacts, runs
-one named operation at a time, audits the canonical product, follows a bounded
-repair edge when possible, and terminates as `complete | blocked | failed`.
-Agents and bins are handler choices for those operations; `sources/`,
+Concrete materials are thin stage pipelines, not product categories layered
+above a separate library executor. A Material Loop coordinates exact Stage
+inputs/outputs, joins producer artifacts, audits the canonical product, and
+terminates through typed `complete|needs_input|blocked|failed` edges. Stage Unit
+Agents own professional judgement; bins own deterministic effects; `sources/`,
 `processing/`, and `vault/` are the persisted result space.
 
 The normative v0.1 contract and Paper reference implementation are documented in
@@ -152,11 +155,10 @@ order are in `docs/workflow-universe-rfc.md`; operation ownership and Agent/Bin
 selection rules are in `docs/operation-layer-design.md`; the implemented source
 layout and rollout gates are in `docs/workflow-modularization-master.md`.
 
-Active skill writing follows the maintainer schema in
-`docs/SKILL_ORCHESTRATION.md`:the skill main process owns workflow state,
-agents are specialist workers, and each phase must state its skip condition,
-writes, failure behavior, and human gate. Active `SKILL.md` files should contain
-runtime instructions, not links back to maintainer docs.
+Active skill writing follows `docs/SKILL_ORCHESTRATION.md`: Skill owns user
+intent and decisions, Workflow owns material state and phase routing, Agent owns
+specialist judgement, and CLI owns deterministic writes. Active `SKILL.md`
+files contain runtime instructions, not links back to maintainer docs.
 
 ## Guardrails
 

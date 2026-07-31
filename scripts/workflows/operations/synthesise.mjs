@@ -1,5 +1,5 @@
 import { cardPath, itemPath } from "./steer.mjs";
-import { composedSchema } from "./extract.mjs";
+import { composedSchema } from "./shared.mjs";
 import { BOOK_ARTIFACT_CONTRACT } from "../artifact-contracts/generated.mjs";
 
 export const SY_SCHEMA = {

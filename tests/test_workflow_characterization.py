@@ -152,59 +152,52 @@ def paper_download_receipt(
     }
 
 
-def text_extract_receipt(input_path: str, output_path: str) -> dict[str, Any]:
-    return {
-        "schema_version": "quasi.operation.document.extract-text.receipt/0.1",
-        "key": "document.extract-text",
-        "effect": "writer",
-        "status": "succeeded",
-        "attempt": 1,
-        "input_path": input_path,
-        "output_path": output_path,
-        "artifact_roles": ["normalized_text"],
-        "exit": 0,
-        "exists": True,
-        "size": 12000,
-        "chars": 10000,
-        "non_whitespace_chars": 8500,
-        "pages": 12,
-        "text_pages": 12,
-        "failure": None,
-    }
-
-
-def readability_receipt(input_path: str, signal: str) -> dict[str, Any]:
-    return {
-        "schema_version": (
-            "quasi.operation.document.assess-readability.receipt/0.1"
-        ),
-        "key": "document.assess-readability",
-        "effect": "readonly",
-        "status": "succeeded",
-        "attempt": 1,
-        "input_path": input_path,
-        "artifact_roles": ["normalized_text"],
-        "signal": signal,
-        "diagnostics": [],
-        "failure": None,
-    }
-
-
-def ocr_receipt(slug: str) -> dict[str, Any]:
+def paper_prepare_receipt(
+    slug: str,
+    *,
+    selected_input: str | None = None,
+    recovered: bool = False,
+) -> dict[str, Any]:
     paths = paper_paths(slug)
+    selected = selected_input or paths["source_text"]
+    artifacts = [
+        {
+            "role": "normalized_text",
+            "path": selected,
+            "exists": True,
+            "usable": True,
+        }
+    ]
+    if recovered:
+        artifacts.insert(
+            0,
+            {
+                "role": "recovery_source",
+                "path": paths["ocr"],
+                "exists": True,
+                "usable": True,
+            },
+        )
     return {
-        "schema_version": "quasi.operation.document.ocr.receipt/0.1",
-        "key": "document.ocr",
+        "schema_version": "quasi.stage.receipt/0.1",
+        "operation": "paper.prepare",
+        "stage": "Prepare",
+        "material_key": f"paper:{slug}",
         "effect": "writer",
-        "status": "succeeded",
+        "status": "complete",
         "attempt": 1,
-        "input_path": paths["source"],
-        "output_path": paths["ocr"],
-        "artifact_roles": ["recovery_source"],
-        "exit": 0,
-        "exists": True,
-        "size": 90000,
-        "failure": None,
+        "source_path": paths["source"],
+        "selected_input": selected,
+        "artifacts": artifacts,
+        "steps": [
+            {
+                "capability": "quasi-extract",
+                "outcome": "created" if not recovered else "repaired",
+                "summary": "prepared one readable normalized text",
+            }
+        ],
+        "diagnostics": [],
+        "issue": None,
     }
 
 
@@ -347,52 +340,54 @@ def book_chapters() -> list[dict[str, Any]]:
     ]
 
 
-def book_extract_receipt(slug: str) -> dict[str, Any]:
+def book_prepare_receipt(slug: str) -> dict[str, Any]:
     chapters = book_chapters()
+    output_dir = f"processing/chapters/{slug}"
+    manifest = f"{output_dir}/manifest.json"
     return {
-        "schema_version": "quasi.operation.chapter.extract.receipt/0.1",
-        "key": "chapter.extract",
+        "schema_version": "quasi.stage.receipt/0.1",
+        "operation": "book.prepare",
+        "stage": "Prepare",
+        "material_key": f"book:{slug}",
         "effect": "writer",
-        "status": "succeeded",
+        "status": "complete",
         "attempt": 1,
-        "input_path": f"sources/{slug}.epub",
-        "output_path": f"processing/chapters/{slug}",
-        "manifest_path": f"processing/chapters/{slug}/manifest.json",
-        "artifact_roles": ["chapter_manifest", "normalized_chapter"],
+        "format": "epub",
+        "output_dir": output_dir,
+        "selected_source": f"sources/{slug}.epub",
+        "normalized_path": None,
+        "manifest_path": manifest,
+        "manifest_fingerprint": "a" * 64,
         "mode": "epub",
         "disposition": "created",
-        "exit": 0,
-        "manifest_exists": True,
-        "request_fingerprint": "legacy-request",
-        "manifest_fingerprint": "legacy-manifest",
         "chapter_count": len(chapters),
         "chapters": chapters,
-        "skipped": [],
-        "removed_files": [],
-        "limit": {"max_chapters": 150, "exceeded": False},
-        "previous_manifest_preserved": False,
-        "failure": None,
-    }
-
-
-def book_boundary_receipt(slug: str) -> dict[str, Any]:
-    return {
-        "schema_version": (
-            "quasi.operation.chapter.assess-boundaries.receipt/0.1"
-        ),
-        "key": "chapter.assess-boundaries",
-        "effect": "readonly",
-        "status": "succeeded",
-        "attempt": 1,
-        "manifest_path": f"processing/chapters/{slug}/manifest.json",
-        "input_paths": [
-            f"processing/chapters/{slug}/{chapter['filename']}"
-            for chapter in book_chapters()
+        "artifacts": [
+            {
+                "role": "chapter_manifest",
+                "path": manifest,
+                "exists": True,
+                "usable": True,
+            },
+            *[
+                {
+                    "role": "normalized_chapter",
+                    "path": f"{output_dir}/{chapter['filename']}",
+                    "exists": True,
+                    "usable": True,
+                }
+                for chapter in chapters
+            ],
         ],
-        "artifact_roles": ["chapter_manifest", "normalized_chapter"],
-        "signal": "ready",
+        "steps": [
+            {
+                "capability": "quasi-extract epub",
+                "outcome": "created",
+                "summary": "prepared and verified three chapters",
+            }
+        ],
         "diagnostics": [],
-        "failure": None,
+        "issue": None,
     }
 
 
@@ -465,24 +460,6 @@ def material_ingress_responses(
         return {}
     request_key = f"{kind}:{slug}"
 
-    def lookup(operation: str) -> dict[str, Any]:
-        return {
-            "schema_version": (
-                f"quasi.operation.{operation}.receipt/0.2"
-            ),
-            "key": operation,
-            "effect": "readonly",
-            "status": "succeeded",
-            "attempt": 1,
-            "request_key": request_key,
-            "kind": kind,
-            "requested_slug": slug,
-            "vault_slug": "__none__",
-            "path": "__none__",
-            "match": "none",
-            "failure": None,
-        }
-
     raw_authors = meta.get("authors", meta.get("author", []))
     authors = raw_authors if isinstance(raw_authors, list) else [raw_authors]
     raw_year = meta.get("year")
@@ -545,30 +522,36 @@ def material_ingress_responses(
             "confidence": "high",
         }
     return {
-        f"{slug}:recall": [reply(lookup("material.recall"))],
         f"{slug}:search": [
             reply(
                 {
-                    "schema_version": (
-                        "quasi.operation.material.search.receipt/0.1"
-                    ),
-                    "key": "material.search",
+                    "schema_version": "quasi.stage.receipt/0.1",
+                    "operation": "material.search",
+                    "stage": "Search",
+                    "material_key": request_key,
                     "effect": "readonly",
-                    "status": "succeeded",
+                    "status": "complete",
                     "attempt": 1,
-                    "request_key": request_key,
                     "kind": kind,
-                    "query": query,
-                    "picked": picked,
+                    "identity": picked,
+                    "local_owner": {
+                        "requested_slug": slug,
+                        "vault_slug": None,
+                        "path": None,
+                        "match": None,
+                    },
                     "confidence": "high",
-                    "sources_hit": ["fixture"],
-                    "conflicts": [],
-                    "notes": "verified fixture identity",
-                    "failure": None,
+                    "observations": [
+                        {
+                            "source": "fixture",
+                            "query": json.dumps(query, sort_keys=True),
+                            "summary": "verified fixture identity",
+                        }
+                    ],
+                    "issue": None,
                 }
             )
         ],
-        f"{slug}:resolve": [reply(lookup("material.resolve"))],
     }
 
 
@@ -640,7 +623,9 @@ def overlaps(report: dict[str, Any], left: str, right: str) -> bool:
     return a["start"] < b["end"] and b["start"] < a["end"]
 
 
-def test_paper_happy_path_uses_download_analyse_audit(tmp_path: Path) -> None:
+def test_paper_happy_path_uses_stage_board_then_analyse_audit(
+    tmp_path: Path,
+) -> None:
     slug = "paper-happy"
     paths = paper_paths(slug)
     report = run_workflow(
@@ -665,12 +650,7 @@ def test_paper_happy_path_uses_download_analyse_audit(tmp_path: Path) -> None:
                     )
                 )
             ],
-            f"{slug}:extract-text": [
-                reply(text_extract_receipt(paths["source"], paths["source_text"]))
-            ],
-            f"{slug}:assess-readability": [
-                reply(readability_receipt(paths["source_text"], "readable"))
-            ],
+            f"{slug}:prepare": [reply(paper_prepare_receipt(slug))],
             f"{slug}:analyse": [
                 reply(paper_analyse_receipt(slug, paths["source_text"]))
             ],
@@ -684,21 +664,15 @@ def test_paper_happy_path_uses_download_analyse_audit(tmp_path: Path) -> None:
     assert report["result"]["status"] == "ok"
     assert report["result"]["material_receipt"]["status"] == "complete"
     assert labels(report) == [
-        f"{slug}:recall",
         f"{slug}:search",
-        f"{slug}:resolve",
         f"{slug}:acquire",
-        f"{slug}:extract-text",
-        f"{slug}:assess-readability",
+        f"{slug}:prepare",
         f"{slug}:analyse",
         f"{slug}:audit",
     ]
     assert [item["phase"] for item in report["trace"]] == [
-        "Recall",
-        "Search",
         "Search",
         "Acquire",
-        "Prepare",
         "Prepare",
         "Analyse",
         "Audit",
@@ -711,15 +685,15 @@ def test_paper_happy_path_uses_download_analyse_audit(tmp_path: Path) -> None:
     assert_before(
         report,
         f"{slug}:acquire",
-        f"{slug}:extract-text",
+        f"{slug}:prepare",
     )
-    assert_before(
-        report, f"{slug}:assess-readability", f"{slug}:analyse"
-    )
+    assert_before(report, f"{slug}:prepare", f"{slug}:analyse")
     assert_before(report, f"{slug}:analyse", f"{slug}:audit")
 
 
-def test_paper_needs_ocr_then_reanalyses_and_audits(tmp_path: Path) -> None:
+def test_paper_prepare_can_recover_ocr_before_analyse(
+    tmp_path: Path,
+) -> None:
     slug = "paper-scan"
     paths = paper_paths(slug)
     report = run_workflow(
@@ -739,15 +713,15 @@ def test_paper_needs_ocr_then_reanalyses_and_audits(tmp_path: Path) -> None:
             f"{slug}:acquire": [
                 reply(paper_download_receipt(slug))
             ],
-            f"{slug}:extract-text": [
-                reply(text_extract_receipt(paths["source"], paths["source_text"])),
-                reply(text_extract_receipt(paths["ocr"], paths["ocr_text"])),
+            f"{slug}:prepare": [
+                reply(
+                    paper_prepare_receipt(
+                        slug,
+                        selected_input=paths["ocr_text"],
+                        recovered=True,
+                    )
+                )
             ],
-            f"{slug}:assess-readability": [
-                reply(readability_receipt(paths["source_text"], "needs_ocr")),
-                reply(readability_receipt(paths["ocr_text"], "readable")),
-            ],
-            f"{slug}:ocr": [reply(ocr_receipt(slug))],
             f"{slug}:analyse": [
                 reply(paper_analyse_receipt(slug, paths["ocr_text"]))
             ],
@@ -760,32 +734,20 @@ def test_paper_needs_ocr_then_reanalyses_and_audits(tmp_path: Path) -> None:
     assert report["result"]["slug"] == slug
     assert report["result"]["status"] == "ok"
     assert labels(report) == [
-        f"{slug}:recall",
         f"{slug}:search",
-        f"{slug}:resolve",
         f"{slug}:acquire",
-        f"{slug}:extract-text",
-        f"{slug}:assess-readability",
-        f"{slug}:ocr",
-        f"{slug}:extract-text",
-        f"{slug}:assess-readability",
+        f"{slug}:prepare",
         f"{slug}:analyse",
         f"{slug}:audit",
     ]
-    ocr = call(report, f"{slug}:ocr")
-    assert ocr["agent_type"] == "general-purpose"
-    assert (
-        f"quasi-extract ocr '{paths['source']}' '{paths['ocr']}' "
-        "--no-clobber --json"
-        in ocr["prompt"]
-    )
+    prepare = call(report, f"{slug}:prepare")
+    assert prepare["agent_type"] == "quasi:extract-agent"
+    assert "quasi-extract ocr INPUT OUTPUT --no-clobber --json" in prepare[
+        "prompt"
+    ]
     reanalysis = call(report, f"{slug}:analyse")
     assert f'"path": "{paths["ocr_text"]}"' in reanalysis["prompt"]
-    assert (
-        call_occurrence(report, f"{slug}:assess-readability", 1)["end"]
-        < call(report, f"{slug}:ocr")["start"]
-    )
-    assert_before(report, f"{slug}:ocr", f"{slug}:analyse")
+    assert_before(report, f"{slug}:prepare", f"{slug}:analyse")
     assert_before(report, f"{slug}:analyse", f"{slug}:audit")
 
 
@@ -833,9 +795,7 @@ def test_paper_download_failure_preserves_actionable_evidence(
     assert report["result"]["attempts"] == attempts
     assert report["result"]["material_receipt"]["status"] == "failed"
     assert labels(report) == [
-        f"{slug}:recall",
         f"{slug}:search",
-        f"{slug}:resolve",
         f"{slug}:acquire",
     ]
     fingerprint = call(
@@ -871,12 +831,7 @@ def test_paper_audit_escalation_gets_one_repair_then_second_audit(
             f"{slug}:acquire": [
                 reply(paper_download_receipt(slug))
             ],
-            f"{slug}:extract-text": [
-                reply(text_extract_receipt(paths["source"], paths["source_text"]))
-            ],
-            f"{slug}:assess-readability": [
-                reply(readability_receipt(paths["source_text"], "readable"))
-            ],
+            f"{slug}:prepare": [reply(paper_prepare_receipt(slug))],
             f"{slug}:analyse": [
                 reply(paper_analyse_receipt(slug, paths["source_text"])),
                 reply(
@@ -905,12 +860,9 @@ def test_paper_audit_escalation_gets_one_repair_then_second_audit(
     assert report["result"]["status"] == "ok"
     assert report["result"]["material_receipt"]["disposition"] == "repaired"
     assert labels(report) == [
-        f"{slug}:recall",
         f"{slug}:search",
-        f"{slug}:resolve",
         f"{slug}:acquire",
-        f"{slug}:extract-text",
-        f"{slug}:assess-readability",
+        f"{slug}:prepare",
         f"{slug}:analyse",
         f"{slug}:audit",
         f"{slug}:analyse",
@@ -1010,10 +962,7 @@ def test_book_fanout_is_parallel_and_reconciles_before_synthesis(
             f"{slug}:acquire": [
                 reply(book_download_receipt(slug))
             ],
-            f"{slug}:extract": [reply(book_extract_receipt(slug))],
-            f"{slug}:assess-chapters": [
-                reply(book_boundary_receipt(slug))
-            ],
+            f"{slug}:prepare": [reply(book_prepare_receipt(slug))],
             f"{slug}:ch01:analyse": [
                 reply(
                     book_analyse_receipt(slug, chapters[0]),
@@ -1052,9 +1001,9 @@ def test_book_fanout_is_parallel_and_reconciles_before_synthesis(
         (f"{slug}:ch02:analyse", f"{slug}:ch03:analyse"),
     ):
         assert overlaps(report, left, right)
-    assert_before(report, f"{slug}:acquire", f"{slug}:extract")
+    assert_before(report, f"{slug}:acquire", f"{slug}:prepare")
     for analyse_label in analyse_labels:
-        assert_before(report, f"{slug}:extract", analyse_label)
+        assert_before(report, f"{slug}:prepare", analyse_label)
         assert_before(report, analyse_label, f"{slug}:synthesise")
     assert_before(report, f"{slug}:synthesise", f"{slug}:audit")
     assert (
@@ -1161,11 +1110,8 @@ def test_author_deduplicates_two_candidates_resolved_to_one_vault_slug(
             f"{canonical}:acquire": [
                 reply(book_download_receipt(canonical))
             ],
-            f"{canonical}:extract": [
-                reply(book_extract_receipt(canonical))
-            ],
-            f"{canonical}:assess-chapters": [
-                reply(book_boundary_receipt(canonical))
+            f"{canonical}:prepare": [
+                reply(book_prepare_receipt(canonical))
             ],
             **{
                 f"{canonical}:ch{chapter['slot']}:analyse": [
@@ -1358,19 +1304,8 @@ def test_topic_processes_one_material_and_one_card_on_parallel_tracks(
                 delay_ms=35,
             )
         ],
-        f"{paper}:extract-text": [
-            reply(
-                text_extract_receipt(
-                    paper_artifacts["source"], paper_artifacts["source_text"]
-                ),
-                delay_ms=20,
-            )
-        ],
-        f"{paper}:assess-readability": [
-            reply(
-                readability_receipt(paper_artifacts["source_text"], "readable"),
-                delay_ms=20,
-            )
+        f"{paper}:prepare": [
+            reply(paper_prepare_receipt(paper), delay_ms=40)
         ],
         f"{paper}:analyse": [
             reply(
@@ -1426,8 +1361,7 @@ def test_topic_processes_one_material_and_one_card_on_parallel_tracks(
 
     material_labels = [
         f"{paper}:acquire",
-        f"{paper}:extract-text",
-        f"{paper}:assess-readability",
+        f"{paper}:prepare",
         f"{paper}:analyse",
         f"{paper}:audit",
     ]
@@ -1443,11 +1377,9 @@ def test_topic_processes_one_material_and_one_card_on_parallel_tracks(
     assert_before(
         report,
         f"{paper}:acquire",
-        f"{paper}:extract-text",
+        f"{paper}:prepare",
     )
-    assert_before(
-        report, f"{paper}:assess-readability", f"{paper}:analyse"
-    )
+    assert_before(report, f"{paper}:prepare", f"{paper}:analyse")
     assert_before(
         report, f"{paper}:analyse", f"{paper}:audit"
     )
