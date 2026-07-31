@@ -297,18 +297,44 @@ def member_key(value: dict[str, str]) -> str:
     return f"{value['kind']}:{value['slug']}"
 
 
+def stage_terminal(
+    operation: str,
+    *,
+    status: str = "complete",
+    failure: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    status = {"succeeded": "complete"}.get(status, status)
+    if status == "complete":
+        return {"status": status, "issue": None}
+    return {
+        "status": status,
+        "issue": {
+            "code": (failure or {}).get("code", f"{operation}.failed"),
+            "operation": operation,
+            "summary": (failure or {}).get("message", "scripted stage outcome"),
+            "user_question": (
+                "Which candidate should be used?"
+                if status == "needs_input"
+                else None
+            ),
+            "retryable": False,
+        },
+    }
+
+
 def recall_receipt(
     items: list[dict[str, str]],
     *,
     topic_slug: str = TOPIC,
-    status: str = "succeeded",
+    status: str = "complete",
     failure: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
-        "schema_version": "quasi.operation.topic.recall.receipt/0.1",
-        "key": "topic.recall",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "topic.recall",
+        "stage": "Recall",
+        "material_key": f"topic:{topic_slug}",
         "effect": "readonly",
-        "status": status,
         "attempt": 1,
         "research_key": f"topic:{topic_slug}",
         "query": DESCRIPTION,
@@ -317,7 +343,9 @@ def recall_receipt(
             {"kind": item["kind"], "slug": item["slug"], "path": item["path"]}
             for item in items
         ],
-        "failure": failure,
+        "terminal": stage_terminal(
+            "topic.recall", status=status, failure=failure
+        ),
     }
 
 
@@ -371,7 +399,7 @@ def membership_receipt(
     resolved: list[dict[str, str]] | None = None,
     *,
     topic_slug: str = TOPIC,
-    status: str = "succeeded",
+    status: str = "complete",
     failure: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     rows = requested if resolved is None else resolved
@@ -390,18 +418,22 @@ def membership_receipt(
                 "match": "slug",
             }
         )
+    requests = [
+        {"kind": item["kind"], "slug": item["slug"]} for item in requested
+    ]
     return {
-        "schema_version": "quasi.operation.topic.resolve-membership.receipt/0.1",
-        "key": "topic.resolve-membership",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "topic.resolve-membership",
+        "stage": "Recall",
+        "material_key": f"topic:{topic_slug}",
         "effect": "readonly",
-        "status": status,
         "attempt": 1,
         "research_key": f"topic:{topic_slug}",
-        "requests": [
-            {"kind": item["kind"], "slug": item["slug"]} for item in requested
-        ],
+        "requests": requests,
         "resolved": projected,
-        "failure": failure,
+        "terminal": stage_terminal(
+            "topic.resolve-membership", status=status, failure=failure
+        ),
     }
 
 
@@ -427,19 +459,20 @@ def discovery_receipt(
     demand_id: str = "r1-d01",
     topic_slug: str = TOPIC,
 ) -> dict[str, Any]:
+    research_key = f"topic:{topic_slug}"
+    operation = f"topic.discover-{demand['kind']}"
     return {
-        "schema_version": (
-            f"quasi.operation.topic.discover-{demand['kind']}.receipt/0.1"
-        ),
-        "key": f"topic.discover-{demand['kind']}",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": operation,
+        "stage": "Search",
+        "material_key": f"{research_key}:demand:{demand_id}",
         "effect": "readonly",
-        "status": "succeeded",
         "attempt": 1,
-        "research_key": f"topic:{topic_slug}",
+        "research_key": research_key,
         "demand_id": demand_id,
         "demand": demand,
         "candidate": candidate,
-        "failure": None,
+        "terminal": stage_terminal(operation),
     }
 
 
@@ -467,10 +500,11 @@ def paper_child_result(slug: str) -> dict[str, Any]:
             ],
             "operations": [{"key": "paper.synthetic"}],
             "audit": {
-                "schema_version": "quasi.operation.paper.audit.receipt/0.2",
-                "key": "paper.audit",
+                "schema_version": "quasi.stage.receipt/0.2",
+                "operation": "paper.audit",
+                "stage": "Audit",
+                "material_key": f"paper:{slug}",
                 "effect": "writer",
-                "status": "clean",
                 "attempt": 1,
                 "target_path": canonical,
                 "artifact_roles": ["canonical"],
@@ -478,7 +512,7 @@ def paper_child_result(slug: str) -> dict[str, Any]:
                 "remaining_violations": 0,
                 "escalated": [],
                 "mutated_paths": [],
-                "failure": None,
+                "terminal": stage_terminal("paper.audit"),
             },
             "freshness": {
                 "observation": "unknown",
@@ -628,8 +662,17 @@ def assert_flat_schema(schema: Any) -> None:
     assert schema.get("type") == "object"
     for forbidden in ("oneOf", "allOf"):
         assert forbidden not in schema
-    if "anyOf" in schema:
-        # Composed writer schemas carry status-branch invariants so the
+    terminal = schema.get("properties", {}).get("terminal")
+    if terminal is not None:
+        branch_statuses = {
+            branch["properties"]["status"]["const"]
+            for branch in terminal["anyOf"]
+        }
+        assert branch_statuses == {
+            "complete", "needs_input", "blocked", "failed"
+        }
+    elif "anyOf" in schema:
+        # Legacy writer schemas carry status-branch invariants so the
         # still-running agent self-repairs its receipt in-invocation.
         branch_statuses = {
             branch["properties"]["status"]["const"]
@@ -712,6 +755,24 @@ def test_recall_only_happy_path_is_ordered_by_dependencies_not_clock_time(
     ]
     assert not any(call["type"] == "router" for call in report["trace"])
     assert report["phases"] == ["Recall"]
+    readonly_stages = [
+        operation
+        for operation in research["operations"]
+        if operation.get("operation") in {
+            "topic.recall",
+            "topic.resolve-membership",
+        }
+    ]
+    assert [operation["operation"] for operation in readonly_stages] == [
+        "topic.recall",
+        "topic.resolve-membership",
+    ]
+    assert all(
+        operation["schema_version"] == "quasi.stage.receipt/0.2"
+        and operation["effect"] == "readonly"
+        and operation["terminal"] == {"status": "complete", "issue": None}
+        for operation in readonly_stages
+    )
     for call in report["trace"]:
         if call["type"] == "agent":
             assert call["request"]["operation"] == call["route"]
@@ -1235,6 +1296,47 @@ def test_readonly_retry_exhaustion_blocks_after_two_unknown_outcomes(
     assert research["resume"] == {"operation_key": "topic.reconcile"}
     assert len(calls(report, "topic.recall")) == 2
     assert len(calls(report, "topic.steer")) == 1
+
+
+@pytest.mark.parametrize(
+    ("stage_status", "legacy_status", "research_status"),
+    [
+        ("failed", "no_works", "failed"),
+        ("blocked", "blocked", "blocked"),
+        ("needs_input", "needs_seeds", "needs_input"),
+    ],
+)
+def test_recall_stage_terminals_route_without_a_second_invocation(
+    tmp_path: Path,
+    stage_status: str,
+    legacy_status: str,
+    research_status: str,
+) -> None:
+    failure = {
+        "code": f"topic.recall_{stage_status}",
+        "message": f"scripted {stage_status} receipt",
+    }
+    report = run_topic(
+        tmp_path,
+        responses={
+            "topic.recall": [
+                reply(
+                    recall_receipt(
+                        [], status=stage_status, failure=failure
+                    )
+                )
+            ],
+            "topic.steer": [reply(steer_receipt(action="create"))],
+        },
+    )
+
+    result = report["result"]
+    research = receipt(result)
+    assert result["status"] == legacy_status
+    assert research["status"] == research_status
+    assert research["stage"] == "recall"
+    assert research["failure"]["code"] == failure["code"]
+    assert len(calls(report, "topic.recall")) == 1
 
 
 @pytest.mark.parametrize(

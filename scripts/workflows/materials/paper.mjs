@@ -1,17 +1,17 @@
 import {
-  PAPER_ACQUIRE_CONTRACT,
+  PAPER_ACQUIRE_STAGE_CONTRACT,
   paperAcquirePrompt,
-  paperAcquireSchema,
+  paperAcquireStageSchema,
 } from "../operations/acquire.mjs";
 import {
-  PAPER_ANALYSE_CONTRACT,
+  PAPER_ANALYSE_STAGE_CONTRACT,
   paperAnalyseOperationPrompt,
-  paperAnalyseSchema,
+  paperAnalyseStageSchema,
 } from "../operations/analyse.mjs";
 import {
-  PAPER_AUDIT_CONTRACT,
+  PAPER_AUDIT_STAGE_CONTRACT,
   paperAuditPrompt,
-  paperAuditSchema,
+  paperAuditStageSchema,
 } from "../operations/audit.mjs";
 import {
   PAPER_PREPARE_STAGE_CONTRACT,
@@ -20,10 +20,8 @@ import {
 } from "../operations/extract.mjs";
 import { optionalText, validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
-import {
-  MATERIAL_RECEIPT_VERSION,
-  stageUserGate,
-} from "./receipt.mjs";
+import { routeStageEdge } from "./route.mjs";
+import { MATERIAL_RECEIPT_VERSION } from "./receipt.mjs";
 
 const PAPER_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
@@ -273,6 +271,31 @@ function mismatchBlocked(state, stage, operationKey) {
   );
 }
 
+function routePaperStage(run, state, stage, operationKey, options) {
+  return routeStageEdge(run, {
+    ...options,
+    state,
+    stage,
+    operationKey,
+    emit: ({ status, extra, failure }) =>
+      result(state, status, stage, extra, failure),
+    unknown: (receipt) =>
+      blocked(state, stage, operationKey, receipt),
+    mismatch: () =>
+      mismatchBlocked(state, stage, operationKey),
+  });
+}
+
+function acquireFailure(receipt, outcome = "known") {
+  const issue = stageIssue(receipt);
+  return operationFailure(
+    (issue && issue.code) || "paper.acquire_failed",
+    "paper.acquire",
+    outcome,
+    (issue && issue.summary) || "Paper Acquire did not complete",
+  );
+}
+
 function prepareFailure(receipt, outcome = "known") {
   const issue = stageIssue(receipt);
   return operationFailure(
@@ -280,6 +303,26 @@ function prepareFailure(receipt, outcome = "known") {
     "paper.prepare",
     outcome,
     (issue && issue.summary) || "Paper Prepare did not complete",
+  );
+}
+
+function analyseFailure(receipt, outcome = "known") {
+  const issue = stageIssue(receipt);
+  return operationFailure(
+    (issue && issue.code) || "paper.analysis_failed",
+    "paper.analyse",
+    outcome,
+    (issue && issue.summary) || "Paper Analyse did not complete",
+  );
+}
+
+function auditFailure(receipt, outcome = "known") {
+  const issue = stageIssue(receipt);
+  return operationFailure(
+    (issue && issue.code) || "paper.audit_failed",
+    "paper.audit",
+    outcome,
+    (issue && issue.summary) || "Paper Audit did not complete",
   );
 }
 
@@ -320,58 +363,30 @@ async function prepare(runtime, state) {
       },
     },
   );
-  state.operations.push(run.receipt);
-  if (run.edge === "unknown")
-    return {
-      terminal: blocked(
-        state,
-        "prepare",
-        "paper.prepare",
-        run.receipt,
-      ),
-    };
-  if (run.edge === "blocked")
-    return {
-      terminal: result(
-        state,
-        "blocked",
-        "prepare",
-        { diagnostics: run.receipt.diagnostics },
-        prepareFailure(run.receipt, "unknown"),
-      ),
-    };
-  if (run.edge === "mismatch")
-    return {
-      terminal: mismatchBlocked(state, "prepare", "paper.prepare"),
-    };
-  if (run.edge === "needs_input") {
-    state.userGate = stageUserGate(run.receipt);
-    return {
-      terminal: result(
-        state,
-        "needs_input",
-        "prepare",
-        { question: stageIssue(run.receipt).user_question },
-        prepareFailure(run.receipt),
-      ),
-    };
-  }
-  if (run.edge === "failed")
-    return {
-      terminal: result(
-        state,
-        "analyse_failed",
-        "prepare",
-        { diagnostics: run.receipt.diagnostics },
-        prepareFailure(run.receipt),
-      ),
-    };
-  for (const artifact of run.receipt.artifacts)
-    state.artifacts.push({
-      ...artifact,
-      producer: "paper.prepare",
-    });
-  return { input: run.receipt.selected_input };
+  const routed = routePaperStage(
+    run,
+    state,
+    "prepare",
+    "paper.prepare",
+    {
+      failure: prepareFailure,
+      blockedExtra: (receipt) => ({ diagnostics: receipt.diagnostics }),
+      needsInputExtra: (receipt) => ({
+        question: receipt.terminal.issue.user_question,
+      }),
+      failedStatus: "analyse_failed",
+      failedExtra: (receipt) => ({ diagnostics: receipt.diagnostics }),
+      onOk: (receipt) => {
+        for (const artifact of receipt.artifacts)
+          state.artifacts.push({
+            ...artifact,
+            producer: "paper.prepare",
+          });
+        return { input: receipt.selected_input };
+      },
+    },
+  );
+  return routed.terminal ? { terminal: routed.terminal } : routed.value;
 }
 
 async function analyse(
@@ -394,7 +409,8 @@ async function analyse(
       phase: "Analyse",
       agentType: "quasi:analyse-agent",
       label: `${state.slug}:analyse`,
-      schema: paperAnalyseSchema({
+      schema: paperAnalyseStageSchema({
+        materialKey: state.materialKey,
         mode,
         input,
         output: state.canonical,
@@ -406,65 +422,49 @@ async function analyse(
       retry: "forbidden",
       replay: mode === "repair" ? "reconciled" : "blocked",
       artifactRoles: ["canonical"],
-      contract: PAPER_ANALYSE_CONTRACT,
+      contract: PAPER_ANALYSE_STAGE_CONTRACT,
       context: { mode, input, output: state.canonical },
     },
   );
-  const receipt = analysis.receipt;
-  state.operations.push(receipt);
-  if (analysis.edge === "unknown" || analysis.edge === "blocked")
-    return {
-      terminal: blocked(
-        state,
-        "analyse",
-        "paper.analyse",
-        receipt,
-      ),
-    };
-  if (analysis.edge === "mismatch")
-    return {
-      terminal: mismatchBlocked(
-        state,
-        "analyse",
-        "paper.analyse",
-      ),
-    };
-  if (analysis.edge === "reconcile") return { reconcile: true };
-  if (analysis.edge !== "ok")
-    return {
-      terminal: result(
-        state,
-        "analyse_failed",
-        "analyse",
-        {
-          notes: receipt.failure && receipt.failure.code,
-        },
-        receipt.failure ||
-          operationFailure("paper.analysis_failed", "paper.analyse"),
-      ),
-    };
-  state.artifacts = state.artifacts.filter(
-    (artifact) => artifact.role !== "canonical",
+  const routed = routePaperStage(
+    analysis,
+    state,
+    "analyse",
+    "paper.analyse",
+    {
+      failure: analyseFailure,
+      blockedFailure: (receipt) => analyseFailure(receipt, "unknown"),
+      failedStatus: "analyse_failed",
+      failedExtra: (receipt) => ({
+        notes: stageIssue(receipt).code,
+      }),
+      onOk: (receipt) => {
+        const { action } = receipt.terminal;
+        state.artifacts = state.artifacts.filter(
+          (artifact) => artifact.role !== "canonical",
+        );
+        state.artifacts.push({
+          role: "canonical",
+          path: state.canonical,
+          exists: true,
+          usable: true,
+          producer:
+            action === "reconciled"
+              ? "paper.analyse:reconciled"
+              : "paper.analyse",
+        });
+        if (mode === "repair" && action === "repair") {
+          state.repaired = true;
+          state.disposition = "repaired";
+        } else if (action === "reconciled") {
+          state.repaired = false;
+          state.disposition = "reused";
+        } else state.disposition = "created";
+        return { action };
+      },
+    },
   );
-  state.artifacts.push({
-    role: "canonical",
-    path: state.canonical,
-    exists: true,
-    usable: true,
-    producer: "paper.analyse",
-  });
-  if (mode === "repair") {
-    if (receipt.action === "repair") {
-      state.repaired = true;
-      state.disposition = "repaired";
-    } else {
-      state.repaired = false;
-      state.disposition = "reused";
-    }
-  } else {
-    state.disposition = "created";
-  }
-  return { action: receipt.action };
+  return routed.terminal ? { terminal: routed.terminal } : routed.value;
 }
 
 async function audit(runtime, state, pass) {
@@ -474,7 +474,8 @@ async function audit(runtime, state, pass) {
       phase: "Audit",
       agentType: "quasi:audit-agent",
       label: `${state.slug}:audit`,
-      schema: paperAuditSchema({
+      schema: paperAuditStageSchema({
+        materialKey: state.materialKey,
         target: state.canonical,
         pass,
       }),
@@ -485,55 +486,39 @@ async function audit(runtime, state, pass) {
       retry: "forbidden",
       replay: "reconciled",
       artifactRoles: ["canonical"],
-      contract: PAPER_AUDIT_CONTRACT,
-      context: { target: state.canonical },
+      contract: PAPER_AUDIT_STAGE_CONTRACT,
+      context: { target: state.canonical, pass },
     },
   );
-  const receipt = auditRun.receipt;
-  if (auditRun.edge === "unknown") {
-    state.operations.push(receipt);
-    return {
-      terminal: blocked(
-        state,
-        "audit",
-        "paper.audit",
+  const routed = routePaperStage(
+    auditRun,
+    state,
+    "audit",
+    "paper.audit",
+    {
+      failure: auditFailure,
+      blockedFailure: (receipt) => auditFailure(receipt, "unknown"),
+      onReceipt: (receipt, edge) => {
+        if (edge === "unknown" || edge === "mismatch") return;
+        state.audit = receipt;
+        if (receipt.mutated_paths.includes(state.canonical)) {
+          state.repaired = true;
+          state.disposition = "repaired";
+        }
+      },
+      blockedStatus: "audit_escalated",
+      failedStatus: "audit_escalated",
+      onOk: (receipt) => ({
         receipt,
-      ),
-    };
-  }
-  if (auditRun.edge === "mismatch") {
-    state.operations.push(receipt);
-    state.audit = receipt || null;
-    return {
-      terminal: mismatchBlocked(
-        state,
-        "audit",
-        "paper.audit",
-      ),
-    };
-  }
-  state.operations.push(receipt);
-  state.audit = receipt;
-  if (receipt.mutated_paths.includes(state.canonical)) {
-    state.repaired = true;
-    state.disposition = "repaired";
-  }
-  if (auditRun.edge !== "ok")
-    return {
-      terminal: result(
-        state,
-        "audit_escalated",
-        "audit",
-        {},
-        receipt.failure,
-      ),
-    };
-  const escalated = receipt.escalated;
-  const clean =
-    receipt.status === "clean" &&
-    escalated.length === 0 &&
-    receipt.remaining_violations === 0;
-  return { receipt, escalated, clean };
+        escalated: receipt.escalated,
+        clean:
+          receipt.terminal.status === "complete" &&
+          receipt.escalated.length === 0 &&
+          receipt.remaining_violations === 0,
+      }),
+    },
+  );
+  return routed.terminal ? { terminal: routed.terminal } : routed.value;
 }
 
 async function processValidatedPaper(runtime, slug, meta) {
@@ -547,7 +532,8 @@ async function processValidatedPaper(runtime, slug, meta) {
       phase: "Acquire",
       agentType: "quasi:download-agent",
       label: `${slug}:acquire`,
-      schema: paperAcquireSchema({
+      schema: paperAcquireStageSchema({
+        materialKey: state.materialKey,
         slug,
         output: state.source,
         doi: meta.doi,
@@ -559,60 +545,43 @@ async function processValidatedPaper(runtime, slug, meta) {
       retry: "forbidden",
       replay: "blocked",
       artifactRoles: ["source"],
-      contract: PAPER_ACQUIRE_CONTRACT,
-      context: { slug, output: state.source },
+      unknownFailureCode: "material.writer_outcome_unknown",
+      contract: PAPER_ACQUIRE_STAGE_CONTRACT,
+      context: { output: state.source },
     },
   );
-  if (download.edge === "unknown") {
-    state.operations.push(download.receipt);
-    return blocked(
-      state,
-      "download",
-      "paper.acquire",
-      download.receipt,
-    );
-  }
-  if (download.edge === "mismatch") {
-    state.operations.push(download.receipt);
-    return mismatchBlocked(
-      state,
-      "download",
-      "paper.acquire",
-    );
-  }
-  const downloadReceipt = download.receipt;
-  state.operations.push(downloadReceipt);
-  if (download.edge === "blocked")
-    return blocked(
-      state,
-      "download",
-      "paper.acquire",
-      downloadReceipt,
-    );
-  if (download.edge !== "ok") {
-    return result(
-      state,
-      "download_failed",
-      "download",
-      {
-        doi: downloadReceipt.doi || meta.doi || null,
-        source: downloadReceipt.source || null,
-        failure_reason: downloadReceipt.failure_reason,
-        attempts: downloadReceipt.attempts,
+  const routed = routePaperStage(
+    download,
+    state,
+    "download",
+    "paper.acquire",
+    {
+      failure: acquireFailure,
+      needsInputExtra: (receipt) => ({
+        question: receipt.terminal.issue.user_question,
+      }),
+      failedStatus: "download_failed",
+      failedExtra: (receipt) => ({
+        doi: receipt.doi || meta.doi || null,
+        source: receipt.source || null,
+        failure_reason: receipt.terminal.issue.summary,
+        attempts: receipt.attempts,
+      }),
+      onOk: (receipt) => {
+        state.artifacts.push({
+          role: "source",
+          path: state.source,
+          exists: true,
+          usable: null,
+          producer:
+            receipt.disposition === "reused"
+              ? "paper.acquire:reconciled"
+              : "paper.acquire",
+        });
       },
-      downloadReceipt.failure,
-    );
-  }
-  state.artifacts.push({
-    role: "source",
-    path: state.source,
-    exists: true,
-    usable: null,
-    producer:
-      downloadReceipt.disposition === "reused"
-        ? "paper.acquire:reconciled"
-        : "paper.acquire",
-  });
+    },
+  );
+  if (routed.terminal) return routed.terminal;
 
   phase("Prepare");
   const prepared = await prepare(runtime, state);
@@ -626,20 +595,6 @@ async function processValidatedPaper(runtime, slug, meta) {
     prepared.input,
   );
   if (analysisResult.terminal) return analysisResult.terminal;
-  if (analysisResult.reconcile) {
-    state.disposition = "reused";
-    state.artifacts = state.artifacts.filter(
-      (artifact) => artifact.role !== "canonical",
-    );
-    state.artifacts.push({
-      role: "canonical",
-      path: state.canonical,
-      exists: true,
-      usable: null,
-      producer: "paper.analyse:reconciled",
-    });
-  }
-
   phase("Audit");
   let auditResult = await audit(runtime, state, 1);
   if (auditResult.terminal) return auditResult.terminal;

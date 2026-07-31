@@ -270,19 +270,18 @@ def analyse(slug: str, action: str = "create") -> dict[str, Any]:
         if row["role"] in {"transcript", "engine_transcript"}
     ]
     return {
-        "schema_version": "quasi.operation.talk.analyse.receipt/0.1",
-        "key": "talk.analyse",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "talk.analyse",
+        "stage": "Analyse",
+        "material_key": f"talk:{slug}",
         "effect": "writer",
-        "status": "succeeded",
         "attempt": 1,
         "input_paths": [row["path"] for row in inputs],
         "input_sha256s": [row["sha256"] for row in inputs],
         "output_path": paths(slug)["canonical"],
         "artifact_roles": ["canonical"],
-        "action": action,
-        "failure": None,
+        "terminal": {"status": "complete", "issue": None, "action": action},
     }
-
 
 def audit(
     slug: str,
@@ -290,6 +289,7 @@ def audit(
     status: str = "clean",
     diagnostic_path: str | None = None,
     mutated: bool = False,
+    pass_number: int = 1,
 ) -> dict[str, Any]:
     target = paths(slug)["canonical"]
     escalated = []
@@ -299,16 +299,34 @@ def audit(
             "kind": "block_kind_mismatch",
             "reason": "the exact Talk product needs a semantic repair",
         }]
+    terminal_status = "complete" if status in {"clean", "partial"} else "failed"
     return {
-        "schema_version": "quasi.operation.talk.audit.legacy.receipt/0.1",
-        "key": "talk.audit.legacy",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "talk.audit",
+        "stage": "Audit",
+        "material_key": f"talk:{slug}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "target_path": target,
+        "artifact_roles": ["canonical"],
+        "pass": pass_number,
         "remaining_violations": len(escalated),
         "escalated": escalated,
         "mutated_paths": [target] if mutated else [],
+        "terminal": {
+            "status": terminal_status,
+            "issue": (
+                None
+                if terminal_status == "complete"
+                else {
+                    "code": "talk.audit_failed",
+                    "operation": "talk.audit",
+                    "summary": "Talk Audit did not complete",
+                    "user_question": None,
+                    "retryable": False,
+                }
+            ),
+        },
     }
 
 
@@ -319,7 +337,7 @@ def response(value: Any) -> dict[str, Any]:
 def happy_responses(slug: str, signal: str = "live") -> dict[str, list[dict[str, Any]]]:
     values = {
         "talk.prepare": [response(prepare_stage(slug, classification=signal))],
-        "talk.audit.legacy": [response(audit(slug))],
+        "talk.audit": [response(audit(slug))],
     }
     if signal == "live":
         values["talk.analyse:create"] = [response(analyse(slug))]
@@ -371,7 +389,7 @@ def test_live_talk_is_one_prepare_stage_then_analyse_and_audit() -> None:
     report = run_talk(slug, happy_responses(slug))
     assert report["result"]["status"] == "ok"
     assert report["result"]["material_receipt"]["status"] == "complete"
-    assert operations(report) == ["talk.prepare", "talk.analyse", "talk.audit.legacy"]
+    assert operations(report) == ["talk.prepare", "talk.analyse", "talk.audit"]
     assert [row["phase"] for row in report["trace"]] == ["Prepare", "Analyse", "Audit"]
     assert report["phases"] == ["Recall", "Prepare", "Analyse", "Audit"]
 
@@ -396,7 +414,7 @@ def test_dead_or_empty_talk_finishes_the_silent_product_in_prepare(signal: str) 
     slug = f"stage-talk-{signal}"
     report = run_talk(slug, happy_responses(slug, signal))
     assert report["result"]["status"] == "ok"
-    assert operations(report) == ["talk.prepare", "talk.audit.legacy"]
+    assert operations(report) == ["talk.prepare", "talk.audit"]
     assert [row["phase"] for row in report["trace"]] == ["Prepare", "Audit"]
     receipt = report["result"]["material_receipt"]
     canonical = [row for row in receipt["artifacts"] if row["role"] == "canonical"]
@@ -408,10 +426,10 @@ def test_existing_coherent_talk_skips_product_rewrite() -> None:
     slug = "stage-talk-reconcile"
     responses = {
         "talk.prepare": [response(prepare_stage(slug, canonical_exists=True))],
-        "talk.audit.legacy": [response(audit(slug))],
+        "talk.audit": [response(audit(slug))],
     }
     report = run_talk(slug, responses)
-    assert operations(report) == ["talk.prepare", "talk.audit.legacy"]
+    assert operations(report) == ["talk.prepare", "talk.audit"]
     receipt = report["result"]["material_receipt"]
     assert receipt["status"] == "complete"
     assert receipt["disposition"] == "reused"
@@ -493,15 +511,15 @@ def test_missing_canonical_rejects_a_fabricated_zero_hash() -> None:
 def test_exact_audit_diagnostic_gets_one_product_repair_and_reaudit() -> None:
     slug = "stage-talk-repair"
     responses = happy_responses(slug)
-    responses["talk.audit.legacy"] = [
+    responses["talk.audit"] = [
         response(audit(slug, status="partial")),
-        response(audit(slug)),
+        response(audit(slug, pass_number=2)),
     ]
     responses["talk.analyse:repair"] = [response(analyse(slug, "repair"))]
     report = run_talk(slug, responses)
     assert operations(report) == [
-        "talk.prepare", "talk.analyse", "talk.audit.legacy",
-        "talk.analyse", "talk.audit.legacy",
+        "talk.prepare", "talk.analyse", "talk.audit",
+        "talk.analyse", "talk.audit",
     ]
     assert report["result"]["material_receipt"]["disposition"] == "repaired"
     assert report["phases"][-3:] == ["Analyse", "Audit", "Analyse", "Audit"][-3:]
@@ -521,14 +539,14 @@ def test_silent_audit_repair_returns_to_prepare_once(signal: str) -> None:
                 )
             ),
         ],
-        "talk.audit.legacy": [
+        "talk.audit": [
             response(audit(slug, status="partial")),
-            response(audit(slug)),
+            response(audit(slug, pass_number=2)),
         ],
     }
     report = run_talk(slug, responses)
     assert operations(report) == [
-        "talk.prepare", "talk.audit.legacy", "talk.prepare", "talk.audit.legacy"
+        "talk.prepare", "talk.audit", "talk.prepare", "talk.audit"
     ]
     assert [row["phase"] for row in report["trace"]] == [
         "Prepare", "Audit", "Prepare", "Audit"
@@ -539,7 +557,7 @@ def test_silent_audit_repair_returns_to_prepare_once(signal: str) -> None:
 def test_foreign_audit_target_fails_without_guessing_an_owner() -> None:
     slug = "stage-talk-owner"
     responses = happy_responses(slug)
-    responses["talk.audit.legacy"] = [
+    responses["talk.audit"] = [
         response(audit(slug, status="partial", diagnostic_path="vault/papers/other.md"))
     ]
     report = run_talk(slug, responses)
@@ -558,4 +576,4 @@ def test_identical_same_runtime_requests_coalesce_all_writers() -> None:
         requests=[request, request],
     )
     assert report["result"][0] == report["result"][1]
-    assert operations(report) == ["talk.prepare", "talk.analyse", "talk.audit.legacy"]
+    assert operations(report) == ["talk.prepare", "talk.analyse", "talk.audit"]

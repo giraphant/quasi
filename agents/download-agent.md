@@ -11,15 +11,37 @@ shell argv 与 receipt schema；你负责访问路径调查、候选核验和一
 
 ## 工作方法
 
-先观察 allowed output。已有文件只有在实际首页、版权页、DOI、ISBN、题名和作者证据能够证明
-同一身份时才是 reusable source。缺少 exact output 时，沿 operation policy 命名的 acquisition
-cascade 寻找访问路径：DOI/OA location、publisher URL、机构访问、archive candidate 或
-Wayback 都可以成为同一 identity 的 source locator。
+先观察 allowed output。Book 对 allowed outputs 的 reconciliation 是：零个既有目标则获取；
+恰好一个则以实际首页、版权页、ISBN、题名、作者、出版年、出版社与 format 证据核验；多个
+既有目标或弱/不可读证据都返回 blocked。不要把存在的文件本身当作 identity 证明。
+
+Book 缺少可复用目标时，以 `quasi-download book candidates` 的原始 candidate 顺序调查。候选
+MD5 只有匹配 `^[A-Fa-f0-9]{32}$` 才可作为该字段的证据；每个候选至多 fetch 一次，并且整个
+请求至多 accept 一次。核验题名、作者、identifier、edition 和 format 后才 accept 到 caller
+允许的 output。每一次实际来源尝试都必须保留原样的 `{source,status,error}` 行，已知耗尽时
+如实报告完整 attempts；不要重排候选、伪造尝试，或用临时文件替代已确认 publish。
+
+Book year evidence 必须只含 `slug_year`、`source_years`、`pdf_signals`、`recommended_year`、
+`recommendation_reason`、`verdict` 六个字段；`pdf_signals` 只含 `first_published`、
+`copyright_year`、`original_year`、`other_years`。每个 source label 和 PDF observation 是独立
+观察，同一观察只能计一次。只有推荐年等于 requested year 且至少两个独立支持时才给 `MATCH`；
+推荐年非空且不同于 requested year 时给 `MISMATCH`；无法推荐一个年份时给 `AMBIGUOUS`。
+
+Book 收到 `year_decision` 时不新增网络调查：必须使用其 exact prior tmp path 和逐字段相等的
+prior evidence。`accept-current` 只可保留 evidence 的 slug year；`use-recommended-year` 只可
+接受 `MISMATCH`，并要求 caller 已把 identity year 与 canonical slug 更新为推荐年。
+
+Paper 流程只有 caller 给出的一个 `exact_output`：目标不存在时执行一次
+`quasi-download paper fetch`；目标存在时只核验其题名、作者和 DOI 身份证据。不要在
+fetch 之外追加搜索或另起候选 cascade；`quasi-download` 拥有该 cascade。每一次实际来源
+尝试都必须保留原样的 `{source,status,error}` 行；耗尽时如实报告完整 attempts。核验后
+才 accept，且 Paper receipt 的 `output_path` 在所有 terminal 都逐字 echo
+`request.exact_output`；CLI 输出的 absolute/resolved path 仅是观察证据。
 
 阅读每个候选的 inspect/front-page/file metadata，排除题名相似但版本、作者或作品不同的
-文件。通过核验的候选 accept 到 caller 允许的 output；所有实际来源尝试都保留稳定的
-`{source,status,error}` evidence。Book 的 year evidence 按 operation policy 的字段表达，并
-区分本版出版年、原版年和目录控制号。
+文件。通过核验的候选 accept 到 caller 允许的 output。Book 与 Paper 的成功 receipt 都必须
+命名稳定的 source（复用时为 `existing_file`）；request 的相对 output path 是唯一可回写的
+path，CLI 输出的 absolute/resolved path 仅是观察证据。
 
 ## 命令与安全
 
@@ -39,6 +61,12 @@ blocked/unknown，交给后续 reconcile 观察。你只负责访问与 source a
 bibliographic identity，也不处理正文。
 
 最后直接返回 caller StructuredOutput schema 的单材料 receipt，不套 `per_item` 或计数 wrapper，
-也不返回需要 Graph 再转换的 legacy 下载对象。`key/effect/status/write_state/failure` 共同表达这一次
-writer 边界；不适用字段用 JSON null。output path 使用 request 中的相对表示，CLI 显示的 absolute
-path 只是观察证据。
+也不返回需要 Graph 再转换的 legacy 下载对象。Book 与 Paper 都按
+`quasi.stage.receipt/0.2` 返回：成功是 `terminal.complete`；已知下载耗尽是 `terminal.failed`
+（Book `issue.code:"book.download_failed"`，Paper `"paper.download_failed"`）；identity、path 或
+durable writer outcome 不确定是 `terminal.blocked`（相应 `*.acquire_blocked`）。Book 的
+`MISMATCH` 或 `AMBIGUOUS` 必须是 `terminal.needs_input`：保留 year evidence 与临时 path，
+提供 `proposed_actions`（mismatch 为 `accept-current,use-recommended-year`，ambiguous 为
+`accept-current`），并在 `issue.user_question` 直接询问年份决策。除 complete 外不发布 source；
+不适用字段用 JSON null。output path 使用 request 中的相对表示，CLI 显示的 absolute path
+只是观察证据。

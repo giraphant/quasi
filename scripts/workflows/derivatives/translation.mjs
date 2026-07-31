@@ -9,6 +9,7 @@ import {
 } from "../operations/translate.mjs";
 import { exactKeys, validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
+import { routeStageEdge } from "../materials/route.mjs";
 
 const RECEIPT_VERSION =
   "quasi.derivative.translation.receipt/0.1";
@@ -384,6 +385,26 @@ function prepareFailure(receipt, outcome = "known") {
   );
 }
 
+function routeTranslationStage(run, state, options) {
+  return routeStageEdge(run, {
+    ...options,
+    state,
+    stage: "prepare",
+    operationKey: "translation.prepare",
+    emit: ({ status, failure }) =>
+      terminal(state, status, "prepare", failure),
+    unknown: (receipt) =>
+      terminal(
+        state,
+        "blocked",
+        "prepare",
+        prepareFailure(receipt, "unknown"),
+      ),
+    mismatch: () =>
+      writerMismatch(state, "prepare", "translation.prepare"),
+  });
+}
+
 async function processStrict(runtime, state) {
   runtime.phase("Prepare");
   const schema = translationPrepareStageSchema({
@@ -424,70 +445,49 @@ async function processStrict(runtime, state) {
       },
     },
   );
-  state.operations.push(run.receipt);
-  if (run.edge === "unknown" || run.edge === "blocked")
-    return terminal(
-      state,
-      "blocked",
-      "prepare",
-      prepareFailure(run.receipt, "unknown"),
-    );
-  if (run.edge === "mismatch")
-    return writerMismatch(
-      state,
-      "prepare",
-      "translation.prepare",
-    );
-  if (run.edge === "needs_input") {
-    state.gate = run.receipt.gate;
-    return terminal(
-      state,
-      "needs_input",
-      "prepare",
-      prepareFailure(run.receipt),
-    );
-  }
-  if (run.edge === "failed")
-    return terminal(
-      state,
-      "failed",
-      "prepare",
-      prepareFailure(run.receipt),
-    );
-
-  const stageReceipt = run.receipt;
-  state.backend = stageReceipt.backend;
-  state.sourcePath = stageReceipt.source.path;
-  state.sourceSha256 = stageReceipt.source.sha256;
-  state.sourceSize = stageReceipt.source.size;
-  state.sourcePages = stageReceipt.source.pages;
-  state.disposition = stageReceipt.disposition;
-  state.recovered = stageReceipt.recovered;
-  setSourceArtifact(state);
-  state.validation = {
-    status: "clean",
-    backend: stageReceipt.backend,
-    input_path: stageReceipt.source.path,
-    input_sha256: stageReceipt.source.sha256,
-    output_path: state.output,
-    output_sha256: stageReceipt.validation.output_sha256,
-    manifest_path: state.manifest,
-    manifest_sha256: stageReceipt.validation.manifest_sha256,
-    source_pages: stageReceipt.validation.source_pages,
-    output_pages: stageReceipt.validation.output_pages,
-    toc_entries: stageReceipt.validation.toc_entries,
-    coverage: stageReceipt.validation.coverage,
-  };
-  setFinalArtifacts(
-    state,
-    {
-      ...stageReceipt.validation,
-      output_path: state.output,
-      manifest_path: state.manifest,
+  const routed = routeTranslationStage(run, state, {
+    failure: prepareFailure,
+    needsInputGate: (receipt) => receipt.gate,
+    assignGate: (gate) => {
+      state.gate = gate;
     },
-    "translation.prepare",
-  );
-  return terminal(state, "complete", "validation");
+    failedStatus: "failed",
+    onOk: (stageReceipt) => {
+      state.backend = stageReceipt.backend;
+      state.sourcePath = stageReceipt.source.path;
+      state.sourceSha256 = stageReceipt.source.sha256;
+      state.sourceSize = stageReceipt.source.size;
+      state.sourcePages = stageReceipt.source.pages;
+      state.disposition = stageReceipt.disposition;
+      state.recovered = stageReceipt.recovered;
+      setSourceArtifact(state);
+      state.validation = {
+        status: "clean",
+        backend: stageReceipt.backend,
+        input_path: stageReceipt.source.path,
+        input_sha256: stageReceipt.source.sha256,
+        output_path: state.output,
+        output_sha256: stageReceipt.validation.output_sha256,
+        manifest_path: state.manifest,
+        manifest_sha256: stageReceipt.validation.manifest_sha256,
+        source_pages: stageReceipt.validation.source_pages,
+        output_pages: stageReceipt.validation.output_pages,
+        toc_entries: stageReceipt.validation.toc_entries,
+        coverage: stageReceipt.validation.coverage,
+      };
+      setFinalArtifacts(
+        state,
+        {
+          ...stageReceipt.validation,
+          output_path: state.output,
+          manifest_path: state.manifest,
+        },
+        "translation.prepare",
+      );
+      return terminal(state, "complete", "validation");
+    },
+  });
+  return routed.terminal || routed.value;
 }
 
 export function translationDependencyFailure(

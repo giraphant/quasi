@@ -128,35 +128,35 @@ def paper_download_receipt(
         if blocked
         else "all acquisition routes failed"
     )
+    terminal = "complete" if succeeded else "blocked" if blocked else "failed"
     return {
-        "schema_version": "quasi.operation.paper.acquire.receipt/0.2",
-        "key": "paper.acquire",
-        "effect": "writer",
-        "status": "succeeded" if succeeded else "blocked" if blocked else "failed",
-        "attempt": 1,
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "paper.acquire",
+        "stage": "Acquire",
         "material_key": f"paper:{slug}",
-        "kind": "paper",
-        "slug": slug,
+        "effect": "writer",
+        "attempt": 1,
         "output_path": paper_paths(slug)["source"],
-        "artifact_roles": ["source"],
+        "doi": doi,
         "disposition": "created" if succeeded else None,
         "write_state": "written" if succeeded else "unknown" if blocked else "not_written",
         "identity_verified": succeeded,
         "source": source if succeeded or source else None,
-        "doi": doi,
-        "failure_reason": None if succeeded else reason,
         "attempts": attempts or [],
-        "failure": (
-            None
-            if succeeded
-            else {
-                "code": "paper.acquire_blocked" if blocked else "paper.download_failed",
-                "operation_key": "paper.acquire",
-                "outcome": "unknown" if blocked else "known",
-                "retryable": False,
-                "message": reason,
-            }
-        ),
+        "terminal": {
+            "status": terminal,
+            "issue": (
+                None
+                if succeeded
+                else {
+                    "code": "paper.acquire_blocked" if blocked else "paper.download_failed",
+                    "operation": "paper.acquire",
+                    "summary": reason,
+                    "user_question": None,
+                    "retryable": False,
+                }
+            ),
+        },
     }
 
 
@@ -212,18 +212,17 @@ def paper_analyse_receipt(
     slug: str, input_path: str, *, action: str = "create"
 ) -> dict[str, Any]:
     return {
-        "schema_version": "quasi.operation.paper.analyse.receipt/0.1",
-        "key": "paper.analyse",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "paper.analyse",
+        "stage": "Analyse",
+        "material_key": f"paper:{slug}",
         "effect": "writer",
-        "status": "succeeded",
         "attempt": 1,
         "input_path": input_path,
         "output_path": paper_paths(slug)["canonical"],
         "artifact_roles": ["canonical"],
-        "action": action,
-        "failure": None,
+        "terminal": {"status": "complete", "issue": None, "action": action},
     }
-
 
 def paper_audit_receipt(
     slug: str,
@@ -233,11 +232,13 @@ def paper_audit_receipt(
     escalated: list[dict[str, str]] | None = None,
     pass_number: int = 1,
 ) -> dict[str, Any]:
+    terminal_status = "complete" if status in {"clean", "partial"} else "failed"
     return {
-        "schema_version": "quasi.operation.paper.audit.receipt/0.2",
-        "key": "paper.audit",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "paper.audit",
+        "stage": "Audit",
+        "material_key": f"paper:{slug}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "target_path": paper_paths(slug)["canonical"],
         "artifact_roles": ["canonical"],
@@ -245,7 +246,20 @@ def paper_audit_receipt(
         "remaining_violations": remaining,
         "escalated": escalated or [],
         "mutated_paths": [],
-        "failure": None,
+        "terminal": {
+            "status": terminal_status,
+            "issue": (
+                None
+                if terminal_status == "complete"
+                else {
+                    "code": "paper.audit_failed",
+                    "operation": "paper.audit",
+                    "summary": "Paper Audit did not complete",
+                    "user_question": None,
+                    "retryable": False,
+                }
+            ),
+        },
     }
 
 
@@ -293,58 +307,87 @@ def book_download_receipt(
     attempts: list[dict[str, str | None]] | None = None,
     allowed_formats: tuple[str, ...] = ("epub",),
 ) -> dict[str, Any]:
-    accepted = status == "ok"
-    signal = "accepted" if accepted else status
-    evidence = None
+    complete = status == "ok"
+    needs_input = status in {"year_mismatch", "year_ambiguous"}
+    blocked = status == "blocked"
+    evidence = book_year_evidence() if complete else None
     temp_path = None
     reason = None
-    if status == "ok":
-        evidence = book_year_evidence()
-    elif status == "year_mismatch":
+    proposed_actions = None
+    if status == "year_mismatch":
         temp_path = f".quasi/temp/downloads/{slug}-prior.epub"
         evidence = book_year_evidence(recommended=2019, verdict="MISMATCH")
         reason = evidence["recommendation_reason"]
-    else:
+        proposed_actions = ["accept-current", "use-recommended-year"]
+    elif status == "year_ambiguous":
+        temp_path = f".quasi/temp/downloads/{slug}-prior.epub"
+        evidence = book_year_evidence(recommended=None, verdict="AMBIGUOUS")
+        reason = evidence["recommendation_reason"]
+        proposed_actions = ["accept-current"]
+    elif not complete:
         reason = "all acquisition routes failed"
-    blocked = status == "blocked"
+    issue = (
+        None
+        if complete
+        else {
+            "code": (
+                "book.acquire_blocked"
+                if blocked
+                else (
+                    "book.year_mismatch"
+                    if status == "year_mismatch"
+                    else (
+                        "book.year_ambiguous"
+                        if status == "year_ambiguous"
+                        else "book.download_failed"
+                    )
+                )
+            ),
+            "operation": "book.acquire",
+            "summary": reason,
+            "user_question": (
+                "Which canonical year should this Book use?" if needs_input else None
+            ),
+            "retryable": False,
+        }
+    )
+    terminal = {
+        "status": (
+            "complete"
+            if complete
+            else "needs_input" if needs_input else "blocked" if blocked else "failed"
+        ),
+        "issue": issue,
+    }
+    if needs_input:
+        terminal.update(
+            {
+                "year_evidence": evidence,
+                "tmp_path": temp_path,
+                "proposed_actions": proposed_actions,
+            }
+        )
     return {
-        "schema_version": "quasi.operation.book.acquire.receipt/0.2",
-        "key": "book.acquire",
-        "effect": "writer",
-        "status": "succeeded" if accepted else "blocked" if blocked else "failed",
-        "signal": signal,
-        "attempt": 1,
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "book.acquire",
+        "stage": "Acquire",
         "material_key": f"book:{slug}",
-        "kind": "book",
-        "slug": slug,
-        "output_path": f"sources/{slug}.epub" if accepted else None,
+        "effect": "writer",
+        "attempt": 1,
+        "output_path": f"sources/{slug}.epub" if complete else None,
         "allowed_output_paths": [
             f"sources/{slug}.{format}" for format in allowed_formats
         ],
-        "artifact_roles": ["source"],
-        "disposition": "reused" if accepted else None,
+        "disposition": "reused" if complete else None,
         "write_state": "not_written" if not blocked else "unknown",
-        "identity_verified": status in {"ok", "year_mismatch", "year_ambiguous"},
-        "format": "epub" if accepted else None,
+        "identity_verified": complete or needs_input,
+        "format": "epub" if complete else None,
         "tmp_path": temp_path,
-        "source": "existing" if accepted else None,
+        "source": "existing" if complete else None,
         "isbn": None,
         "year_evidence": evidence,
-        "failure_reason": reason,
         "attempts": attempts or [],
-        "failure": (
-            None
-            if accepted
-            else {
-                "code": (
-                    "book.acquire_blocked" if blocked else f"book.{signal}"
-                ),
-                "operation_key": "book.acquire",
-                "outcome": "unknown" if blocked else "known",
-                "retryable": False,
-                "message": reason,
-            }
-        ),
+        "terminal": terminal,
     }
 
 
@@ -419,31 +462,30 @@ def book_prepare_receipt(slug: str) -> dict[str, Any]:
 
 def book_analyse_receipt(slug: str, chapter: dict[str, Any]) -> dict[str, Any]:
     return {
-        "schema_version": "quasi.operation.chapter.analyse.receipt/0.1",
-        "key": "chapter.analyse",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "chapter.analyse",
+        "stage": "Analyse",
+        "material_key": f"book:{slug}",
         "effect": "writer",
-        "status": "succeeded",
         "attempt": 1,
-        "input_path": (
-            f"processing/chapters/{slug}/{chapter['filename']}"
-        ),
-        "output_path": (
-            f"vault/books/{slug}/"
-            f"ch{chapter['slot']}-{chapter['slug']}.md"
-        ),
+        "input_path": f"processing/chapters/{slug}/{chapter['filename']}",
+        "output_path": f"vault/books/{slug}/ch{chapter['slot']}-{chapter['slug']}.md",
         "artifact_roles": ["chapter_canonical"],
-        "action": "create",
-        "write_state": "written",
-        "failure": None,
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "action": "create",
+            "write_state": "written",
+        },
     }
-
 
 def book_synth_receipt(slug: str) -> dict[str, Any]:
     return {
-        "schema_version": "quasi.operation.book.synthesise.receipt/0.1",
-        "key": "book.synthesise",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "book.synthesise",
+        "stage": "Synthesise",
+        "material_key": f"book:{slug}",
         "effect": "writer",
-        "status": "succeeded",
         "attempt": 1,
         "input_paths": [
             f"vault/books/{slug}/ch{chapter['slot']}-{chapter['slug']}.md"
@@ -451,23 +493,25 @@ def book_synth_receipt(slug: str) -> dict[str, Any]:
         ],
         "output_path": f"vault/books/{slug}/00-overview.md",
         "artifact_roles": ["canonical"],
-        "action": "create",
         "chapters_analyzed": 3,
-        "failure": None,
+        "terminal": {"status": "complete", "issue": None, "action": "create"},
     }
 
 
 def book_audit_receipt(slug: str) -> dict[str, Any]:
     return {
-        "schema_version": "quasi.operation.book.audit.receipt/0.1",
-        "key": "book.audit",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "book.audit",
+        "stage": "Audit",
+        "material_key": f"book:{slug}",
         "effect": "writer",
-        "status": "clean",
         "attempt": 1,
         "target_path": f"vault/books/{slug}",
+        "pass": 1,
         "remaining_violations": 0,
         "escalated": [],
         "mutated_paths": [],
+        "terminal": {"status": "complete", "issue": None},
     }
 
 
@@ -832,7 +876,7 @@ def test_paper_download_failure_preserves_actionable_evidence(
     fingerprint = call(
         report, f"{slug}:acquire"
     )["schema_fingerprint"]
-    assert "failure_reason" in fingerprint
+    assert "terminal" in fingerprint
     assert "attempts" in fingerprint
 
 
@@ -915,7 +959,7 @@ def test_paper_audit_escalation_gets_one_repair_then_second_audit(
     )
 
 
-def test_book_download_keeps_legacy_year_status_and_temp_evidence(
+def test_book_download_exposes_stage_year_gate_and_temp_evidence(
     tmp_path: Path,
 ) -> None:
     slug = "legacy-book-download"
@@ -934,7 +978,7 @@ def test_book_download_keeps_legacy_year_status_and_temp_evidence(
     )
 
     assert report["result"]["slug"] == slug
-    assert report["result"]["status"] == "year_mismatch"
+    assert report["result"]["status"] == "needs_input"
     assert report["result"]["year_evidence"] == book_year_evidence(
         recommended=2019,
         verdict="MISMATCH",
@@ -1172,37 +1216,41 @@ def test_author_deduplicates_two_candidates_resolved_to_one_vault_slug(
             f"{name}:synthesise": [
                 reply(
                     {
-                        "schema_version": (
-                            "quasi.operation.author.synthesise.receipt/0.1"
-                        ),
-                        "key": "author.synthesise",
+                        "schema_version": "quasi.stage.receipt/0.2",
+                        "operation": "author.synthesise",
+                        "stage": "Synthesise",
+                        "material_key": f"author:{name}",
                         "effect": "writer",
-                        "status": "succeeded",
                         "attempt": 1,
                         "input_material_keys": [f"book:{canonical}"],
                         "input_paths": [author_input],
                         "output_path": author_output,
                         "artifact_roles": ["canonical"],
-                        "action": "create",
                         "materials_analyzed": 1,
-                        "failure": None,
+                        "terminal": {
+                            "status": "complete",
+                            "issue": None,
+                            "action": "create",
+                        },
                     }
                 )
             ],
             f"{name}:audit": [
                 reply(
                     {
-                        "schema_version": (
-                            "quasi.operation.author.audit.legacy.receipt/0.1"
-                        ),
-                        "key": "author.audit.legacy",
+                        "schema_version": "quasi.stage.receipt/0.2",
+                        "operation": "author.audit",
+                        "stage": "Audit",
+                        "material_key": f"author:{name}",
                         "effect": "writer",
-                        "status": "clean",
                         "attempt": 1,
                         "target_path": author_output,
+                        "artifact_roles": ["canonical"],
+                        "pass": 1,
                         "remaining_violations": 0,
                         "escalated": [],
                         "mutated_paths": [],
+                        "terminal": {"status": "complete", "issue": None},
                     }
                 )
             ],

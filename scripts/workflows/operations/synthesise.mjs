@@ -1,5 +1,6 @@
 import { cardPath, itemPath } from "./steer.mjs";
 import { composedSchema } from "./shared.mjs";
+import { stageContract, stageReceiptSchema } from "../stage.mjs";
 import {
   AUTHOR_ARTIFACT_CONTRACT,
   BOOK_ARTIFACT_CONTRACT,
@@ -14,167 +15,95 @@ export const SY_SCHEMA = {
   },
 };
 
-export const BOOK_SYNTHESISE_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "schema_version",
-    "key",
-    "effect",
-    "status",
-    "attempt",
-    "input_paths",
-    "output_path",
-    "artifact_roles",
-    "action",
-    "chapters_analyzed",
-    "failure",
-  ],
-  properties: {
-    schema_version: {
-      const: "quasi.operation.book.synthesise.receipt/0.1",
-    },
-    key: { const: "book.synthesise" },
-    effect: { const: "writer" },
-    status: {
-      type: "string",
-      enum: ["succeeded", "failed", "blocked"],
-    },
-    attempt: { type: "integer", const: 1 },
-    input_paths: {
-      type: "array",
-      minItems: 1,
-      maxItems: 150,
-      items: { type: "string" },
-    },
-    output_path: { type: "string" },
-    artifact_roles: {
-      type: "array",
-      minItems: 1,
-      maxItems: 1,
-      items: { const: "canonical" },
-    },
-    action: {
-      type: "string",
-      enum: ["create", "repair", "reconciled"],
-    },
-    chapters_analyzed: { type: "integer", minimum: 0 },
-    failure: {
-      type: ["object", "null"],
-      additionalProperties: false,
-      required: [
-        "code",
-        "operation_key",
-        "outcome",
-        "retryable",
-      ],
-      properties: {
-        code: { type: "string" },
-        operation_key: { const: "book.synthesise" },
-        outcome: { type: "string", enum: ["known", "unknown"] },
-        retryable: { const: false },
+const synthesisArtifactRoles = (role) => ({
+  type: "array",
+  minItems: 1,
+  maxItems: 1,
+  items: { const: role },
+});
+
+const synthesisTerminalPayloads = (mode) => ({
+  complete: {
+    required: ["action"],
+    properties: {
+      action: {
+        type: "string",
+        enum:
+          mode === "create"
+            ? ["create", "reconciled"]
+            : ["repair", "reconciled"],
       },
     },
   },
-};
-
-export const AUTHOR_SYNTHESISE_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "schema_version",
-    "key",
-    "effect",
-    "status",
-    "attempt",
-    "input_material_keys",
-    "input_paths",
-    "output_path",
-    "artifact_roles",
-    "action",
-    "materials_analyzed",
-    "failure",
-  ],
-  properties: {
-    schema_version: {
-      const:
-        "quasi.operation.author.synthesise.receipt/0.1",
-    },
-    key: { const: "author.synthesise" },
-    effect: { const: "writer" },
-    status: {
-      type: "string",
-      enum: ["succeeded", "failed", "blocked"],
-    },
-    attempt: { type: "integer", const: 1 },
-    input_material_keys: {
-      type: "array",
-      minItems: 1,
-      maxItems: 15,
-      items: { type: "string" },
-    },
-    input_paths: {
-      type: "array",
-      minItems: 1,
-      maxItems: 15,
-      items: { type: "string" },
-    },
-    output_path: { type: "string" },
-    artifact_roles: {
-      type: "array",
-      minItems: 1,
-      maxItems: 1,
-      items: { const: "canonical" },
-    },
-    action: {
-      type: "string",
-      enum: ["create", "repair", "reconciled"],
-    },
-    materials_analyzed: { type: "integer", minimum: 0 },
-    failure: {
-      type: ["object", "null"],
-      additionalProperties: false,
-      required: [
-        "code",
-        "operation_key",
-        "outcome",
-        "retryable",
-        "message",
-      ],
-      properties: {
-        code: { type: "string" },
-        operation_key: { const: "author.synthesise" },
-        outcome: { type: "string", enum: ["known", "unknown"] },
-        retryable: { const: false },
-        message: { type: ["string", "null"] },
-      },
-    },
+  failed: {
+    required: ["action"],
+    properties: { action: { const: mode } },
   },
-};
+  blocked: {
+    required: ["action"],
+    properties: { action: { const: mode } },
+  },
+});
 
-const RECONCILE_CODE = "output_exists_requires_reconcile";
+export const bookSynthesiseStageSchema = ({
+  materialKey,
+  inputPaths,
+  mode,
+  output,
+}) =>
+  stageReceiptSchema({
+    operation: "book.synthesise",
+    stage: "Synthesise",
+    materialKey,
+    effect: "writer",
+    required: [
+      "input_paths",
+      "output_path",
+      "artifact_roles",
+      "chapters_analyzed",
+    ],
+    properties: {
+      input_paths: { const: inputPaths },
+      output_path: { const: output },
+      artifact_roles: synthesisArtifactRoles("canonical"),
+      chapters_analyzed: { const: inputPaths.length },
+    },
+    terminalPayloads: synthesisTerminalPayloads(mode),
+  });
 
-const knownOutcome = {
-  type: "object",
-  required: ["outcome"],
-  properties: { outcome: { const: "known" } },
-};
-const unknownOutcome = {
-  type: "object",
-  required: ["outcome"],
-  properties: { outcome: { const: "unknown" } },
-};
+export const BOOK_SYNTHESISE_STAGE_CONTRACT = stageContract({
+  schema: bookSynthesiseStageSchema({
+    materialKey: "book:placeholder",
+    inputPaths: ["vault/books/placeholder/ch01-chapter.md"],
+    mode: "create",
+    output: "vault/books/placeholder/00-overview.md",
+  }),
+  complete: (receipt, context) =>
+    [
+      ...(context.mode === "create" ? ["create"] : ["repair"]),
+      "reconciled",
+    ].includes(receipt.terminal.action),
+});
 
-// The author.synthesise writer matrix, exact ordered corpus echo, and the
-// materials_analyzed count ride the schema as deep consts.
-export const authorSynthesiseSchema = ({
+export const authorSynthesiseStageSchema = ({
+  materialKey,
   inputs,
   mode,
   output,
 }) =>
-  composedSchema(
-    AUTHOR_SYNTHESISE_SCHEMA,
-    {
+  stageReceiptSchema({
+    operation: "author.synthesise",
+    stage: "Synthesise",
+    materialKey,
+    effect: "writer",
+    required: [
+      "input_material_keys",
+      "input_paths",
+      "output_path",
+      "artifact_roles",
+      "materials_analyzed",
+    ],
+    properties: {
       input_material_keys: {
         const: inputs.map((input) => input.material_key),
       },
@@ -182,137 +111,30 @@ export const authorSynthesiseSchema = ({
         const: inputs.map((input) => input.path),
       },
       output_path: { const: output },
+      artifact_roles: synthesisArtifactRoles("canonical"),
+      materials_analyzed: { const: inputs.length },
     },
-    {
-      succeeded: {
-        properties: {
-          status: { const: "succeeded" },
-          failure: { type: "null" },
-          materials_analyzed: { const: inputs.length },
-          action:
-            mode === "create"
-              ? { const: "create" }
-              : { enum: ["repair", "reconciled"] },
-        },
-      },
-      failed: {
-        properties: {
-          status: { const: "failed" },
-          action: { const: mode },
-          failure: knownOutcome,
-        },
-      },
-      blocked: {
-        properties: {
-          status: { const: "blocked" },
-          action: { const: mode },
-          failure: unknownOutcome,
-        },
-      },
-    },
-  );
+    terminalPayloads: synthesisTerminalPayloads(mode),
+  });
 
-export const AUTHOR_SYNTHESISE_CONTRACT = {
-  schema: AUTHOR_SYNTHESISE_SCHEMA,
-};
-
-const nonReconcileSynthFailure = (outcome) => ({
-  type: "object",
-  required: ["outcome", "code"],
-  properties: {
-    outcome: { const: outcome },
-    code: { not: { const: RECONCILE_CODE } },
-  },
+export const AUTHOR_SYNTHESISE_STAGE_CONTRACT = stageContract({
+  schema: authorSynthesiseStageSchema({
+    materialKey: "author:placeholder",
+    inputs: [
+      {
+        material_key: "paper:placeholder",
+        path: "vault/papers/placeholder.md",
+      },
+    ],
+    mode: "create",
+    output: "vault/authors/placeholder.md",
+  }),
+  complete: (receipt, context) =>
+    [
+      ...(context.mode === "create" ? ["create"] : ["repair"]),
+      "reconciled",
+    ].includes(receipt.terminal.action),
 });
-
-// The book.synthesise matrix rides the schema; the typed create collision
-// surfaces as the reconcile edge via the contract detector.
-const bookSynthesiseBranches = (mode, count) =>
-  mode === "create"
-    ? {
-        succeeded: {
-          properties: {
-            status: { const: "succeeded" },
-            failure: { type: "null" },
-            chapters_analyzed: { const: count },
-            action: { const: "create" },
-          },
-        },
-        failed: {
-          properties: {
-            status: { const: "failed" },
-            action: { const: "create" },
-            failure: nonReconcileSynthFailure("known"),
-          },
-        },
-        blocked_unknown: {
-          properties: {
-            status: { const: "blocked" },
-            action: { const: "create" },
-            failure: nonReconcileSynthFailure("unknown"),
-          },
-        },
-        blocked_reconcile: {
-          properties: {
-            status: { const: "blocked" },
-            action: { const: "reconciled" },
-            failure: {
-              type: "object",
-              required: ["outcome", "code"],
-              properties: {
-                outcome: { const: "unknown" },
-                code: { const: RECONCILE_CODE },
-              },
-            },
-          },
-        },
-      }
-    : {
-        succeeded: {
-          properties: {
-            status: { const: "succeeded" },
-            failure: { type: "null" },
-            chapters_analyzed: { const: count },
-            action: { enum: ["repair", "reconciled"] },
-          },
-        },
-        failed: {
-          properties: {
-            status: { const: "failed" },
-            action: { const: "repair" },
-            failure: nonReconcileSynthFailure("known"),
-          },
-        },
-        blocked: {
-          properties: {
-            status: { const: "blocked" },
-            action: { const: "repair" },
-            failure: nonReconcileSynthFailure("unknown"),
-          },
-        },
-      };
-
-export const bookSynthesiseSchema = ({
-  inputPaths,
-  mode,
-  output,
-}) =>
-  composedSchema(
-    BOOK_SYNTHESISE_SCHEMA,
-    {
-      input_paths: { const: inputPaths },
-      output_path: { const: output },
-    },
-    bookSynthesiseBranches(mode, inputPaths.length),
-  );
-
-export const BOOK_SYNTHESISE_CONTRACT = {
-  schema: BOOK_SYNTHESISE_SCHEMA,
-  reconcile: (receipt, context) =>
-    context.mode === "create" &&
-    receipt.status === "blocked" &&
-    receipt.action === "reconciled",
-};
 
 export function bookSynthesiseOperationPrompt(
   slug,
@@ -327,6 +149,7 @@ export function bookSynthesiseOperationPrompt(
     schema_version:
       "quasi.operation.book.synthesise.request/0.1",
     operation: "book.synthesise",
+    stage: "Synthesise",
     material_key: `book:${slug}`,
     inputs: inputPaths.map((path) => ({
       role: "chapter_canonical",
@@ -374,6 +197,8 @@ export function authorSynthesiseOperationPrompt(
     schema_version:
       "quasi.operation.author.synthesise.request/0.1",
     operation: "author.synthesise",
+    stage: "Synthesise",
+    material_key: `author:${name}`,
     collection_key: `author:${name}`,
     inputs: inputs.map((input) => ({
       material_key: input.material_key,
@@ -806,6 +631,17 @@ ${JSON.stringify(request, null, 2)}`;
 // The writer matrix rides the composed schema: exact ordered member echo as a
 // deep const, path consts, and a per-mode action/members_analyzed pairing
 // (a reconciled receipt reads nothing, a written one reads every member).
+
+const knownOutcome = {
+  type: "object",
+  required: ["outcome"],
+  properties: { outcome: { const: "known" } },
+};
+const unknownOutcome = {
+  type: "object",
+  required: ["outcome"],
+  properties: { outcome: { const: "unknown" } },
+};
 
 const topicSynthesiseComposed = (
   base,

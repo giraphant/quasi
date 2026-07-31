@@ -11,13 +11,16 @@ import {
   validText,
 } from "../runtime.mjs";
 import {
+  BOOK_ACQUIRE_STAGE_CONTRACT,
   MATERIAL_SEARCH_STAGE_CONTRACT,
+  bookAcquireStageSchema,
   materialSearchStageSchema,
-  validBookAcquireReceipt,
 } from "../operations/acquire.mjs";
 import {
-  PAPER_AUDIT_CONTRACT,
-  paperAuditSchema,
+  BOOK_AUDIT_STAGE_CONTRACT,
+  PAPER_AUDIT_STAGE_CONTRACT,
+  bookAuditStageSchema,
+  paperAuditStageSchema,
 } from "../operations/audit.mjs";
 import {
   applyBookYearDecision,
@@ -29,7 +32,10 @@ import {
   validChapterSlot,
 } from "../operations/extract.mjs";
 import {
-  MATERIAL_RECEIPT_VERSION,
+  MATERIAL_FAILURE_SCHEMA,
+  MATERIAL_RESUME_SCHEMA,
+  bookAcquireAllowedSources,
+  materialReceiptSchema,
   validUserGate,
 } from "./receipt.mjs";
 const INGRESS_RECEIPT_VERSION =
@@ -55,39 +61,6 @@ export function canonicalMemberPath(kind, id) {
     : `vault/papers/${id}.md`;
 }
 
-function validMaterialFailure(failure) {
-  if (
-    !failure ||
-    typeof failure !== "object" ||
-    Array.isArray(failure) ||
-    ![4, 5].includes(Object.keys(failure).length) ||
-    !["code", "operation_key", "outcome", "retryable"].every(
-      (key) =>
-        Object.prototype.hasOwnProperty.call(failure, key),
-    ) ||
-    Object.keys(failure).some(
-      (key) =>
-        ![
-          "code",
-          "operation_key",
-          "outcome",
-          "retryable",
-          "message",
-        ].includes(key),
-    )
-  )
-    return false;
-  return (
-    validText(failure.code, 1, 200) &&
-    validText(failure.operation_key, 1, 200) &&
-    ["known", "unknown"].includes(failure.outcome) &&
-    typeof failure.retryable === "boolean" &&
-    (failure.message === undefined ||
-      failure.message === null ||
-      validText(failure.message, 1, 4000))
-  );
-}
-
 function projectFailure(failure) {
   return {
     code: failure.code,
@@ -96,24 +69,6 @@ function projectFailure(failure) {
     retryable: failure.retryable,
     message: failure.message || null,
   };
-}
-
-function validResume(resume) {
-  if (resume === null) return true;
-  if (!record(resume)) return false;
-  const keys = Object.keys(resume);
-  return !!(
-    keys.length >= 1 &&
-    keys.length <= 3 &&
-    keys.every((key) =>
-      ["operation_key", "stage", "policy"].includes(key),
-    ) &&
-    validText(resume.operation_key, 1, 200) &&
-    (resume.stage === undefined ||
-      validText(resume.stage, 1, 100)) &&
-    (resume.policy === undefined ||
-      validText(resume.policy, 1, 400))
-  );
 }
 
 function projectResume(resume) {
@@ -153,74 +108,32 @@ function validBlockedResume(receipt) {
   });
 }
 
-function validMaterialArtifact(artifact) {
-  return !!(
-    exactKeys(artifact, [
-      "role",
-      "path",
-      "exists",
-      "usable",
-      "producer",
-    ]) &&
-    validText(artifact.role, 1, 100) &&
-    validText(artifact.path, 1, 1000) &&
-    artifact.exists === true &&
-    [null, true, false].includes(artifact.usable) &&
-    validText(artifact.producer, 1, 200)
-  );
-}
-
-function validAuditDiagnostic(diagnostic) {
-  return !!(
-    exactKeys(diagnostic, ["path", "kind", "reason"]) &&
-    validText(diagnostic.path, 1, 1000) &&
-    validText(diagnostic.kind, 1, 200) &&
-    validText(diagnostic.reason, 1, 4000)
-  );
-}
-
-function validPaperAudit(audit, expectedPath) {
+function validPaperAudit(audit, materialKey, expectedPath) {
   return !!(
     audit &&
     validateSchema(
-      paperAuditSchema({
+      paperAuditStageSchema({
+        materialKey,
         target: expectedPath,
         pass: audit.pass,
       }),
       audit,
     ) &&
-    audit.status === "clean" &&
-    PAPER_AUDIT_CONTRACT.statuses.clean(audit) === true
+    audit.terminal.status === "complete" &&
+    PAPER_AUDIT_STAGE_CONTRACT.statuses.complete(audit) === true
   );
 }
 
-function validBookAuditItem(audit, expectedPath) {
+function validBookAuditItem(audit, materialKey, expectedPath) {
   return !!(
-    exactKeys(audit, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "target_path",
-      "remaining_violations",
-      "escalated",
-      "mutated_paths",
-    ]) &&
-    audit.schema_version ===
-      "quasi.operation.book.audit.receipt/0.1" &&
-    audit.key === "book.audit" &&
-    audit.effect === "writer" &&
-    ["clean", "partial", "error"].includes(audit.status) &&
-    audit.attempt === 1 &&
-    audit.target_path === expectedPath &&
-    Number.isInteger(audit.remaining_violations) &&
-    audit.remaining_violations >= 0 &&
-    Array.isArray(audit.escalated) &&
-    audit.escalated.every(validAuditDiagnostic) &&
-    Array.isArray(audit.mutated_paths) &&
-    audit.mutated_paths.every((path) =>
-      validText(path, 1, 1000),
+    audit &&
+    validateSchema(
+      bookAuditStageSchema({
+        materialKey,
+        target: expectedPath,
+        pass: audit.pass,
+      }),
+      audit,
     )
   );
 }
@@ -229,6 +142,7 @@ function cleanMaterialAudit(receipt, demand) {
   if (demand.kind === "paper")
     return validPaperAudit(
       receipt.audit,
+      demand.material_key,
       canonicalMemberPath(demand.kind, demand.id),
     );
   const expected = `vault/books/${demand.id}`;
@@ -236,13 +150,14 @@ function cleanMaterialAudit(receipt, demand) {
     !Array.isArray(receipt.audit) ||
     receipt.audit.length < 1 ||
     !receipt.audit.every((audit) =>
-      validBookAuditItem(audit, expected),
+      validBookAuditItem(audit, demand.material_key, expected),
     )
   )
     return false;
   const last = receipt.audit[receipt.audit.length - 1];
   return (
-    last.status === "clean" &&
+    last.terminal.status === "complete" &&
+    BOOK_AUDIT_STAGE_CONTRACT.statuses.complete(last) === true &&
     last.remaining_violations === 0 &&
     last.escalated.length === 0
   );
@@ -297,6 +212,32 @@ function validBookCanonicalSet(receipt, demand) {
   return sameStrings(slots, receipt.expected_slots);
 }
 
+function validBookAcquireStage(operation, demand, expectedYear) {
+  const allowedSources = bookAcquireAllowedSources(
+    operation,
+    demand.id,
+  );
+  return !!(
+    allowedSources &&
+    validateSchema(
+      bookAcquireStageSchema({
+        materialKey: demand.material_key,
+        slug: demand.id,
+        allowedSources,
+        yearDecision: null,
+      }),
+      operation,
+    ) &&
+    operation.terminal.status === "complete" &&
+    BOOK_ACQUIRE_STAGE_CONTRACT.statuses.complete(operation, {
+      allowedSources,
+      expectedYear,
+      batchAcceptYear: true,
+      yearDecision: null,
+    }) === true
+  );
+}
+
 function bookYearWarning(receipt, demand) {
   if (demand.kind !== "book") return null;
   const expectedYear = demand.meta && demand.meta.year;
@@ -305,22 +246,13 @@ function bookYearWarning(receipt, demand) {
     .reverse()
     .find(
       (operation) =>
-        operation.schema_version ===
-          "quasi.operation.book.acquire.receipt/0.2" &&
-        operation.key === "book.acquire" &&
-        operation.material_key === demand.material_key &&
-        operation.kind === "book" &&
-        operation.slug === demand.id,
+        operation.operation === "book.acquire" &&
+        operation.stage === "Acquire" &&
+        operation.material_key === demand.material_key,
     );
   const evidence = acquire && acquire.year_evidence;
   return evidence &&
-    acquire.signal === "accepted" &&
-    validBookAcquireReceipt(acquire, {
-      slug: demand.id,
-      expectedYear,
-      batchAcceptYear: true,
-      yearDecision: null,
-    }) &&
+    validBookAcquireStage(acquire, demand, expectedYear) &&
     evidence.verdict !== "MATCH"
     ? evidence
     : null;
@@ -328,76 +260,26 @@ function bookYearWarning(receipt, demand) {
 
 export function strictChildResult(result, demand) {
   if (
-    !result ||
-    typeof result !== "object" ||
-    Array.isArray(result) ||
+    !record(result) ||
     result.slug !== demand.id ||
-    !result.material_receipt ||
-    typeof result.material_receipt !== "object" ||
-    Array.isArray(result.material_receipt)
-  )
-    return null;
-  const receipt = result.material_receipt;
-  const baseKeys = [
-    "schema_version",
-    "material_key",
-    "kind",
-    "id",
-    "status",
-    "disposition",
-    "stage",
-    "artifacts",
-    "operations",
-    "audit",
-    "freshness",
-    "warnings",
-    "failure",
-    "user_gate",
-    "resume",
-  ];
-  const bookInventoryKeys = [
-    "expected_slots",
-    "present_slots",
-    "missing_slots",
-  ];
-  const topLevelClosed =
-    exactKeys(receipt, baseKeys) ||
-    (demand.kind === "book" &&
-      exactKeys(receipt, [...baseKeys, ...bookInventoryKeys]));
-  if (
-    !topLevelClosed ||
-    receipt.schema_version !== MATERIAL_RECEIPT_VERSION ||
-    receipt.material_key !== demand.material_key ||
-    receipt.kind !== demand.kind ||
-    receipt.id !== demand.id ||
-    !["complete", "needs_input", "blocked", "failed"].includes(
-      receipt.status,
-    ) ||
-    !Array.isArray(receipt.artifacts) ||
-    !Array.isArray(receipt.operations) ||
-    receipt.operations.some(
-      (operation) =>
-        !operation ||
-        typeof operation !== "object" ||
-        Array.isArray(operation),
-    ) ||
-    !Array.isArray(receipt.warnings) ||
-    receipt.warnings.some(
-      (warning) => !validText(warning, 1, 1000),
-    ) ||
-    !exactKeys(receipt.freshness, ["observation", "basis"]) ||
-    receipt.freshness.observation !== "unknown" ||
-    receipt.freshness.basis !==
-      "operation-receipts-and-final-audit" ||
-    typeof receipt.stage !== "string" ||
-    !validUserGate(receipt.user_gate, receipt, {
-      expectedYear: demand.meta && demand.meta.year,
-    }) ||
-    receipt.artifacts.some(
-      (artifact) => !validMaterialArtifact(artifact),
+    !validateSchema(
+      materialReceiptSchema({
+        materialKey: demand.material_key,
+        kind: demand.kind,
+        id: demand.id,
+      }),
+      result.material_receipt,
     )
   )
     return null;
+  const receipt = result.material_receipt;
+  if (
+    !validUserGate(receipt.user_gate, receipt, {
+      expectedYear: demand.meta && demand.meta.year,
+    })
+  )
+    return null;
+
   const expected = canonicalMemberPath(demand.kind, demand.id);
   const canonicalProducers =
     demand.kind === "book"
@@ -410,12 +292,11 @@ export function strictChildResult(result, demand) {
           "paper.analyse:reconciled",
         ]);
   const allCanonicals = receipt.artifacts.filter(
-    (artifact) => artifact && artifact.role === "canonical",
+    (artifact) => artifact.role === "canonical",
   );
   const canonicals = allCanonicals.filter(
     (artifact) =>
       artifact.path === expected &&
-      artifact.exists === true &&
       artifact.usable !== false &&
       canonicalProducers.has(artifact.producer),
   );
@@ -445,13 +326,9 @@ export function strictChildResult(result, demand) {
       return null;
   } else if (
     receipt.disposition !== null ||
-    !validMaterialFailure(receipt.failure) ||
-    (receipt.status === "needs_input"
-      ? receipt.user_gate === null
-      : receipt.user_gate !== null) ||
+    !validateSchema(MATERIAL_FAILURE_SCHEMA, receipt.failure) ||
     (receipt.status === "failed" && receipt.resume !== null) ||
-    (receipt.status === "needs_input" &&
-      (receipt.resume === null || !validResume(receipt.resume))) ||
+    (receipt.status === "needs_input" && receipt.resume === null) ||
     (receipt.status === "blocked" &&
       !validBlockedResume(receipt))
   ) {
@@ -503,7 +380,7 @@ function validIngressReceipt(receipt, expected) {
     !(receipt.request === null || record(receipt.request)) ||
     !Array.isArray(receipt.operations) ||
     receipt.operations.some((operation) => !record(operation)) ||
-    !validResume(receipt.resume)
+    !validateSchema(MATERIAL_RESUME_SCHEMA, receipt.resume)
   )
     return false;
   if (receipt.status === "resolved")
@@ -522,7 +399,7 @@ function validIngressReceipt(receipt, expected) {
     );
   if (
     receipt.identity !== null ||
-    !validMaterialFailure(receipt.failure)
+    !validateSchema(MATERIAL_FAILURE_SCHEMA, receipt.failure)
   )
     return false;
   const expectedGate = ingressUserGate(

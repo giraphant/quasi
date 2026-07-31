@@ -165,31 +165,30 @@ def search_receipt(
 
 def download_failed(slug: str) -> dict[str, Any]:
     return {
-        "schema_version": "quasi.operation.paper.acquire.receipt/0.2",
-        "key": "paper.acquire",
-        "effect": "writer",
-        "status": "failed",
-        "attempt": 1,
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "paper.acquire",
+        "stage": "Acquire",
         "material_key": f"paper:{slug}",
-        "kind": "paper",
-        "slug": slug,
+        "effect": "writer",
+        "attempt": 1,
         "output_path": f"sources/{slug}.pdf",
-        "artifact_roles": ["source"],
+        "doi": "10.1000/safety",
         "disposition": None,
         "write_state": "not_written",
         "identity_verified": False,
         "source": None,
-        "doi": "10.1000/safety",
-        "failure_reason": "not available",
         "attempts": [
             {"source": "oa", "status": "failed", "error": "404"}
         ],
-        "failure": {
-            "code": "paper.download_failed",
-            "operation_key": "paper.acquire",
-            "outcome": "known",
-            "retryable": False,
-            "message": "not available",
+        "terminal": {
+            "status": "failed",
+            "issue": {
+                "code": "paper.download_failed",
+                "operation": "paper.acquire",
+                "summary": "not available",
+                "user_question": None,
+                "retryable": False,
+            },
         },
     }
 

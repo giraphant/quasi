@@ -186,7 +186,8 @@ def test_talk_analyse_gets_schema_and_ordered_exact_inputs() -> None:
     assert "时间脉络" in artifact_contracts
     for token in (
         "quasi.operation.talk.analyse.request/0.1",
-        "quasi.operation.talk.analyse.receipt/0.1",
+        "talkAnalyseStageSchema",
+        "TALK_ANALYSE_STAGE_CONTRACT",
         'operation: "talk.analyse"',
         "artifact_contract: TALK_ARTIFACT_CONTRACT",
         "frontmatter_seed:",
@@ -214,12 +215,12 @@ def test_talk_audit_stays_on_exact_canonical_target() -> None:
     assert "对同一 target 跑一次 audit" in contract
     assert "Workflow 按 exact\nowner 路由回 producer" in contract
     for token in (
-        "quasi.operation.talk.audit.legacy.receipt/0.1",
-        'key: { const: "talk.audit.legacy" }',
+        "talkAuditStageSchema",
+        "TALK_AUDIT_STAGE_CONTRACT",
         "vault/talks/${slug}/talk.md",
         "exact_output",
         "mutated_paths",
-        'operation: "talk.audit.legacy"',
+        'operation: "talk.audit"',
     ):
         assert token in operation
 

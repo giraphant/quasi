@@ -433,10 +433,11 @@ def child_result(
     canonical = artifact_path or canonical_path(kind, slug)
     audit = (
         {
-            "schema_version": "quasi.operation.paper.audit.receipt/0.2",
-            "key": "paper.audit",
+            "schema_version": "quasi.stage.receipt/0.2",
+            "operation": "paper.audit",
+            "stage": "Audit",
+            "material_key": f"paper:{slug}",
             "effect": "writer",
-            "status": "clean",
             "attempt": 1,
             "target_path": canonical_path(kind, slug),
             "artifact_roles": ["canonical"],
@@ -444,23 +445,24 @@ def child_result(
             "remaining_violations": 0,
             "escalated": [],
             "mutated_paths": [],
-            "failure": None,
+            "terminal": {"status": "complete", "issue": None},
         }
         if kind == "paper" and terminal == "complete"
         else (
             [
                 {
-                    "schema_version": (
-                        "quasi.operation.book.audit.receipt/0.1"
-                    ),
-                    "key": "book.audit",
+                    "schema_version": "quasi.stage.receipt/0.2",
+                    "operation": "book.audit",
+                    "stage": "Audit",
+                    "material_key": f"book:{slug}",
                     "effect": "writer",
-                    "status": "clean",
                     "attempt": 1,
                     "target_path": f"vault/books/{slug}",
+                    "pass": 1,
                     "remaining_violations": 0,
                     "escalated": [],
                     "mutated_paths": [],
+                    "terminal": {"status": "complete", "issue": None},
                 }
             ]
             if terminal == "complete"
@@ -532,23 +534,17 @@ def child_result(
             receipt["operations"].insert(
                 0,
                 {
-                    "schema_version": (
-                        "quasi.operation.book.acquire.receipt/0.2"
-                    ),
-                    "key": "book.acquire",
-                    "effect": "writer",
-                    "status": "succeeded",
-                    "signal": "accepted",
-                    "attempt": 1,
+                    "schema_version": "quasi.stage.receipt/0.2",
+                    "operation": "book.acquire",
+                    "stage": "Acquire",
                     "material_key": material_key or f"book:{slug}",
-                    "kind": "book",
-                    "slug": slug,
+                    "effect": "writer",
+                    "attempt": 1,
                     "output_path": f"sources/{slug}.epub",
                     "allowed_output_paths": [
                         f"sources/{slug}.epub",
                         f"sources/{slug}.pdf",
                     ],
-                    "artifact_roles": ["source"],
                     "disposition": "reused",
                     "write_state": "not_written",
                     "identity_verified": True,
@@ -557,9 +553,8 @@ def child_result(
                     "source": "existing_file",
                     "isbn": "9780000000002",
                     "year_evidence": year_warning,
-                    "failure_reason": None,
                     "attempts": [],
-                    "failure": None,
+                    "terminal": {"status": "complete", "issue": None},
                 },
             )
     result = {
@@ -584,19 +579,35 @@ def synthesis_receipt(
 ) -> dict[str, Any]:
     input_keys = [f"{kind}:{slug}" for kind, slug in members]
     input_paths = [canonical_path(kind, slug) for kind, slug in members]
+    terminal_status = "complete" if status == "succeeded" else status
+    outcome = "unknown" if terminal_status == "blocked" else "known"
     return {
-        "schema_version": ("quasi.operation.author.synthesise.receipt/0.1"),
-        "key": "author.synthesise",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "author.synthesise",
+        "stage": "Synthesise",
+        "material_key": f"author:{name}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "input_material_keys": input_keys,
         "input_paths": input_paths,
         "output_path": output_path or f"vault/authors/{name}.md",
         "artifact_roles": ["canonical"],
-        "action": action,
         "materials_analyzed": len(members),
-        "failure": None,
+        "terminal": {
+            "status": terminal_status,
+            "issue": (
+                None
+                if terminal_status == "complete"
+                else {
+                    "code": "author.synthesise_failed",
+                    "operation": "author.synthesise",
+                    "summary": "Author Synthesise did not complete",
+                    "user_question": None,
+                    "retryable": False,
+                }
+            ),
+            "action": action,
+        },
     }
 
 
@@ -607,18 +618,37 @@ def audit_receipt(
     escalated: list[dict[str, str]] | None = None,
     mutated_paths: list[str] | None = None,
     target_path: str | None = None,
+    pass_number: int = 1,
 ) -> dict[str, Any]:
     diagnostics = escalated or []
+    terminal_status = "complete" if status in {"clean", "partial"} else "failed"
     return {
-        "schema_version": ("quasi.operation.author.audit.legacy.receipt/0.1"),
-        "key": "author.audit.legacy",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "author.audit",
+        "stage": "Audit",
+        "material_key": f"author:{name}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "target_path": target_path or f"vault/authors/{name}.md",
+        "artifact_roles": ["canonical"],
+        "pass": pass_number,
         "remaining_violations": len(diagnostics),
         "escalated": diagnostics,
         "mutated_paths": mutated_paths or [],
+        "terminal": {
+            "status": terminal_status,
+            "issue": (
+                None
+                if terminal_status == "complete"
+                else {
+                    "code": "author.audit_failed",
+                    "operation": "author.audit",
+                    "summary": "Author Audit did not complete",
+                    "user_question": None,
+                    "retryable": False,
+                }
+            ),
+        },
     }
 
 
@@ -656,7 +686,7 @@ def base_responses(
                 )
             )
         ],
-        "author.audit.legacy": audit or [reply(audit_receipt(name))],
+        "author.audit": audit or [reply(audit_receipt(name))],
     }
 
 
@@ -763,7 +793,7 @@ def test_zero_book_budget_is_preserved_and_does_not_start_book_search(
         "author.synthesise": [
             reply(synthesis_receipt(name, [("paper", paper["slug"])]))
         ],
-        "author.audit.legacy": [reply(audit_receipt(name))],
+        "author.audit": [reply(audit_receipt(name))],
     }
     children = {f"paper:{paper['slug']}": [reply(child_result("paper", paper["slug"]))]}
     report = run_author(
@@ -983,7 +1013,7 @@ def test_child_admission_uses_exact_material_receipt_not_legacy_status(
                 "author.synthesise": [
                     reply(synthesis_receipt(name, [("paper", paper["slug"])]))
                 ],
-                "author.audit.legacy": [reply(audit_receipt(name))],
+                "author.audit": [reply(audit_receipt(name))],
             }
         )
     report = run_author(
@@ -1181,7 +1211,7 @@ def test_all_failed_children_skip_synthesis_and_audit(
     assert result["tried"] == 2
     assert collection(result)["status"] == "failed"
     assert calls(report, "author.synthesise") == []
-    assert calls(report, "author.audit.legacy") == []
+    assert calls(report, "author.audit") == []
 
 
 def test_out_of_order_children_join_before_stable_order_synthesis(
@@ -1238,9 +1268,9 @@ def test_out_of_order_children_join_before_stable_order_synthesis(
             ),
             "synthesis",
         ),
-        ("author.audit.legacy", None, "audit"),
+        ("author.audit", None, "audit"),
         (
-            "author.audit.legacy",
+            "author.audit",
             audit_receipt(
                 "ada-example",
                 target_path="vault/authors/foreign.md",
@@ -1259,7 +1289,7 @@ def test_writer_unknown_or_malformed_is_called_once_then_blocks(
     responses = base_responses(name)
     responses[writer] = [reply(bad_receipt)]
     if writer == "author.synthesise":
-        responses.pop("author.audit.legacy")
+        responses.pop("author.audit")
     report = run_author(
         tmp_path,
         name=name,
@@ -1277,7 +1307,7 @@ def test_writer_unknown_or_malformed_is_called_once_then_blocks(
     assert receipt["resume"] == {"operation_key": "author.reconcile"}
     assert len(calls(report, writer)) == 1
     if writer == "author.synthesise":
-        assert calls(report, "author.audit.legacy") == []
+        assert calls(report, "author.audit") == []
 
 
 def test_synthesis_failure_without_required_message_is_writer_mismatch(
@@ -1300,7 +1330,7 @@ def test_synthesis_failure_without_required_message_is_writer_mismatch(
     }
     responses = base_responses(name)
     responses["author.synthesise"] = [reply(failed)]
-    responses.pop("author.audit.legacy")
+    responses.pop("author.audit")
 
     report = run_author(
         tmp_path,
@@ -1315,7 +1345,7 @@ def test_synthesis_failure_without_required_message_is_writer_mismatch(
     assert receipt["failure"]["code"] == "author.writer_receipt_mismatch"
     assert receipt["failure"]["outcome"] == "unknown"
     assert len(calls(report, "author.synthesise")) == 1
-    assert calls(report, "author.audit.legacy") == []
+    assert calls(report, "author.audit") == []
 
 
 def test_exact_author_audit_diagnostic_gets_one_repair_and_one_reaudit(
@@ -1340,7 +1370,7 @@ def test_exact_author_audit_diagnostic_gets_one_repair_and_one_reaudit(
         ],
         audit=[
             reply(audit_receipt(name, status="partial", escalated=[diagnostic])),
-            reply(audit_receipt(name)),
+            reply(audit_receipt(name, pass_number=2)),
         ],
     )
     report = run_author(
@@ -1350,7 +1380,7 @@ def test_exact_author_audit_diagnostic_gets_one_repair_and_one_reaudit(
         children=base_children(),
     )
     synth_calls = calls(report, "author.synthesise")
-    audit_calls = calls(report, "author.audit.legacy")
+    audit_calls = calls(report, "author.audit")
     assert len(synth_calls) == 2
     assert len(audit_calls) == 2
     assert synth_calls[1]["request"]["mode"] == "repair"
@@ -1377,7 +1407,7 @@ def test_clean_mechanical_audit_mutation_marks_repaired_without_semantic_rewrite
         children=base_children(),
     )
     assert len(calls(report, "author.synthesise")) == 1
-    assert len(calls(report, "author.audit.legacy")) == 1
+    assert len(calls(report, "author.audit")) == 1
     receipt = collection(report["result"])
     assert receipt["status"] == "complete"
     assert receipt["disposition"] == "repaired"
@@ -1425,7 +1455,7 @@ def test_foreign_audit_paths_never_guess_a_producer(
         children=base_children(),
     )
     assert len(calls(report, "author.synthesise")) == 1
-    assert len(calls(report, "author.audit.legacy")) == 1
+    assert len(calls(report, "author.audit")) == 1
     result = report["result"]
     assert result["status"] == "audit_escalated"
     receipt = collection(result)
@@ -1457,7 +1487,7 @@ def test_same_runtime_identical_requests_share_one_author_promise(
         f"book:{book_candidate()['slug']}",
         f"paper:{paper_candidate()['slug']}",
         "author.synthesise",
-        "author.audit.legacy",
+        "author.audit",
     ]:
         assert len(calls(report, route)) == 1
 
@@ -1504,7 +1534,7 @@ def test_same_runtime_conflicting_author_identity_blocks_before_second_writer(
     blocked_receipt = collection(blocked_result)
     assert blocked_receipt["failure"]["code"] == ("author.identity_conflict")
     assert len(calls(report, "author.synthesise")) == 1
-    assert len(calls(report, "author.audit.legacy")) == 1
+    assert len(calls(report, "author.audit")) == 1
 
 
 def test_legacy_adapter_is_derived_from_authoritative_collection_receipt(

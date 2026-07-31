@@ -119,10 +119,11 @@ def paper_result(slug: str, title: str) -> dict[str, Any]:
             ],
             "operations": [{"key": "paper.synthetic"}],
             "audit": {
-                "schema_version": "quasi.operation.paper.audit.receipt/0.2",
-                "key": "paper.audit",
+                "schema_version": "quasi.stage.receipt/0.2",
+                "operation": "paper.audit",
+                "stage": "Audit",
+                "material_key": f"paper:{slug}",
                 "effect": "writer",
-                "status": "clean",
                 "attempt": 1,
                 "target_path": canonical,
                 "artifact_roles": ["canonical"],
@@ -130,7 +131,7 @@ def paper_result(slug: str, title: str) -> dict[str, Any]:
                 "remaining_violations": 0,
                 "escalated": [],
                 "mutated_paths": [],
-                "failure": None,
+                "terminal": {"status": "complete", "issue": None},
             },
             "freshness": {
                 "observation": "unknown",
@@ -216,15 +217,18 @@ def complete_book_result(slug: str) -> tuple[dict[str, Any], dict[str, Any]]:
             "operations": [{"key": "book.synthetic"}],
             "audit": [
                 {
-                    "schema_version": "quasi.operation.book.audit.receipt/0.1",
-                    "key": "book.audit",
+                    "schema_version": "quasi.stage.receipt/0.2",
+                    "operation": "book.audit",
+                    "stage": "Audit",
+                    "material_key": f"book:{slug}",
                     "effect": "writer",
-                    "status": "clean",
                     "attempt": 1,
                     "target_path": root,
+                    "pass": 1,
                     "remaining_violations": 0,
                     "escalated": [],
                     "mutated_paths": [],
+                    "terminal": {"status": "complete", "issue": None},
                 }
             ],
             "freshness": {
@@ -316,6 +320,116 @@ def paper_gate_result(slug: str) -> tuple[dict[str, Any], dict[str, Any]]:
         "title": "Gate Paper",
     }
     return result, demand
+
+
+def book_acquire_gate_result(
+    slug: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    evidence = {
+        "slug_year": 2020,
+        "source_years": {"catalog": 2021, "copyright": 2021},
+        "pdf_signals": {
+            "first_published": 2021,
+            "copyright_year": 2021,
+            "original_year": None,
+            "other_years": [],
+        },
+        "recommended_year": 2021,
+        "recommendation_reason": "two independent edition records agree",
+        "verdict": "MISMATCH",
+    }
+    issue = {
+        "code": "book.year_mismatch",
+        "operation": "book.acquire",
+        "summary": evidence["recommendation_reason"],
+        "user_question": "Which canonical year should this Book use?",
+        "retryable": False,
+    }
+    temp_path = f".quasi/temp/downloads/{slug}-candidate.epub"
+    operation = {
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "book.acquire",
+        "stage": "Acquire",
+        "material_key": f"book:{slug}",
+        "effect": "writer",
+        "attempt": 1,
+        "output_path": None,
+        "allowed_output_paths": [f"sources/{slug}.epub"],
+        "disposition": None,
+        "write_state": "not_written",
+        "identity_verified": True,
+        "format": None,
+        "tmp_path": temp_path,
+        "source": None,
+        "isbn": "9780000000002",
+        "year_evidence": evidence,
+        "attempts": [],
+        "terminal": {
+            "status": "needs_input",
+            "issue": issue,
+            "year_evidence": evidence,
+            "tmp_path": temp_path,
+            "proposed_actions": [
+                "accept-current",
+                "use-recommended-year",
+            ],
+        },
+    }
+    gate = {
+        "schema_version": "quasi.user-gate.stage/0.1",
+        "operation_key": "book.acquire",
+        "kind": "stage_needs_input",
+        "issue": issue,
+        "candidates": [],
+        "conflicts": [],
+        "question": issue["user_question"],
+        "year_evidence": evidence,
+        "tmp_path": temp_path,
+        "proposed_actions": [
+            "accept-current",
+            "use-recommended-year",
+        ],
+    }
+    result = {
+        "slug": slug,
+        "material_receipt": {
+            "schema_version": "quasi.material-loop.receipt/0.2",
+            "material_key": f"book:{slug}",
+            "kind": "book",
+            "id": slug,
+            "status": "needs_input",
+            "disposition": None,
+            "stage": "download",
+            "artifacts": [],
+            "operations": [operation],
+            "audit": [],
+            "freshness": {
+                "observation": "unknown",
+                "basis": "operation-receipts-and-final-audit",
+            },
+            "warnings": [],
+            "failure": {
+                "code": issue["code"],
+                "operation_key": "book.acquire",
+                "outcome": "known",
+                "retryable": False,
+                "message": issue["summary"],
+            },
+            "user_gate": gate,
+            "resume": {
+                "operation_key": "book.user-gate",
+                "stage": "download",
+                "policy": "human-year-decision-or-correct-request",
+            },
+        },
+    }
+    return result, {
+        "material_key": f"book:{slug}",
+        "kind": "book",
+        "id": slug,
+        "title": "Book Year Gate",
+        "meta": {"year": 2020},
+    }
 
 
 def test_batch_projection_binds_the_exact_request_and_search_proof() -> None:
@@ -475,6 +589,17 @@ def test_paper_identity_conflict_and_blocked_resume_are_exact() -> None:
             "result": impossible_resume,
         },
     ) is None
+
+
+def test_book_acquire_stage_year_gate_is_admitted_exactly() -> None:
+    result, demand = book_acquire_gate_result("book-gate")
+    assert run_join("strict", {"result": result, "demand": demand})
+
+    mutated = copy.deepcopy(result)
+    mutated["material_receipt"]["user_gate"]["proposed_actions"] = [
+        "accept-current"
+    ]
+    assert run_join("strict", {"result": mutated, "demand": demand}) is None
 
 
 def test_book_join_rejects_foreign_or_unusable_canonical_artifacts() -> None:

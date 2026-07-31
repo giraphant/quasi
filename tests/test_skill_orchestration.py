@@ -250,8 +250,8 @@ def test_download_receipt_keeps_actionable_acquisition_evidence() -> None:
     assert "failure reason" in text and "attempts" in text
     assert "POSIX single quoting" in text
     assert "source:\"existing_file\"" in text
-    assert "preserve_attempt_rows: true" in acquire
-    assert "min_independent_supports: 2" in acquire
+    assert "attempts: { ...acquireAttemptsSchema, minItems: 1 }" in acquire
+    assert "min_independent_supports" not in acquire
 
 
 def test_audit_agent_has_one_local_fix_then_validation_transaction() -> None:

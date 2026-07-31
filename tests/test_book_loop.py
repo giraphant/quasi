@@ -235,18 +235,14 @@ def year_evidence() -> dict[str, Any]:
 
 def acquire(slug: str, extension: str = "epub") -> dict[str, Any]:
     return {
-        "schema_version": "quasi.operation.book.acquire.receipt/0.2",
-        "key": "book.acquire",
-        "effect": "writer",
-        "status": "succeeded",
-        "signal": "accepted",
-        "attempt": 1,
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "book.acquire",
+        "stage": "Acquire",
         "material_key": f"book:{slug}",
-        "kind": "book",
-        "slug": slug,
+        "effect": "writer",
+        "attempt": 1,
         "output_path": paths(slug, extension)["source"],
         "allowed_output_paths": [paths(slug, extension)["source"]],
-        "artifact_roles": ["source"],
         "disposition": "reused",
         "write_state": "not_written",
         "identity_verified": True,
@@ -255,53 +251,61 @@ def acquire(slug: str, extension: str = "epub") -> dict[str, Any]:
         "source": "existing_file",
         "isbn": "9780000000002",
         "year_evidence": year_evidence(),
-        "failure_reason": None,
         "attempts": [],
-        "failure": None,
+        "terminal": {"status": "complete", "issue": None},
     }
 
 
-def acquire_year_gate(slug: str, signal: str) -> dict[str, Any]:
+def acquire_year_gate(slug: str, verdict: str) -> dict[str, Any]:
     evidence = year_evidence()
-    if signal == "year_mismatch":
+    if verdict == "MISMATCH":
         evidence["source_years"] = {"catalog": 2025, "copyright": 2025}
         evidence["pdf_signals"]["first_published"] = 2025
         evidence["pdf_signals"]["copyright_year"] = 2025
         evidence["recommended_year"] = 2025
-        evidence["verdict"] = "MISMATCH"
     else:
         evidence["recommended_year"] = None
-        evidence["verdict"] = "AMBIGUOUS"
-    reason = evidence["recommendation_reason"]
+    evidence["verdict"] = verdict
+    temp_path = f".quasi/temp/downloads/{slug}-candidate.epub"
+    actions = (
+        ["accept-current", "use-recommended-year"]
+        if verdict == "MISMATCH"
+        else ["accept-current"]
+    )
+    issue_code = (
+        "book.year_mismatch" if verdict == "MISMATCH" else "book.year_ambiguous"
+    )
+    question = "Which canonical year should this Book use?"
     return {
-        "schema_version": "quasi.operation.book.acquire.receipt/0.2",
-        "key": "book.acquire",
-        "effect": "writer",
-        "status": "failed",
-        "signal": signal,
-        "attempt": 1,
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "book.acquire",
+        "stage": "Acquire",
         "material_key": f"book:{slug}",
-        "kind": "book",
-        "slug": slug,
+        "effect": "writer",
+        "attempt": 1,
         "output_path": None,
         "allowed_output_paths": [paths(slug)["source"]],
-        "artifact_roles": ["source"],
         "disposition": None,
         "write_state": "not_written",
         "identity_verified": True,
         "format": None,
-        "tmp_path": f".quasi/temp/downloads/{slug}-candidate.epub",
+        "tmp_path": temp_path,
         "source": None,
         "isbn": "9780000000002",
         "year_evidence": evidence,
-        "failure_reason": reason,
         "attempts": [],
-        "failure": {
-            "code": f"book.{signal}",
-            "operation_key": "book.acquire",
-            "outcome": "known",
-            "retryable": False,
-            "message": reason,
+        "terminal": {
+            "status": "needs_input",
+            "issue": {
+                "code": issue_code,
+                "operation": "book.acquire",
+                "summary": evidence["recommendation_reason"],
+                "user_question": question,
+                "retryable": False,
+            },
+            "year_evidence": evidence,
+            "tmp_path": temp_path,
+            "proposed_actions": actions,
         },
     }
 
@@ -400,30 +404,41 @@ def analyse(
     member: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     row = member or next(item for item in chapters(slug) if item["slot"] == slot)
-    failed = status == "failed"
+    terminal_status = "complete" if status == "succeeded" else status
+    failed = terminal_status == "failed"
     return {
-        "schema_version": "quasi.operation.chapter.analyse.receipt/0.1",
-        "key": "chapter.analyse",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "chapter.analyse",
+        "stage": "Analyse",
+        "material_key": f"book:{slug}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "input_path": chapter_input(slug, row),
         "output_path": chapter_output(slug, row),
         "artifact_roles": ["chapter_canonical"],
-        "action": action,
-        "write_state": "not_written" if failed or action == "reconciled" else "written",
-        "failure": (
-            {
-                "code": "book.chapter_analysis_failed",
-                "operation_key": "chapter.analyse",
-                "outcome": "known",
-                "retryable": True,
-            }
-            if failed
-            else None
-        ),
+        "terminal": {
+            "status": terminal_status,
+            "issue": (
+                {
+                    "code": "book.chapter_analysis_failed",
+                    "operation": "chapter.analyse",
+                    "summary": "chapter analysis did not complete",
+                    "user_question": None,
+                    "retryable": True,
+                }
+                if failed
+                else None
+            ),
+            "action": action,
+            "write_state": (
+                "unknown"
+                if terminal_status == "blocked"
+                else "not_written"
+                if failed or action == "reconciled"
+                else "written"
+            ),
+        },
     }
-
 
 def synthesis(
     slug: str,
@@ -433,17 +448,17 @@ def synthesis(
 ) -> dict[str, Any]:
     rows = members or chapters(slug)
     return {
-        "schema_version": "quasi.operation.book.synthesise.receipt/0.1",
-        "key": "book.synthesise",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "book.synthesise",
+        "stage": "Synthesise",
+        "material_key": f"book:{slug}",
         "effect": "writer",
-        "status": "succeeded",
         "attempt": 1,
         "input_paths": [chapter_output(slug, row) for row in rows],
         "output_path": paths(slug)["overview"],
         "artifact_roles": ["canonical"],
-        "action": action,
         "chapters_analyzed": len(rows),
-        "failure": None,
+        "terminal": {"status": "complete", "issue": None, "action": action},
     }
 
 
@@ -452,18 +467,36 @@ def audit(
     *,
     status: str = "clean",
     diagnostics: list[dict[str, str]] | None = None,
+    pass_number: int = 1,
 ) -> dict[str, Any]:
     escalated = diagnostics or []
+    terminal_status = "complete" if status in {"clean", "partial"} else "failed"
     return {
-        "schema_version": "quasi.operation.book.audit.receipt/0.1",
-        "key": "book.audit",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "book.audit",
+        "stage": "Audit",
+        "material_key": f"book:{slug}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "target_path": f"vault/books/{slug}",
+        "pass": pass_number,
         "remaining_violations": len(escalated),
         "escalated": escalated,
         "mutated_paths": [],
+        "terminal": {
+            "status": terminal_status,
+            "issue": (
+                None
+                if terminal_status == "complete"
+                else {
+                    "code": "book.audit_failed",
+                    "operation": "book.audit",
+                    "summary": "Book Audit did not complete",
+                    "user_question": None,
+                    "retryable": False,
+                }
+            ),
+        },
     }
 
 
@@ -568,19 +601,19 @@ def test_book_prepare_envelope_gives_specialist_all_exact_capabilities(
     assert not any(item["operation"] in {"chapter.plan", "chapter.extract"} for item in report["trace"])
 
 
-@pytest.mark.parametrize("signal", ["year_mismatch", "year_ambiguous"])
+@pytest.mark.parametrize("verdict", ["MISMATCH", "AMBIGUOUS"])
 def test_book_year_gate_is_typed_needs_input(
     tmp_path: Path,
-    signal: str,
+    verdict: str,
 ) -> None:
-    slug = f"book-stage-{signal.replace('_', '-')}"
+    slug = f"book-stage-{verdict.lower()}"
     report = run_book(
         tmp_path,
         slug,
-        {"book.acquire": [reply(acquire_year_gate(slug, signal))]},
+        {"book.acquire": [reply(acquire_year_gate(slug, verdict))]},
     )
 
-    assert report["result"]["status"] == signal
+    assert report["result"]["status"] == "needs_input"
     receipt = report["result"]["material_receipt"]
     assert receipt["status"] == "needs_input"
     assert receipt["resume"] == {
@@ -591,17 +624,20 @@ def test_book_year_gate_is_typed_needs_input(
     gate = receipt["user_gate"]
     evidence = report["result"]["year_evidence"]
     assert gate == {
-        "schema_version": "quasi.user-gate.book-year/0.1",
-        "operation_key": "book.user-gate",
-        "kind": "book_year_decision",
-        "actions": (
+        "schema_version": "quasi.user-gate.stage/0.1",
+        "operation_key": "book.acquire",
+        "kind": "stage_needs_input",
+        "issue": acquire_year_gate(slug, verdict)["terminal"]["issue"],
+        "candidates": [],
+        "conflicts": [],
+        "question": gate["question"],
+        "year_evidence": evidence,
+        "tmp_path": report["result"]["tmp_path"],
+        "proposed_actions": (
             ["accept-current", "use-recommended-year"]
-            if signal == "year_mismatch"
+            if verdict == "MISMATCH"
             else ["accept-current"]
         ),
-        "tmp_path": report["result"]["tmp_path"],
-        "year_evidence": evidence,
-        "question": gate["question"],
     }
     assert gate["question"]
 
@@ -838,7 +874,7 @@ def test_exact_overview_diagnostic_routes_synthesis_repair_then_reaudit(
                 ],
             )
         ),
-        reply(audit(slug)),
+        reply(audit(slug, pass_number=2)),
     ]
     responses["book.synthesise"] = [
         reply(synthesis(slug)),

@@ -143,24 +143,20 @@ def search(slug: str) -> dict[str, Any]:
 
 def acquire(slug: str) -> dict[str, Any]:
     return {
-        "schema_version": "quasi.operation.paper.acquire.receipt/0.2",
-        "key": "paper.acquire",
-        "effect": "writer",
-        "status": "succeeded",
-        "attempt": 1,
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "paper.acquire",
+        "stage": "Acquire",
         "material_key": f"paper:{slug}",
-        "kind": "paper",
-        "slug": slug,
+        "effect": "writer",
+        "attempt": 1,
         "output_path": paths(slug)["source"],
-        "artifact_roles": ["source"],
+        "doi": "10.1000/example",
         "disposition": "created",
         "write_state": "written",
         "identity_verified": True,
         "source": "doi_cascade",
-        "doi": "10.1000/example",
-        "failure_reason": None,
         "attempts": [],
-        "failure": None,
+        "terminal": {"status": "complete", "issue": None},
     }
 
 
@@ -236,20 +232,24 @@ def prepare(
     }
 
 
-def analyse(slug: str, input_path: str | None = None) -> dict[str, Any]:
+def analyse(
+    slug: str,
+    input_path: str | None = None,
+    *,
+    action: str = "create",
+) -> dict[str, Any]:
     return {
-        "schema_version": "quasi.operation.paper.analyse.receipt/0.1",
-        "key": "paper.analyse",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "paper.analyse",
+        "stage": "Analyse",
+        "material_key": f"paper:{slug}",
         "effect": "writer",
-        "status": "succeeded",
         "attempt": 1,
         "input_path": input_path or paths(slug)["text"],
         "output_path": paths(slug)["canonical"],
         "artifact_roles": ["canonical"],
-        "action": "create",
-        "failure": None,
+        "terminal": {"status": "complete", "issue": None, "action": action},
     }
-
 
 def audit(
     slug: str,
@@ -268,11 +268,13 @@ def audit(
                 "reason": "missing exact section",
             }
         ]
+    terminal_status = "complete" if status in {"clean", "partial"} else "failed"
     return {
-        "schema_version": "quasi.operation.paper.audit.receipt/0.2",
-        "key": "paper.audit",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "paper.audit",
+        "stage": "Audit",
+        "material_key": f"paper:{slug}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "target_path": paths(slug)["canonical"],
         "artifact_roles": ["canonical"],
@@ -280,7 +282,14 @@ def audit(
         "remaining_violations": remaining,
         "escalated": escalated,
         "mutated_paths": [],
-        "failure": None,
+        "terminal": {
+            "status": terminal_status,
+            "issue": (
+                None
+                if terminal_status == "complete"
+                else stage_issue("paper.audit", "paper.audit_failed")
+            ),
+        },
     }
 
 
@@ -329,6 +338,28 @@ def test_paper_happy_path_is_one_prepare_stage(tmp_path: Path) -> None:
     assert receipt["operations"][0] == acquire(slug)
     assert receipt["operations"][-1] == receipt["audit"] == audit(slug)
     assert "per_item" not in report["trace"][1]["schema"]["properties"]
+
+
+def test_acquire_prompt_is_a_thin_stage_envelope(tmp_path: Path) -> None:
+    slug = "paper-acquire-envelope"
+    report = run_paper(tmp_path, slug, base(slug))
+    call = next(item for item in report["trace"] if item["label"] == f"{slug}:acquire")
+    request = json.loads(call["prompt"])
+
+    assert call["agent_type"] == "quasi:download-agent"
+    assert request["schema_version"] == "quasi.stage.paper-acquire.request/0.1"
+    assert request["operation"] == "paper.acquire"
+    assert request["stage"] == "Acquire"
+    assert request["effect"] == "writer"
+    assert request["refs"] == {"output": paths(slug)["source"]}
+    assert request["exact_output"] == paths(slug)["source"]
+    assert request["shell_argv"]["exact_output"] == f"'{paths(slug)['source']}'"
+    assert request["capabilities"] == [
+        "quasi-download paper fetch --slug SLUG --output OUTPUT --json",
+        "quasi-download accept --path INPUT --slug SLUG --kind paper --json",
+        "Read the exact output only to verify title, authors, and DOI evidence",
+    ]
+    assert "operation_policy" not in request
 
 
 def test_prepare_prompt_gives_goal_capabilities_and_exact_refs(tmp_path: Path) -> None:
@@ -444,8 +475,7 @@ def test_audit_routes_one_exact_analysis_repair(tmp_path: Path) -> None:
         audit(slug, status="partial"),
         audit(slug, pass_number=2),
     ]
-    repaired = analyse(slug)
-    repaired["action"] = "repair"
+    repaired = analyse(slug, action="repair")
     responses[f"{slug}:analyse"] = [analyse(slug), repaired]
     report = run_paper(tmp_path, slug, responses)
 

@@ -2,6 +2,16 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.28** (2026-08-01): **统一 material/document 的 Stage terminal，收紧 admission 而不把判断塞回 Graph。**
+  - Analyse、Synthesise 与 Audit producer 现在和 Acquire/Prepare 一样交付 `quasi.stage.receipt/0.2`；Graph 只按四个 terminal 路由，消除每个 producer 自己的 status/branch union。Talk Transcribe 与 Translation Prepare 已对齐该形状，继续分别保留 media reconciliation 与 fenced-generation、manifest-last publication 的确定性语义。
+  - Child MaterialReceipt admission 删去重复的专用 receipt 解释，改经共享 schema/Stage validators 重证 identity、canonical artifacts 与 clean final audit；strict Topic recall vertical 同步进入 shared terminal path。为保留未迁移 rolling Topic synthesis 的闭合 schema，恢复了它仍引用的 `knownOutcome`/`unknownOutcome` 常量。
+  - `docs/GRAPH_COLLABORATION.md` 固定了薄 Graph 与测试边界：协议、ingress、join 与 capability tests 是长期守卫，钉死逐 operation receipt/edge 的 characterization assertions 只作为迁移脚手架。已知债务是 `topic.audit.legacy`，它保留到 topic-merge round 再删除。
+
+- **0.52.27** (2026-07-31): **Acquire 统一为 Stage Unit，并把状态判断留在专业 worker 与确定性观察层。**
+  - Book/Paper Acquire 现在和其它非平凡阶段一样交付 `quasi.stage.receipt/0.2`；Book 年份不匹配或歧义是标准 `needs_input` terminal，不再让 Graph 保留一套 acquisition 专用终态判断。
+  - 采集方法、来源选择、失败停止与年份证据判断下沉到 `download-agent` 合同，Graph 只保留 exact refs、共享资源边界与 schema-valid terminal routing；新增共享 `materials/route.mjs`，避免各材料循环重复解释同一 Stage receipt。
+  - 新增只读 `quasi-status` 磁盘状态 oracle：它不启动 LLM、Graph 或网络，可按 Paper、Book、Talk 已落盘的 canonical artifacts 给出已证明阶段和下一阶段的 exact refs。
+
 - **0.52.26** (2026-07-31): **清理 Workflow、Stage specialist 与外层 Skill 的职责边界。**
   - Paper/Book 批次继续只启动一张顶层图；runtime 现在以 `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit` 的每阶段独立 FIFO lane 控制最多五个活跃 Operation。队列等待不算 invocation timeout，批次仍可流水推进而不是按五项 barrier 分组。
   - Material ingress、child join 与 batch 汇总统一升到闭合的 0.2 receipts。Graph 只管理 exact refs、阶段推进、并发、coalesce 与 typed terminal；Search、Prepare 等 Stage specialist 对自己的目标、可用能力和 schema 负责，外层 `collect-material` 只启动图、处理真正的人类 gate 与安全 checkpoint。

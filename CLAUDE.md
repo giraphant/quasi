@@ -31,15 +31,15 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 - Every `agent()` call must carry its exact stage through `opts.phase`; do not use `Paper`, `Book`, `Author`, `Talk`, `Topic`, or `Translation` as a phase.
 - Every Agent invocation enters a FIFO runtime lane keyed by phase, with at most five active calls in each phase. Independent phase lanes may progress concurrently.
 - Agent labels begin with the stable material slug or collection key, followed by the operation, so parallel work remains identifiable when the UI truncates long labels.
-- `Recall` normalises and coalesces material requests; the single `Search` specialist invocation investigates external records and resolves its selected identity against the vault. `Acquire` accepts a source artifact; `Prepare` converts or structures inputs; the remaining stages produce, combine, and validate canonical artifacts.
+- `Recall` normalises and coalesces material requests; the single `Search` specialist invocation investigates external records and resolves its selected identity against the vault. Every material/document operation — Acquire, Prepare, Analyse, Synthesise, and Audit, including Talk and Translation stages — returns `quasi.stage.receipt/0.2`; the Book year gate is an ordinary `terminal.needs_input`.
 
 ### Stage Unit model
 
 - A non-trivial stage is one goal-owning Agent invocation with a self-contained envelope: goal, exact inputs/outputs, bounded identity, available capabilities, and one output schema.
 - The shared Stage receipt is `quasi.stage.receipt/0.2`. Its required `terminal` is a closed `complete|needs_input|blocked|failed` union: `complete` proves only the exact artifacts required by the next stage and requires `issue:null`; the other terminals carry one typed issue, while `needs_input` also carries concrete candidates, conflict fields, and a user question.
-- The Agent owns professional method and stopping judgement. Do not encode query counts, provider cascades, text-readability heuristics, OCR decisions, chapter replanning, or translation recovery as Graph branches merely to control the Agent. A hard bound belongs in the Graph only when it protects a real shared resource or writer boundary.
+- The Agent owns professional method and stopping judgement. Do not encode query counts, provider cascades, text-readability heuristics, OCR decisions, chapter replanning, or translation recovery as Graph branches merely to control the Agent. Acquisition method and policy discipline live in `agents/download-agent.md`; an Acquire envelope keeps its goal, exact refs, result schema, and only real shared-resource or writer bounds. A hard bound belongs in the Graph only when it protects such a boundary.
 - The Workflow validates the same schema sent to StructuredOutput, then checks exact ownership and cross-artifact joins. Do not add a second, stricter handwritten interpretation of a schema-valid failure receipt.
-- Single-action producer Operations such as Analyse, Synthesise, and Audit may keep their operation receipts. Stage Units are for work that naturally requires specialist investigation or local recovery, not a requirement to make every Agent invocation large.
+- All material/document Operations, including single-action Analyse, Synthesise, and Audit producers, use the shared Stage receipt. Stage Units are for work that naturally requires specialist investigation or local recovery, not a requirement to make every Agent invocation large.
 - Unknown writer outcomes still stop the current run. Agent autonomy does not permit duplicate writers, path discovery outside the envelope, or replay after an ambiguous write.
 
 ### Path roots
@@ -88,7 +88,7 @@ Current userConfig mapping:
 
 - The graph owns material identity and processing state. The skill main process owns only user decisions and explicitly skill-scoped sidecars; it must not maintain a second metadata, recall, or writer-success state machine.
 - `metadata-agent`, `discovery-agent`, and `localisation-agent` return JSON and do not write files.
-- `download-agent` reconciles or accepts one exact Book/Paper source through `quasi-download`; it returns the single material's direct Acquire receipt and does not own caller manifests.
+- `download-agent` reconciles or accepts one exact Book/Paper source through `quasi-download`; it returns that material's direct Acquire `quasi.stage.receipt/0.2`, including a standard `needs_input` terminal for a Book year gate, and does not own caller manifests.
 - `extract-agent` owns Paper/Book Prepare judgement and local recovery over caller-named refs. It invokes deterministic `quasi-extract` transactions; those CLI transactions own chapter files and `processing/chapters/{slug}/manifest.json`.
 - `analyse-agent`, `synthesis-agent`, `proofread-agent`, and `citecheck-agent` write only the exact product path assigned by the caller.
 - `steer-agent` owns `vault/topics/{slug}/02-outline.md` (the topic research outline; users may hand-edit it between runs) and returns sub-question-targeted candidates; it writes nothing else.
@@ -108,6 +108,8 @@ quasi-download accept ...
 quasi-extract epub|text|ocr|split ...
 quasi-transcribe run|classify|silent ...
 quasi-audit --path ...
+quasi-status --kind paper|book|talk --slug SLUG --json
+quasi-status --scan --json
 quasi-helpers proofread prepare|cleanup ...
 quasi-helpers citation parse|biblio|resolve|review-cards|emit-bib ...
 quasi-helpers localise scan|write ...
@@ -154,22 +156,27 @@ the goal and available capabilities without transcribing the specialist's
 decision tree. `npm run check:workflows` verifies
 schema/projection/operation/bundle parity.
 
-Paper and Book now use goal-owning Prepare Stage Units. `paper.prepare` asks
-`extract-agent` to establish one readable normalized text from the exact
-accepted source; `book.prepare` asks it to establish one coherent, semantically
-usable chapter generation. OCR, readability judgement, chapter planning, and
-local repair are specialist method over deterministic `quasi-extract`
-capabilities, not separate Workflow nodes. The graph sees the resulting exact
-artifacts, then invokes the single-action Analyse/Synthesise/Audit producers.
+Paper and Book use goal-owning Acquire and Prepare Stage Units.
+`paper.acquire` and `book.acquire` let `download-agent` establish one exact
+accepted source (or return a typed terminal); `paper.prepare` asks
+`extract-agent` to establish one readable normalized text, while `book.prepare`
+asks it to establish one coherent, semantically usable chapter generation. Talk
+and Translation Prepare use the same terminal shape while preserving their media
+reconciliation and fenced-generation publication contracts. OCR, readability
+judgement, chapter planning, local repair, and acquisition method are specialist
+work over deterministic `quasi-*` capabilities, not separate Workflow nodes.
+The graph sees the resulting exact artifacts, then routes the same stage receipt
+through Analyse, Synthesise, and Audit.
 
-Receipt validation is centralised in `runtime.mjs::operate`. For a Stage Unit,
-the host and runtime validate the same closed `quasi.stage.receipt/0.2` schema,
-then the Stage contract checks only the exact postcondition needed by the next
-stage. Schema-valid `needs_input|blocked|failed` terminals are routed as their
-declared meaning; the graph must not reinterpret them as malformed because it
-disagrees with the specialist's internal method. Single-action producer
-Operations retain operation-specific receipts and exact ownership checks.
-Unknown writer outcomes always stop the current run and are never replayed.
+Receipt validation is centralised in `runtime.mjs::operate`. The host validates
+the closed `quasi.stage.receipt/0.2` schema for every material/document
+operation; the runtime backstop mirrors it for non-Claude hosts. Each Stage
+contract then checks only the exact postcondition needed by the next stage. The
+shared `scripts/workflows/materials/route.mjs` edge router maps each schema-valid
+`needs_input|blocked|failed` terminal to its declared graph edge; the graph must
+not reinterpret it as malformed because it disagrees with the specialist's
+internal method. Unknown writer outcomes always stop the current run and are
+never replayed.
 
 StructuredOutput may ask a still-running Agent to repair malformed output.
 That provider-level correction is distinct from graph replay: after an Agent
@@ -178,10 +185,11 @@ that JSON Schema cannot express stay small and concrete, such as an exact path
 join, count equality, or coherent manifest generation.
 
 Child MaterialReceipt admission at collection/research joins stays strict on
-purpose — the dispatch seam is host-pluggable, so the shared
-`scripts/workflows/materials/member.mjs` join re-proves identity, canonical
-artifacts, and clean final audit for Author, Batch, and strict Topic recall.
-`research/topic.mjs` (the multi-round loop) is the remaining unmigrated graph.
+purpose — the dispatch seam is host-pluggable, so the shared receipt schemas and
+validators in `scripts/workflows/materials/member.mjs` re-prove identity,
+canonical artifacts, and clean final audit for Author, Batch, and strict Topic
+recall. The rolling `research/topic.mjs` loop remains legacy; its
+`topic.audit.legacy` identifier is intentional debt until the topic-merge round.
 
 `quasi-pi-runner` is the Pi-only adapter for the existing `workflows/process-material.mjs` graph. It uses the official Pi SDK already installed with Pi, loads `quasi:<name>` definitions from root `agents/`, and deliberately implements only `agent`, `parallel`, `phase`, `log`, and `args`; do not add a third-party workflow compatibility dependency. Claude Code keeps using its native Workflow path.
 
@@ -219,7 +227,7 @@ Removed legacy bins must not reappear in active docs or prompts: `quasi-citation
 
 ## Skill writing schema
 
-`docs/SKILL_ORCHESTRATION.md` is maintainer guidance. Active `SKILL.md` files should not cite it directly; runtime skill text should contain only information the executing model needs.
+`docs/SKILL_ORCHESTRATION.md` and `docs/GRAPH_COLLABORATION.md` are maintainer guidance. Active `SKILL.md` files should not cite either directly; runtime skill text should contain only information the executing model needs.
 
 Use this shape for active skills when applicable:
 
@@ -277,4 +285,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.26.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.28.

@@ -1,18 +1,19 @@
 import {
   TOPIC_DISCOVER_BOOK_CONTRACT,
-  TOPIC_DISCOVER_BOOK_SCHEMA,
   TOPIC_DISCOVER_PAPER_CONTRACT,
-  TOPIC_DISCOVER_PAPER_SCHEMA,
   TOPIC_RECALL_CONTRACT,
-  TOPIC_RECALL_SCHEMA,
   TOPIC_RESOLVE_MEMBERSHIP_CONTRACT,
-  TOPIC_RESOLVE_MEMBERSHIP_SCHEMA,
   topicDiscoverBookOperationPrompt,
+  topicDiscoverBookStageSchema,
   topicDiscoverPaperOperationPrompt,
+  topicDiscoverPaperStageSchema,
   topicRecallOperationPrompt as topicRecallPrompt,
+  topicRecallStageSchema,
   topicResolveMembershipOperationPrompt as topicResolveMembershipPrompt,
+  topicResolveMembershipStageSchema,
 } from "../operations/acquire.mjs";
 import { strictChildResult } from "../materials/member.mjs";
+import { routeStageEdge } from "../materials/route.mjs";
 import {
   TOPIC_AUDIT_CONTRACT,
   topicAuditLegacyPrompt,
@@ -32,6 +33,7 @@ import {
   topicSteerOperationPrompt,
 } from "../operations/steer.mjs";
 import { exactKeys, validText } from "../runtime.mjs";
+import { stageIssue } from "../stage.mjs";
 
 const RESEARCH_RECEIPT_VERSION =
   "quasi.research.topic.receipt/0.1";
@@ -490,6 +492,86 @@ function operationOptions(key, effect, roles, contract, context) {
   };
 }
 
+function topicStageFailure(
+  receipt,
+  operationKey,
+  outcome = "known",
+) {
+  const issue = stageIssue(receipt);
+  return operationFailure(
+    (issue && issue.code) || `${operationKey}_failed`,
+    operationKey,
+    outcome,
+    (issue && issue.summary) || `${operationKey} did not complete`,
+  );
+}
+
+function routeTopicStage(
+  run,
+  state,
+  stage,
+  operationKey,
+  {
+    mismatchCode,
+    mismatchMessage,
+    failedStatus = "all_failed",
+    needsInputStatus = "needs_seeds",
+    needsInputExtra = null,
+    onOk = (receipt) => ({ edge: "ok", receipt }),
+    onFailed = null,
+  },
+) {
+  return routeStageEdge(run, {
+    state,
+    stage,
+    operationKey,
+    emit: ({ status, failure, extra }) =>
+      terminal(
+        state,
+        status === "needs_input" ? needsInputStatus : status,
+        status === "all_failed" ? "failed" : status,
+        stage,
+        failure,
+        extra,
+      ),
+    failure: (receipt, outcome) =>
+      topicStageFailure(receipt, operationKey, outcome),
+    unknown: () =>
+      terminal(
+        state,
+        "blocked",
+        "blocked",
+        stage,
+        operationFailure(
+          mismatchCode,
+          operationKey,
+          "unknown",
+          mismatchMessage,
+        ),
+      ),
+    mismatch: () =>
+      terminal(
+        state,
+        "blocked",
+        "blocked",
+        stage,
+        operationFailure(
+          mismatchCode,
+          operationKey,
+          "unknown",
+          mismatchMessage,
+        ),
+      ),
+    blockedStatus: "blocked",
+    blockedOutcome: "unknown",
+    failedStatus,
+    needsInputStatus: "needs_input",
+    needsInputExtra,
+    onOk,
+    onFailed,
+  });
+}
+
 async function runSteer(
   runtime,
   state,
@@ -746,8 +828,16 @@ async function runMaterialRound(
           agentType: "quasi:discovery-agent",
           label: `${state.slug}:discover:${demandId}`,
           schema: book
-            ? TOPIC_DISCOVER_BOOK_SCHEMA
-            : TOPIC_DISCOVER_PAPER_SCHEMA,
+            ? topicDiscoverBookStageSchema({
+                researchKey: state.researchKey,
+                demandId,
+                demand,
+              })
+            : topicDiscoverPaperStageSchema({
+                researchKey: state.researchKey,
+                demandId,
+                demand,
+              }),
         },
         operationOptions(
           `topic.discover-${demand.kind}`,
@@ -761,39 +851,38 @@ async function runMaterialRound(
       );
     }),
   );
-  state.operations.push(
-    ...discoveryRuns.map((run) => run.receipt),
+  const discoveryRoutes = discoveryRuns.map((run, index) =>
+    routeTopicStage(
+      run,
+      state,
+      "discovery",
+      `topic.discover-${ledger[index].demand.kind}`,
+      {
+        mismatchCode: "topic.discovery_receipt_invalid",
+        mismatchMessage:
+          "discovery receipt did not prove the exact demand contract",
+        onOk: (receipt) => ({ edge: "ok", receipt }),
+        onFailed: (receipt) => ({ edge: "failed", receipt }),
+      },
+    ),
   );
-  for (let index = 0; index < ledger.length; index += 1) {
-    if (
-      ["unknown", "mismatch"].includes(
-        discoveryRuns[index].edge,
-      )
-    )
-      return {
-        terminal: terminal(
-          state,
-          "blocked",
-          "blocked",
-          "discovery",
-          operationFailure(
-            "topic.discovery_receipt_invalid",
-            `topic.discover-${ledger[index].demand.kind}`,
-            "unknown",
-            "discovery receipt did not prove the exact demand contract",
-          ),
-        ),
-      };
-  }
+  const discoveryTerminal = discoveryRoutes.find(
+    (routed) => routed.terminal,
+  );
+  if (discoveryTerminal) return discoveryTerminal;
   const discoveries = ledger
     .map((entry, index) => ({
       ...entry,
-      run: discoveryRuns[index],
-      receipt: discoveryRuns[index].receipt,
+      ...discoveryRoutes[index].value,
     }))
-    .filter(({ run, receipt }) => {
-      if (run.edge === "ok") return true;
-      state.discoveryFailures.push(receipt.failure);
+    .filter(({ edge, receipt }) => {
+      if (edge === "ok") return true;
+      state.discoveryFailures.push(
+        topicStageFailure(
+          receipt,
+          `topic.discover-${receipt.demand.kind}`,
+        ),
+      );
       return false;
     });
   if (!discoveries.length)
@@ -809,7 +898,10 @@ async function runMaterialRound(
       phase: "Recall",
       agentType: "general-purpose",
       label: `${state.slug}:resolve-discovered:r1`,
-      schema: TOPIC_RESOLVE_MEMBERSHIP_SCHEMA,
+      schema: topicResolveMembershipStageSchema({
+        researchKey: state.researchKey,
+        requests,
+      }),
     },
     operationOptions(
       "topic.resolve-membership",
@@ -819,40 +911,19 @@ async function runMaterialRound(
       { state, requests, allowAlias: true },
     ),
   );
-  const membership = membershipRun.receipt;
-  state.operations.push(membership);
-  if (
-    membershipRun.edge === "unknown" ||
-    membershipRun.edge === "mismatch"
-  )
-    return {
-      terminal: terminal(
-        state,
-        "blocked",
-        "blocked",
-        "membership",
-        operationFailure(
-          "topic.membership_receipt_invalid",
-          "topic.resolve-membership",
-          "unknown",
-          "discovered membership did not correlate exact candidates",
-        ),
-      ),
-    };
-  if (membershipRun.edge !== "ok")
-    return {
-      terminal: terminal(
-        state,
-        membershipRun.edge === "blocked"
-          ? "blocked"
-          : "all_failed",
-        membershipRun.edge === "blocked"
-          ? "blocked"
-          : "failed",
-        "membership",
-        membership.failure,
-      ),
-    };
+  const membershipRoute = routeTopicStage(
+    membershipRun,
+    state,
+    "membership",
+    "topic.resolve-membership",
+    {
+      mismatchCode: "topic.membership_receipt_invalid",
+      mismatchMessage:
+        "discovered membership did not correlate exact candidates",
+    },
+  );
+  if (membershipRoute.terminal) return membershipRoute;
+  const membership = membershipRoute.value.receipt;
   const grouped = buildMaterialDemands(
     discoveries,
     membership.resolved,
@@ -932,7 +1003,11 @@ async function processStrict(runtime, router, slug, meta) {
           phase: "Recall",
           agentType: "general-purpose",
           label: `${slug}:recall`,
-          schema: TOPIC_RECALL_SCHEMA,
+          schema: topicRecallStageSchema({
+            researchKey: state.researchKey,
+            query: state.desc,
+            maxItems: state.maxItems,
+          }),
         },
         operationOptions(
           "topic.recall",
@@ -953,52 +1028,39 @@ async function processStrict(runtime, router, slug, meta) {
         `${slug}:steer:r0`,
       ),
   ]);
-  const recall = recallRun.receipt;
-  state.operations.unshift(recall);
-  if (
-    recallRun.edge === "unknown" ||
-    recallRun.edge === "mismatch"
-  ) {
-    return terminal(
-      state,
-      "blocked",
-      "blocked",
-      "recall",
-      operationFailure(
-        "topic.recall_receipt_invalid",
-        "topic.recall",
-        "unknown",
-        "recall receipt did not prove the exact contract",
-      ),
-    );
-  }
+  const recallRoute = routeTopicStage(
+    recallRun,
+    state,
+    "recall",
+    "topic.recall",
+    {
+      mismatchCode: "topic.recall_receipt_invalid",
+      mismatchMessage: "recall receipt did not prove the exact contract",
+      onOk: (receipt) => ({ edge: "ok", receipt }),
+      onFailed: (receipt) => ({ edge: "failed", receipt }),
+    },
+  );
+  if (recallRoute.terminal) return recallRoute.terminal;
   if (initialSteerResult.terminal)
     return initialSteerResult.terminal;
-  if (recallRun.edge === "blocked")
-    return terminal(
-      state,
-      "blocked",
-      "blocked",
-      "recall",
-      recall.failure,
-    );
-  if (recallRun.edge === "failed" && meta.maxRounds === 0)
+  const { edge: recallEdge, receipt: recall } = recallRoute.value;
+  const recallFailure = topicStageFailure(recall, "topic.recall");
+  if (recallEdge === "failed" && meta.maxRounds === 0)
     return terminal(
       state,
       "no_works",
       "failed",
       "recall",
-      recall.failure,
+      recallFailure,
     );
-  if (recallRun.edge === "failed") {
+  if (recallEdge === "failed") {
     state.recallFailed = true;
     state.warnings.push(
-      `Topic recall failed before the material round: ${recall.failure.code}`,
+      `Topic recall failed before the material round: ${recallFailure.code}`,
     );
   }
 
-  const requests =
-    recallRun.edge === "ok" ? recall.items : [];
+  const requests = recallEdge === "ok" ? recall.items : [];
   if (!requests.length && meta.maxRounds === 0)
     return terminal(
       state,
@@ -1014,57 +1076,54 @@ async function processStrict(runtime, router, slug, meta) {
     );
 
   if (requests.length) {
+    const membershipRequests = requests.map(({ kind, slug: id }) => ({
+      kind,
+      slug: id,
+    }));
     const membershipRun = await runtime.operate(
-      topicResolveMembershipPrompt(state.researchKey, requests),
+      topicResolveMembershipPrompt(
+        state.researchKey,
+        membershipRequests,
+      ),
       {
         phase: "Recall",
         agentType: "general-purpose",
         label: `${slug}:resolve-membership`,
-        schema: TOPIC_RESOLVE_MEMBERSHIP_SCHEMA,
+        schema: topicResolveMembershipStageSchema({
+          researchKey: state.researchKey,
+          requests: membershipRequests,
+        }),
       },
       operationOptions(
         "topic.resolve-membership",
         "readonly",
         [],
         TOPIC_RESOLVE_MEMBERSHIP_CONTRACT,
-        { state, requests, allowAlias: false },
+        { state, requests: membershipRequests, allowAlias: false },
       ),
     );
-    const membership = membershipRun.receipt;
-    state.operations.push(membership);
-    if (
-      membershipRun.edge === "unknown" ||
-      membershipRun.edge === "mismatch"
-    ) {
-      return terminal(
-        state,
-        "blocked",
-        "blocked",
-        "membership",
-        operationFailure(
-          "topic.membership_receipt_invalid",
-          "topic.resolve-membership",
-          "unknown",
+    const membershipRoute = routeTopicStage(
+      membershipRun,
+      state,
+      "membership",
+      "topic.resolve-membership",
+      {
+        mismatchCode: "topic.membership_receipt_invalid",
+        mismatchMessage:
           "membership receipt did not correlate exact requests",
-        ),
-      );
-    }
-    if (membershipRun.edge === "failed")
-      return terminal(
-        state,
-        "no_works",
-        "failed",
-        "membership",
-        membership.failure,
-      );
-    if (membershipRun.edge === "blocked")
-      return terminal(
-        state,
-        "blocked",
-        "blocked",
-        "membership",
-        membership.failure,
-      );
+        onFailed: (receipt) => ({
+          terminal: terminal(
+            state,
+            "no_works",
+            "failed",
+            "membership",
+            topicStageFailure(receipt, "topic.resolve-membership"),
+          ),
+        }),
+      },
+    );
+    if (membershipRoute.terminal) return membershipRoute.terminal;
+    const membership = membershipRoute.value.receipt;
     state.members = membership.resolved
       .filter((row) => row.resolved_slug !== null)
       .map((row) => ({

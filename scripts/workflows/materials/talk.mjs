@@ -1,12 +1,12 @@
 import {
-  TALK_ANALYSE_CONTRACT,
+  TALK_ANALYSE_STAGE_CONTRACT,
   talkAnalyseOperationPrompt,
-  talkAnalyseSchema,
+  talkAnalyseStageSchema,
 } from "../operations/analyse.mjs";
 import {
-  TALK_AUDIT_CONTRACT,
-  talkAuditLegacyPrompt,
-  talkAuditSchema,
+  TALK_AUDIT_STAGE_CONTRACT,
+  talkAuditPrompt,
+  talkAuditStageSchema,
 } from "../operations/audit.mjs";
 import {
   TALK_PREPARE_STAGE_CONTRACT,
@@ -15,10 +15,8 @@ import {
 } from "../operations/transcribe.mjs";
 import { validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
-import {
-  MATERIAL_RECEIPT_VERSION,
-  stageUserGate,
-} from "./receipt.mjs";
+import { MATERIAL_RECEIPT_VERSION } from "./receipt.mjs";
+import { routeStageEdge } from "./route.mjs";
 
 const TALK_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -358,6 +356,37 @@ function writerMismatch(state, stage, operationKey) {
   );
 }
 
+function routeTalkStage(run, state, stage, operationKey, options) {
+  return routeStageEdge(run, {
+    ...options,
+    state,
+    stage,
+    operationKey,
+    emit: ({ status, receiptStatus, extra, failure }) =>
+      terminal(
+        state,
+        status,
+        receiptStatus ||
+          (status === "blocked"
+            ? "blocked"
+            : status === "needs_input"
+              ? "needs_input"
+              : "failed"),
+        stage,
+        failure,
+        extra,
+      ),
+    unknown: (receipt) =>
+      options.unknown
+        ? options.unknown(receipt)
+        : writerMismatch(state, stage, operationKey, receipt),
+    mismatch: () =>
+      options.mismatch
+        ? options.mismatch()
+        : writerMismatch(state, stage, operationKey),
+  });
+}
+
 function addGeneratedArtifacts(state, rows, producer) {
   const replace = new Map(
     state.artifacts.map((item) => [item.path, item]),
@@ -400,6 +429,16 @@ function prepareFailure(receipt, outcome = "known") {
     "talk.prepare",
     outcome,
     (issue && issue.summary) || "Talk Prepare did not complete",
+  );
+}
+
+function analyseFailure(receipt, outcome = "known") {
+  const issue = stageIssue(receipt);
+  return operationFailure(
+    (issue && issue.code) || "talk.analysis_failed",
+    "talk.analyse",
+    outcome,
+    (issue && issue.summary) || "Talk Analyse did not complete",
   );
 }
 
@@ -455,95 +494,80 @@ async function prepareTalk(runtime, state, repairDiagnostics = []) {
       },
     },
   );
-  state.operations.push(run.receipt);
-  if (run.edge === "unknown" || run.edge === "blocked")
-    return {
-      terminal: terminal(
-        state,
-        "blocked",
-        "blocked",
-        "prepare",
-        prepareFailure(run.receipt, "unknown"),
-      ),
-    };
-  if (run.edge === "mismatch")
-    return {
-      terminal: writerMismatch(state, "prepare", "talk.prepare"),
-    };
-  if (run.edge === "needs_input") {
-    state.userGate = stageUserGate(run.receipt);
-    return {
-      terminal: terminal(
-        state,
-        "needs_input",
-        "needs_input",
-        "prepare",
-        prepareFailure(run.receipt),
-        { question: stageIssue(run.receipt).user_question },
-      ),
-    };
-  }
-  if (run.edge === "failed")
-    return {
-      terminal: terminal(
-        state,
-        "transcribe_failed",
-        "failed",
-        "prepare",
-        prepareFailure(run.receipt),
-        { diagnostics: run.receipt.diagnostics },
-      ),
-    };
-  const receipt = run.receipt;
-  state.sourceSha256 = receipt.source_observation.sha256;
-  state.requestFingerprint =
-    receipt.generation_observation.request_fingerprint;
-  state.outputExists = receipt.canonical_observation !== null;
-  state.transcriptReplaced = receipt.transcript_changed;
-  state.classification = receipt.classification;
-  state.transcriptArtifacts = receipt.artifacts.filter((row) =>
-    ["transcript", "subtitle", "engine_transcript"].includes(row.role),
+  const routed = routeTalkStage(
+    run,
+    state,
+    "prepare",
+    "talk.prepare",
+    {
+      unknown: (receipt) =>
+        terminal(
+          state,
+          "blocked",
+          "blocked",
+          "prepare",
+          prepareFailure(receipt, "unknown"),
+        ),
+      failure: prepareFailure,
+      needsInputExtra: (receipt) => ({
+        question: receipt.terminal.issue.user_question,
+      }),
+      failedStatus: "transcribe_failed",
+      failedExtra: (receipt) => ({ diagnostics: receipt.diagnostics }),
+      onOk: (receipt) => {
+        state.sourceSha256 = receipt.source_observation.sha256;
+        state.requestFingerprint =
+          receipt.generation_observation.request_fingerprint;
+        state.outputExists = receipt.canonical_observation !== null;
+        state.transcriptReplaced = receipt.transcript_changed;
+        state.classification = receipt.classification;
+        state.transcriptArtifacts = receipt.artifacts.filter((row) =>
+          ["transcript", "subtitle", "engine_transcript"].includes(row.role),
+        );
+        addGeneratedArtifacts(state, receipt.artifacts, "talk.prepare");
+        if (state.outputExists) {
+          const canonicalArtifact = receipt.artifacts.find(
+            (item) =>
+              item.role === "canonical" && item.path === state.canonical,
+          );
+          state.artifacts = state.artifacts.filter(
+            (item) => item.path !== state.canonical,
+          );
+          state.artifacts.push(
+            artifact(
+              "canonical",
+              state.canonical,
+              receipt.canonical_action
+                ? `talk.prepare:${receipt.canonical_action}`
+                : "talk.prepare:observed",
+              receipt.canonical_observation.sha256,
+              canonicalArtifact ? canonicalArtifact.size : null,
+            ),
+          );
+          if (receipt.canonical_action === "create") {
+            state.disposition = "created";
+            if (!repairDiagnostics.length)
+              state.budgets.produce.used = 1;
+          } else if (receipt.canonical_action === "repair") {
+            state.repaired = true;
+            state.disposition = "repaired";
+            if (!repairDiagnostics.length)
+              state.budgets.produce.used = 1;
+          } else state.disposition = "reused";
+        }
+        if (
+          state.classification === "live" &&
+          state.transcriptReplaced &&
+          state.outputExists
+        ) {
+          state.repaired = true;
+          state.disposition = "repaired";
+        }
+        return { receipt };
+      },
+    },
   );
-  addGeneratedArtifacts(state, receipt.artifacts, "talk.prepare");
-  if (state.outputExists) {
-    const canonicalArtifact = receipt.artifacts.find(
-      (item) =>
-        item.role === "canonical" && item.path === state.canonical,
-    );
-    state.artifacts = state.artifacts.filter(
-      (item) => item.path !== state.canonical,
-    );
-    state.artifacts.push(
-      artifact(
-        "canonical",
-        state.canonical,
-        receipt.canonical_action
-          ? `talk.prepare:${receipt.canonical_action}`
-          : "talk.prepare:observed",
-        receipt.canonical_observation.sha256,
-        canonicalArtifact ? canonicalArtifact.size : null,
-      ),
-    );
-    if (receipt.canonical_action === "create") {
-      state.disposition = "created";
-      if (!repairDiagnostics.length)
-        state.budgets.produce.used = 1;
-    } else if (receipt.canonical_action === "repair") {
-      state.repaired = true;
-      state.disposition = "repaired";
-      if (!repairDiagnostics.length)
-        state.budgets.produce.used = 1;
-    } else state.disposition = "reused";
-  }
-  if (
-    state.classification === "live" &&
-    state.transcriptReplaced &&
-    state.outputExists
-  ) {
-    state.repaired = true;
-    state.disposition = "repaired";
-  }
-  return { receipt };
+  return routed.terminal ? { terminal: routed.terminal } : routed.value;
 }
 
 async function runProducer(
@@ -582,7 +606,8 @@ async function runProducer(
         mode === "repair"
           ? `${state.slug}:analyse-repair`
           : `${state.slug}:analyse`,
-      schema: talkAnalyseSchema({
+      schema: talkAnalyseStageSchema({
+        materialKey: state.materialKey,
         inputs,
         mode,
         output: state.canonical,
@@ -592,73 +617,53 @@ async function runProducer(
       key: "talk.analyse",
       effect: "writer",
       retry: "forbidden",
-      replay: "blocked",
+      replay: mode === "repair" ? "reconciled" : "blocked",
       artifactRoles: ["canonical"],
       unknownFailureCode: "talk.writer_outcome_unknown",
-      contract: TALK_ANALYSE_CONTRACT,
+      contract: TALK_ANALYSE_STAGE_CONTRACT,
       context: { inputs, mode, output: state.canonical },
     },
   );
-  const receipt = analysis.receipt;
-  state.operations.push(receipt);
-  if (
-    analysis.edge === "unknown" ||
-    analysis.edge === "mismatch"
-  )
-    return {
-      terminal: writerMismatch(
-        state,
-        "analyse",
-        "talk.analyse",
-      ),
-    };
-  if (analysis.edge === "blocked")
-    return {
-      terminal: terminal(
-        state,
-        "blocked",
-        "blocked",
-        "analyse",
-        receipt.failure,
-      ),
-    };
-  if (analysis.edge !== "ok")
-    return {
-      terminal: terminal(
-        state,
-        "analyse_failed",
-        "failed",
-        "analyse",
-        receipt.failure,
-      ),
-    };
-  state.talkProducer = "talk.analyse";
-  state.artifacts = state.artifacts.filter(
-    (item) => item.path !== state.canonical,
+  const routed = routeTalkStage(
+    analysis,
+    state,
+    "analyse",
+    "talk.analyse",
+    {
+      failure: analyseFailure,
+      blockedFailure: (receipt) => analyseFailure(receipt, "unknown"),
+      failedStatus: "analyse_failed",
+      onOk: (receipt) => {
+        const { action } = receipt.terminal;
+        state.talkProducer = "talk.analyse";
+        state.artifacts = state.artifacts.filter(
+          (item) => item.path !== state.canonical,
+        );
+        state.artifacts.push(
+          artifact(
+            "canonical",
+            state.canonical,
+            action === "reconciled"
+              ? "talk.analyse:reconciled"
+              : "talk.analyse",
+          ),
+        );
+        if (action === "repair") {
+          state.repaired = true;
+          state.disposition = "repaired";
+        } else if (action === "reconciled") {
+          state.disposition = state.disposition || "reused";
+        } else state.disposition = "created";
+        return { receipt };
+      },
+    },
   );
-  state.artifacts.push(
-    artifact(
-      "canonical",
-      state.canonical,
-      receipt.action === "reconciled"
-        ? "talk.analyse:reconciled"
-        : "talk.analyse",
-    ),
-  );
-  if (receipt.action === "repair") {
-    state.repaired = true;
-    state.disposition = "repaired";
-  } else if (receipt.action === "reconciled") {
-    state.disposition = state.disposition || "reused";
-  } else {
-    state.disposition = "created";
-  }
-  return { receipt };
+  return routed.terminal ? { terminal: routed.terminal } : routed.value;
 }
 
 async function runAudit(runtime, state, pass) {
   const auditRun = await runtime.operate(
-    talkAuditLegacyPrompt(state.slug, pass),
+    talkAuditPrompt(state.slug, pass),
     {
       phase: "Audit",
       agentType: "quasi:audit-agent",
@@ -666,74 +671,97 @@ async function runAudit(runtime, state, pass) {
         pass === 1
           ? `${state.slug}:audit`
           : `${state.slug}:audit-${pass}`,
-      schema: talkAuditSchema({ target: state.canonical }),
+      schema: talkAuditStageSchema({
+        materialKey: state.materialKey,
+        target: state.canonical,
+        pass,
+      }),
     },
     {
-      key: "talk.audit.legacy",
+      key: "talk.audit",
       effect: "writer",
       retry: "forbidden",
       replay: "blocked",
       artifactRoles: ["canonical"],
       unknownFailureCode: "talk.writer_outcome_unknown",
-      contract: TALK_AUDIT_CONTRACT,
-      context: { target: state.canonical },
+      contract: TALK_AUDIT_STAGE_CONTRACT,
+      context: { target: state.canonical, pass },
     },
   );
-  const receipt = auditRun.receipt;
-  state.operations.push(receipt);
-  state.audit.push(receipt);
-  state.budgets.auditPasses.used += 1;
-  if (
-    auditRun.edge === "unknown" ||
-    auditRun.edge === "mismatch"
-  )
-    return {
-      terminal: writerMismatch(
-        state,
-        "audit",
-        "talk.audit.legacy",
-      ),
-    };
-  if (!ownedAuditPaths(receipt, state))
-    return {
-      terminal: terminal(
-        state,
-        "audit_escalated",
-        "failed",
-        "audit",
-        operationFailure(
-          "talk.repair_owner_unknown",
-          "talk.audit.legacy",
-          "known",
-          "audit named a path outside the exact Talk product",
-        ),
-        { escalated: receipt.escalated },
-      ),
-    };
-  if (auditRun.edge !== "ok")
-    return {
-      terminal: terminal(
-        state,
-        "audit_escalated",
-        "failed",
-        "audit",
-        operationFailure(
-          "talk.audit_failed",
-          "talk.audit.legacy",
-          "known",
-          "legacy audit transaction reported an error",
-        ),
-        { escalated: [] },
-      ),
-    };
-  if (receipt.mutated_paths.includes(state.canonical)) {
-    state.repaired = true;
-    state.disposition = "repaired";
-  }
-  return {
-    clean: receipt.status === "clean",
-    diagnostics: receipt.escalated,
+  const ownerFailure = (receipt) =>
+    operationFailure(
+      "talk.repair_owner_unknown",
+      "talk.audit",
+      "known",
+      "audit named a path outside the exact Talk product",
+    );
+  const auditFailure = (receipt, outcome = "known") => {
+    const issue = stageIssue(receipt);
+    return operationFailure(
+      (issue && issue.code) || "talk.audit_failed",
+      "talk.audit",
+      outcome,
+      (issue && issue.summary) || "Talk Audit did not complete",
+    );
   };
+  const routed = routeTalkStage(
+    auditRun,
+    state,
+    "audit",
+    "talk.audit",
+    {
+      onReceipt: (receipt, edge) => {
+        if (edge === "unknown" || edge === "mismatch") return;
+        state.audit.push(receipt);
+        state.budgets.auditPasses.used += 1;
+      },
+      failure: (receipt, outcome = "known") =>
+        ownedAuditPaths(receipt, state)
+          ? auditFailure(receipt, outcome)
+          : ownerFailure(receipt),
+      blockedFailure: (receipt) =>
+        ownedAuditPaths(receipt, state)
+          ? auditFailure(receipt, "unknown")
+          : ownerFailure(receipt),
+      blockedStatus: "audit_escalated",
+      blockedExtra: (receipt) => ({
+        escalated: ownedAuditPaths(receipt, state)
+          ? []
+          : receipt.escalated,
+      }),
+      failedStatus: "audit_escalated",
+      failedExtra: (receipt) => ({
+        escalated: ownedAuditPaths(receipt, state)
+          ? []
+          : receipt.escalated,
+      }),
+      onOk: (receipt) => {
+        if (!ownedAuditPaths(receipt, state))
+          return {
+            terminal: terminal(
+              state,
+              "audit_escalated",
+              "failed",
+              "audit",
+              ownerFailure(receipt),
+              { escalated: receipt.escalated },
+            ),
+          };
+        if (receipt.mutated_paths.includes(state.canonical)) {
+          state.repaired = true;
+          state.disposition = "repaired";
+        }
+        return {
+          clean:
+            receipt.terminal.status === "complete" &&
+            receipt.remaining_violations === 0 &&
+            receipt.escalated.length === 0,
+          diagnostics: receipt.escalated,
+        };
+      },
+    },
+  );
+  return routed.terminal ? { terminal: routed.terminal } : routed.value;
 }
 
 async function processTalkStrict(runtime, state) {
@@ -807,7 +835,7 @@ async function processTalkStrict(runtime, state) {
         "audit",
         operationFailure(
           "talk.repair_exhausted",
-          "talk.audit.legacy",
+          "talk.audit",
           "known",
           "Talk output remains non-clean after one producer repair",
         ),

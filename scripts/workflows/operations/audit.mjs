@@ -1,4 +1,5 @@
 import { validText } from "../runtime.mjs";
+import { stageContract, stageReceiptSchema } from "../stage.mjs";
 import { composedSchema } from "./shared.mjs";
 
 export const AU_SCHEMA = {
@@ -19,191 +20,97 @@ export const AU_SCHEMA = {
   },
 };
 
-export const PAPER_AUDIT_SCHEMA = {
+const AUDIT_DIAGNOSTIC_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: [
-    "schema_version",
-    "key",
-    "effect",
-    "status",
-    "attempt",
-    "target_path",
-    "artifact_roles",
-    "pass",
-    "remaining_violations",
-    "escalated",
-    "mutated_paths",
-    "failure",
-  ],
+  required: ["path", "kind", "reason"],
   properties: {
-    schema_version: {
-      const: "quasi.operation.paper.audit.receipt/0.2",
-    },
-    key: { const: "paper.audit" },
-    effect: { const: "writer" },
-    status: {
-      type: "string",
-      enum: ["clean", "partial", "error"],
-    },
-    attempt: { type: "integer", const: 1 },
-    target_path: { type: "string" },
-    artifact_roles: { const: ["canonical"] },
-    pass: { type: "integer", minimum: 1, maximum: 2 },
-    remaining_violations: {
-      type: "integer",
-      minimum: 0,
-      description:
-        "Non-negative count; the Workflow validates status/count consistency.",
-    },
-    escalated: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path", "kind", "reason"],
-        properties: {
-          path: { type: "string" },
-          kind: { type: "string" },
-          reason: { type: "string" },
-        },
-      },
-    },
-    mutated_paths: {
-      type: "array",
-      items: { type: "string" },
-    },
-    failure: {
-      type: ["object", "null"],
-      additionalProperties: false,
-      required: [
-        "code",
-        "operation_key",
-        "outcome",
-        "retryable",
-        "message",
-      ],
-      properties: {
-        code: { const: "paper.audit_failed" },
-        operation_key: { const: "paper.audit" },
-        outcome: { const: "known" },
-        retryable: { const: false },
-        message: { type: ["string", "null"] },
-      },
-    },
+    path: { type: "string" },
+    kind: { type: "string" },
+    reason: { type: "string" },
   },
 };
 
-const PAPER_AUDIT_BRANCHES = {
-  clean: {
+const auditStageSchema = ({
+  operation,
+  materialKey,
+  target,
+  pass,
+  artifactRoles = null,
+}) =>
+  stageReceiptSchema({
+    operation,
+    stage: "Audit",
+    materialKey,
+    effect: "writer",
+    required: [
+      "target_path",
+      "pass",
+      ...(artifactRoles ? ["artifact_roles"] : []),
+      "remaining_violations",
+      "escalated",
+      "mutated_paths",
+    ],
     properties: {
-      status: { const: "clean" },
-      remaining_violations: { const: 0 },
-      escalated: { maxItems: 0 },
-      failure: { type: "null" },
-    },
-  },
-  partial: {
-    properties: {
-      status: { const: "partial" },
-      remaining_violations: { minimum: 1 },
-      escalated: { minItems: 1 },
-      failure: { type: "null" },
-    },
-  },
-  error: {
-    properties: {
-      status: { const: "error" },
-      failure: { type: "object" },
-    },
-  },
-};
-
-export const paperAuditSchema = ({ target, pass }) =>
-  composedSchema(
-    PAPER_AUDIT_SCHEMA,
-    {
       target_path: { const: target },
       pass: { const: pass },
+      ...(artifactRoles
+        ? { artifact_roles: { const: artifactRoles } }
+        : {}),
+      remaining_violations: { type: "integer", minimum: 0 },
+      escalated: {
+        type: "array",
+        items: AUDIT_DIAGNOSTIC_SCHEMA,
+      },
       mutated_paths: {
         type: "array",
-        items: { const: target },
+        uniqueItems: true,
+        items: { type: "string" },
       },
     },
-    PAPER_AUDIT_BRANCHES,
-  );
+  });
 
-// Only the count/diagnostic arithmetic a JSON Schema cannot express stays in
-// the contract; everything else rides the composed schema.
-export const PAPER_AUDIT_CONTRACT = {
-  schema: PAPER_AUDIT_SCHEMA,
-  statuses: {
-    clean: (receipt) =>
-      new Set(receipt.mutated_paths).size ===
-      receipt.mutated_paths.length,
-    partial: (receipt) =>
-      receipt.remaining_violations ===
-        receipt.escalated.length &&
-      new Set(receipt.mutated_paths).size ===
-        receipt.mutated_paths.length,
-    error: (receipt) =>
-      new Set(receipt.mutated_paths).size ===
-      receipt.mutated_paths.length,
-  },
-  edges: { clean: "ok", partial: "ok", error: "failed" },
+// Clean and partial are successful Audit terminal outcomes. The evidence carries
+// the distinction: a clean result has no remaining violations or escalations.
+const completeAudit = (receipt) =>
+  receipt.remaining_violations === 0
+    ? receipt.escalated.length === 0
+    : receipt.remaining_violations === receipt.escalated.length;
+
+const auditStageContract = ({ schema, complete, failed = () => true }) => {
+  const contract = stageContract({ schema, complete });
+  return {
+    ...contract,
+    statuses: {
+      ...contract.statuses,
+      failed,
+    },
+  };
 };
 
-export const BOOK_AUDIT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "schema_version",
-    "key",
-    "effect",
-    "status",
-    "attempt",
-    "target_path",
-    "remaining_violations",
-    "escalated",
-    "mutated_paths",
-  ],
-  properties: {
-    schema_version: {
-      const:
-        "quasi.operation.book.audit.receipt/0.1",
-    },
-    key: { const: "book.audit" },
-    effect: { const: "writer" },
-    status: {
-      type: "string",
-      enum: ["clean", "partial", "error"],
-    },
-    attempt: { type: "integer", const: 1 },
-    target_path: { type: "string" },
-    remaining_violations: { type: "integer", minimum: 0 },
-    escalated: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path", "kind", "reason"],
-        properties: {
-          path: { type: "string" },
-          kind: { type: "string" },
-          reason: { type: "string" },
-        },
-      },
-    },
-    mutated_paths: {
-      type: "array",
-      items: { type: "string" },
-    },
-  },
-};
+export const paperAuditStageSchema = ({
+  materialKey,
+  target,
+  pass,
+}) =>
+  auditStageSchema({
+    operation: "paper.audit",
+    materialKey,
+    target,
+    pass,
+    artifactRoles: ["canonical"],
+  });
+
+export const PAPER_AUDIT_STAGE_CONTRACT = auditStageContract({
+  schema: paperAuditStageSchema({
+    materialKey: "paper:placeholder",
+    target: "vault/papers/placeholder.md",
+    pass: 1,
+  }),
+  complete: completeAudit,
+});
 
 const bookAuditReported = (receipt) =>
-  new Set(receipt.mutated_paths).size ===
-    receipt.mutated_paths.length &&
   receipt.mutated_paths.every((path) =>
     validText(path, 1, 2048),
   ) &&
@@ -214,156 +121,28 @@ const bookAuditReported = (receipt) =>
       validText(diagnostic.reason, 1, 4000),
   );
 
-const AUDIT_STATUS_BRANCHES = {
-  clean: {
-    properties: {
-      status: { const: "clean" },
-      remaining_violations: { const: 0 },
-      escalated: { maxItems: 0 },
-    },
-  },
-  partial: {
-    properties: {
-      status: { const: "partial" },
-      remaining_violations: { minimum: 1 },
-      escalated: { minItems: 1 },
-    },
-  },
-  error: {
-    properties: { status: { const: "error" } },
-  },
-};
+export const bookAuditStageSchema = ({
+  materialKey,
+  target,
+  pass,
+}) =>
+  auditStageSchema({
+    operation: "book.audit",
+    materialKey,
+    target,
+    pass,
+  });
 
-// Legacy composite audits close the error status: it is a command failure and
-// must not smuggle diagnostics.
-const CLOSED_ERROR_BRANCHES = {
-  ...AUDIT_STATUS_BRANCHES,
-  error: {
-    properties: {
-      status: { const: "error" },
-      remaining_violations: { const: 0 },
-      escalated: { maxItems: 0 },
-    },
-  },
-};
-
-export const bookAuditSchema = ({ target }) =>
-  composedSchema(
-    BOOK_AUDIT_SCHEMA,
-    { target_path: { const: target } },
-    AUDIT_STATUS_BRANCHES,
-  );
-
-// mutated_paths must be exact and duplicate-free because the graph settles
-// producer ownership for every reported path; that stays in the contract.
-export const BOOK_AUDIT_CONTRACT = {
-  schema: BOOK_AUDIT_SCHEMA,
-  statuses: {
-    clean: (receipt) => bookAuditReported(receipt),
-    partial: (receipt) =>
-      bookAuditReported(receipt) &&
-      receipt.escalated.length ===
-        receipt.remaining_violations,
-    error: (receipt) => bookAuditReported(receipt),
-  },
-  edges: { clean: "ok", partial: "ok", error: "failed" },
-};
-
-export const AUTHOR_AUDIT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "schema_version",
-    "key",
-    "effect",
-    "status",
-    "attempt",
-    "target_path",
-    "remaining_violations",
-    "escalated",
-    "mutated_paths",
-  ],
-  properties: {
-    schema_version: {
-      const:
-        "quasi.operation.author.audit.legacy.receipt/0.1",
-    },
-    key: { const: "author.audit.legacy" },
-    effect: { const: "writer" },
-    status: {
-      type: "string",
-      enum: ["clean", "partial", "error"],
-    },
-    attempt: { type: "integer", const: 1 },
-    target_path: { type: "string" },
-    remaining_violations: { type: "integer", minimum: 0 },
-    escalated: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path", "kind", "reason"],
-        properties: {
-          path: { type: "string" },
-          kind: { type: "string" },
-          reason: { type: "string" },
-        },
-      },
-    },
-    mutated_paths: {
-      type: "array",
-      items: { type: "string" },
-    },
-  },
-};
-
-export const TALK_AUDIT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "schema_version",
-    "key",
-    "effect",
-    "status",
-    "attempt",
-    "target_path",
-    "remaining_violations",
-    "escalated",
-    "mutated_paths",
-  ],
-  properties: {
-    schema_version: {
-      const:
-        "quasi.operation.talk.audit.legacy.receipt/0.1",
-    },
-    key: { const: "talk.audit.legacy" },
-    effect: { const: "writer" },
-    status: {
-      type: "string",
-      enum: ["clean", "partial", "error"],
-    },
-    attempt: { type: "integer", const: 1 },
-    target_path: { type: "string" },
-    remaining_violations: { type: "integer", minimum: 0 },
-    escalated: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path", "kind", "reason"],
-        properties: {
-          path: { type: "string" },
-          kind: { type: "string" },
-          reason: { type: "string" },
-        },
-      },
-    },
-    mutated_paths: {
-      type: "array",
-      items: { type: "string" },
-    },
-  },
-};
+export const BOOK_AUDIT_STAGE_CONTRACT = auditStageContract({
+  schema: bookAuditStageSchema({
+    materialKey: "book:placeholder",
+    target: "vault/books/placeholder",
+    pass: 1,
+  }),
+  complete: (receipt) =>
+    bookAuditReported(receipt) && completeAudit(receipt),
+  failed: bookAuditReported,
+});
 
 const legacyAuditReported = (receipt) =>
   receipt.escalated.every(
@@ -376,45 +155,68 @@ const legacyAuditReported = (receipt) =>
     validText(path, 1, 2048),
   );
 
-const legacyCompositeAuditContract = (schema) => ({
-  schema,
-  statuses: {
-    clean: (receipt) => legacyAuditReported(receipt),
-    partial: (receipt) =>
-      legacyAuditReported(receipt) &&
-      receipt.escalated.length ===
-        receipt.remaining_violations,
-    error: (receipt) => legacyAuditReported(receipt),
-  },
-  edges: { clean: "ok", partial: "ok", error: "failed" },
+const closedAuditFailure = (receipt) =>
+  legacyAuditReported(receipt) &&
+  receipt.remaining_violations === 0 &&
+  receipt.escalated.length === 0;
+
+export const authorAuditStageSchema = ({
+  materialKey,
+  target,
+  pass,
+}) =>
+  auditStageSchema({
+    operation: "author.audit",
+    materialKey,
+    target,
+    pass,
+    artifactRoles: ["canonical"],
+  });
+
+export const AUTHOR_AUDIT_STAGE_CONTRACT = auditStageContract({
+  schema: authorAuditStageSchema({
+    materialKey: "author:placeholder",
+    target: "vault/authors/placeholder.md",
+    pass: 1,
+  }),
+  complete: (receipt) =>
+    legacyAuditReported(receipt) && completeAudit(receipt),
+  failed: closedAuditFailure,
 });
 
-export const talkAuditSchema = ({ target }) =>
-  composedSchema(
-    TALK_AUDIT_SCHEMA,
-    { target_path: { const: target } },
-    CLOSED_ERROR_BRANCHES,
-  );
+export const talkAuditStageSchema = ({
+  materialKey,
+  target,
+  pass,
+}) =>
+  auditStageSchema({
+    operation: "talk.audit",
+    materialKey,
+    target,
+    pass,
+    artifactRoles: ["canonical"],
+  });
 
-export const authorAuditSchema = ({ target }) =>
-  composedSchema(
-    AUTHOR_AUDIT_SCHEMA,
-    { target_path: { const: target } },
-    CLOSED_ERROR_BRANCHES,
-  );
-
-export const TALK_AUDIT_CONTRACT =
-  legacyCompositeAuditContract(TALK_AUDIT_SCHEMA);
-export const AUTHOR_AUDIT_CONTRACT =
-  legacyCompositeAuditContract(AUTHOR_AUDIT_SCHEMA);
+export const TALK_AUDIT_STAGE_CONTRACT = auditStageContract({
+  schema: talkAuditStageSchema({
+    materialKey: "talk:placeholder",
+    target: "vault/talks/placeholder/talk.md",
+    pass: 1,
+  }),
+  complete: (receipt) =>
+    legacyAuditReported(receipt) && completeAudit(receipt),
+  failed: closedAuditFailure,
+});
 
 export function paperAuditPrompt(slug, pass) {
   const output = `vault/papers/${slug}.md`;
   const request = {
     schema_version: "quasi.operation.paper.audit.request/0.2",
     operation: "paper.audit",
+    stage: "Audit",
     material_key: `paper:${slug}`,
     effect: "writer",
+    pass,
     mode: pass === 1 ? "audit" : "re-audit",
     target: { role: "canonical", path: output },
   };
@@ -426,22 +228,27 @@ export function bookAuditPrompt(slug, pass) {
   const request = {
     schema_version: "quasi.operation.book.audit.request/0.1",
     operation: "book.audit",
+    stage: "Audit",
     material_key: `book:${slug}`,
     effect: "writer",
+    pass,
     mode: pass === 1 ? "audit" : "re-audit",
     target: { role: "canonical_scope", path: scope },
   };
   return JSON.stringify(request, null, 2);
 }
 
-export function authorAuditLegacyPrompt(name, pass) {
+export function authorAuditPrompt(name, pass) {
   const output = `vault/authors/${name}.md`;
   const request = {
     schema_version:
-      "quasi.operation.author.audit.legacy.request/0.1",
-    operation: "author.audit.legacy",
+      "quasi.operation.author.audit.request/0.1",
+    operation: "author.audit",
+    stage: "Audit",
+    material_key: `author:${name}`,
     collection_key: `author:${name}`,
     effect: "writer",
+    pass,
     mode: pass === 1 ? "audit" : "re-audit",
     target: { role: "canonical", path: output },
     exact_output: output,
@@ -450,14 +257,16 @@ export function authorAuditLegacyPrompt(name, pass) {
   return JSON.stringify(request, null, 2);
 }
 
-export function talkAuditLegacyPrompt(slug, pass) {
+export function talkAuditPrompt(slug, pass) {
   const output = `vault/talks/${slug}/talk.md`;
   const request = {
     schema_version:
-      "quasi.operation.talk.audit.legacy.request/0.1",
-    operation: "talk.audit.legacy",
+      "quasi.operation.talk.audit.request/0.1",
+    operation: "talk.audit",
+    stage: "Audit",
     material_key: `talk:${slug}`,
     effect: "writer",
+    pass,
     mode: pass === 1 ? "audit" : "re-audit",
     target: { role: "canonical", path: output },
     exact_output: output,
@@ -466,8 +275,7 @@ export function talkAuditLegacyPrompt(slug, pass) {
   return JSON.stringify(request, null, 2);
 }
 
-// Strict Topic recall-only audit. Author and Talk retain their current operation ids until
-// their own cleanup slices; Paper and Book use the strict ids above.
+// Strict Topic recall-only audit remains on its legacy receipt contract below.
 const TOPIC_AUDIT_DIAGNOSTIC_SCHEMA = {
   type: "object",
   additionalProperties: false,

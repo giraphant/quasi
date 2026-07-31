@@ -178,10 +178,11 @@ const strictResult = item => {{
     : `vault/books/${{slug}}/00-overview.md`
   const audit = item.kind === "paper"
     ? {{
-        schema_version: "quasi.operation.paper.audit.receipt/0.2",
-        key: "paper.audit",
+        schema_version: "quasi.stage.receipt/0.2",
+        operation: "paper.audit",
+        stage: "Audit",
+        material_key: `paper:${{slug}}`,
         effect: "writer",
-        status: "clean",
         attempt: 1,
         target_path: canonical,
         artifact_roles: ["canonical"],
@@ -189,18 +190,21 @@ const strictResult = item => {{
         remaining_violations: 0,
         escalated: [],
         mutated_paths: [],
-        failure: null,
+        terminal: {{ status: "complete", issue: null }},
       }}
     : [{{
-        schema_version: "quasi.operation.book.audit.receipt/0.1",
-        key: "book.audit",
+        schema_version: "quasi.stage.receipt/0.2",
+        operation: "book.audit",
+        stage: "Audit",
+        material_key: `book:${{slug}}`,
         effect: "writer",
-        status: "clean",
         attempt: 1,
         target_path: `vault/books/${{slug}}`,
+        pass: 1,
         remaining_violations: 0,
         escalated: [],
         mutated_paths: [],
+        terminal: {{ status: "complete", issue: null }},
       }}]
   const artifacts = [{{
     role: "canonical",
@@ -608,33 +612,32 @@ def successful_paper_search(
 
 def paper_download_failed(slug: str) -> dict[str, Any]:
     return {
-        "schema_version": "quasi.operation.paper.acquire.receipt/0.2",
-        "key": "paper.acquire",
-        "effect": "writer",
-        "status": "failed",
-        "attempt": 1,
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "paper.acquire",
+        "stage": "Acquire",
         "material_key": f"paper:{slug}",
-        "kind": "paper",
-        "slug": slug,
+        "effect": "writer",
+        "attempt": 1,
         "output_path": f"sources/{slug}.pdf",
-        "artifact_roles": ["source"],
+        "doi": "10.1000/parallel",
         "disposition": None,
         "write_state": "not_written",
         "identity_verified": False,
         "source": None,
-        "doi": "10.1000/parallel",
-        "failure_reason": "not available",
         "attempts": [{
             "source": "oa",
             "status": "failed",
             "error": "404",
         }],
-        "failure": {
-            "code": "paper.download_failed",
-            "operation_key": "paper.acquire",
-            "outcome": "known",
-            "retryable": False,
-            "message": "not available",
+        "terminal": {
+            "status": "failed",
+            "issue": {
+                "code": "paper.download_failed",
+                "operation": "paper.acquire",
+                "summary": "not available",
+                "user_question": None,
+                "retryable": False,
+            },
         },
     }
 

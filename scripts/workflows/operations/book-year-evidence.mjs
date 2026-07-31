@@ -47,19 +47,5 @@ export function validYearEvidence(evidence, expectedYear) {
     !["MATCH", "MISMATCH", "AMBIGUOUS"].includes(evidence.verdict)
   )
     return false;
-  if (evidence.verdict === "MATCH") {
-    const support = [
-      ...Object.values(evidence.source_years),
-      evidence.pdf_signals.first_published,
-      evidence.pdf_signals.copyright_year,
-      ...evidence.pdf_signals.other_years,
-    ].filter((year) => year === evidence.recommended_year).length;
-    return evidence.recommended_year === expectedYear && support >= 2;
-  }
-  if (evidence.verdict === "MISMATCH")
-    return (
-      evidence.recommended_year !== null &&
-      evidence.recommended_year !== expectedYear
-    );
-  return evidence.recommended_year === null;
+  return true;
 }

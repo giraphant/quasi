@@ -9,18 +9,19 @@ import {
   authorResolveMembershipPrompt,
 } from "../operations/acquire.mjs";
 import {
-  AUTHOR_AUDIT_CONTRACT,
-  authorAuditLegacyPrompt,
-  authorAuditSchema,
+  AUTHOR_AUDIT_STAGE_CONTRACT,
+  authorAuditPrompt,
+  authorAuditStageSchema,
 } from "../operations/audit.mjs";
 import {
-  AUTHOR_SYNTHESISE_CONTRACT,
+  AUTHOR_SYNTHESISE_STAGE_CONTRACT,
   authorSynthesiseOperationPrompt,
-  authorSynthesiseSchema,
+  authorSynthesiseStageSchema,
 } from "../operations/synthesise.mjs";
 import { AUTHOR_ARTIFACT_CONTRACT } from "../artifact-contracts/generated.mjs";
 import { strictChildResult } from "../materials/member.mjs";
 import { validText } from "../runtime.mjs";
+import { stageIssue } from "../stage.mjs";
 
 const AUTHOR_RECEIPT_VERSION =
   "quasi.collection.author.receipt/0.1";
@@ -423,6 +424,17 @@ function ownedAuditPaths(receipt, output) {
   ].every((path) => path === output);
 }
 
+function stageFailure(receipt, fallback, operation, outcome = "known") {
+  const issue = stageIssue(receipt);
+  return operationFailure(
+    (issue && issue.code) || fallback,
+    operation,
+    outcome,
+    !!(issue && issue.retryable),
+    (issue && issue.summary) || `${operation} did not complete`,
+  );
+}
+
 async function runSynthesis(
   runtime,
   state,
@@ -444,7 +456,8 @@ async function runSynthesis(
       phase: "Synthesise",
       agentType: "quasi:synthesis-agent",
       label,
-      schema: authorSynthesiseSchema({
+      schema: authorSynthesiseStageSchema({
+        materialKey: state.collectionKey,
         inputs,
         mode,
         output: state.output,
@@ -454,10 +467,10 @@ async function runSynthesis(
       key: "author.synthesise",
       effect: "writer",
       retry: "forbidden",
-      replay: "blocked",
+      replay: mode === "repair" ? "reconciled" : "blocked",
       artifactRoles: ["canonical"],
       unknownFailureCode: "author.writer_outcome_unknown",
-      contract: AUTHOR_SYNTHESISE_CONTRACT,
+      contract: AUTHOR_SYNTHESISE_STAGE_CONTRACT,
       context: { inputs, mode, output: state.output },
     },
   );
@@ -491,33 +504,56 @@ async function runSynthesis(
         "blocked",
         "blocked",
         "synthesis",
-        receipt.failure,
+        stageFailure(
+          receipt,
+          "author.synthesise_failed",
+          "author.synthesise",
+          "unknown",
+        ),
       ),
     };
-  if (synthesis.edge !== "ok")
+  if (synthesis.edge === "needs_input")
+    return {
+      terminal: terminal(
+        state,
+        "needs_input",
+        "needs_input",
+        "synthesis",
+        stageFailure(receipt, "author.synthesise_failed", "author.synthesise"),
+        { question: stageIssue(receipt).user_question },
+      ),
+    };
+  if (synthesis.edge !== "ok") {
+    const failure = stageFailure(
+      receipt,
+      "author.synthesise_failed",
+      "author.synthesise",
+    );
     return {
       terminal: terminal(
         state,
         "synth_failed",
         "failed",
         "synthesis",
-        receipt.failure,
-        { notes: receipt.failure.message || receipt.failure.code },
+        failure,
+        { notes: failure.message || failure.code },
       ),
     };
+  }
+  const { action } = receipt.terminal;
   state.artifact = {
     role: "canonical",
     path: state.output,
     exists: true,
     producer:
-      receipt.action === "reconciled"
+      action === "reconciled"
         ? "author.synthesise:reconciled"
         : "author.synthesise",
   };
-  if (receipt.action === "repair") {
+  if (action === "repair") {
     state.repaired = true;
     state.disposition = "repaired";
-  } else if (receipt.action === "reconciled") {
+  } else if (action === "reconciled") {
     state.disposition = state.disposition || "reused";
   } else {
     state.disposition = "created";
@@ -527,22 +563,26 @@ async function runSynthesis(
 
 async function runAudit(runtime, state, pass, label) {
   const auditRun = await runtime.operate(
-    authorAuditLegacyPrompt(state.name, pass),
+    authorAuditPrompt(state.name, pass),
     {
       phase: "Audit",
       agentType: "quasi:audit-agent",
       label,
-      schema: authorAuditSchema({ target: state.output }),
+      schema: authorAuditStageSchema({
+        materialKey: state.collectionKey,
+        target: state.output,
+        pass,
+      }),
     },
     {
-      key: "author.audit.legacy",
+      key: "author.audit",
       effect: "writer",
       retry: "forbidden",
       replay: "blocked",
       artifactRoles: ["canonical"],
       unknownFailureCode: "author.writer_outcome_unknown",
-      contract: AUTHOR_AUDIT_CONTRACT,
-      context: { target: state.output },
+      contract: AUTHOR_AUDIT_STAGE_CONTRACT,
+      context: { target: state.output, pass },
     },
   );
   const receipt = auditRun.receipt;
@@ -555,7 +595,7 @@ async function runAudit(runtime, state, pass, label) {
   ) {
     const failure = operationFailure(
       "author.writer_receipt_mismatch",
-      "author.audit.legacy",
+      "author.audit",
       "unknown",
       false,
       "writer receipt did not prove the exact audit contract",
@@ -570,10 +610,21 @@ async function runAudit(runtime, state, pass, label) {
       ),
     };
   }
+  if (auditRun.edge === "needs_input")
+    return {
+      terminal: terminal(
+        state,
+        "needs_input",
+        "needs_input",
+        "audit",
+        stageFailure(receipt, "author.audit_failed", "author.audit"),
+        { question: stageIssue(receipt).user_question },
+      ),
+    };
   if (!ownedAuditPaths(receipt, state.output)) {
     const failure = operationFailure(
       "author.repair_owner_unknown",
-      "author.audit.legacy",
+      "author.audit",
       "known",
       false,
       "audit named a path outside the exact Author product",
@@ -590,21 +641,20 @@ async function runAudit(runtime, state, pass, label) {
     };
   }
   if (auditRun.edge !== "ok") {
-    const failure = operationFailure(
+    const failure = stageFailure(
+      receipt,
       "author.audit_failed",
-      "author.audit.legacy",
-      "known",
-      false,
-      "legacy audit transaction reported an error",
+      "author.audit",
+      auditRun.edge === "blocked" ? "unknown" : "known",
     );
     return {
       terminal: terminal(
         state,
-        "audit_escalated",
-        "failed",
+        auditRun.edge === "blocked" ? "blocked" : "audit_escalated",
+        auditRun.edge === "blocked" ? "blocked" : "failed",
         "audit",
         failure,
-        { escalated: [] },
+        { escalated: receipt.escalated },
       ),
     };
   }
@@ -613,7 +663,10 @@ async function runAudit(runtime, state, pass, label) {
     state.disposition = "repaired";
   }
   return {
-    clean: receipt.status === "clean",
+    clean:
+      receipt.terminal.status === "complete" &&
+      receipt.remaining_violations === 0 &&
+      receipt.escalated.length === 0,
     escalated: receipt.escalated,
   };
 }
@@ -924,7 +977,7 @@ async function processAuthorStrict(
     if (!audited.clean) {
       const failure = operationFailure(
         "author.repair_exhausted",
-        "author.audit.legacy",
+        "author.audit",
         "known",
         false,
         "Author output remains non-clean after one repair",

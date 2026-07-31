@@ -77,29 +77,16 @@ def test_common_role_does_not_duplicate_operation_catalog_or_migration_history()
         assert operation_specific not in text
 
 
-def test_operation_module_owns_receipts_and_injects_artifact_contracts() -> None:
+def test_operation_module_injects_artifact_contracts() -> None:
     text = operation_text()
 
-    for key, contract, schema in (
-        (
-            "paper.analyse",
-            "PAPER_ARTIFACT_CONTRACT",
-            "PAPER_ANALYSE_SCHEMA",
-        ),
-        (
-            "chapter.analyse",
-            "CHAPTER_ARTIFACT_CONTRACT",
-            "CHAPTER_ANALYSE_SCHEMA",
-        ),
-        (
-            "talk.analyse",
-            "TALK_ARTIFACT_CONTRACT",
-            "TALK_ANALYSE_SCHEMA",
-        ),
+    for key, contract in (
+        ("paper.analyse", "PAPER_ARTIFACT_CONTRACT"),
+        ("chapter.analyse", "CHAPTER_ARTIFACT_CONTRACT"),
+        ("talk.analyse", "TALK_ARTIFACT_CONTRACT"),
     ):
         assert key in text
         assert contract in text
-        assert f"export const {schema}" in text
 
     assert text.count("artifact_contract:") == 3
     assert text.count("frontmatter_seed:") == 3
