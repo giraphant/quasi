@@ -211,14 +211,29 @@ def prepare_stage(
         "effect": "writer",
         "attempt": 1,
         "slug": slug,
-        "source_path": p["media"],
-        "source_sha256": SHA["source"] if status == "complete" else None,
-        "request_fingerprint": SHA["request"] if status == "complete" else None,
-        "manifest_path": p["manifest"],
-        "classification": classification,
+        "source_observation": (
+            {"path": p["media"], "sha256": SHA["source"]}
+            if status == "complete"
+            else None
+        ),
+        "generation_observation": (
+            {
+                "manifest_path": p["manifest"],
+                "request_fingerprint": SHA["request"],
+            }
+            if status == "complete"
+            else None
+        ),
+        "classification": classification or "unclassified",
         "transcript_changed": transcript_changed,
-        "canonical_exists": canonical_exists,
-        "canonical_sha256": SHA["canonical"] if canonical_exists else None,
+        "canonical_observation": (
+            {
+                "path": p["canonical"],
+                "sha256": SHA["canonical"],
+            }
+            if canonical_exists
+            else None
+        ),
         "artifacts": transcript_artifacts(slug) if artifacts is None else artifacts,
         "steps": [
             {
@@ -466,8 +481,8 @@ def test_complete_prepare_must_prove_exact_transcript_artifacts() -> None:
 
 def test_missing_canonical_rejects_a_fabricated_zero_hash() -> None:
     slug = "stage-talk-zero-hash"
-    receipt = prepare_stage(slug)
-    receipt["canonical_sha256"] = "0" * 64
+    receipt = prepare_stage(slug, canonical_exists=True)
+    receipt["canonical_observation"]["sha256"] = "0" * 64
     report = run_talk(slug, {"talk.prepare": [response(receipt)]})
     assert report["result"]["status"] == "blocked"
     assert report["result"]["material_receipt"]["failure"]["code"] == (

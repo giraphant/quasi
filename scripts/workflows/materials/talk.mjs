@@ -406,9 +406,12 @@ function prepareFailure(receipt, outcome = "known") {
 
 async function prepareTalk(runtime, state) {
   const context = {
+    media: state.media,
+    manifest: state.manifest,
     prepared: state.prepared,
     transcript: state.transcript,
     subtitle: state.subtitle,
+    canonical: state.canonical,
     processingDir: state.processingDir,
     engines: state.engines,
   };
@@ -485,9 +488,10 @@ async function prepareTalk(runtime, state) {
       ),
     };
   const receipt = run.receipt;
-  state.sourceSha256 = receipt.source_sha256;
-  state.requestFingerprint = receipt.request_fingerprint;
-  state.outputExists = receipt.canonical_exists;
+  state.sourceSha256 = receipt.source_observation.sha256;
+  state.requestFingerprint =
+    receipt.generation_observation.request_fingerprint;
+  state.outputExists = receipt.canonical_observation !== null;
   state.transcriptReplaced = receipt.transcript_changed;
   state.classification = receipt.classification;
   state.transcriptArtifacts = receipt.artifacts.filter((row) =>
@@ -503,7 +507,7 @@ async function prepareTalk(runtime, state) {
         "canonical",
         state.canonical,
         "talk.prepare:observed",
-        receipt.canonical_sha256,
+        receipt.canonical_observation.sha256,
       ),
     );
     state.disposition = "reused";

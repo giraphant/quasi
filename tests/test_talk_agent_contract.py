@@ -115,17 +115,28 @@ if (schema.properties.operation.const !== "talk.prepare")
   throw new Error("wrong operation");
 if (schema.properties.stage.const !== "Prepare")
   throw new Error("wrong stage");
-for (const key of ["source_sha256", "request_fingerprint", "canonical_sha256"]) {
-  const hash = schema.properties[key];
-  if (Object.hasOwn(hash, "type") || Object.hasOwn(hash, "pattern"))
-    throw new Error(`${key} must isolate the nullable branch`);
-  if (!Array.isArray(hash.anyOf) || hash.anyOf.length !== 2)
-    throw new Error(`${key} must have two explicit branches`);
-  const nullBranch = hash.anyOf.find((row) => row.type === "null");
-  const digestBranch = hash.anyOf.find((row) => row.type === "string");
-  if (!nullBranch || digestBranch?.pattern !== "^[a-f0-9]{64}$")
-    throw new Error(`${key} has the wrong nullable digest contract`);
-}
+const source = schema.properties.source_observation;
+if (!Array.isArray(source.type) || source.type.join(",") !== "object,null")
+  throw new Error("source observation must be object|null");
+if (source.properties.path.const !== "input.wav" ||
+    source.properties.sha256.pattern !== "^[a-f0-9]{64}$")
+  throw new Error("source observation must bind the exact artifact");
+const generation = schema.properties.generation_observation;
+if (!Array.isArray(generation.type) ||
+    generation.type.join(",") !== "object,null")
+  throw new Error("generation observation must be object|null");
+if (generation.properties.manifest_path.const !==
+      "processing/talks/placeholder/manifest.json" ||
+    generation.properties.request_fingerprint.pattern !== "^[a-f0-9]{64}$")
+  throw new Error("generation observation must bind the exact manifest");
+const canonical = schema.properties.canonical_observation;
+if (!Array.isArray(canonical.type) ||
+    canonical.type.join(",") !== "object,null")
+  throw new Error("canonical observation must be object|null");
+if (canonical.properties.path.const !== "vault/talks/placeholder/talk.md")
+  throw new Error("canonical observation must echo the exact path");
+if (canonical.properties.sha256.pattern !== "^[a-f0-9]{64}$")
+  throw new Error("canonical observation must carry a digest");
 """
     completed = subprocess.run(
         ["node", "--input-type=module", "-e", script],
@@ -139,8 +150,8 @@ for (const key of ["source_sha256", "request_fingerprint", "canonical_sha256"]) 
 
 def test_transcribe_agent_reports_only_real_canonical_hashes() -> None:
     contract = text(TRANSCRIBE)
-    assert "`canonical_exists:false` 和 JSON `null`" in contract
-    assert "存在时才回显其实际 SHA-256" in contract
+    assert "`canonical_observation:null`" in contract
+    assert "exact path 与实际 SHA-256" in contract
 
 
 def test_silent_product_remains_one_exact_writer_operation() -> None:

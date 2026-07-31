@@ -46,5 +46,7 @@ request 要求时准备为 exact media output；已有且与 source generation �
 内部可以依材料状态调用多项能力。交付前选择一个 `terminal` 分支并对照 schema 检查完整性；
 complete 的 issue 为 null，其他分支使用 typed issue。`artifacts` 逐字采用 CLI receipt 的
 path/hash/size，`steps` 概括实际工作，`transcript_changed` 告诉下一阶段 canonical 是否需要刷新。你不写 `talk.md`、
-不执行 analyse/audit，也不发现另一份媒体。Canonical observation 始终对应真实文件状态：文件
-尚不存在时返回 `canonical_exists:false` 和 JSON `null`，存在时才回显其实际 SHA-256。
+不执行 analyse/audit，也不发现另一份媒体。三个 observation 始终对应真实文件状态：已观察到的
+source 和 committed generation 分别返回包含 exact path/fingerprint 的 object；尚不存在的
+canonical 返回 `canonical_observation:null`，存在时才返回包含 exact path 与实际 SHA-256 的
+object。尚未完成语义分类时使用 `classification:unclassified`。

@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.24** (2026-07-31): **修复 Talk Prepare 在真实 StructuredOutput 中无法表达缺失 canonical 的问题。**
+  - 原生 `glm-5.2` worker 已正确复用 committed transcript generation 并判定 `live`，但 `canonical_sha256` 连续被编码为字符串 `"null"`、空字符串或缺失，五次均被 schema 拒绝。Prepare 因而错误终止为 `talk.writer_outcome_unknown`，Analyse 从未获得执行机会。
+  - Talk Prepare 不再用 `canonical_exists + nullable scalar hash` 表达同一事实。Source、generation 与 canonical 现在各自使用单一 `object|null` observation；不存在的 canonical 是整个 observation 为 null，存在时 object 同时绑定 exact path 与真实 digest。未完成分类使用显式 `unclassified`，不再要求宿主生成顶层 nullable string。
+  - Graph 只验证下一阶段需要的 exact observations 与 transcript artifacts，没有新增转录个案、CLI 次数或隐藏恢复条件；全零伪 digest 仍 fail closed。生成 bundle 为 293,248 bytes；全库 773 项回归通过。
+
 - **0.52.23** (2026-07-31): **修复三个由 StructuredOutput schema 与 Graph 完成谓词漂移造成的假阻断。**
   - Talk Prepare 的 nullable SHA-256 改为显式 `null | constrained string` schema 分支，避免 Claude 把缺失 canonical 的 JSON null 生成为字符串 `"null"`。Graph 仍只接受真实文件 hash；`canonical_exists:false` 搭配全零伪 hash 会明确失败。
   - `material.search` 现在按既有 schema/Agent 语义接受 `local_owner:null` 为“已检查且无本地 owner”，并沿 Search 选出的 canonical identity 进入 Acquire；exact owner object 仍须绑定同一 identity 与 canonical vault path。

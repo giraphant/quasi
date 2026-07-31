@@ -9,14 +9,28 @@ import {
 
 const TALK_HASH_PATTERN = "^[a-f0-9]{64}$";
 
-// Claude StructuredOutput may apply a sibling `pattern` to the null arm of a
-// type union. Keep absence and a verified digest in separate schema branches.
-const nullableHashSchema = {
-  anyOf: [
-    { type: "null" },
-    { type: "string", pattern: TALK_HASH_PATTERN },
-  ],
-};
+const artifactObservationSchema = (path) => ({
+  type: ["object", "null"],
+  additionalProperties: false,
+  required: ["path", "sha256"],
+  properties: {
+    path: { const: path },
+    sha256: { type: "string", pattern: TALK_HASH_PATTERN },
+  },
+});
+
+const generationObservationSchema = (manifest) => ({
+  type: ["object", "null"],
+  additionalProperties: false,
+  required: ["manifest_path", "request_fingerprint"],
+  properties: {
+    manifest_path: { const: manifest },
+    request_fingerprint: {
+      type: "string",
+      pattern: TALK_HASH_PATTERN,
+    },
+  },
+});
 
 const failureSchema = (operationKey) => ({
   type: ["object", "null"],
@@ -255,31 +269,28 @@ export const talkPrepareStageSchema = ({
     effect: "writer",
     required: [
       "slug",
-      "source_path",
-      "source_sha256",
-      "request_fingerprint",
-      "manifest_path",
+      "source_observation",
+      "generation_observation",
       "classification",
       "transcript_changed",
-      "canonical_exists",
-      "canonical_sha256",
+      "canonical_observation",
       "artifacts",
       "steps",
       "diagnostics",
     ],
     properties: {
       slug: { const: slug },
-      source_path: { const: media },
-      source_sha256: nullableHashSchema,
-      request_fingerprint: nullableHashSchema,
-      manifest_path: { const: manifest },
+      source_observation:
+        artifactObservationSchema(media),
+      generation_observation:
+        generationObservationSchema(manifest),
       classification: {
-        type: ["string", "null"],
-        enum: ["live", "dead", "empty", null],
+        type: "string",
+        enum: ["live", "dead", "empty", "unclassified"],
       },
       transcript_changed: { type: "boolean" },
-      canonical_exists: { type: "boolean" },
-      canonical_sha256: nullableHashSchema,
+      canonical_observation:
+        artifactObservationSchema(canonical),
       artifacts: {
         type: "array",
         maxItems: 8,
@@ -321,10 +332,14 @@ export const TALK_PREPARE_STAGE_CONTRACT = stageContract({
       ),
     ]);
     return (
-      typeof receipt.source_sha256 === "string" &&
-      typeof receipt.request_fingerprint === "string" &&
+      receipt.source_observation !== null &&
+      receipt.source_observation.path === context.media &&
+      receipt.generation_observation !== null &&
+      receipt.generation_observation.manifest_path === context.manifest &&
       ["live", "dead", "empty"].includes(receipt.classification) &&
-      receipt.canonical_exists === (receipt.canonical_sha256 !== null) &&
+      (receipt.canonical_observation === null ||
+        (receipt.canonical_observation.path === context.canonical &&
+          receipt.canonical_observation.sha256 !== "0".repeat(64))) &&
       receipt.artifacts.every((row) => allowed.has(row.path)) &&
       receipt.artifacts.some(
         (row) => row.role === "transcript" && row.path === context.transcript,
