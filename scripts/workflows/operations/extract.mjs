@@ -42,6 +42,10 @@ const preparedArtifactSchema = (paths, roles) => ({
   },
 });
 
+const CHAPTER_SLOT_PATTERN = "^\\d{2,3}[a-z]{0,2}$";
+const CHAPTER_SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
+const CHAPTER_TITLE_PATTERN = "^[^\\u0000-\\u001f\\u007f-\\u009f]+$";
+
 const chapterRefSchema = {
   type: "object",
   additionalProperties: false,
@@ -55,18 +59,30 @@ const chapterRefSchema = {
     "end_page",
   ],
   properties: {
-    slot: { type: "string" },
-    title: { type: "string", minLength: 1, maxLength: 500 },
+    slot: { type: "string", pattern: CHAPTER_SLOT_PATTERN },
+    title: {
+      type: "string",
+      minLength: 1,
+      maxLength: 500,
+      pattern: CHAPTER_TITLE_PATTERN,
+      description:
+        "Exact committed chapter title, trimmed and free of tabs, newlines, and other control characters.",
+    },
     filename: { type: "string" },
-    slug: { type: "string" },
+    slug: {
+      type: "string",
+      pattern: CHAPTER_SLUG_PATTERN,
+      description:
+        "Exact committed chapter slug in lowercase ASCII kebab-case; underscores, spaces, Unicode, dots, and path separators are invalid.",
+    },
     word_count: { type: "integer", minimum: 0 },
     start_page: { type: ["integer", "null"], minimum: 1 },
     end_page: { type: ["integer", "null"], minimum: 1 },
   },
 };
 
-const CHAPTER_SLOT = /^\d{2,3}[a-z]{0,2}$/;
-const CHAPTER_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
+const CHAPTER_SLOT = new RegExp(CHAPTER_SLOT_PATTERN);
+const CHAPTER_SLUG = new RegExp(CHAPTER_SLUG_PATTERN);
 
 const validChapterRef = (chapter) => {
   const filenameIsSafe =
@@ -81,9 +97,7 @@ const validChapterRef = (chapter) => {
     !CHAPTER_SLOT.test(chapter.slot) ||
     !CHAPTER_SLUG.test(chapter.slug) ||
     !filenameIsSafe ||
-    typeof chapter.title !== "string" ||
-    chapter.title.length < 1 ||
-    chapter.title.length > 500
+    !validText(chapter.title, 1, 500)
   )
     return false;
   const noPages =

@@ -44,7 +44,10 @@ usable 的 exact normalized artifact。
   发布新 generation。继续工作，直到章节集合 ready，或你判断现有 source/能力无法解决。
 
 最终 `chapters` 逐字采用最新 committed manifest 的完整有序表；filename、slot、slug、页码
-和 fingerprint 不手抄改写。`artifacts` 只报告 request 输出目录和 manifest 实际拥有的产物。
+和 fingerprint 不手抄改写。可交付 manifest 的每个 slug 都必须匹配
+`^[a-z0-9][a-z0-9-]{0,79}$`；若旧 manifest 不符合，使用 exact source 和当前 CLI 发布
+新 generation，然后回显新 manifest。`artifacts` 只报告 request 输出目录和 manifest 实际
+拥有的产物。
 
 ## 阶段判断
 

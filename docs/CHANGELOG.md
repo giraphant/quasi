@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.25** (2026-07-31): **修复 Book EPUB chapter-ref 生成端，不再用放宽标准接纳坏 manifest。**
+  - Sen 的 17 章 Prepare 并非因 `disposition:replaced` 失败；真实 seam 是旧 extractor 把 filename-derived title 的下划线保留进 chapter slug，而 StructuredOutput schema 又没有公开 Graph 实际要求的 ASCII kebab-case。Chapter slug 现在在 host schema 与 Graph backstop 中共同固定为 `^[a-z0-9][a-z0-9-]{0,79}$`，Agent 会在交付前看到精确要求；underscore、Unicode、空格、点与路径分隔符继续 fail closed。
+  - EPUB extractor 原生读取 `.htm|.html|.xhtml`，NCX 标题先规范化空白，slug 只由确定性 CLI 生成；无法 ASCII 化的标题使用唯一 `section-{slot}`。0.52.23 曾为接纳真实 receipt 而允许 title tab，本版撤回该放宽并在 schema 中禁止控制字符。
+  - PDF/EPUB extraction fingerprint 新增 `canonical-v1` chapter-ref contract。旧 generation 不被兼容放行，而是在下一次 exact-source Prepare 中通过同一锁、staging 与 manifest-last transaction 重建。生成 bundle 为 293,722 bytes；全库 782 项回归通过。
+
 - **0.52.24** (2026-07-31): **修复 Talk Prepare 在真实 StructuredOutput 中无法表达缺失 canonical 的问题。**
   - 原生 `glm-5.2` worker 已正确复用 committed transcript generation 并判定 `live`，但 `canonical_sha256` 连续被编码为字符串 `"null"`、空字符串或缺失，五次均被 schema 拒绝。Prepare 因而错误终止为 `talk.writer_outcome_unknown`，Analyse 从未获得执行机会。
   - Talk Prepare 不再用 `canonical_exists + nullable scalar hash` 表达同一事实。Source、generation 与 canonical 现在各自使用单一 `object|null` observation；不存在的 canonical 是整个 observation 为 null，存在时 object 同时绑定 exact path 与真实 digest。未完成分类使用显式 `unclassified`，不再要求宿主生成顶层 nullable string。

@@ -24,7 +24,20 @@ from chapter_commit import (
     emit_receipt,
     failure_receipt,
 )
-from toc_utils import is_skip, assign_slots, make_filename, make_slug
+from toc_utils import (
+    CHAPTER_REF_CONTRACT,
+    assign_slots,
+    is_skip,
+    make_filename,
+    make_slug,
+)
+
+
+HTML_SUFFIXES = {'.htm', '.html', '.xhtml'}
+
+
+def _is_html_member(name: str) -> bool:
+    return Path(name).suffix.lower() in HTML_SUFFIXES
 
 
 class HTMLTextExtractor(HTMLParser):
@@ -85,8 +98,9 @@ def parse_toc_from_ncx(ncx_content):
         # 解码HTML实体
         title = title.replace('&#x2019;', "'").replace('&#x2018;', "'")
         title = title.replace('&amp;', '&').replace('&#x2013;', '–')
+        title = ' '.join(title.split())
         chapters.append({
-            'title': title.strip(),
+            'title': title,
             'src': src.strip()
         })
 
@@ -117,7 +131,7 @@ def process_epub(epub_path, output_dir, *, structured=False):
             elif 'OPS/' in f:
                 content_prefix = 'OPS/'
                 break
-            elif f.startswith('Text/') and f.endswith('.xhtml'):
+            elif f.startswith('Text/') and _is_html_member(f):
                 content_prefix = 'Text/'
                 break
 
@@ -137,7 +151,7 @@ def process_epub(epub_path, output_dir, *, structured=False):
 
         # 如果没有ncx或解析失败，直接按文件名排序
         if not chapters:
-            html_files = sorted([f for f in all_files if f.endswith('.html') or f.endswith('.xhtml')])
+            html_files = sorted([f for f in all_files if _is_html_member(f)])
             chapters = [{'title': Path(f).stem, 'src': Path(f).name} for f in html_files]
             print(f"直接从文件列表读取到 {len(chapters)} 个HTML文件")
 
@@ -331,7 +345,10 @@ def _commit_epub(args, *, progress_stream) -> tuple[int, dict]:
             input_path=input_path,
             output_dir=output_dir,
             mode='epub',
-            options={'extractor': 'epub'},
+            options={
+                'extractor': 'epub',
+                'chapter_ref_contract': CHAPTER_REF_CONTRACT,
+            },
             max_chapters=args.max_chapters,
             build_stage=build,
             expected_manifest_fingerprint=args.expected_manifest_fingerprint,

@@ -40,15 +40,20 @@ def _write_epub(
     path: Path,
     chapter_count: int = 2,
     body_label: str = "chapter",
+    *,
+    extension: str = ".xhtml",
+    include_ncx: bool = True,
+    filename_template: str = "chapter-{index}",
+    nav_title_template: str = "Chapter {index}: Title",
 ) -> None:
     navpoints = []
     with zipfile.ZipFile(path, "w") as archive:
         for index in range(1, chapter_count + 1):
-            filename = f"chapter-{index}.xhtml"
+            filename = filename_template.format(index=index) + extension
             navpoints.append(
                 f"""
                 <navPoint id="chapter-{index}">
-                  <navLabel><text>Chapter {index}: Title</text></navLabel>
+                  <navLabel><text>{nav_title_template.format(index=index)}</text></navLabel>
                   <content src="{filename}"/>
                 </navPoint>
                 """
@@ -61,10 +66,11 @@ def _write_epub(
                     + "</p></body></html>"
                 ),
             )
-        archive.writestr(
-            "OEBPS/toc.ncx",
-            "<ncx><navMap>" + "".join(navpoints) + "</navMap></ncx>",
-        )
+        if include_ncx:
+            archive.writestr(
+                "OEBPS/toc.ncx",
+                "<ncx><navMap>" + "".join(navpoints) + "</navMap></ncx>",
+            )
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
@@ -103,6 +109,94 @@ def test_epub_json_commits_full_manifest_and_one_stdout_object(tmp_path: Path):
         (output / "manifest.json").read_bytes()
     ).hexdigest()
     assert all((output / row["filename"]).is_file() for row in receipt["chapters"])
+
+
+def test_epub_fallback_reads_htm_and_normalises_filename_slug(tmp_path: Path):
+    source = tmp_path / "book.epub"
+    output = tmp_path / "chapters"
+    _write_epub(
+        source,
+        chapter_count=2,
+        extension=".htm",
+        include_ncx=False,
+        filename_template="{index:02d}_chapter_title",
+    )
+
+    result = _run("epub", str(source), str(output), "--json")
+
+    receipt = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert receipt["chapter_count"] == 2
+    assert [row["title"] for row in receipt["chapters"]] == [
+        "01_chapter_title",
+        "02_chapter_title",
+    ]
+    assert [row["slug"] for row in receipt["chapters"]] == [
+        "01-chapter-title",
+        "02-chapter-title",
+    ]
+
+
+def test_epub_normalises_ncx_title_whitespace(tmp_path: Path):
+    source = tmp_path / "book.epub"
+    output = tmp_path / "chapters"
+    _write_epub(
+        source,
+        chapter_count=1,
+        nav_title_template="Chapter {index}:\tA   Stable Title",
+    )
+
+    result = _run("epub", str(source), str(output), "--json")
+
+    receipt = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert receipt["chapters"][0]["title"] == "Chapter 1: A Stable Title"
+
+
+def test_epub_non_ascii_title_uses_canonical_slot_fallback(tmp_path: Path):
+    source = tmp_path / "book.epub"
+    output = tmp_path / "chapters"
+    _write_epub(
+        source,
+        chapter_count=1,
+        extension=".htm",
+        include_ncx=False,
+        filename_template="第一章",
+    )
+
+    result = _run("epub", str(source), str(output), "--json")
+
+    receipt = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert receipt["chapters"][0]["slug"] == "section-01"
+
+
+def test_epub_replaces_pre_contract_manifest_with_canonical_slugs(tmp_path: Path):
+    source = tmp_path / "book.epub"
+    output = tmp_path / "chapters"
+    _write_epub(
+        source,
+        chapter_count=1,
+        extension=".htm",
+        include_ncx=False,
+        filename_template="01_chapter_title",
+    )
+    assert _run("epub", str(source), str(output), "--json").returncode == 0
+    manifest_path = output / "manifest.json"
+    old_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    old_manifest["request_fingerprint"] = "0" * 64
+    old_manifest["chapters"][0]["slug"] = "01_chapter_title"
+    manifest_path.write_text(
+        json.dumps(old_manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run("epub", str(source), str(output), "--json")
+
+    receipt = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert receipt["disposition"] == "replaced"
+    assert receipt["chapters"][0]["slug"] == "01-chapter-title"
 
 
 def test_epub_limit_is_signal_only(tmp_path: Path):

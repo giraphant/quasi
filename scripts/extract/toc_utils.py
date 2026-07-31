@@ -18,6 +18,10 @@ slot 格式：
 from __future__ import annotations
 
 import re
+import unicodedata
+
+
+CHAPTER_REF_CONTRACT = 'canonical-v1'
 
 
 # ---------- SKIP 规则：标题级硬过滤，必然非内容 ----------
@@ -147,9 +151,10 @@ def make_filename(slot: str, title: str, ext: str = 'txt') -> str:
 def make_slug(slot: str, title: str) -> str:
     """章节 vault 输出用的稳定 slug（确定性），供 analysis 层拼 ``ch{slot}-{slug}.md``。
 
-    去掉标题里的章号前缀（Chapter N / 第N章 / N. / CH N），其余 slugify：保留 CJK、
-    lowercase、非词字符→连字符、截断。返回**裸** slug（不含 ch/slot 前缀）。
+    去掉标题里的章号前缀（Chapter N / 第N章 / N. / CH N），其余 slugify：ASCII
+    lowercase、非字母数字→连字符、截断。返回**裸** slug（不含 ch/slot 前缀）。
     章号后无实义标题时回退整标题（"Chapter 1" → "chapter-1"），避免空 slug。
+    无可转写的 ASCII 文字时使用带 slot 的稳定 section fallback，保证唯一性。
 
     存进 manifest.json 后成为跨 run 稳定的章节身份，取代此前由 LLM 现编的 slug
     （非确定性 → 续跑不幂等 + 前缀不一致 → 双前缀）。
@@ -163,8 +168,16 @@ def make_slug(slot: str, title: str) -> str:
             break
     stripped = stripped.strip(' :：.-—–\t')
     base = stripped if re.search(r'\w', stripped) else t
-    slug = re.sub(r'[^\w]+', '-', base).strip('-').lower()
+    ascii_base = (
+        unicodedata.normalize('NFKD', base)
+        .encode('ascii', 'ignore')
+        .decode('ascii')
+    )
+    slug = re.sub(r'[^A-Za-z0-9]+', '-', ascii_base).strip('-').lower()
+    if not slug:
+        safe_slot = re.sub(r'[^a-z0-9]+', '-', str(slot).lower()).strip('-')
+        slug = f"section-{safe_slot or '00'}"
     if len(slug) > 60:
         # 截到 60 内最后一个连字符,不切词中间;首 60 无连字符(单长词)时才硬截
         slug = slug[:60].rsplit('-', 1)[0] or slug[:60]
-    return slug.strip('-') or 'section'
+    return slug.strip('-')

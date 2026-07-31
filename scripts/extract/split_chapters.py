@@ -43,7 +43,13 @@ from chapter_commit import (
     failure_receipt,
     verify_expected_manifest,
 )
-from toc_utils import is_skip, assign_slots, make_filename, make_slug
+from toc_utils import (
+    CHAPTER_REF_CONTRACT,
+    assign_slots,
+    is_skip,
+    make_filename,
+    make_slug,
+)
 
 try:
     import fitz  # PyMuPDF
@@ -322,6 +328,8 @@ def _legacy_run(args) -> int:
                 )
             if args.method == 'pattern':
                 print("Using pattern-based splitting...")
+
+        options['chapter_ref_contract'] = CHAPTER_REF_CONTRACT
 
         # The legacy surface is only a prose renderer.  Its chapter writes use
         # the exact same lock, staging, validation, and manifest-last commit as
@@ -820,6 +828,8 @@ def _json_run(args, argv: list[str]) -> int:
             builder = _json_full_build(args, pdf_path, mode, None)
             require_previous = False
             disposition = None
+
+        options['chapter_ref_contract'] = CHAPTER_REF_CONTRACT
 
         with redirect_stdout(sys.stderr):
             exit_code, receipt = commit_chapter_set(

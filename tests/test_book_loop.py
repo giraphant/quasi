@@ -14,6 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 BOOK = ROOT / "scripts" / "workflows" / "materials" / "book.mjs"
 RUNTIME = ROOT / "scripts" / "workflows" / "runtime.mjs"
+EXTRACT_OPERATION = ROOT / "scripts" / "workflows" / "operations" / "extract.mjs"
 
 NODE_HARNESS = r"""
 import { processBook } from __BOOK_URI__
@@ -345,8 +346,9 @@ def analyse(
     *,
     status: str = "succeeded",
     action: str = "create",
+    member: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    row = next(item for item in chapters(slug) if item["slot"] == slot)
+    row = member or next(item for item in chapters(slug) if item["slot"] == slot)
     failed = status == "failed"
     return {
         "schema_version": "quasi.operation.chapter.analyse.receipt/0.1",
@@ -372,8 +374,13 @@ def analyse(
     }
 
 
-def synthesis(slug: str, *, action: str = "create") -> dict[str, Any]:
-    rows = chapters(slug)
+def synthesis(
+    slug: str,
+    *,
+    action: str = "create",
+    members: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    rows = members or chapters(slug)
     return {
         "schema_version": "quasi.operation.book.synthesise.receipt/0.1",
         "key": "book.synthesise",
@@ -426,6 +433,39 @@ def happy(slug: str, *, barrier: bool = False) -> dict[str, list[Any]]:
 
 def operations(report: dict[str, Any]) -> list[str | None]:
     return [entry["operation"] for entry in report["trace"]]
+
+
+def test_book_prepare_schema_exposes_canonical_chapter_slug_contract() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+    script = f"""
+import {{ bookPrepareStageSchema }} from {json.dumps(EXTRACT_OPERATION.as_uri())};
+const schema = bookPrepareStageSchema({{
+  materialKey: "book:example",
+  source: "sources/example.epub",
+  format: "epub",
+  normalized: "processing/chapters/example/source.txt",
+  recoverySource: "processing/chapters/example/ocr.pdf",
+  recoveryText: "processing/chapters/example/ocr.txt",
+  outputDir: "processing/chapters/example",
+  manifest: "processing/chapters/example/manifest.json",
+}});
+console.log(JSON.stringify(schema.properties.chapters.items.properties.slug));
+"""
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    slug_schema = json.loads(result.stdout)
+    assert slug_schema["pattern"] == "^[a-z0-9][a-z0-9-]{0,79}$"
+    assert "kebab-case" in slug_schema["description"]
+    assert "underscores" in slug_schema["description"]
 
 
 def test_book_happy_path_is_prepare_then_parallel_analysis_join(
@@ -527,7 +567,7 @@ def test_prepare_complete_reproves_every_manifest_chapter(tmp_path: Path) -> Non
     )
 
 
-def test_epub_prepare_accepts_exact_manifest_titles_with_tabs(
+def test_epub_prepare_rejects_manifest_titles_with_tabs(
     tmp_path: Path,
 ) -> None:
     slug = "book-stage-epub-tab-title"
@@ -551,12 +591,58 @@ def test_epub_prepare_accepts_exact_manifest_titles_with_tabs(
             },
         ]
     )
+    responses = {
+        "book.acquire": [reply(acquire(slug))],
+        "book.prepare": [reply(receipt)],
+    }
+    report = run_book(tmp_path, slug, responses)
+
+    assert report["result"]["status"] == "blocked"
+    assert report["result"]["material_receipt"]["failure"]["code"] == (
+        "book.writer_receipt_mismatch"
+    )
+
+
+def test_epub_prepare_accepts_replaced_manifest_with_canonical_slugs(
+    tmp_path: Path,
+) -> None:
+    slug = "book-stage-epub-replaced"
+    rows = chapters(slug)
+    rows[0]["slug"] = "preface"
+    rows[1]["slug"] = "chapter-two"
+    receipt = prepare(slug, members=rows)
+    receipt["disposition"] = "replaced"
     responses = happy(slug)
     responses["book.prepare"] = [reply(receipt)]
+    responses["chapter.analyse:01"] = [reply(analyse(slug, "01", member=rows[0]))]
+    responses["chapter.analyse:02"] = [reply(analyse(slug, "02", member=rows[1]))]
+    responses["book.synthesise"] = [reply(synthesis(slug, members=rows))]
+
     report = run_book(tmp_path, slug, responses)
 
     assert report["result"]["status"] == "ok"
     assert report["result"]["material_receipt"]["status"] == "complete"
+
+
+@pytest.mark.parametrize("invalid_slug", ["01_preface", "章节-二", "../outside"])
+def test_epub_prepare_rejects_noncanonical_chapter_slug(
+    tmp_path: Path,
+    invalid_slug: str,
+) -> None:
+    slug = "book-stage-epub-unsafe-slug"
+    rows = chapters(slug)
+    rows[0]["slug"] = invalid_slug
+    responses = {
+        "book.acquire": [reply(acquire(slug))],
+        "book.prepare": [reply(prepare(slug, members=rows))],
+    }
+
+    report = run_book(tmp_path, slug, responses)
+
+    assert report["result"]["status"] == "blocked"
+    assert report["result"]["material_receipt"]["failure"]["code"] == (
+        "book.writer_receipt_mismatch"
+    )
 
 
 def test_known_missing_chapter_refills_only_that_member(tmp_path: Path) -> None:
