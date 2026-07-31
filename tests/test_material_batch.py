@@ -115,19 +115,195 @@ const runtime = {{
   log: () => {{}},
 }}
 const items = [
-  {{ kind: "paper", slug: "paper-one" }},
-  {{ kind: "book", slug: "book-two" }},
+  {{ kind: "paper", request: {{
+    slug: "paper-one",
+    title: "Paper One",
+    authors: ["Ada Example"],
+    year: 2024,
+    doi: "10.1000/paper-one",
+    journal: "Example Journal",
+  }} }},
+  {{ kind: "book", request: {{
+    slug: "book-two",
+    title: "Book Two",
+    authors: ["Ben Example"],
+    year: 2023,
+    isbn: "9780000000002",
+    publisher: "Example Press",
+    category: "monograph",
+  }} }},
 ]
-const result = await processMaterialBatch(runtime, items, async item => ({{
-  slug: item.slug,
-  status: "ok",
-  material_receipt: {{
-    schema_version: "quasi.material-loop.receipt/0.1",
-    material_key: `${{item.kind}}:${{item.slug}}`,
+const strictResult = item => {{
+  const slug = item.request.slug
+  const identity = item.kind === "paper" ? {{
+    slug,
+    title: item.request.title,
+    authors: item.request.authors,
+    year: item.request.year,
+    doi: item.request.doi,
+    oa_url: null,
+    url: null,
+    journal: item.request.journal,
+    confidence: "high",
+  }} : {{
+    slug,
+    title: item.request.title,
+    authors: item.request.authors,
+    year: item.request.year,
+    isbn: item.request.isbn,
+    publisher: item.request.publisher,
+    category: item.request.category,
+    confidence: "high",
+  }}
+  const search = {{
+    schema_version: "quasi.stage.receipt/0.2",
+    operation: "material.search",
+    stage: "Search",
+    material_key: `${{item.kind}}:${{slug}}`,
+    effect: "readonly",
+    attempt: 1,
     kind: item.kind,
-    id: item.slug,
-    status: "complete",
-  }},
+    identity,
+    local_owner: null,
+    confidence: "high",
+    observations: [{{
+      source: "fixture",
+      query: item.request.title,
+      summary: "exact identity",
+    }}],
+    terminal: {{ status: "complete", issue: null }},
+  }}
+  const canonical = item.kind === "paper"
+    ? `vault/papers/${{slug}}.md`
+    : `vault/books/${{slug}}/00-overview.md`
+  const audit = item.kind === "paper"
+    ? {{
+        schema_version: "quasi.operation.paper.audit.receipt/0.2",
+        key: "paper.audit",
+        effect: "writer",
+        status: "clean",
+        attempt: 1,
+        target_path: canonical,
+        artifact_roles: ["canonical"],
+        pass: 1,
+        remaining_violations: 0,
+        escalated: [],
+        mutated_paths: [],
+        failure: null,
+      }}
+    : [{{
+        schema_version: "quasi.operation.book.audit.receipt/0.1",
+        key: "book.audit",
+        effect: "writer",
+        status: "clean",
+        attempt: 1,
+        target_path: `vault/books/${{slug}}`,
+        remaining_violations: 0,
+        escalated: [],
+        mutated_paths: [],
+      }}]
+  const artifacts = [{{
+    role: "canonical",
+    path: canonical,
+    exists: true,
+    usable: true,
+    producer: item.kind === "paper"
+      ? "paper.analyse"
+      : "book.synthesise",
+  }}]
+  if (item.kind === "book") artifacts.push({{
+    role: "chapter_canonical",
+    path: `vault/books/${{slug}}/ch01-example.md`,
+    exists: true,
+    usable: true,
+    producer: "chapter.analyse",
+  }})
+  return {{
+    slug,
+    // Deliberately contradictory: Batch admission is MaterialReceipt-owned.
+    status: "legacy-status-must-not-control-the-batch",
+    private_child_state: {{ must_not_escape: true }},
+    material_receipt: {{
+      schema_version: "quasi.material-loop.receipt/0.2",
+      material_key: `${{item.kind}}:${{slug}}`,
+      kind: item.kind,
+      id: slug,
+      status: "complete",
+      disposition: "created",
+      stage: "audit",
+      artifacts,
+      operations: [{{ key: `${{item.kind}}.analyse` }}],
+      audit,
+      freshness: {{
+        observation: "unknown",
+        basis: "operation-receipts-and-final-audit",
+      }},
+      warnings: [],
+      failure: null,
+      user_gate: null,
+      resume: null,
+      ...(item.kind === "book" ? {{
+        expected_slots: ["01"],
+        present_slots: ["01"],
+        missing_slots: [],
+      }} : {{}}),
+    }},
+    ingress_receipt: {{
+      schema_version: "quasi.material-ingress.receipt/0.2",
+      request_key: `${{item.kind}}:${{slug}}`,
+      kind: item.kind,
+      status: "resolved",
+      stage: "search",
+      request: item.kind === "paper" ? {{
+        slug,
+        title: item.request.title,
+        authors: item.request.authors,
+        year: item.request.year,
+        doi: item.request.doi,
+        oa_url: null,
+        url: null,
+        journal: item.request.journal,
+      }} : {{
+        slug,
+        title: item.request.title,
+        authors: item.request.authors,
+        year: item.request.year,
+        isbn: item.request.isbn,
+        publisher: item.request.publisher,
+        category: item.request.category,
+        format: null,
+      }},
+      operations: [search],
+      identity: {{
+        slug,
+        meta: item.kind === "paper" ? {{
+          title: identity.title,
+          authors: identity.authors,
+          year: identity.year,
+          doi: identity.doi,
+          oa_url: identity.oa_url,
+          url: identity.url,
+          journal: identity.journal,
+          confidence: "verified",
+        }} : {{
+          title: identity.title,
+          authors: identity.authors,
+          year: identity.year,
+          isbn: identity.isbn,
+          publisher: identity.publisher,
+          category: identity.category,
+          format: null,
+          confidence: "verified",
+        }},
+      }},
+      failure: null,
+      user_gate: null,
+      resume: null,
+    }},
+  }}
+}}
+const result = await processMaterialBatch(runtime, items, async item => ({{
+  ...strictResult(item),
 }}))
 console.log(JSON.stringify(result))
 """
@@ -148,9 +324,77 @@ console.log(JSON.stringify(result))
         "blocked": 0,
         "failed": 0,
     }
+    assert "results" not in result
     assert [
-        item["result"]["slug"] for item in result["results"]
+        item["id"] for item in result["batch_receipt"]["items"]
     ] == ["paper-one", "book-two"]
+    assert [
+        item["canonical_artifacts"][0]["path"]
+        for item in result["batch_receipt"]["items"]
+    ] == [
+        "vault/papers/paper-one.md",
+        "vault/books/book-two/00-overview.md",
+    ]
+    assert [
+        artifact["path"]
+        for artifact in result["batch_receipt"]["items"][1][
+            "canonical_artifacts"
+        ]
+    ] == [
+        "vault/books/book-two/00-overview.md",
+        "vault/books/book-two/ch01-example.md",
+    ]
+    assert all(
+        item["issue"] is None
+        and item["user_gate"] is None
+        and item["resume"] is None
+        for item in result["batch_receipt"]["items"]
+    )
+
+
+def test_batch_rejects_weak_receipt_despite_legacy_ok() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+    script = f"""
+import {{ processMaterialBatch }} from {json.dumps(BATCH.as_uri())}
+const runtime = {{
+  parallel: tasks => Promise.all(tasks.map(task => task())),
+  log: () => {{}},
+}}
+const items = [
+  {{ kind: "paper", slug: "paper-one" }},
+  {{ kind: "paper", slug: "paper-two" }},
+]
+const result = await processMaterialBatch(runtime, items, async item => ({{
+  slug: item.slug,
+  status: "ok",
+  material_receipt: {{
+    schema_version: "quasi.material-loop.receipt/0.2",
+    material_key: `paper:${{item.slug}}`,
+    kind: "paper",
+    id: item.slug,
+    status: "complete",
+  }},
+}}))
+console.log(JSON.stringify(result))
+"""
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["status"] == "blocked"
+    assert result["batch_receipt"]["counts"]["blocked"] == 2
+    assert all(
+        item["issue"]["code"]
+        == "material.batch_child_receipt_invalid"
+        for item in result["batch_receipt"]["items"]
+    )
 
 
 def paper_request(title: str = "Parallel Paper") -> dict[str, Any]:
@@ -211,6 +455,37 @@ def failed_search(
     }
 
 
+def needs_input_search(
+    request_key: str,
+    query: dict[str, Any],
+) -> dict[str, Any]:
+    candidate = {
+        "slug": "different-parallel-paper-2024",
+        "title": query["title"],
+        "authors": ["Bea Different"],
+        "year": query["year"],
+        "doi": query["doi"],
+        "oa_url": None,
+        "url": None,
+        "journal": "Parallel Studies",
+        "confidence": "high",
+    }
+    receipt = failed_search(request_key, "paper", query)
+    receipt["terminal"] = {
+        "status": "needs_input",
+        "issue": {
+            "code": "material.identity_conflict",
+            "operation": "material.search",
+            "summary": "The title resolves to a different author.",
+            "user_question": "Use the evidence-backed candidate?",
+            "retryable": False,
+        },
+        "candidates": [candidate],
+        "conflicts": ["authors"],
+    }
+    return receipt
+
+
 def paper_query() -> dict[str, Any]:
     return {
         "slug": None,
@@ -234,6 +509,60 @@ def book_query() -> dict[str, Any]:
         "publisher": None,
         "category": None,
         "format": None,
+    }
+
+
+def book_year_decision() -> dict[str, Any]:
+    return {
+        "action": "use-recommended-year",
+        "tmp_path": ".quasi/temp/downloads/year-book-candidate.epub",
+        "year_evidence": {
+            "slug_year": 2020,
+            "source_years": {"catalog": 2021, "copyright": 2021},
+            "pdf_signals": {
+                "first_published": 2021,
+                "copyright_year": 2021,
+                "original_year": None,
+                "other_years": [],
+            },
+            "recommended_year": 2021,
+            "recommendation_reason": "two independent signals agree",
+            "verdict": "MISMATCH",
+        },
+    }
+
+
+def successful_book_search(
+    request_key: str,
+    slug: str,
+    year: int,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "material.search",
+        "stage": "Search",
+        "material_key": request_key,
+        "effect": "readonly",
+        "attempt": 1,
+        "kind": "book",
+        "identity": {
+            "slug": slug,
+            "title": "Year Book",
+            "authors": ["Bea Writer"],
+            "year": year,
+            "isbn": "9780000000002",
+            "publisher": "Example Press",
+            "category": "monograph",
+            "confidence": "high",
+        },
+        "local_owner": None,
+        "confidence": "high",
+        "observations": [{
+            "source": "publisher",
+            "query": "9780000000002",
+            "summary": "Exact edition identity.",
+        }],
+        "terminal": {"status": "complete", "issue": None},
     }
 
 
@@ -279,23 +608,34 @@ def successful_paper_search(
 
 def paper_download_failed(slug: str) -> dict[str, Any]:
     return {
-        "acquired": 0,
-        "failed": 1,
-        "per_item": [{
-            "kind": "paper",
-            "slug": slug,
-            "status": "download_failed",
-            "disposition": None,
-            "identity_verified": False,
-            "source": None,
-            "doi": "10.1000/parallel",
-            "failure_reason": "not available",
-            "attempts": [{
-                "source": "oa",
-                "status": "failed",
-                "error": "404",
-            }],
+        "schema_version": "quasi.operation.paper.acquire.receipt/0.2",
+        "key": "paper.acquire",
+        "effect": "writer",
+        "status": "failed",
+        "attempt": 1,
+        "material_key": f"paper:{slug}",
+        "kind": "paper",
+        "slug": slug,
+        "output_path": f"sources/{slug}.pdf",
+        "artifact_roles": ["source"],
+        "disposition": None,
+        "write_state": "not_written",
+        "identity_verified": False,
+        "source": None,
+        "doi": "10.1000/parallel",
+        "failure_reason": "not available",
+        "attempts": [{
+            "source": "oa",
+            "status": "failed",
+            "error": "404",
         }],
+        "failure": {
+            "code": "paper.download_failed",
+            "operation_key": "paper.acquire",
+            "outcome": "known",
+            "retryable": False,
+            "message": "not available",
+        },
     }
 
 
@@ -333,7 +673,7 @@ def test_batch_is_one_parallel_run_with_ordered_item_progress(
     result = report["result"]
     assert result["status"] == "failed"
     assert result["batch_receipt"] == {
-        "schema_version": "quasi.collection.material-batch.receipt/0.1",
+        "schema_version": "quasi.collection.material-batch.receipt/0.2",
         "status": "failed",
         "total": 2,
         "counts": {
@@ -347,11 +687,21 @@ def test_batch_is_one_parallel_run_with_ordered_item_progress(
     }
     assert [
         (item["index"], item["kind"], item["status"])
-        for item in result["results"]
+        for item in result["batch_receipt"]["items"]
     ] == [
         (0, "paper", "failed"),
         (1, "book", "failed"),
     ]
+    assert all(
+        item["material_key"] is None
+        and item["id"] is None
+        and item["canonical_artifacts"] == []
+        and item["user_gate"] is None
+        and item["issue"]["code"]
+        == "material.identity_not_resolved"
+        and item["resume"] is None
+        for item in result["batch_receipt"]["items"]
+    )
     search_calls = [
         call for call in report["trace"]
         if call["label"].endswith(":search")
@@ -396,7 +746,7 @@ def test_invalid_batch_item_does_not_stop_valid_sibling(
     }
     assert [
         item["status"]
-        for item in report["result"]["results"]
+        for item in report["result"]["batch_receipt"]["items"]
     ] == ["failed", "failed"]
     assert all(
         call["label"].startswith(slug)
@@ -432,6 +782,187 @@ def test_duplicate_batch_requests_share_one_material_loop(
             for call in report["trace"]
         ) == 1
     assert [
-        item["result"]["slug"]
-        for item in report["result"]["results"]
+        item["id"]
+        for item in report["result"]["batch_receipt"]["items"]
     ] == [slug, slug]
+    assert all(
+        item["canonical_artifacts"] == []
+        and item["user_gate"] is None
+        and item["issue"]["code"] == "paper.download_failed"
+        and item["resume"] is None
+        for item in report["result"]["batch_receipt"]["items"]
+    )
+
+
+def test_batch_preserves_typed_user_gate_without_raw_child_result(
+    tmp_path: Path,
+) -> None:
+    paper_slug = "example-parallel-paper-2024"
+    book_slug = "writer-parallel-book-2023"
+    responses = {
+        f"{paper_slug}:search": [
+            needs_input_search(
+                f"paper:{paper_slug}",
+                paper_query(),
+            ),
+        ],
+        f"{book_slug}:search": [
+            failed_search(
+                f"book:{book_slug}",
+                "book",
+                book_query(),
+            ),
+        ],
+    }
+    report = run_batch(
+        tmp_path,
+        {
+            "kind": "batch",
+            "items": [paper_request(), book_request()],
+        },
+        responses,
+        search_barrier=2,
+    )
+
+    result = report["result"]
+    assert "results" not in result
+    assert result["status"] == "partial"
+    assert result["batch_receipt"]["counts"] == {
+        "complete": 0,
+        "needs_input": 1,
+        "blocked": 0,
+        "failed": 1,
+    }
+    gate_item = result["batch_receipt"]["items"][0]
+    assert gate_item["status"] == "needs_input"
+    assert gate_item["canonical_artifacts"] == []
+    assert gate_item["issue"]["code"] == "material.identity_conflict"
+    assert gate_item["resume"] == {
+        "operation_key": "material.user-gate"
+    }
+    assert gate_item["user_gate"] == {
+        "schema_version": "quasi.user-gate.stage/0.1",
+        "operation_key": "material.search",
+        "kind": "stage_needs_input",
+        "issue": {
+            "code": "material.identity_conflict",
+            "operation": "material.search",
+            "summary": "The title resolves to a different author.",
+            "user_question": "Use the evidence-backed candidate?",
+            "retryable": False,
+        },
+        "question": "Use the evidence-backed candidate?",
+        "candidates": [
+            {
+                "slug": "different-parallel-paper-2024",
+                "title": "Parallel Paper",
+                "authors": ["Bea Different"],
+                "year": 2024,
+                "doi": "10.1000/parallel",
+                "oa_url": None,
+                "url": None,
+                "journal": "Parallel Studies",
+                "confidence": "high",
+            }
+        ],
+        "conflicts": ["authors"],
+    }
+
+
+def test_batch_admits_invalid_book_year_decision_as_exact_user_gate(
+    tmp_path: Path,
+) -> None:
+    paper_slug = "example-parallel-paper-2024"
+    responses = {
+        f"{paper_slug}:search": [
+            failed_search(
+                f"paper:{paper_slug}",
+                "paper",
+                paper_query(),
+            ),
+        ],
+    }
+    report = run_batch(
+        tmp_path,
+        {
+            "kind": "batch",
+            "items": [
+                {
+                    "kind": "book",
+                    "slug": "invalid-year-book-2020",
+                    "request": {
+                        "title": "Invalid Year Book",
+                        "authors": ["Bea Writer"],
+                        "year": 2020,
+                        "isbn": "9780000000002",
+                    },
+                    "year_decision": {"action": "not-a-decision"},
+                },
+                paper_request(),
+            ],
+        },
+        responses,
+    )
+
+    first = report["result"]["batch_receipt"]["items"][0]
+    assert first["status"] == "needs_input"
+    assert first["issue"]["code"] == "book.year_decision_invalid"
+    assert first["user_gate"]["kind"] == "stage_needs_input"
+    assert first["resume"] == {"operation_key": "material.user-gate"}
+
+
+def test_batch_admits_search_bound_book_year_decision_conflict(
+    tmp_path: Path,
+) -> None:
+    book_slug = "year-book-2020"
+    paper_slug = "example-parallel-paper-2024"
+    responses = {
+        f"{book_slug}:search": [
+            successful_book_search(
+                f"book:{book_slug}",
+                "year-book-2019",
+                2019,
+            ),
+        ],
+        f"{paper_slug}:search": [
+            failed_search(
+                f"paper:{paper_slug}",
+                "paper",
+                paper_query(),
+            ),
+        ],
+    }
+    report = run_batch(
+        tmp_path,
+        {
+            "kind": "batch",
+            "items": [
+                {
+                    "kind": "book",
+                    "slug": book_slug,
+                    "request": {
+                        "title": "Year Book",
+                        "authors": ["Bea Writer"],
+                        "year": 2020,
+                        "isbn": "9780000000002",
+                    },
+                    "year_decision": book_year_decision(),
+                },
+                paper_request(),
+            ],
+        },
+        responses,
+    )
+
+    first = report["result"]["batch_receipt"]["items"][0]
+    assert first["status"] == "needs_input"
+    assert first["issue"] == {
+        "code": "book.year_decision_invalid",
+        "operation_key": "material.search",
+        "outcome": "known",
+        "retryable": False,
+        "message": (
+            "year_decision does not match the identity returned by Search"
+        ),
+    }
+    assert first["user_gate"]["kind"] == "stage_needs_input"

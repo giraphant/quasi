@@ -267,6 +267,22 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+def _clear_macos_hidden(path: Path) -> bool:
+    """Remove a staging inode's macOS hidden flag from its public filename."""
+
+    hidden = getattr(stat, "UF_HIDDEN", 0)
+    chflags = getattr(os, "chflags", None)
+    if not hidden or chflags is None:
+        return False
+    flags = getattr(path.stat(), "st_flags", 0)
+    if not flags & hidden:
+        return False
+    chflags(path, flags & ~hidden)
+    with path.open("rb") as handle:
+        os.fsync(handle.fileno())
+    return True
+
+
 def _receipt(
     *,
     root: Path,
@@ -384,6 +400,7 @@ def run(args: argparse.Namespace) -> tuple[int, dict]:
             try:
                 manifest = _load_manifest(manifest_path, output, fingerprint)
                 if manifest is not None and manifest["request_fingerprint"] == fingerprint:
+                    _clear_macos_hidden(output)
                     action = "reconciled"
                 else:
                     if (output.exists() or output.is_symlink()) and manifest is None and not args.force:
@@ -486,6 +503,7 @@ def run(args: argparse.Namespace) -> tuple[int, dict]:
                                 shutil.copy2(output, backup)
                             try:
                                 os.replace(stage, output)
+                                _clear_macos_hidden(output)
                                 _fsync_dir(output.parent)
                                 os.replace(manifest_stage, manifest_path)
                                 marker_replaced = True

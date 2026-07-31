@@ -6,17 +6,16 @@
 
 ## 输入
 
-从用户请求归一化：
+从用户请求保留这些事实：
 
-- `media`：存在的 local regular audio/video file；relative path 从
-  `$CLAUDE_PROJECT_DIR` 解析。
-- `title`：2..280 字符的会议或讲座标题。
-- `date`：真实 `YYYY-MM-DD`。
-- `slug`：匹配 `^[a-z0-9][a-z0-9-]{0,79}$` 的 canonical slug。
-- `engines`：可选、有序、互异的 `soniox|apple|parakeet` 子集。
-- `lang`：`auto` 或用户给出的受支持 language tag。
+- `media`：用户指定的 local audio/video file。
+- `title`：会议或讲座标题。
+- `date`：录制日期。
+- `slug`：用户给出的或由题名、日期自然确定的身份提示。
+- `engines`、`lang`、`prepare_media`：仅在用户明确指定时传入。
 
-题名、日期或 slug 需要推断且不唯一时，先请用户确认；其余事实作为 JSON data 交给图。
+题名或日期确实存在多个可能且会改变 Talk 身份时才请用户确认。路径、枚举、日期、slug 与
+文件状态的闭合验证只由 Workflow 拥有；Skill 不维护第二份 Talk schema。
 
 ## 硬约束
 
@@ -28,9 +27,10 @@
 
 ## 状态
 
-图内的 Talk 状态由 `quasi.material-loop.receipt/0.1` 表达。Prepare specialist 使用
+图内的 Talk 状态由 `quasi.material-loop.receipt/0.2` 表达。Prepare specialist 使用
 `quasi.stage.receipt/0.2`，terminal 为
 `complete|needs_input|blocked|failed`。
+其中 `needs_input` 必须携带闭合 `user_gate`；其它 terminal 的 `user_gate` 为 `null`。
 
 主要 artifacts：
 
@@ -43,10 +43,10 @@
 
 - **Talk Prepare specialist**：`transcribe-agent` 获得 exact media/refs、engines、language、
   output schema 和 `quasi-transcribe` capabilities。它观察已有 generation，按材料状态完成
-  media preparation、transcription 与语义分类，最终交付一个 coherent transcript generation。
+  media preparation、transcription 与语义分类，最终交付一个 coherent transcript generation；
+  dead/empty material 的 deterministic silent canonical 也在本阶段完成。
 - **Talk producer**：live material 由 `analyse-agent` 读取有序 exact transcript refs，并按
-  `quasi.artifact.talk/0.1` 写唯一 Talk page；dead/empty material 由 exact silent renderer
-  生成同一 canonical role。
+  `quasi.artifact.talk/0.1` 写唯一 Talk page。
 - **Audit specialist**：`audit-agent` 检查 exact Talk page，执行证据保持的机械修正，并把
   semantic diagnostics 交回 producer owner。
 
@@ -58,8 +58,8 @@ writer safety 与 producer repair edge。
 
 ```text
 Recall
-  → Prepare: Talk specialist establishes transcript generation
-  → Analyse: live analysis or dead/empty canonical rendering
+  → Prepare: transcript generation; dead/empty closes canonical here
+  → Analyse: live Talk only
   → Audit: exact target validation; optional exact-owner repair + re-audit
 ```
 
@@ -67,42 +67,23 @@ Recall
 
 ```python
 request = parse_request()
-media = normalize_local_path(request.media, project_root=env("CLAUDE_PROJECT_DIR"))
-title = validate_plain_string(request.title, min_length=2, max_length=280)
-date = validate_real_iso_date(request.date)
-slug = validate_regex(request.slug, r"^[a-z0-9][a-z0-9-]{0,79}$")
-
-if not is_regular_non_symlink_file(media):
-    report("media 必须是存在的 local regular file")
-    return
-if title/date/slug 需要用户确认:
-    present_identity_question(media=media, title=title, date=date, slug=slug)
+if request.title/date 存在真正的身份歧义:
+    present_identity_question(request)
     return
 
 args = {
     "kind": "talk",
-    "slug": slug,
+    "slug": request.slug,
     "meta": {
-        "title": title,
-        "date": date,
-        "media": media,
-        "engines": validate_engines(request.get("engines")),
-        "lang": validate_language_tag(request.get("lang") or "auto"),
+        "title": request.title,
+        "date": request.date,
+        "media": request.media,
     },
 }
-
-if env("PI_CODING_AGENT") == "true":
-    result = run_pi_graph(write_temp_json(args))
-elif env("CODEX_THREAD_ID"):
-    result = run_codex_graph(write_temp_json(args))
-else:
-    return Workflow(
-        scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs",
-        args=args,
-    )
-
-receipt = require_material_receipt(result, kind="talk", material_key=f"talk:{slug}")
-present_typed_terminal(receipt)
+for key in ["engines", "lang", "prepare_media"]:
+    if key in request:
+        args["meta"][key] = request[key]
+return args  # collect-material 使用唯一共享 run_graph 与 terminal handler
 ```
 
 ## 断点续跑

@@ -198,11 +198,27 @@ def prepare_stage(
     status: str = "complete",
     classification: str | None = "live",
     canonical_exists: bool = False,
+    canonical_action: str | None = None,
     transcript_changed: bool = False,
     artifacts: list[dict[str, Any]] | None = None,
     stage_issue: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     p = paths(slug)
+    owns_silent = status == "complete" and classification in {"dead", "empty"}
+    canonical_exists = canonical_exists or owns_silent
+    if owns_silent and canonical_action is None:
+        canonical_action = "create"
+    prepared_artifacts = transcript_artifacts(slug) if artifacts is None else artifacts
+    if owns_silent and artifacts is None:
+        prepared_artifacts = [
+            *prepared_artifacts,
+            {
+                "role": "canonical",
+                "path": p["canonical"],
+                "sha256": SHA["canonical"],
+                "size": 1000,
+            },
+        ]
     return {
         "schema_version": "quasi.stage.receipt/0.2",
         "operation": "talk.prepare",
@@ -234,7 +250,8 @@ def prepare_stage(
             if canonical_exists
             else None
         ),
-        "artifacts": transcript_artifacts(slug) if artifacts is None else artifacts,
+        "canonical_action": canonical_action,
+        "artifacts": prepared_artifacts,
         "steps": [
             {
                 "capability": "quasi-transcribe and transcript inspection",
@@ -263,25 +280,6 @@ def analyse(slug: str, action: str = "create") -> dict[str, Any]:
         "output_path": paths(slug)["canonical"],
         "artifact_roles": ["canonical"],
         "action": action,
-        "failure": None,
-    }
-
-
-def silent(slug: str, signal: str, action: str = "create") -> dict[str, Any]:
-    return {
-        "schema_version": "quasi.operation.talk.render-silent.receipt/0.1",
-        "key": "talk.render-silent",
-        "effect": "writer",
-        "status": "succeeded",
-        "attempt": 1,
-        "material_key": f"talk:{slug}",
-        "input_path": paths(slug)["transcript"],
-        "output_path": paths(slug)["canonical"],
-        "artifact_roles": ["canonical"],
-        "classification_signal": signal,
-        "action": action,
-        "output_sha256": SHA["canonical"],
-        "size": 1000,
         "failure": None,
     }
 
@@ -325,8 +323,6 @@ def happy_responses(slug: str, signal: str = "live") -> dict[str, list[dict[str,
     }
     if signal == "live":
         values["talk.analyse:create"] = [response(analyse(slug))]
-    else:
-        values["talk.render-silent:create"] = [response(silent(slug, signal))]
     return values
 
 
@@ -396,13 +392,16 @@ def test_prepare_envelope_gives_the_specialist_goal_and_capabilities() -> None:
 
 
 @pytest.mark.parametrize("signal", ["dead", "empty"])
-def test_dead_or_empty_talk_uses_the_silent_product_operation(signal: str) -> None:
+def test_dead_or_empty_talk_finishes_the_silent_product_in_prepare(signal: str) -> None:
     slug = f"stage-talk-{signal}"
     report = run_talk(slug, happy_responses(slug, signal))
     assert report["result"]["status"] == "ok"
-    assert operations(report) == [
-        "talk.prepare", "talk.render-silent", "talk.audit.legacy"
-    ]
+    assert operations(report) == ["talk.prepare", "talk.audit.legacy"]
+    assert [row["phase"] for row in report["trace"]] == ["Prepare", "Audit"]
+    receipt = report["result"]["material_receipt"]
+    canonical = [row for row in receipt["artifacts"] if row["role"] == "canonical"]
+    assert len(canonical) == 1
+    assert canonical[0]["producer"] == "talk.prepare:create"
 
 
 def test_existing_coherent_talk_skips_product_rewrite() -> None:
@@ -506,6 +505,35 @@ def test_exact_audit_diagnostic_gets_one_product_repair_and_reaudit() -> None:
     ]
     assert report["result"]["material_receipt"]["disposition"] == "repaired"
     assert report["phases"][-3:] == ["Analyse", "Audit", "Analyse", "Audit"][-3:]
+
+
+@pytest.mark.parametrize("signal", ["dead", "empty"])
+def test_silent_audit_repair_returns_to_prepare_once(signal: str) -> None:
+    slug = f"stage-talk-{signal}-repair"
+    responses = {
+        "talk.prepare": [
+            response(prepare_stage(slug, classification=signal)),
+            response(
+                prepare_stage(
+                    slug,
+                    classification=signal,
+                    canonical_action="repair",
+                )
+            ),
+        ],
+        "talk.audit.legacy": [
+            response(audit(slug, status="partial")),
+            response(audit(slug)),
+        ],
+    }
+    report = run_talk(slug, responses)
+    assert operations(report) == [
+        "talk.prepare", "talk.audit.legacy", "talk.prepare", "talk.audit.legacy"
+    ]
+    assert [row["phase"] for row in report["trace"]] == [
+        "Prepare", "Audit", "Prepare", "Audit"
+    ]
+    assert report["result"]["material_receipt"]["disposition"] == "repaired"
 
 
 def test_foreign_audit_target_fails_without_guessing_an_owner() -> None:

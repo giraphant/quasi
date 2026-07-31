@@ -62,6 +62,7 @@ class BodySchema:
     identity_fields: list[str] = field(default_factory=list)
     h1: str = ""
     metadata_lines: list[str] = field(default_factory=list)
+    evidence_rules: list[str] = field(default_factory=list)
     # Phase 1 = False(只 warn);Phase 3 = True(未知 H2 直接 fail)
     strict: bool = False
 
@@ -82,6 +83,16 @@ class BodySchema:
 
 AUTHOR_BODY = BodySchema(
     type_name="author",
+    artifact_schema_version="quasi.artifact.author/0.1",
+    path_pattern="vault/authors/{slug}.md",
+    identity_fields=["name"],
+    h1="使用 frontmatter.name",
+    evidence_rules=[
+        "只使用 caller 提供并验证的 canonical Book/Paper corpus",
+        "每份成员作品首次出现时使用由其 exact canonical path 推导的 wikilink",
+        "保持原材料的证据类型，不虚构时间顺序、引文或作品关系",
+        "rating 只能由 caller 提供的证据支持；没有证据时省略",
+    ],
     sections=[
         BodySection(
             h2="思想肖像",

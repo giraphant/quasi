@@ -231,6 +231,7 @@ export function classifyReceipt(
 }
 
 export const AGENT_TIMEOUT_MS = 45 * 60 * 1000;
+export const PHASE_AGENT_LIMIT = 5;
 
 const UNKNOWN_AGENT_STATUSES = new Set([
   "cancelled",
@@ -241,22 +242,148 @@ const UNKNOWN_AGENT_STATUSES = new Set([
 
 export function createRuntime({ agent, parallel, phase, log }) {
   const coalesced = new Map();
+  const phaseLanes = new Map();
+
+  const phaseKey = (opts) =>
+    typeof (opts && opts.phase) === "string" && opts.phase.length > 0
+      ? opts.phase
+      : "__unphased__";
+
+  const finishPhaseEntry = (key, lane, entry) => {
+    if (entry.settled) return;
+    entry.settled = true;
+    lane.active -= 1;
+    lane.running.delete(entry);
+    if (lane.poisoned) {
+      // A poisoned lane is reset only after every underlying invocation that
+      // caused the saturation has actually settled. Until then new work must
+      // fail closed instead of slipping in behind a timed-out guard.
+      if (lane.active === 0) phaseLanes.delete(key);
+      return;
+    }
+    drainPhase(key, lane);
+    if (lane.active === 0 && lane.queue.length === 0)
+      phaseLanes.delete(key);
+  };
+
+  const poisonPhaseIfSaturated = (lane) => {
+    if (
+      lane.poisoned ||
+      lane.active !== PHASE_AGENT_LIMIT ||
+      lane.running.size !== PHASE_AGENT_LIMIT ||
+      ![...lane.running].every(
+        (entry) => entry.guarded && entry.timedOut,
+      )
+    )
+      return;
+    lane.poisoned = true;
+    const queued = lane.queue.splice(0);
+    // These entries never started, so null is an honest unknown outcome for
+    // both readonly and writer callers. In particular, a queued writer is not
+    // replayed later after the lane recovers.
+    for (const entry of queued) entry.resolve(null);
+  };
+
+  const drainPhase = (key, lane) => {
+    while (
+      !lane.poisoned &&
+      lane.active < PHASE_AGENT_LIMIT &&
+      lane.queue.length > 0
+    ) {
+      const next = lane.queue.shift();
+      next.started = true;
+      lane.active += 1;
+      lane.running.add(next);
+      Promise.resolve()
+        .then(next.invoke)
+        .then(next.resolve, next.reject)
+        .then(() => finishPhaseEntry(key, lane, next));
+    }
+  };
+
+  // This is a stage-UI/pipeline bound, not a global provider cap: each visible
+  // processing phase owns an independent FIFO lane. A host adapter may still
+  // impose its own global provider limit. The slot follows the underlying Agent
+  // Promise, not a guard's timeout verdict, so a possibly-live background call
+  // continues to count against its phase limit.
+  const admitAgent = (opts, invoke, guarded = false) => {
+    const key = phaseKey(opts);
+    let lane = phaseLanes.get(key);
+    if (!lane) {
+      lane = {
+        active: 0,
+        poisoned: false,
+        queue: [],
+        running: new Set(),
+      };
+      phaseLanes.set(key, lane);
+    }
+    if (lane.poisoned)
+      return { promise: Promise.resolve(null), timedOut: () => {} };
+
+    let entry;
+    const promise = new Promise((resolve, reject) => {
+      entry = {
+        guarded,
+        invoke,
+        reject,
+        resolve,
+        settled: false,
+        started: false,
+        timedOut: false,
+      };
+      lane.queue.push(entry);
+      drainPhase(key, lane);
+    });
+    return {
+      promise,
+      timedOut: () => {
+        if (!entry.started || entry.settled || entry.timedOut) return;
+        entry.timedOut = true;
+        poisonPhaseIfSaturated(lane);
+      },
+    };
+  };
+
+  const rawAgent = (prompt, opts) =>
+    Promise.resolve().then(() => agent(prompt, opts));
+
+  const scheduleAgent = (
+    prompt,
+    opts,
+    { guarded = false, onStart = null } = {},
+  ) =>
+    admitAgent(opts, () => {
+      if (onStart) onStart();
+      return rawAgent(prompt, opts);
+    }, guarded);
+
   const callAgent = (prompt, opts) =>
-    Promise.resolve(agent(prompt, opts));
+    scheduleAgent(prompt, opts).promise;
 
   const guard = (prompt, opts) => {
     let timer;
-    const invocation = callAgent(prompt, opts);
-    return Promise.race([
-      invocation.finally(() => clearTimeout(timer)),
-      new Promise((resolve) => {
+    let armTimeout;
+    let admission;
+    const timeout = new Promise((resolve) => {
+      armTimeout = () => {
         timer = setTimeout(() => {
+          admission.timedOut();
           log(
             `⏱ ${opts.label} 超过 ${AGENT_TIMEOUT_MS / 60000} 分钟未返回,按死亡处理`,
           );
           resolve(null);
         }, AGENT_TIMEOUT_MS);
-      }),
+      };
+    });
+    admission = scheduleAgent(prompt, opts, {
+      guarded: true,
+      onStart: armTimeout,
+    });
+    const invocation = admission.promise;
+    return Promise.race([
+      invocation.finally(() => clearTimeout(timer)),
+      timeout,
     ]);
   };
 

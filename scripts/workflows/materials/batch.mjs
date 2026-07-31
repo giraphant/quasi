@@ -1,9 +1,8 @@
+import { projectChildMaterialResult } from "./member.mjs";
+import { normaliseMaterialRequest } from "./ingress.mjs";
+
 const BATCH_RECEIPT_VERSION =
-  "quasi.collection.material-batch.receipt/0.1";
-const MATERIAL_RECEIPT_VERSION =
-  "quasi.material-loop.receipt/0.1";
-const INGRESS_RECEIPT_VERSION =
-  "quasi.material-ingress.receipt/0.1";
+  "quasi.collection.material-batch.receipt/0.2";
 const MAX_BATCH_ITEMS = 32;
 const ID_CHARS = /[^a-z0-9]+/g;
 
@@ -68,144 +67,49 @@ function closedFailure(
   };
 }
 
-function materialReceipt(result) {
-  const receipt = result && result.material_receipt;
-  return record(receipt) &&
-    receipt.schema_version === MATERIAL_RECEIPT_VERSION &&
-    ["book", "paper"].includes(receipt.kind) &&
-    typeof receipt.id === "string" &&
-    receipt.material_key === `${receipt.kind}:${receipt.id}` &&
-    ["complete", "needs_input", "blocked", "failed"].includes(
-      receipt.status,
-    )
-    ? receipt
-    : null;
-}
-
-function ingressReceipt(result) {
-  const receipt = result && result.ingress_receipt;
-  return record(receipt) &&
-    receipt.schema_version === INGRESS_RECEIPT_VERSION &&
-    ["resolved", "needs_input", "blocked", "failed"].includes(
-      receipt.status,
-    )
-    ? receipt
-    : null;
+function batchTerminal(kind, status, issue) {
+  return {
+    material_key: null,
+    kind: kind || "invalid",
+    id: null,
+    status,
+    canonical_artifacts: [],
+    user_gate: null,
+    issue,
+    resume: null,
+  };
 }
 
 function classifyResult(item, result, error = null) {
   if (error)
-    return {
-      status: "blocked",
-      slug: null,
-      ingressStatus: null,
-      materialStatus: null,
-      failure: closedFailure(
+    return batchTerminal(
+      item.kind,
+      "blocked",
+      closedFailure(
         null,
         "material.batch_child_outcome_unknown",
         "material.batch",
         "unknown",
         error,
       ),
-    };
+    );
 
-  const ingress = ingressReceipt(result);
-  const material = materialReceipt(result);
-  const publicStatus =
-    result && typeof result.status === "string"
-      ? result.status
-      : "unknown";
-  const slug =
-    result && typeof result.slug === "string"
-      ? result.slug
-      : material
-        ? material.id
-        : null;
-
-  if (
-    publicStatus === "year_mismatch" ||
-    publicStatus === "year_ambiguous" ||
-    (ingress && ingress.status === "needs_input") ||
-    (material && material.status === "needs_input")
-  )
-    return {
-      status: "needs_input",
-      slug,
-      ingressStatus: ingress ? ingress.status : null,
-      materialStatus: material ? material.status : null,
-      failure: closedFailure(
-        (material && material.failure) ||
-          (ingress && ingress.failure),
-        "material.batch_item_needs_input",
-        item.kind === "book"
-          ? "book.user-gate"
-          : "material.search",
-      ),
-    };
-
-  if (
-    publicStatus === "ok" &&
-    material &&
-    material.kind === item.kind &&
-    material.status === "complete"
-  )
-    return {
-      status: "complete",
-      slug,
-      ingressStatus: ingress ? ingress.status : null,
-      materialStatus: material.status,
-      failure: null,
-    };
-
-  if (
-    publicStatus === "blocked" ||
-    (ingress && ingress.status === "blocked") ||
-    (material && material.status === "blocked")
-  )
-    return {
-      status: "blocked",
-      slug,
-      ingressStatus: ingress ? ingress.status : null,
-      materialStatus: material ? material.status : null,
-      failure: closedFailure(
-        (material && material.failure) ||
-          (ingress && ingress.failure),
-        "material.batch_item_blocked",
-        "material.batch",
-        "unknown",
-      ),
-    };
-
-  if (
-    (ingress && ingress.status === "failed") ||
-    (material && material.status === "failed")
-  )
-    return {
-      status: "failed",
-      slug,
-      ingressStatus: ingress ? ingress.status : null,
-      materialStatus: material ? material.status : null,
-      failure: closedFailure(
-        (material && material.failure) ||
-          (ingress && ingress.failure),
-        "material.batch_item_failed",
-        "material.batch",
-      ),
-    };
-
-  return {
-    status: "blocked",
-    slug,
-    ingressStatus: ingress ? ingress.status : null,
-    materialStatus: material ? material.status : null,
-    failure: closedFailure(
+  const projected = projectChildMaterialResult(
+    result,
+    item.request,
+  );
+  if (projected) return projected;
+  return batchTerminal(
+    item.kind,
+    "blocked",
+    closedFailure(
       null,
       "material.batch_child_receipt_invalid",
       "material.batch",
       "unknown",
       "child result did not carry an exact terminal receipt",
     ),
-  };
+  );
 }
 
 function aggregateStatus(counts, total) {
@@ -231,7 +135,6 @@ function invalidBatch(message, total = 0) {
   );
   return {
     status: "failed",
-    results: [],
     batch_receipt: {
       schema_version: BATCH_RECEIPT_VERSION,
       status: "failed",
@@ -256,15 +159,36 @@ export async function processMaterialBatch(
       rawItems.length,
     );
 
-  const items = rawItems.map((raw, index) => ({
-    index,
-    request_id: itemId(raw, index),
-    kind:
+  const items = rawItems.map((raw, index) => {
+    const kind =
       record(raw) && ["book", "paper"].includes(raw.kind)
         ? raw.kind
-        : null,
-    raw,
-  }));
+        : null;
+    const normalized = kind
+      ? normaliseMaterialRequest(kind, raw)
+      : null;
+    const request = normalized
+      ? {
+          ...normalized,
+          yearDecision:
+            kind === "book" &&
+            record(raw) &&
+            Object.prototype.hasOwnProperty.call(
+              raw,
+              "year_decision",
+            )
+              ? raw.year_decision
+              : null,
+        }
+      : null;
+    return {
+      index,
+      request_id: itemId(raw, index),
+      kind,
+      request,
+      raw,
+    };
+  });
 
   const outcomes = await runtime.parallel(
     items.map((item) => async () => {
@@ -278,24 +202,13 @@ export async function processMaterialBatch(
         );
         return {
           ...item,
-          result: {
-            status: "failed",
-            failure,
-          },
-          summary: {
-            status: "failed",
-            slug: null,
-            ingressStatus: null,
-            materialStatus: null,
-            failure,
-          },
+          summary: batchTerminal(null, "failed", failure),
         };
       }
       try {
         const result = await runItem(item.raw);
         return {
           ...item,
-          result,
           summary: classifyResult(item, result),
         };
       } catch (error) {
@@ -303,16 +216,6 @@ export async function processMaterialBatch(
           (error && error.message) || String(error);
         return {
           ...item,
-          result: {
-            status: "blocked",
-            failure: closedFailure(
-              null,
-              "material.batch_child_outcome_unknown",
-              "material.batch",
-              "unknown",
-              message,
-            ),
-          },
           summary: classifyResult(item, null, message),
         };
       }
@@ -331,31 +234,13 @@ export async function processMaterialBatch(
   const summaries = outcomes.map((outcome) => ({
     index: outcome.index,
     request_id: outcome.request_id,
-    kind: outcome.kind || "invalid",
-    status: outcome.summary.status,
-    result_status:
-      outcome.result &&
-      typeof outcome.result.status === "string"
-        ? outcome.result.status
-        : "unknown",
-    slug: outcome.summary.slug,
-    ingress_status: outcome.summary.ingressStatus,
-    material_status: outcome.summary.materialStatus,
-    failure: outcome.summary.failure,
-  }));
-  const results = outcomes.map((outcome) => ({
-    index: outcome.index,
-    request_id: outcome.request_id,
-    kind: outcome.kind || "invalid",
-    status: outcome.summary.status,
-    result: outcome.result,
+    ...outcome.summary,
   }));
   runtime.log(
     `material batch result: total=${outcomes.length} complete=${counts.complete} needs_input=${counts.needs_input} blocked=${counts.blocked} failed=${counts.failed}`,
   );
   return {
     status: status === "complete" ? "ok" : status,
-    results,
     batch_receipt: {
       schema_version: BATCH_RECEIPT_VERSION,
       status,

@@ -9,10 +9,10 @@ import {
   TOPIC_RESOLVE_MEMBERSHIP_SCHEMA,
   topicDiscoverBookOperationPrompt,
   topicDiscoverPaperOperationPrompt,
-  topicMemberPath,
   topicRecallOperationPrompt as topicRecallPrompt,
   topicResolveMembershipOperationPrompt as topicResolveMembershipPrompt,
 } from "../operations/acquire.mjs";
+import { strictChildResult } from "../materials/member.mjs";
 import {
   TOPIC_AUDIT_CONTRACT,
   topicAuditLegacyPrompt,
@@ -36,12 +36,6 @@ import { exactKeys, validText } from "../runtime.mjs";
 const RESEARCH_RECEIPT_VERSION =
   "quasi.research.topic.receipt/0.1";
 const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
-
-const sameStrings = (left, right) =>
-  Array.isArray(left) &&
-  Array.isArray(right) &&
-  left.length === right.length &&
-  left.every((value, index) => value === right[index]);
 
 const operationFailure = (
   code,
@@ -313,212 +307,19 @@ function rejectedResult(slug, validation, conflict = false) {
   );
 }
 
-function validMaterialFailure(failure) {
-  return !!(
-    failure &&
-    typeof failure === "object" &&
-    !Array.isArray(failure) &&
-    [4, 5].includes(Object.keys(failure).length) &&
-    ["code", "operation_key", "outcome", "retryable"].every(
-      (key) =>
-        Object.prototype.hasOwnProperty.call(failure, key),
-    ) &&
-    Object.keys(failure).every((key) =>
-      [
-        "code",
-        "operation_key",
-        "outcome",
-        "retryable",
-        "message",
-      ].includes(key),
-    ) &&
-    validText(failure.code, 1, 200) &&
-    validText(failure.operation_key, 1, 200) &&
-    ["known", "unknown"].includes(failure.outcome) &&
-    typeof failure.retryable === "boolean" &&
-    (failure.message === undefined ||
-      failure.message === null ||
-      validText(failure.message, 1, 4000))
-  );
-}
-
-function validMaterialArtifact(artifact) {
-  return !!(
-    exactKeys(artifact, [
-      "role",
-      "path",
-      "exists",
-      "usable",
-      "producer",
-    ]) &&
-    validText(artifact.role, 1, 100) &&
-    validText(artifact.path, 1, 1000) &&
-    artifact.exists === true &&
-    [null, true, false].includes(artifact.usable) &&
-    validText(artifact.producer, 1, 200)
-  );
-}
-
-function cleanChildAudit(receipt, demand) {
-  const target = topicMemberPath(demand.kind, demand.id);
-  if (demand.kind === "paper")
-    return !!(
-      exactKeys(receipt.audit, [
-        "schema_version",
-        "key",
-        "effect",
-        "status",
-        "attempt",
-        "target_path",
-        "remaining_violations",
-        "escalated",
-      ]) &&
-      receipt.audit.schema_version ===
-        "quasi.operation.paper.audit.agent-receipt/0.1" &&
-      receipt.audit.key === "paper.audit" &&
-      receipt.audit.effect === "writer" &&
-      receipt.audit.status === "clean" &&
-      receipt.audit.attempt === 1 &&
-      receipt.audit.target_path === target &&
-      receipt.audit.remaining_violations === 0 &&
-      Array.isArray(receipt.audit.escalated) &&
-      receipt.audit.escalated.length === 0
-    );
-  if (!Array.isArray(receipt.audit) || !receipt.audit.length)
-    return false;
-  const last = receipt.audit[receipt.audit.length - 1];
-  return !!(
-    last &&
-    last.schema_version ===
-      "quasi.operation.book.audit.receipt/0.1" &&
-    last.key === "book.audit" &&
-    last.effect === "writer" &&
-    last.status === "clean" &&
-    last.attempt === 1 &&
-    last.target_path === `vault/books/${demand.id}` &&
-    last.remaining_violations === 0 &&
-    Array.isArray(last.escalated) &&
-    last.escalated.length === 0
-  );
-}
-
 function strictMaterialResult(result, demand) {
+  const admitted = strictChildResult(result, demand);
   if (
-    !result ||
-    typeof result !== "object" ||
-    Array.isArray(result) ||
-    result.slug !== demand.id ||
-    !result.material_receipt ||
-    typeof result.material_receipt !== "object" ||
-    Array.isArray(result.material_receipt)
-  )
-    return null;
-  const receipt = result.material_receipt;
-  const baseKeys = [
-    "schema_version",
-    "material_key",
-    "kind",
-    "id",
-    "status",
-    "disposition",
-    "stage",
-    "artifacts",
-    "operations",
-    "audit",
-    "freshness",
-    "warnings",
-    "failure",
-    "resume",
-  ];
-  const bookKeys = [
-    ...baseKeys,
-    "expected_slots",
-    "present_slots",
-    "missing_slots",
-  ];
-  if (
-    !(exactKeys(receipt, baseKeys) ||
-      (demand.kind === "book" &&
-        exactKeys(receipt, bookKeys))) ||
-    receipt.schema_version !==
-      "quasi.material-loop.receipt/0.1" ||
-    receipt.material_key !== demand.material_key ||
-    receipt.kind !== demand.kind ||
-    receipt.id !== demand.id ||
-    !["complete", "blocked", "failed"].includes(
-      receipt.status,
-    ) ||
-    !Array.isArray(receipt.artifacts) ||
-    receipt.artifacts.some(
-      (artifact) => !validMaterialArtifact(artifact),
-    ) ||
-    !Array.isArray(receipt.operations) ||
-    !Array.isArray(receipt.warnings) ||
-    !exactKeys(receipt.freshness, ["observation", "basis"]) ||
-    receipt.freshness.observation !== "unknown" ||
-    receipt.freshness.basis !==
-      "operation-receipts-and-final-audit"
-  )
-    return null;
-  const target = topicMemberPath(demand.kind, demand.id);
-  const canonicals = receipt.artifacts.filter(
-    (artifact) =>
-      artifact.role === "canonical" &&
-      artifact.path === target &&
-      artifact.exists === true &&
-      artifact.usable !== false,
-  );
-  if (receipt.status === "complete") {
-    if (
-      !["created", "reused", "repaired"].includes(
-        receipt.disposition,
-      ) ||
-      receipt.stage !== "audit" ||
-      receipt.failure !== null ||
-      receipt.resume !== null ||
-      canonicals.length !== 1 ||
-      !cleanChildAudit(receipt, demand)
+    !admitted ||
+    !["complete", "needs_input", "blocked", "failed"].includes(
+      admitted.status,
     )
-      return null;
-    if (
-      demand.kind === "book" &&
-      Object.prototype.hasOwnProperty.call(
-        receipt,
-        "expected_slots",
-      ) &&
-      (!Array.isArray(receipt.expected_slots) ||
-        !Array.isArray(receipt.present_slots) ||
-        !Array.isArray(receipt.missing_slots) ||
-        !sameStrings(
-          receipt.expected_slots,
-          receipt.present_slots,
-        ) ||
-        receipt.missing_slots.length !== 0)
-    )
-      return null;
-  } else if (
-    receipt.disposition !== null ||
-    !validMaterialFailure(receipt.failure) ||
-    (receipt.status === "failed" && receipt.resume !== null) ||
-    (receipt.status === "blocked" &&
-      !(
-        receipt.resume === null ||
-        (receipt.resume &&
-          typeof receipt.resume === "object" &&
-          !Array.isArray(receipt.resume))
-      ))
   )
     return null;
   return {
-    material_key: demand.material_key,
-    kind: demand.kind,
-    id: demand.id,
-    status: receipt.status,
-    canonical_path:
-      receipt.status === "complete" ? target : null,
+    ...admitted,
     subq: demand.subq,
     role: demand.role,
-    receipt,
   };
 }
 

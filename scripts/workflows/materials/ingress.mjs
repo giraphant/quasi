@@ -3,13 +3,23 @@ import {
   materialSearchStageSchema,
   materialSearchPrompt,
 } from "../operations/acquire.mjs";
+import {
+  BOOK_TEMP_PATH,
+  validYearEvidence,
+} from "../operations/book-year-evidence.mjs";
+import {
+  sameClosedValue,
+  validateSchema,
+} from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
+import {
+  failureUserGate,
+  stageUserGate,
+} from "./receipt.mjs";
 
 const INGRESS_RECEIPT_VERSION =
-  "quasi.material-ingress.receipt/0.1";
+  "quasi.material-ingress.receipt/0.2";
 const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
-const BOOK_TEMP_PATH =
-  /^\.quasi\/temp\/downloads\/[A-Za-z0-9][A-Za-z0-9._-]{0,220}\.(?:epub|pdf)$/;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 const CATEGORIES = new Set([
   "monograph",
@@ -103,7 +113,7 @@ function invalidRequest(kind, message) {
   };
 }
 
-function normaliseRequest(kind, args) {
+export function normaliseMaterialRequest(kind, args) {
   if (!["book", "paper"].includes(kind))
     return invalidRequest(kind, "kind must be book or paper");
   const nested =
@@ -293,6 +303,7 @@ function ingressReceipt(
     operations,
     identity,
     failure,
+    user_gate: ingressUserGate(status, operations, failure),
     resume:
       status === "blocked"
         ? { operation_key: "material.search" }
@@ -300,6 +311,17 @@ function ingressReceipt(
           ? { operation_key: "material.user-gate" }
           : null,
   };
+}
+
+export function ingressUserGate(status, operations, failure) {
+  if (status !== "needs_input") return null;
+  const last = Array.isArray(operations) ? operations.at(-1) : null;
+  return last &&
+    last.operation === "material.search" &&
+    last.terminal &&
+    last.terminal.status === "needs_input"
+    ? stageUserGate(last)
+    : failureUserGate(failure);
 }
 
 function terminal(request, operations, publicStatus, stage, failure) {
@@ -381,7 +403,57 @@ function resolvedMeta(request, picked) {
       };
 }
 
-function applyBookYearDecision(picked, decision) {
+export function validResolvedIngressEvidence(
+  receipt,
+  request,
+  yearDecision = null,
+) {
+  if (
+    !request.ok ||
+    receipt.status !== "resolved" ||
+    receipt.request_key !== request.requestKey ||
+    !Array.isArray(receipt.operations) ||
+    receipt.operations.length !== 1
+  )
+    return false;
+  const search = receipt.operations[0];
+  if (
+    !validateSchema(
+      materialSearchStageSchema({
+        request_key: request.requestKey,
+        kind: request.kind,
+      }),
+      search,
+    ) ||
+    search.terminal.status !== "complete" ||
+    MATERIAL_SEARCH_STAGE_CONTRACT.statuses.complete(search) !== true
+  )
+    return false;
+  if (
+    request.kind === "book" &&
+    !validYearDecisionEnvelope(yearDecision)
+  )
+    return false;
+  const adjusted =
+    request.kind === "book"
+      ? applyBookYearDecision(search.identity, yearDecision)
+      : { ok: true, picked: search.identity };
+  if (!adjusted.ok) return false;
+  const picked = adjusted.picked;
+  const owner = search.local_owner;
+  if (owner !== null && owner.identity_slug !== picked.slug)
+    return false;
+  const slug = (owner && owner.vault_slug) || picked.slug;
+  return !!(
+    receipt.identity.slug === slug &&
+    sameClosedValue(
+      receipt.identity.meta,
+      resolvedMeta(request, picked),
+    )
+  );
+}
+
+export function applyBookYearDecision(picked, decision) {
   if (
     !decision ||
     decision.action !== "use-recommended-year"
@@ -422,7 +494,7 @@ function applyBookYearDecision(picked, decision) {
   };
 }
 
-function validYearDecisionEnvelope(decision) {
+export function validYearDecisionEnvelope(decision) {
   if (decision == null) return true;
   if (
     !exactKeys(decision, [
@@ -439,29 +511,9 @@ function validYearDecisionEnvelope(decision) {
     return false;
   const evidence = decision.year_evidence;
   return !!(
-    exactKeys(evidence, [
-      "slug_year",
-      "source_years",
-      "pdf_signals",
-      "recommended_year",
-      "recommendation_reason",
-      "verdict",
-    ]) &&
-    Number.isInteger(evidence.slug_year) &&
-    evidence.source_years &&
-    typeof evidence.source_years === "object" &&
-    !Array.isArray(evidence.source_years) &&
-    exactKeys(evidence.pdf_signals, [
-      "first_published",
-      "copyright_year",
-      "original_year",
-      "other_years",
-    ]) &&
-    Array.isArray(evidence.pdf_signals.other_years) &&
-    (evidence.recommended_year === null ||
-      Number.isInteger(evidence.recommended_year)) &&
-    validText(evidence.recommendation_reason, 1, 4000) &&
-    ["MISMATCH", "AMBIGUOUS"].includes(evidence.verdict)
+    evidence &&
+    ["MISMATCH", "AMBIGUOUS"].includes(evidence.verdict) &&
+    validYearEvidence(evidence, evidence.slug_year)
   );
 }
 
@@ -604,7 +656,7 @@ export function processMaterialIngress(
   next,
   options = {},
 ) {
-  const request = normaliseRequest(kind, args);
+  const request = normaliseMaterialRequest(kind, args);
   if (!request.ok)
     return Promise.resolve(
       invalidTerminal(kind, args, request.message),

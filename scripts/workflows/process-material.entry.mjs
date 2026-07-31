@@ -7,6 +7,7 @@ import { createMaterialDispatch } from "./materials/dispatch.mjs";
 import { processMaterialBatch } from "./materials/batch.mjs";
 import { processBook } from "./materials/book.mjs";
 import { processPaper } from "./materials/paper.mjs";
+import { MATERIAL_RECEIPT_VERSION } from "./materials/receipt.mjs";
 import { processTalk } from "./materials/talk.mjs";
 import { processTopic } from "./research/topic.mjs";
 import { createRuntime } from "./runtime.mjs";
@@ -104,8 +105,7 @@ export async function run(primitives, inputArgs) {
       const resolvedSlug = result.slug;
       const sources =
         receipt &&
-        receipt.schema_version ===
-          "quasi.material-loop.receipt/0.1" &&
+        receipt.schema_version === MATERIAL_RECEIPT_VERSION &&
         receipt.material_key === `paper:${resolvedSlug}` &&
         receipt.kind === "paper" &&
         receipt.id === resolvedSlug &&

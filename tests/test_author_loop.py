@@ -30,7 +30,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 AUTHOR_MODULE = PLUGIN_ROOT / "scripts/workflows" / "collections" / "author.mjs"
 RUNTIME_MODULE = PLUGIN_ROOT / "scripts/workflows" / "runtime.mjs"
 
-MATERIAL_RECEIPT_VERSION = "quasi.material-loop.receipt/0.1"
+MATERIAL_RECEIPT_VERSION = "quasi.material-loop.receipt/0.2"
 COLLECTION_RECEIPT_VERSION = "quasi.collection.author.receipt/0.1"
 
 
@@ -433,16 +433,18 @@ def child_result(
     canonical = artifact_path or canonical_path(kind, slug)
     audit = (
         {
-            "schema_version": (
-                "quasi.operation.paper.audit.agent-receipt/0.1"
-            ),
+            "schema_version": "quasi.operation.paper.audit.receipt/0.2",
             "key": "paper.audit",
             "effect": "writer",
             "status": "clean",
             "attempt": 1,
             "target_path": canonical_path(kind, slug),
+            "artifact_roles": ["canonical"],
+            "pass": 1,
             "remaining_violations": 0,
             "escalated": [],
+            "mutated_paths": [],
+            "failure": None,
         }
         if kind == "paper" and terminal == "complete"
         else (
@@ -485,7 +487,20 @@ def child_result(
                         if kind == "paper"
                         else "book.synthesise"
                     ),
-                }
+                },
+                *(
+                    [
+                        {
+                            "role": "chapter_canonical",
+                            "path": f"vault/books/{slug}/ch01-example.md",
+                            "exists": True,
+                            "usable": None,
+                            "producer": "chapter.analyse",
+                        }
+                    ]
+                    if kind == "book"
+                    else []
+                ),
             ]
             if terminal == "complete"
             else []
@@ -502,6 +517,7 @@ def child_result(
         },
         "warnings": [],
         "failure": failure,
+        "user_gate": None,
         "resume": resume,
     }
     if kind == "book" and terminal == "complete":
@@ -512,6 +528,40 @@ def child_result(
                 "missing_slots": [],
             }
         )
+        if year_warning is not None:
+            receipt["operations"].insert(
+                0,
+                {
+                    "schema_version": (
+                        "quasi.operation.book.acquire.receipt/0.2"
+                    ),
+                    "key": "book.acquire",
+                    "effect": "writer",
+                    "status": "succeeded",
+                    "signal": "accepted",
+                    "attempt": 1,
+                    "material_key": material_key or f"book:{slug}",
+                    "kind": "book",
+                    "slug": slug,
+                    "output_path": f"sources/{slug}.epub",
+                    "allowed_output_paths": [
+                        f"sources/{slug}.epub",
+                        f"sources/{slug}.pdf",
+                    ],
+                    "artifact_roles": ["source"],
+                    "disposition": "reused",
+                    "write_state": "not_written",
+                    "identity_verified": True,
+                    "format": "epub",
+                    "tmp_path": None,
+                    "source": "existing_file",
+                    "isbn": "9780000000002",
+                    "year_evidence": year_warning,
+                    "failure_reason": None,
+                    "attempts": [],
+                    "failure": None,
+                },
+            )
     result = {
         "slug": slug,
         "status": (
@@ -521,8 +571,6 @@ def child_result(
         ),
         "material_receipt": receipt,
     }
-    if year_warning is not None:
-        result["year_warning"] = year_warning
     return result
 
 
@@ -656,6 +704,11 @@ def collection(result: dict[str, Any]) -> dict[str, Any]:
         ),
         (
             "ada-example",
+            author_meta(full_name="A" * 121, maxBooks=1, maxPapers=0),
+            "author.identity_invalid",
+        ),
+        (
+            "ada-example",
             author_meta(maxBooks=-1, maxPapers=1),
             "author.budget_invalid",
         ),
@@ -760,6 +813,7 @@ def test_discoveries_overlap_and_resolver_waits_for_both(
     assert book_search["start"] < paper_search["end"]
     assert paper_search["start"] < book_search["end"]
     assert resolver["start"] > max(book_search["end"], paper_search["end"])
+    assert resolver["phase"] == "Search"
     assert report["phases"] == ["Search"]
 
 
@@ -996,7 +1050,8 @@ def test_mixed_child_outcomes_synthesise_only_complete_members_and_are_partial(
     tmp_path: Path,
 ) -> None:
     name = "ada-example"
-    book = book_candidate()
+    book = book_candidate("example-reliable-monograph-2024")
+    book["year"] = 2024
     good = paper_candidate("example-good-paper-2026")
     blocked = paper_candidate("example-blocked-paper-2025")
     responses = base_responses(
@@ -1019,8 +1074,22 @@ def test_mixed_child_outcomes_synthesise_only_complete_members_and_are_partial(
                     "book",
                     book["slug"],
                     year_warning={
-                        "code": "edition_year_reviewed",
+                        "slug_year": 2024,
+                        "source_years": {
+                            "catalog": 2025,
+                            "copyright": 2025,
+                        },
+                        "pdf_signals": {
+                            "first_published": 2025,
+                            "copyright_year": 2025,
+                            "original_year": None,
+                            "other_years": [],
+                        },
                         "recommended_year": 2025,
+                        "recommendation_reason": (
+                            "two independent edition signals agree"
+                        ),
+                        "verdict": "MISMATCH",
                     },
                 )
             )
@@ -1048,8 +1117,22 @@ def test_mixed_child_outcomes_synthesise_only_complete_members_and_are_partial(
     assert result["year_warnings"] == [
         {
             "slug": book["slug"],
-            "code": "edition_year_reviewed",
+            "slug_year": 2024,
+            "source_years": {
+                "catalog": 2025,
+                "copyright": 2025,
+            },
+            "pdf_signals": {
+                "first_published": 2025,
+                "copyright_year": 2025,
+                "original_year": None,
+                "other_years": [],
+            },
             "recommended_year": 2025,
+            "recommendation_reason": (
+                "two independent edition signals agree"
+            ),
+            "verdict": "MISMATCH",
         }
     ]
     receipt = collection(result)
@@ -1453,3 +1536,48 @@ def test_legacy_adapter_is_derived_from_authoritative_collection_receipt(
         f"book:{book_candidate()['slug']}",
         f"paper:{paper_candidate()['slug']}",
     ]
+
+
+def test_author_synthesis_uses_the_generated_artifact_contract() -> None:
+    exported = subprocess.run(
+        [
+            "python3",
+            str(PLUGIN_ROOT / "scripts/schemas/export_contracts.py"),
+            "author",
+        ],
+        cwd=PLUGIN_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    contract = json.loads(exported.stdout)["author"]
+    assert contract["schema_version"] == "quasi.artifact.author/0.1"
+    assert contract["path_pattern"] == "vault/authors/{slug}.md"
+    assert contract["identity"]["fields"] == ["name"]
+    assert contract["document"]["h1"] == "使用 frontmatter.name"
+    assert contract["document"]["section_order"] == [
+        "思想肖像",
+        "代表著作",
+        "学术轨迹",
+        "关键概念",
+        "理论网络",
+        "金句要点",
+        "项目关联",
+    ]
+    assert any(
+        "rating" in rule and "省略" in rule
+        for rule in contract["document"]["evidence_rules"]
+    )
+
+    build = (PLUGIN_ROOT / "scripts" / "build-workflows.mjs").read_text(
+        encoding="utf-8"
+    )
+    synthesis = (
+        PLUGIN_ROOT / "scripts/workflows/operations/synthesise.mjs"
+    ).read_text(encoding="utf-8")
+    assert 'type: "author", exportName: "AUTHOR_ARTIFACT_CONTRACT"' in build
+    assert "artifact_contract: AUTHOR_ARTIFACT_CONTRACT" in synthesis
+    assert 'type: "author"' in synthesis
+    assert "name: full" in synthesis
+    assert "AUTHOR_SYNTHESIS_INSTRUCTIONS" not in synthesis
+    assert 'prompt_pack: "author-synthesis/1"' not in synthesis

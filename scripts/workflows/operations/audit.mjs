@@ -29,13 +29,16 @@ export const PAPER_AUDIT_SCHEMA = {
     "status",
     "attempt",
     "target_path",
+    "artifact_roles",
+    "pass",
     "remaining_violations",
     "escalated",
+    "mutated_paths",
+    "failure",
   ],
   properties: {
     schema_version: {
-      const:
-        "quasi.operation.paper.audit.agent-receipt/0.1",
+      const: "quasi.operation.paper.audit.receipt/0.2",
     },
     key: { const: "paper.audit" },
     effect: { const: "writer" },
@@ -45,6 +48,8 @@ export const PAPER_AUDIT_SCHEMA = {
     },
     attempt: { type: "integer", const: 1 },
     target_path: { type: "string" },
+    artifact_roles: { const: ["canonical"] },
+    pass: { type: "integer", minimum: 1, maximum: 2 },
     remaining_violations: {
       type: "integer",
       minimum: 0,
@@ -64,6 +69,28 @@ export const PAPER_AUDIT_SCHEMA = {
         },
       },
     },
+    mutated_paths: {
+      type: "array",
+      items: { type: "string" },
+    },
+    failure: {
+      type: ["object", "null"],
+      additionalProperties: false,
+      required: [
+        "code",
+        "operation_key",
+        "outcome",
+        "retryable",
+        "message",
+      ],
+      properties: {
+        code: { const: "paper.audit_failed" },
+        operation_key: { const: "paper.audit" },
+        outcome: { const: "known" },
+        retryable: { const: false },
+        message: { type: ["string", "null"] },
+      },
+    },
   },
 };
 
@@ -73,6 +100,7 @@ const PAPER_AUDIT_BRANCHES = {
       status: { const: "clean" },
       remaining_violations: { const: 0 },
       escalated: { maxItems: 0 },
+      failure: { type: "null" },
     },
   },
   partial: {
@@ -80,17 +108,28 @@ const PAPER_AUDIT_BRANCHES = {
       status: { const: "partial" },
       remaining_violations: { minimum: 1 },
       escalated: { minItems: 1 },
+      failure: { type: "null" },
     },
   },
   error: {
-    properties: { status: { const: "error" } },
+    properties: {
+      status: { const: "error" },
+      failure: { type: "object" },
+    },
   },
 };
 
-export const paperAuditSchema = ({ target }) =>
+export const paperAuditSchema = ({ target, pass }) =>
   composedSchema(
     PAPER_AUDIT_SCHEMA,
-    { target_path: { const: target } },
+    {
+      target_path: { const: target },
+      pass: { const: pass },
+      mutated_paths: {
+        type: "array",
+        items: { const: target },
+      },
+    },
     PAPER_AUDIT_BRANCHES,
   );
 
@@ -99,11 +138,17 @@ export const paperAuditSchema = ({ target }) =>
 export const PAPER_AUDIT_CONTRACT = {
   schema: PAPER_AUDIT_SCHEMA,
   statuses: {
-    clean: () => true,
+    clean: (receipt) =>
+      new Set(receipt.mutated_paths).size ===
+      receipt.mutated_paths.length,
     partial: (receipt) =>
       receipt.remaining_violations ===
-      receipt.escalated.length,
-    error: () => true,
+        receipt.escalated.length &&
+      new Set(receipt.mutated_paths).size ===
+        receipt.mutated_paths.length,
+    error: (receipt) =>
+      new Set(receipt.mutated_paths).size ===
+      receipt.mutated_paths.length,
   },
   edges: { clean: "ok", partial: "ok", error: "failed" },
 };
@@ -366,7 +411,7 @@ export const AUTHOR_AUDIT_CONTRACT =
 export function paperAuditPrompt(slug, pass) {
   const output = `vault/papers/${slug}.md`;
   const request = {
-    schema_version: "quasi.operation.paper.audit.request/0.1",
+    schema_version: "quasi.operation.paper.audit.request/0.2",
     operation: "paper.audit",
     material_key: `paper:${slug}`,
     effect: "writer",

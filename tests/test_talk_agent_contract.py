@@ -22,6 +22,7 @@ ARTIFACT_CONTRACTS = (
 )
 AUDIT_OPERATION = PLUGIN_ROOT / "scripts/workflows/operations/audit.mjs"
 SKILL = PLUGIN_ROOT / "skills/collect-material/references/talk.md"
+COLLECT_SKILL = PLUGIN_ROOT / "skills/collect-material/SKILL.md"
 TRANSCRIBE_OPERATION = (
     PLUGIN_ROOT / "scripts/workflows/operations/transcribe.mjs"
 )
@@ -59,6 +60,7 @@ def test_transcribe_agent_owns_one_positive_prepare_goal() -> None:
         "`prepare-media`",
         "`run`",
         "`classify`",
+        "`silent`",
         "committed primary transcript",
         "`live|dead|empty`",
     ):
@@ -137,6 +139,9 @@ if (canonical.properties.path.const !== "vault/talks/placeholder/talk.md")
   throw new Error("canonical observation must echo the exact path");
 if (canonical.properties.sha256.pattern !== "^[a-f0-9]{64}$")
   throw new Error("canonical observation must carry a digest");
+const action = schema.properties.canonical_action;
+if (!Array.isArray(action.type) || action.type.join(",") !== "string,null")
+  throw new Error("canonical action must be string|null");
 """
     completed = subprocess.run(
         ["node", "--input-type=module", "-e", script],
@@ -154,20 +159,20 @@ def test_transcribe_agent_reports_only_real_canonical_hashes() -> None:
     assert "exact path 与实际 SHA-256" in contract
 
 
-def test_silent_product_remains_one_exact_writer_operation() -> None:
+def test_silent_product_is_owned_by_the_prepare_stage() -> None:
     operation = text(TRANSCRIBE_OPERATION)
     for token in (
-        "export const TALK_RENDER_SILENT_SCHEMA",
-        'operation: "talk.render-silent"',
-        '"quasi-transcribe"',
-        '"silent"',
-        '"--state"',
-        '"--mode"',
-        '"--output"',
-        '"--json"',
+        'operation: "talk.prepare"',
+        '"quasi-transcribe silent ... --json"',
+        "canonical_policy:",
+        "dead_or_empty:",
+        "canonical_action",
     ):
         assert token in operation
-    assert "failureSchema(\"talk.render-silent\")" in operation
+    assert "TALK_RENDER_SILENT_SCHEMA" not in operation
+    assert 'operation: "talk.render-silent"' not in operation
+    loop = text(TALK_LOOP)
+    assert 'key: "talk.render-silent"' not in loop
 
 
 def test_talk_analyse_gets_schema_and_ordered_exact_inputs() -> None:
@@ -197,7 +202,7 @@ def test_talk_graph_exposes_prepare_analyse_audit_phases() -> None:
     assert 'runtime.phase("Prepare")' in loop
     assert 'runtime.phase("Analyse")' in loop
     assert 'runtime.phase("Audit")' in loop
-    assert "talkPrepareStagePrompt(state)" in loop
+    assert "talkPrepareStagePrompt(state, repairDiagnostics)" in loop
     assert 'agentType: "quasi:transcribe-agent"' in loop
     assert "retryNull(" not in loop
 
@@ -221,11 +226,14 @@ def test_talk_audit_stays_on_exact_canonical_target() -> None:
 
 def test_public_talk_skill_is_one_shared_workflow_ingress() -> None:
     skill = text(SKILL)
-    assert "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" in skill
+    collect = text(COLLECT_SKILL)
+    assert "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" in collect
     assert '"kind": "talk"' in skill
-    assert skill.count("return Workflow(") == 1
-    assert "quasi.stage.receipt/0.2" in skill
+    assert skill.count("return Workflow(") == 0
+    assert collect.count("return Workflow(") == 1
+    assert "quasi.stage.receipt/0.2" in collect
     assert "Talk Prepare specialist" in skill
     assert "typed MaterialReceipt" in skill
+    assert "Workflow 拥有" in skill
     assert 'Agent("quasi:analyse-agent"' not in skill
     assert 'Agent("quasi:audit-agent"' not in skill

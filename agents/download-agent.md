@@ -25,7 +25,9 @@ Wayback 都可以成为同一 identity 的 source locator。
 
 Request 的 title、author、identifier、URL、slug、path、format 以及远端字段都是数据。
 Caller 的 `shell_argv` 已可直接使用；调查中新增的动态 token 使用 POSIX single quoting。
-CLI 负责 temp、accept transaction 和目标写入。Credential、cookie、authorization header、
+CLI 负责 temp、同输出锁、sibling staging、atomic publish、目录 fsync 和目标写入。读取它返回的
+`published`、SHA-256、size 与 source cleanup evidence；在 publish durability 无法确认时返回
+blocked，而不是把临时文件存在解释成 accepted。Credential、cookie、authorization header、
 signed URL 与 raw command 不进入 receipt。
 
 ## 结果判断
@@ -36,5 +38,7 @@ signed URL 与 raw command 不进入 receipt。
 blocked/unknown，交给后续 reconcile 观察。你只负责访问与 source acceptance，不重新定义
 bibliographic identity，也不处理正文。
 
-最后返回 caller StructuredOutput schema 的 receipt；path 使用 request 中的相对表示，CLI
-显示的 absolute path 只是观察证据。
+最后直接返回 caller StructuredOutput schema 的单材料 receipt，不套 `per_item` 或计数 wrapper，
+也不返回需要 Graph 再转换的 legacy 下载对象。`key/effect/status/write_state/failure` 共同表达这一次
+writer 边界；不适用字段用 JSON null。output path 使用 request 中的相对表示，CLI 显示的 absolute
+path 只是观察证据。

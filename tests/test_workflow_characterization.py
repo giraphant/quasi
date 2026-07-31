@@ -122,33 +122,41 @@ def paper_download_receipt(
     attempts: list[dict[str, str | None]] | None = None,
 ) -> dict[str, Any]:
     succeeded = status == "ok"
-    item: dict[str, Any] = {
+    blocked = status == "blocked"
+    reason = failure_reason or (
+        "acquisition outcome was not observable"
+        if blocked
+        else "all acquisition routes failed"
+    )
+    return {
+        "schema_version": "quasi.operation.paper.acquire.receipt/0.2",
+        "key": "paper.acquire",
+        "effect": "writer",
+        "status": "succeeded" if succeeded else "blocked" if blocked else "failed",
+        "attempt": 1,
+        "material_key": f"paper:{slug}",
         "kind": "paper",
         "slug": slug,
-        "status": status,
+        "output_path": paper_paths(slug)["source"],
+        "artifact_roles": ["source"],
         "disposition": "created" if succeeded else None,
+        "write_state": "written" if succeeded else "unknown" if blocked else "not_written",
         "identity_verified": succeeded,
-        "attempts": attempts or [],
+        "source": source if succeeded or source else None,
         "doi": doi,
-    }
-    if succeeded:
-        item.update(
-            {
-                "path": paper_paths(slug)["source"],
-                "source": source,
+        "failure_reason": None if succeeded else reason,
+        "attempts": attempts or [],
+        "failure": (
+            None
+            if succeeded
+            else {
+                "code": "paper.acquire_blocked" if blocked else "paper.download_failed",
+                "operation_key": "paper.acquire",
+                "outcome": "unknown" if blocked else "known",
+                "retryable": False,
+                "message": reason,
             }
-        )
-    else:
-        item.update(
-            {
-                "source": source,
-                "failure_reason": failure_reason,
-            }
-        )
-    return {
-        "acquired": 1 if succeeded else 0,
-        "failed": 0 if succeeded else 1,
-        "per_item": [item],
+        ),
     }
 
 
@@ -223,18 +231,21 @@ def paper_audit_receipt(
     status: str = "clean",
     remaining: int = 0,
     escalated: list[dict[str, str]] | None = None,
+    pass_number: int = 1,
 ) -> dict[str, Any]:
     return {
-        "schema_version": (
-            "quasi.operation.paper.audit.agent-receipt/0.1"
-        ),
+        "schema_version": "quasi.operation.paper.audit.receipt/0.2",
         "key": "paper.audit",
         "effect": "writer",
         "status": status,
         "attempt": 1,
         "target_path": paper_paths(slug)["canonical"],
+        "artifact_roles": ["canonical"],
+        "pass": pass_number,
         "remaining_violations": remaining,
         "escalated": escalated or [],
+        "mutated_paths": [],
+        "failure": None,
     }
 
 
@@ -280,43 +291,60 @@ def book_download_receipt(
     *,
     status: str = "ok",
     attempts: list[dict[str, str | None]] | None = None,
+    allowed_formats: tuple[str, ...] = ("epub",),
 ) -> dict[str, Any]:
-    item: dict[str, Any] = {
+    accepted = status == "ok"
+    signal = "accepted" if accepted else status
+    evidence = None
+    temp_path = None
+    reason = None
+    if status == "ok":
+        evidence = book_year_evidence()
+    elif status == "year_mismatch":
+        temp_path = f".quasi/temp/downloads/{slug}-prior.epub"
+        evidence = book_year_evidence(recommended=2019, verdict="MISMATCH")
+        reason = evidence["recommendation_reason"]
+    else:
+        reason = "all acquisition routes failed"
+    blocked = status == "blocked"
+    return {
+        "schema_version": "quasi.operation.book.acquire.receipt/0.2",
+        "key": "book.acquire",
+        "effect": "writer",
+        "status": "succeeded" if accepted else "blocked" if blocked else "failed",
+        "signal": signal,
+        "attempt": 1,
+        "material_key": f"book:{slug}",
         "kind": "book",
         "slug": slug,
-        "status": status,
-        "disposition": "reused" if status == "ok" else None,
-        "identity_verified": status in {"ok", "year_mismatch"},
-        "format": "epub" if status == "ok" else None,
+        "output_path": f"sources/{slug}.epub" if accepted else None,
+        "allowed_output_paths": [
+            f"sources/{slug}.{format}" for format in allowed_formats
+        ],
+        "artifact_roles": ["source"],
+        "disposition": "reused" if accepted else None,
+        "write_state": "not_written" if not blocked else "unknown",
+        "identity_verified": status in {"ok", "year_mismatch", "year_ambiguous"},
+        "format": "epub" if accepted else None,
+        "tmp_path": temp_path,
+        "source": "existing" if accepted else None,
+        "isbn": None,
+        "year_evidence": evidence,
+        "failure_reason": reason,
         "attempts": attempts or [],
-    }
-    if status == "ok":
-        item.update(
-            {
-                "path": f"sources/{slug}.epub",
-                "source": "existing",
-                "format": "epub",
-                "year_evidence": book_year_evidence(),
-            }
-        )
-    elif status == "year_mismatch":
-        item.update(
-            {
-                "tmp_path": (
-                    f".quasi/temp/downloads/{slug}-prior.epub"
+        "failure": (
+            None
+            if accepted
+            else {
+                "code": (
+                    "book.acquire_blocked" if blocked else f"book.{signal}"
                 ),
-                "year_evidence": book_year_evidence(
-                    recommended=2019,
-                    verdict="MISMATCH",
-                ),
+                "operation_key": "book.acquire",
+                "outcome": "unknown" if blocked else "known",
+                "retryable": False,
+                "message": reason,
             }
-        )
-    else:
-        item["failure_reason"] = "all acquisition routes failed"
-    return {
-        "acquired": 1 if status == "ok" else 0,
-        "failed": 0 if status == "ok" else 1,
-        "per_item": [item],
+        ),
     }
 
 
@@ -489,11 +517,7 @@ def material_ingress_responses(
         }
     else:
         acquire = responses.get(f"{slug}:acquire", [])
-        acquired_item = (
-            acquire[0].get("result", {}).get("per_item", [{}])[0]
-            if acquire
-            else {}
-        )
+        acquired_item = acquire[0].get("result", {}) if acquire else {}
         query = {
             "slug": slug,
             "title": meta.get("title"),
@@ -708,7 +732,7 @@ def test_paper_prepare_can_recover_ocr_before_analyse(
         },
         responses={
             f"{slug}:acquire": [
-                reply(paper_download_receipt(slug))
+                reply(paper_download_receipt(slug, doi="10.1000/scan"))
             ],
             f"{slug}:prepare": [
                 reply(
@@ -791,6 +815,16 @@ def test_paper_download_failure_preserves_actionable_evidence(
     assert report["result"]["failure_reason"] == "all acquisition routes failed"
     assert report["result"]["attempts"] == attempts
     assert report["result"]["material_receipt"]["status"] == "failed"
+    assert report["result"]["material_receipt"]["operations"][0] == (
+        paper_download_receipt(
+            slug,
+            status="download_failed",
+            doi="10.1000/missing",
+            source="wayback",
+            failure_reason="all acquisition routes failed",
+            attempts=attempts,
+        )
+    )
     assert labels(report) == [
         f"{slug}:search",
         f"{slug}:acquire",
@@ -848,7 +882,7 @@ def test_paper_audit_escalation_gets_one_repair_then_second_audit(
                         escalated=[diagnostic],
                     )
                 ),
-                reply(paper_audit_receipt(slug)),
+                reply(paper_audit_receipt(slug, pass_number=2)),
             ],
         },
     )
@@ -908,6 +942,7 @@ def test_book_download_keeps_legacy_year_status_and_temp_evidence(
     assert report["result"]["tmp_path"] == (
         f".quasi/temp/downloads/{slug}-prior.epub"
     )
+    assert report["result"]["material_receipt"]["status"] == "needs_input"
 
 
 def test_book_download_failure_preserves_reason_and_attempts(
@@ -941,6 +976,13 @@ def test_book_download_failure_preserves_reason_and_attempts(
         "all acquisition routes failed"
     )
     assert report["result"]["attempts"] == attempts
+    assert report["result"]["material_receipt"]["operations"][0] == (
+        book_download_receipt(
+            slug,
+            status="download_failed",
+            attempts=attempts,
+        )
+    )
 
 
 def test_book_fanout_is_parallel_and_reconciles_before_synthesis(
@@ -1105,7 +1147,12 @@ def test_author_deduplicates_two_candidates_resolved_to_one_vault_slug(
                 )
             ],
             f"{canonical}:acquire": [
-                reply(book_download_receipt(canonical))
+                reply(
+                    book_download_receipt(
+                        canonical,
+                        allowed_formats=("epub", "pdf"),
+                    )
+                )
             ],
             f"{canonical}:prepare": [
                 reply(book_prepare_receipt(canonical))

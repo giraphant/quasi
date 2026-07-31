@@ -29,6 +29,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 
 - Workflow phases describe processing progress, never router branches or material kinds. The shared order is `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`.
 - Every `agent()` call must carry its exact stage through `opts.phase`; do not use `Paper`, `Book`, `Author`, `Talk`, `Topic`, or `Translation` as a phase.
+- Every Agent invocation enters a FIFO runtime lane keyed by phase, with at most five active calls in each phase. Independent phase lanes may progress concurrently.
 - Agent labels begin with the stable material slug or collection key, followed by the operation, so parallel work remains identifiable when the UI truncates long labels.
 - `Recall` normalises and coalesces material requests; the single `Search` specialist invocation investigates external records and resolves its selected identity against the vault. `Acquire` accepts a source artifact; `Prepare` converts or structures inputs; the remaining stages produce, combine, and validate canonical artifacts.
 
@@ -87,7 +88,7 @@ Current userConfig mapping:
 
 - The graph owns material identity and processing state. The skill main process owns only user decisions and explicitly skill-scoped sidecars; it must not maintain a second metadata, recall, or writer-success state machine.
 - `metadata-agent`, `discovery-agent`, and `localisation-agent` return JSON and do not write files.
-- `download-agent` accepts or rejects candidates through `quasi-download`; it returns `DOWNLOAD_RESULT.per_item` and does not own caller manifests.
+- `download-agent` reconciles or accepts one exact Book/Paper source through `quasi-download`; it returns the single material's direct Acquire receipt and does not own caller manifests.
 - `extract-agent` owns Paper/Book Prepare judgement and local recovery over caller-named refs. It invokes deterministic `quasi-extract` transactions; those CLI transactions own chapter files and `processing/chapters/{slug}/manifest.json`.
 - `analyse-agent`, `synthesis-agent`, `proofread-agent`, and `citecheck-agent` write only the exact product path assigned by the caller.
 - `steer-agent` owns `vault/topics/{slug}/02-outline.md` (the topic research outline; users may hand-edit it between runs) and returns sub-question-targeted candidates; it writes nothing else.
@@ -177,12 +178,10 @@ that JSON Schema cannot express stay small and concrete, such as an exact path
 join, count equality, or coherent manifest generation.
 
 Child MaterialReceipt admission at collection/research joins stays strict on
-purpose — the dispatch seam is host-pluggable, so a join re-proves identity,
-canonical artifact, and clean final audit
-(`scripts/workflows/materials/member.mjs` for Author; `topic-recall.mjs`
-keeps its own variant with deliberately different book audit and canonical
-rules pending alignment). `research/topic.mjs` (the multi-round loop) is the
-remaining unmigrated graph.
+purpose — the dispatch seam is host-pluggable, so the shared
+`scripts/workflows/materials/member.mjs` join re-proves identity, canonical
+artifacts, and clean final audit for Author, Batch, and strict Topic recall.
+`research/topic.mjs` (the multi-round loop) is the remaining unmigrated graph.
 
 `quasi-pi-runner` is the Pi-only adapter for the existing `workflows/process-material.mjs` graph. It uses the official Pi SDK already installed with Pi, loads `quasi:<name>` definitions from root `agents/`, and deliberately implements only `agent`, `parallel`, `phase`, `log`, and `args`; do not add a third-party workflow compatibility dependency. Claude Code keeps using its native Workflow path.
 
@@ -194,7 +193,7 @@ remaining unmigrated graph.
 
 Public skill routing separates material intake from topic research. `collect-material` owns paper, book, author, Talk, and Translation; `precise-topic` owns vault recall, outline steering, evidence cards, human seed gates, and topic synthesis. Both still call `workflows/process-material.mjs`, so topic candidates reuse the same paper/book router without duplicating graph nodes. Draft proofreading and citation closure use `finalise-draft`.
 
-One user request containing 2–32 top-level Books/Papers enters `process-material.mjs` once as `{kind:"batch",items:[...]}`. The batch coordinator shares one runtime across independent material loops, preserves input order, coalesces duplicate identities before any duplicate writer, and returns `quasi.collection.material-batch.receipt/0.1`. Do not expand a batch into one Workflow invocation per item; that produces multiple top-level UI graphs and prevents aggregate progress management.
+One user request containing 2–32 top-level Books/Papers enters `process-material.mjs` once as `{kind:"batch",items:[...]}`. The batch coordinator shares one runtime across independent material loops, preserves input order, coalesces duplicate identities before any duplicate writer, and returns `quasi.collection.material-batch.receipt/0.2`. Do not expand a batch into one Workflow invocation per item; that produces multiple top-level UI graphs and prevents aggregate progress management.
 
 For a single Book or Paper request, `collect-material` passes only user-provided hints into the graph. Recall normalises and coalesces the request without starting a worker. One `material.search` Stage Unit gives `metadata-agent` both search and vault-resolution capabilities, so the specialist establishes the canonical identity and exact existing owner in one investigation. Search owns author order, year, identifiers, venue/publisher, access URLs, and canonical slug. Author/Topic candidate finding uses `discovery-agent`; Chinese-edition matching uses `localisation-agent`. The skill main process starts the graph before doing metadata work. A failed download preserves `failure_reason` and per-source `attempts` in the graph result.
 
@@ -274,8 +273,8 @@ When changing config, runtime state, or handoff contracts:
 - `$CLAUDE_PROJECT_DIR` is fixed at session start; a `cd` inside a dispatched worker's *prompt* does not redirect where the orchestration graph writes. Dispatch E2E workers with the correct cwd; never rely on an in-prompt `cd`.
 - A dead Workflow subagent writes no `result` line in `journal.jsonl` — its key stays `started`-only forever, and a retry shows up as a *new* started+result pair. Count `started` vs `result` keys to find deaths; do not look for `result: null`.
 - `agent()` returns `null` when a subagent dies on a terminal API error after retries. `process-material.mjs::retryNull` pays exactly one retry per null, because a `null` cannot distinguish a deterministic failure from a transient one.
-- A run that looks hung is usually harness backoff, not deadlock. A dying subagent's transcript ends in a synthetic `API Error: …` assistant message, but the harness can sit in invisible retry backoff for 20–40 minutes before `agent()` finally sees `null` — no result line, no progress, nothing a script can observe or shorten. Before declaring a run dead, check each no-result agent's transcript mtime: still advancing = live agent (a `0 tok` display can just be a slow provider), stale with an API-error tail = a death still waiting to be reported. Legacy and read-only graph calls may still use `guard` and `retryNull` to bound a dead worker. Paper writer Operations deliberately await their exact Agent call without a timer race: a timed-out Promise could continue writing after the graph had followed another edge. Resume or reconciliation, not a concurrent retry, is the safe recovery for an unknown writer outcome. Other workflow scripts have no such bound — there, killing the run and re-invoking with `resumeFromRunId` is still the only shortcut.
+- A run that looks hung is usually harness backoff, not deadlock. A dying subagent's transcript ends in a synthetic `API Error: …` assistant message, but the harness can sit in invisible retry backoff for 20–40 minutes before `agent()` finally sees `null` — no result line, no progress, nothing a script can observe or shorten. Before declaring a run dead, check each no-result agent's transcript mtime: still advancing = live agent (a `0 tok` display can just be a slow provider), stale with an API-error tail = a death still waiting to be reported. Every Agent call enters its phase's FIFO lane (at most five active calls); queue wait is not invocation time. Modern writer Operations deliberately await their exact Agent call without a timer race: a timed-out Promise could continue writing after the graph had followed another edge. Resume or reconciliation, not a concurrent retry, is the safe recovery for an unknown writer outcome. `research/topic.mjs` remains legacy graph debt and may still use `guard` / `retryNull`; do not extend those primitives into the migrated base loops.
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.23.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.52.26.

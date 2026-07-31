@@ -28,12 +28,12 @@ def code_lines() -> list[tuple[int, str]]:
     return out
 
 
-def test_one_agent_primitive_feeds_bounded_legacy_and_unbounded_writer():
-    """Legacy calls remain bounded; operation writers await one underlying call.
+def test_one_agent_primitive_feeds_phase_admitted_legacy_and_writer_calls():
+    """Every source-runtime Agent call shares the per-phase admission boundary.
 
     Racing a writer against the legacy timer could return blocked while the losing
-    Agent continues writing in the background, so guard and invokeWriter share one
-    callAgent primitive but only guard races its returned Promise.
+    Agent continues writing in the background. The admission slot therefore follows
+    the underlying callAgent Promise even when only guard races its visible result.
     """
     bare = [
         (n, line.strip())
@@ -42,14 +42,18 @@ def test_one_agent_primitive_feeds_bounded_legacy_and_unbounded_writer():
     ]
 
     assert len(bare) == 1, f"agent() 调用边界漂移: {bare}"
-    assert re.search(
-        r"Promise\.resolve\(agent\(prompt,\s*opts\)\)",
-        bare[0][1],
-    )
+    assert "agent(prompt,opts)" in bare[0][1].replace(" ", "")
 
     runtime = runtime_source()
+    assert "export const PHASE_AGENT_LIMIT = 5" in runtime
+    assert "const phaseLanes = new Map()" in runtime
+    assert "const admitAgent = (opts, invoke, guarded = false) =>" in runtime
+    assert "const rawAgent = (prompt, opts) =>" in runtime
+    assert "const scheduleAgent = (" in runtime
     assert "const callAgent = (prompt, opts) =>" in runtime
-    assert "const invocation = callAgent(prompt, opts)" in runtime
+    assert "admitAgent(opts, () =>" in runtime
+    assert "admission = scheduleAgent(prompt, opts" in runtime
+    assert "const invocation = admission.promise" in runtime
     assert "const invokeWriter = async" in runtime
     assert "await callAgent(prompt, opts)" in runtime
     assert 'effect === "writer"' in runtime

@@ -107,7 +107,7 @@ def test_collect_material_starts_one_graph_and_does_not_shadow_ingress() -> None
     assert "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" in skill
     assert '"kind": "batch"' in skill
     assert "2–32" in skill
-    assert "quasi.collection.material-batch.receipt/0.1" in skill
+    assert "quasi.collection.material-batch.receipt/0.2" in skill
     assert "material.recall" not in skill
     assert "quasi-search book" not in skill
     assert "quasi-helpers vault resolve" not in skill

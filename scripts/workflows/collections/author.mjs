@@ -18,12 +18,15 @@ import {
   authorSynthesiseOperationPrompt,
   authorSynthesiseSchema,
 } from "../operations/synthesise.mjs";
+import { AUTHOR_ARTIFACT_CONTRACT } from "../artifact-contracts/generated.mjs";
 import { strictChildResult } from "../materials/member.mjs";
 import { validText } from "../runtime.mjs";
 
 const AUTHOR_RECEIPT_VERSION =
   "quasi.collection.author.receipt/0.1";
 const AUTHOR_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
+const AUTHOR_NAME_SCHEMA =
+  AUTHOR_ARTIFACT_CONTRACT.identity.properties.name;
 
 const operationFailure = (
   code,
@@ -61,7 +64,13 @@ function validateIdentity(name, meta) {
       ? meta.fullName
       : name;
   const topic = meta.topic || "";
-  if (!validText(full, 2, 200))
+  if (
+    !validText(
+      full,
+      AUTHOR_NAME_SCHEMA.minLength,
+      AUTHOR_NAME_SCHEMA.maxLength,
+    )
+  )
     return {
       ok: false,
       code: "author.identity_invalid",
@@ -127,9 +136,7 @@ function createState(name, meta) {
     repaired: false,
     disposition: null,
     discoveryFailures: [],
-    warnings: [
-      "author discovery and audit remain explicitly named legacy composites",
-    ],
+    warnings: [],
     budgets: {
       books: { used: 0, limit: meta.maxBooks },
       papers: { used: 0, limit: meta.maxPapers },
@@ -750,7 +757,7 @@ async function processAuthorStrict(
       candidates,
     ),
     {
-      phase: "Recall",
+      phase: "Search",
       agentType: "general-purpose",
       label: `${name}:resolve-membership`,
       schema: AUTHOR_RESOLVE_MEMBERSHIP_SCHEMA,

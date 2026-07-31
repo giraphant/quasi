@@ -25,6 +25,8 @@ materialise in the hook+bash subprocess env for one tool call at a time.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import hashlib
 import html
 import json
 import os
@@ -32,6 +34,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -2275,6 +2278,190 @@ def _cmd_paper_fetch(args) -> int:
     return 1
 
 
+@contextmanager
+def _accept_output_lock(destination: Path):
+    """Serialize every writer targeting one accepted source path."""
+    lock_path = destination.parent / f".{destination.name}.quasi-download.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("a+b")
+    try:
+        try:
+            import fcntl
+        except ImportError as exc:  # pragma: no cover - supported plugin hosts are Unix
+            raise RuntimeError("accept requires advisory file locking") from exc
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if "fcntl" in locals():
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _stage_accepted_file(source: Path, destination: Path) -> tuple[Path, str, int]:
+    """Copy source bytes into a fsynced sibling stage and return its proof."""
+    descriptor, raw_stage = tempfile.mkstemp(
+        prefix=f"{destination.name}.quasi-stage-",
+        dir=destination.parent,
+    )
+    stage = Path(raw_stage)
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with source.open("rb") as reader, os.fdopen(descriptor, "wb") as writer:
+            while True:
+                chunk = reader.read(1024 * 1024)
+                if not chunk:
+                    break
+                writer.write(chunk)
+                digest.update(chunk)
+                size += len(chunk)
+            os.fchmod(writer.fileno(), source.stat().st_mode & 0o777)
+            writer.flush()
+            os.fsync(writer.fileno())
+        return stage, digest.hexdigest(), size
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        stage.unlink(missing_ok=True)
+        raise
+
+
+def _file_proof(path: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _accept_to_output(
+    source: Path,
+    destination: Path,
+    *,
+    kind: str,
+    overwrite: bool,
+) -> tuple[dict, int]:
+    """Publish one accepted source without exposing an unlink/write window."""
+    source = Path(source).resolve()
+    destination = Path(destination).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    published = False
+    previous_output = destination.exists()
+    stage: Path | None = None
+
+    try:
+        with _accept_output_lock(destination):
+            # Re-observe both refs under the output lock; another accepter may
+            # have settled this target while this caller was queued.
+            previous_output = destination.exists()
+            if source == destination:
+                if not source.is_file():
+                    return {
+                        "status": "not_found",
+                        "kind": kind,
+                        "path": str(source),
+                    }, 1
+                sha256, size_bytes = _file_proof(destination)
+                return {
+                    "status": "ok",
+                    "kind": kind,
+                    "path": str(destination),
+                    "moved": False,
+                    "published": True,
+                    "source_removed": False,
+                    "sha256": sha256,
+                    "size_bytes": size_bytes,
+                    "reason": "already_at_destination",
+                }, 0
+
+            if not source.exists() or not source.is_file():
+                return {
+                    "status": "not_found",
+                    "kind": kind,
+                    "path": str(source),
+                }, 1
+
+            if previous_output and not overwrite:
+                return {
+                    "status": "conflict",
+                    "kind": kind,
+                    "path": str(destination),
+                    "temp_path": str(source),
+                    "reason": "destination_exists",
+                }, 1
+
+            stage, sha256, size_bytes = _stage_accepted_file(
+                source,
+                destination,
+            )
+            os.replace(stage, destination)
+            stage = None
+            published = True
+            _fsync_directory(destination.parent)
+
+            source_removed = False
+            cleanup_error = None
+            try:
+                source.unlink()
+                source_removed = True
+                _fsync_directory(source.parent)
+            except OSError as exc:
+                # The accepted output is already durable. A leftover fenced
+                # temp candidate is cleanup debt, not an uncertain writer.
+                cleanup_error = f"{type(exc).__name__}: {exc}"
+
+            payload = {
+                "status": "ok",
+                "kind": kind,
+                "path": str(destination),
+                "temp_path": str(source),
+                "moved": source_removed,
+                "published": True,
+                "source_removed": source_removed,
+                "sha256": sha256,
+                "size_bytes": size_bytes,
+            }
+            if cleanup_error is not None:
+                payload["cleanup_error"] = cleanup_error
+            return payload, 0
+    except (OSError, RuntimeError) as exc:
+        if stage is not None:
+            stage.unlink(missing_ok=True)
+        payload = {
+            "status": "blocked",
+            "kind": kind,
+            "path": str(destination),
+            "temp_path": str(source),
+            "reason": "accept_commit_failed",
+            "error": f"{type(exc).__name__}: {exc}",
+            "published": published,
+            "previous_output_preserved": (
+                not published and previous_output and destination.exists()
+            ),
+        }
+        if published and destination.is_file():
+            sha256, size_bytes = _file_proof(destination)
+            payload.update({"sha256": sha256, "size_bytes": size_bytes})
+        return payload, 1
+
+
 def _cmd_accept(args) -> int:
     if not args.path:
         print("accept: need --path", file=sys.stderr)
@@ -2284,48 +2471,16 @@ def _cmd_accept(args) -> int:
         return 2
 
     src = resolve_project_path(args.path)
-    if not src.exists() or not src.is_file():
-        print_json({
-            "status": "not_found",
-            "path": str(src),
-        })
-        return 1
-
     out_dir = resolve_project_path(args.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
     dest = (out_dir / f"{args.slug}{src.suffix.lower()}").resolve()
-
-    if src == dest:
-        print_json({
-            "status": "ok",
-            "kind": args.kind,
-            "path": str(dest),
-            "moved": False,
-            "reason": "already_at_destination",
-        })
-        return 0
-
-    if dest.exists() and not args.overwrite:
-        print_json({
-            "status": "conflict",
-            "kind": args.kind,
-            "path": str(dest),
-            "temp_path": str(src),
-            "reason": "destination_exists",
-        })
-        return 1
-
-    if dest.exists() and args.overwrite:
-        dest.unlink()
-    shutil.move(str(src), str(dest))
-    print_json({
-        "status": "ok",
-        "kind": args.kind,
-        "path": str(dest),
-        "temp_path": str(src),
-        "moved": True,
-    })
-    return 0
+    payload, code = _accept_to_output(
+        src,
+        dest,
+        kind=args.kind,
+        overwrite=args.overwrite,
+    )
+    print_json(payload)
+    return code
 
 
 # ---- argparse: subcommand structure ----------------------------------------

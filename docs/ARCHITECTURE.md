@@ -85,9 +85,11 @@ Top-level requests containing 2–32 Books/Papers use one material-batch
 coordinator inside that same Workflow invocation. It shares the runtime and
 coalescing map with every child Material Loop, runs independent items through
 `parallel`, preserves input order in the aggregate receipt, and never creates a
-second Workflow per item. `quasi.collection.material-batch.receipt/0.1`
-summarises per-item progress without flattening or replacing the child ingress
-and MaterialReceipts.
+second Workflow per item. `quasi.collection.material-batch.receipt/0.2`
+contains one ordered, authoritative projection per input item: identity, status,
+canonical artifacts, user gate or issue, and resume. It deliberately omits
+duplicate raw child results; strict child MaterialReceipt admission happens at
+the shared join before that projection is emitted.
 
 The shared graph presents progress as
 `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`.

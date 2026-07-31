@@ -171,7 +171,8 @@ def test_collect_material_routes_translation_through_shared_workflow() -> None:
     assert skill.count("return Workflow(") == 1
     assert "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" in skill
     assert "quasi.derivative.translation.receipt/0.1" in skill
-    assert "`needs_input` 带一个用户可以回答" in skill
+    assert "`needs_input` 时" in skill
+    assert "用户可以回答的问题" in skill
     assert "收到答案后构造一次新的 graph request" in skill
     assert 'Agent("quasi:translate-agent"' not in skill
 

@@ -235,23 +235,74 @@ def year_evidence() -> dict[str, Any]:
 
 def acquire(slug: str, extension: str = "epub") -> dict[str, Any]:
     return {
-        "acquired": 1,
-        "failed": 0,
-        "per_item": [
-            {
-                "kind": "book",
-                "slug": slug,
-                "status": "ok",
-                "disposition": "reused",
-                "identity_verified": True,
-                "format": extension,
-                "path": paths(slug, extension)["source"],
-                "source": "existing_file",
-                "isbn": "9780000000002",
-                "year_evidence": year_evidence(),
-                "attempts": [],
-            }
-        ],
+        "schema_version": "quasi.operation.book.acquire.receipt/0.2",
+        "key": "book.acquire",
+        "effect": "writer",
+        "status": "succeeded",
+        "signal": "accepted",
+        "attempt": 1,
+        "material_key": f"book:{slug}",
+        "kind": "book",
+        "slug": slug,
+        "output_path": paths(slug, extension)["source"],
+        "allowed_output_paths": [paths(slug, extension)["source"]],
+        "artifact_roles": ["source"],
+        "disposition": "reused",
+        "write_state": "not_written",
+        "identity_verified": True,
+        "format": extension,
+        "tmp_path": None,
+        "source": "existing_file",
+        "isbn": "9780000000002",
+        "year_evidence": year_evidence(),
+        "failure_reason": None,
+        "attempts": [],
+        "failure": None,
+    }
+
+
+def acquire_year_gate(slug: str, signal: str) -> dict[str, Any]:
+    evidence = year_evidence()
+    if signal == "year_mismatch":
+        evidence["source_years"] = {"catalog": 2025, "copyright": 2025}
+        evidence["pdf_signals"]["first_published"] = 2025
+        evidence["pdf_signals"]["copyright_year"] = 2025
+        evidence["recommended_year"] = 2025
+        evidence["verdict"] = "MISMATCH"
+    else:
+        evidence["recommended_year"] = None
+        evidence["verdict"] = "AMBIGUOUS"
+    reason = evidence["recommendation_reason"]
+    return {
+        "schema_version": "quasi.operation.book.acquire.receipt/0.2",
+        "key": "book.acquire",
+        "effect": "writer",
+        "status": "failed",
+        "signal": signal,
+        "attempt": 1,
+        "material_key": f"book:{slug}",
+        "kind": "book",
+        "slug": slug,
+        "output_path": None,
+        "allowed_output_paths": [paths(slug)["source"]],
+        "artifact_roles": ["source"],
+        "disposition": None,
+        "write_state": "not_written",
+        "identity_verified": True,
+        "format": None,
+        "tmp_path": f".quasi/temp/downloads/{slug}-candidate.epub",
+        "source": None,
+        "isbn": "9780000000002",
+        "year_evidence": evidence,
+        "failure_reason": reason,
+        "attempts": [],
+        "failure": {
+            "code": f"book.{signal}",
+            "operation_key": "book.acquire",
+            "outcome": "known",
+            "retryable": False,
+            "message": reason,
+        },
     }
 
 
@@ -475,7 +526,13 @@ def test_book_happy_path_is_prepare_then_parallel_analysis_join(
     report = run_book(tmp_path, slug, happy(slug, barrier=True))
 
     assert report["result"]["status"] == "ok"
-    assert report["result"]["material_receipt"]["status"] == "complete"
+    material_receipt = report["result"]["material_receipt"]
+    assert material_receipt["status"] == "complete"
+    assert material_receipt["operations"][0] == acquire(slug)
+    acquire_call = next(
+        item for item in report["trace"] if item["operation"] == "book.acquire"
+    )
+    assert "per_item" not in acquire_call["schema"]["properties"]
     assert operations(report) == [
         "book.acquire",
         "book.prepare",
@@ -511,6 +568,53 @@ def test_book_prepare_envelope_gives_specialist_all_exact_capabilities(
     assert not any(item["operation"] in {"chapter.plan", "chapter.extract"} for item in report["trace"])
 
 
+@pytest.mark.parametrize("signal", ["year_mismatch", "year_ambiguous"])
+def test_book_year_gate_is_typed_needs_input(
+    tmp_path: Path,
+    signal: str,
+) -> None:
+    slug = f"book-stage-{signal.replace('_', '-')}"
+    report = run_book(
+        tmp_path,
+        slug,
+        {"book.acquire": [reply(acquire_year_gate(slug, signal))]},
+    )
+
+    assert report["result"]["status"] == signal
+    receipt = report["result"]["material_receipt"]
+    assert receipt["status"] == "needs_input"
+    assert receipt["resume"] == {
+        "operation_key": "book.user-gate",
+        "stage": "download",
+        "policy": "human-year-decision-or-correct-request",
+    }
+    gate = receipt["user_gate"]
+    evidence = report["result"]["year_evidence"]
+    assert gate == {
+        "schema_version": "quasi.user-gate.book-year/0.1",
+        "operation_key": "book.user-gate",
+        "kind": "book_year_decision",
+        "actions": (
+            ["accept-current", "use-recommended-year"]
+            if signal == "year_mismatch"
+            else ["accept-current"]
+        ),
+        "tmp_path": report["result"]["tmp_path"],
+        "year_evidence": evidence,
+        "question": gate["question"],
+    }
+    assert gate["question"]
+
+
+def test_book_complete_receipt_has_closed_empty_user_gate(
+    tmp_path: Path,
+) -> None:
+    slug = "book-stage-no-user-gate"
+    report = run_book(tmp_path, slug, happy(slug))
+
+    assert report["result"]["material_receipt"]["user_gate"] is None
+
+
 @pytest.mark.parametrize("status", ["needs_input", "failed"])
 def test_book_prepare_terminal_stops_before_fanout(
     tmp_path: Path,
@@ -530,6 +634,21 @@ def test_book_prepare_terminal_stops_before_fanout(
     assert report["result"]["material_receipt"]["failure"]["code"] == (
         "book.chapter_set_unavailable"
     )
+    if status == "needs_input":
+        gate = report["result"]["material_receipt"]["user_gate"]
+        assert gate == {
+            "schema_version": "quasi.user-gate.stage/0.1",
+            "operation_key": "book.prepare",
+            "kind": "stage_needs_input",
+            "issue": prepare(slug, status=status)["terminal"]["issue"],
+            "candidates": [],
+            "conflicts": [],
+            "question": (
+                "Which of the two observed tables of contents should define the book?"
+            ),
+        }
+    else:
+        assert report["result"]["material_receipt"]["user_gate"] is None
 
 
 @pytest.mark.parametrize("value", [None, {"status": "complete"}])

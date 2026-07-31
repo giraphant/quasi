@@ -449,7 +449,7 @@ def paper_child_result(slug: str) -> dict[str, Any]:
         "slug": slug,
         "status": "ok",
         "material_receipt": {
-            "schema_version": "quasi.material-loop.receipt/0.1",
+            "schema_version": "quasi.material-loop.receipt/0.2",
             "material_key": f"paper:{slug}",
             "kind": "paper",
             "id": slug,
@@ -467,16 +467,18 @@ def paper_child_result(slug: str) -> dict[str, Any]:
             ],
             "operations": [{"key": "paper.synthetic"}],
             "audit": {
-                "schema_version": (
-                    "quasi.operation.paper.audit.agent-receipt/0.1"
-                ),
+                "schema_version": "quasi.operation.paper.audit.receipt/0.2",
                 "key": "paper.audit",
                 "effect": "writer",
                 "status": "clean",
                 "attempt": 1,
                 "target_path": canonical,
+                "artifact_roles": ["canonical"],
+                "pass": 1,
                 "remaining_violations": 0,
                 "escalated": [],
+                "mutated_paths": [],
+                "failure": None,
             },
             "freshness": {
                 "observation": "unknown",
@@ -484,6 +486,7 @@ def paper_child_result(slug: str) -> dict[str, Any]:
             },
             "warnings": [],
             "failure": None,
+            "user_gate": None,
             "resume": None,
         },
     }

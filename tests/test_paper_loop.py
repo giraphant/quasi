@@ -143,21 +143,24 @@ def search(slug: str) -> dict[str, Any]:
 
 def acquire(slug: str) -> dict[str, Any]:
     return {
-        "acquired": 1,
-        "failed": 0,
-        "per_item": [
-            {
-                "kind": "paper",
-                "slug": slug,
-                "status": "ok",
-                "disposition": "created",
-                "identity_verified": True,
-                "path": paths(slug)["source"],
-                "source": "doi_cascade",
-                "doi": "10.1000/example",
-                "attempts": [],
-            }
-        ],
+        "schema_version": "quasi.operation.paper.acquire.receipt/0.2",
+        "key": "paper.acquire",
+        "effect": "writer",
+        "status": "succeeded",
+        "attempt": 1,
+        "material_key": f"paper:{slug}",
+        "kind": "paper",
+        "slug": slug,
+        "output_path": paths(slug)["source"],
+        "artifact_roles": ["source"],
+        "disposition": "created",
+        "write_state": "written",
+        "identity_verified": True,
+        "source": "doi_cascade",
+        "doi": "10.1000/example",
+        "failure_reason": None,
+        "attempts": [],
+        "failure": None,
     }
 
 
@@ -248,7 +251,12 @@ def analyse(slug: str, input_path: str | None = None) -> dict[str, Any]:
     }
 
 
-def audit(slug: str, *, status: str = "clean") -> dict[str, Any]:
+def audit(
+    slug: str,
+    *,
+    status: str = "clean",
+    pass_number: int = 1,
+) -> dict[str, Any]:
     escalated: list[dict[str, str]] = []
     remaining = 0
     if status == "partial":
@@ -261,14 +269,18 @@ def audit(slug: str, *, status: str = "clean") -> dict[str, Any]:
             }
         ]
     return {
-        "schema_version": "quasi.operation.paper.audit.agent-receipt/0.1",
+        "schema_version": "quasi.operation.paper.audit.receipt/0.2",
         "key": "paper.audit",
         "effect": "writer",
         "status": status,
         "attempt": 1,
         "target_path": paths(slug)["canonical"],
+        "artifact_roles": ["canonical"],
+        "pass": pass_number,
         "remaining_violations": remaining,
         "escalated": escalated,
+        "mutated_paths": [],
+        "failure": None,
     }
 
 
@@ -307,12 +319,16 @@ def test_paper_happy_path_is_one_prepare_stage(tmp_path: Path) -> None:
     ]
     receipt = report["result"]["material_receipt"]
     assert receipt["status"] == "complete"
+    assert receipt["user_gate"] is None
     assert [item.get("operation", item.get("key")) for item in receipt["operations"]] == [
         "paper.acquire",
         "paper.prepare",
         "paper.analyse",
         "paper.audit",
     ]
+    assert receipt["operations"][0] == acquire(slug)
+    assert receipt["operations"][-1] == receipt["audit"] == audit(slug)
+    assert "per_item" not in report["trace"][1]["schema"]["properties"]
 
 
 def test_prepare_prompt_gives_goal_capabilities_and_exact_refs(tmp_path: Path) -> None:
@@ -370,6 +386,18 @@ def test_prepare_terminal_stops_before_analysis(
     assert report["result"]["material_receipt"]["failure"]["code"] == (
         "paper.text_not_readable"
     )
+    if status == "needs_input":
+        assert report["result"]["material_receipt"]["user_gate"] == {
+            "schema_version": "quasi.user-gate.stage/0.1",
+            "operation_key": "paper.prepare",
+            "kind": "stage_needs_input",
+            "issue": prepare(slug, status=status)["terminal"]["issue"],
+            "candidates": [],
+            "conflicts": [],
+            "question": "Can you provide another source PDF?",
+        }
+    else:
+        assert report["result"]["material_receipt"]["user_gate"] is None
 
 
 @pytest.mark.parametrize("stage_reply", [None, {"status": "complete"}])
@@ -412,7 +440,10 @@ def test_prepare_complete_requires_usable_selected_artifact(tmp_path: Path) -> N
 def test_audit_routes_one_exact_analysis_repair(tmp_path: Path) -> None:
     slug = "paper-stage-audit-repair"
     responses = base(slug)
-    responses[f"{slug}:audit"] = [audit(slug, status="partial"), audit(slug)]
+    responses[f"{slug}:audit"] = [
+        audit(slug, status="partial"),
+        audit(slug, pass_number=2),
+    ]
     repaired = analyse(slug)
     repaired["action"] = "repair"
     responses[f"{slug}:analyse"] = [analyse(slug), repaired]
@@ -422,6 +453,22 @@ def test_audit_routes_one_exact_analysis_repair(tmp_path: Path) -> None:
     assert labels(report).count(f"{slug}:analyse") == 2
     assert labels(report).count(f"{slug}:audit") == 2
     assert report["result"]["material_receipt"]["disposition"] == "repaired"
+
+
+def test_audit_mechanical_mutation_is_one_direct_repaired_receipt(
+    tmp_path: Path,
+) -> None:
+    slug = "paper-stage-audit-mechanical-repair"
+    responses = base(slug)
+    repaired_audit = audit(slug)
+    repaired_audit["mutated_paths"] = [paths(slug)["canonical"]]
+    responses[f"{slug}:audit"] = [repaired_audit]
+    report = run_paper(tmp_path, slug, responses)
+
+    receipt = report["result"]["material_receipt"]
+    assert receipt["status"] == "complete"
+    assert receipt["disposition"] == "repaired"
+    assert receipt["operations"][-1] == receipt["audit"] == repaired_audit
 
 
 def test_analysis_unknown_is_one_writer_call(tmp_path: Path) -> None:

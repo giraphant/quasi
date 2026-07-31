@@ -4,6 +4,7 @@ import {
   exactKeys,
   optionalText,
   sameClosedValue,
+  validateSchema,
   validText,
 } from "../runtime.mjs";
 import {
@@ -14,412 +15,403 @@ import {
   stageContract,
   stageReceiptSchema,
 } from "../stage.mjs";
+import {
+  BOOK_TEMP_PATH,
+  validYearEvidence,
+} from "./book-year-evidence.mjs";
 
+export {
+  BOOK_TEMP_PATH,
+  validYearEvidence,
+} from "./book-year-evidence.mjs";
+
+const acquireAttemptsSchema = {
+  type: "array",
+  maxItems: 64,
+  items: {
+    type: "object",
+    additionalProperties: false,
+    required: ["source", "status", "error"],
+    properties: {
+      source: { type: "string", minLength: 1, maxLength: 200 },
+      status: { type: "string", minLength: 1, maxLength: 100 },
+      error: { type: ["string", "null"], maxLength: 4000 },
+    },
+  },
+};
+
+const acquireFailureSchema = (operationKey) => ({
+  type: ["object", "null"],
+  additionalProperties: false,
+  required: [
+    "code",
+    "operation_key",
+    "outcome",
+    "retryable",
+    "message",
+  ],
+  properties: {
+    code: { type: "string", minLength: 1, maxLength: 200 },
+    operation_key: { const: operationKey },
+    outcome: { type: "string", enum: ["known", "unknown"] },
+    retryable: { const: false },
+    message: { type: "string", minLength: 1, maxLength: 4000 },
+  },
+});
+
+// Acquire is a single-material writer boundary. The Agent returns this receipt
+// directly; there is no one-element batch envelope and no graph-side adapter.
 export const BOOK_ACQUIRE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["acquired", "failed", "per_item"],
+  required: [
+    "schema_version",
+    "key",
+    "effect",
+    "status",
+    "signal",
+    "attempt",
+    "material_key",
+    "kind",
+    "slug",
+    "output_path",
+    "allowed_output_paths",
+    "artifact_roles",
+    "disposition",
+    "write_state",
+    "identity_verified",
+    "format",
+    "tmp_path",
+    "source",
+    "isbn",
+    "year_evidence",
+    "failure_reason",
+    "attempts",
+    "failure",
+  ],
   properties: {
-    acquired: { type: "integer", minimum: 0 },
-    failed: { type: "integer", minimum: 0 },
-    per_item: {
+    schema_version: {
+      const: "quasi.operation.book.acquire.receipt/0.2",
+    },
+    key: { const: "book.acquire" },
+    effect: { const: "writer" },
+    status: {
+      type: "string",
+      enum: ["succeeded", "failed", "blocked"],
+    },
+    signal: {
+      type: "string",
+      enum: [
+        "accepted",
+        "year_mismatch",
+        "year_ambiguous",
+        "download_failed",
+        "blocked",
+      ],
+    },
+    attempt: { type: "integer", const: 1 },
+    material_key: { type: "string" },
+    kind: { const: "book" },
+    slug: { type: "string" },
+    output_path: { type: ["string", "null"] },
+    allowed_output_paths: {
+      type: "array",
+      minItems: 1,
+      maxItems: 2,
+      uniqueItems: true,
+      items: { type: "string" },
+    },
+    artifact_roles: {
       type: "array",
       minItems: 1,
       maxItems: 1,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: [
-          "kind",
-          "slug",
-          "status",
-          "disposition",
-          "identity_verified",
-          "format",
-          "attempts",
-        ],
-        properties: {
-          kind: { const: "book" },
-          slug: { type: "string" },
-          status: {
-            type: "string",
-            enum: [
-              "ok",
-              "year_mismatch",
-              "year_ambiguous",
-              "download_failed",
-              "blocked",
-            ],
-          },
-          disposition: {
-            type: ["string", "null"],
-            enum: ["created", "reused", null],
-          },
-          identity_verified: { type: "boolean" },
-          format: {
-            type: ["string", "null"],
-            enum: ["epub", "pdf", null],
-          },
-          path: { type: "string" },
-          tmp_path: { type: "string" },
-          source: { type: "string" },
-          isbn: { type: ["string", "null"] },
-          verdict_note: { type: "string" },
-          failure_reason: { type: "string" },
-          year_evidence: { type: "object" },
-          attempts: {
-            type: "array",
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["source", "status", "error"],
-              properties: {
-                source: { type: "string" },
-                status: { type: "string" },
-                error: { type: ["string", "null"] },
-              },
-            },
-          },
-        },
-      },
+      items: { const: "source" },
     },
+    disposition: {
+      type: ["string", "null"],
+      enum: ["created", "reused", null],
+    },
+    write_state: {
+      type: "string",
+      enum: ["written", "not_written", "unknown"],
+    },
+    identity_verified: { type: "boolean" },
+    format: {
+      type: ["string", "null"],
+      enum: ["epub", "pdf", null],
+    },
+    tmp_path: { type: ["string", "null"] },
+    source: { type: ["string", "null"], maxLength: 200 },
+    isbn: { type: ["string", "null"], maxLength: 100 },
+    year_evidence: { type: ["object", "null"] },
+    failure_reason: { type: ["string", "null"], maxLength: 4000 },
+    attempts: acquireAttemptsSchema,
+    failure: acquireFailureSchema("book.acquire"),
   },
 };
 
 export const PAPER_ACQUIRE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["acquired", "failed", "per_item"],
+  required: [
+    "schema_version",
+    "key",
+    "effect",
+    "status",
+    "attempt",
+    "material_key",
+    "kind",
+    "slug",
+    "output_path",
+    "artifact_roles",
+    "disposition",
+    "write_state",
+    "identity_verified",
+    "source",
+    "doi",
+    "failure_reason",
+    "attempts",
+    "failure",
+  ],
   properties: {
-    acquired: { type: "integer", minimum: 0 },
-    failed: { type: "integer", minimum: 0 },
-    per_item: {
+    schema_version: {
+      const: "quasi.operation.paper.acquire.receipt/0.2",
+    },
+    key: { const: "paper.acquire" },
+    effect: { const: "writer" },
+    status: {
+      type: "string",
+      enum: ["succeeded", "failed", "blocked"],
+    },
+    attempt: { type: "integer", const: 1 },
+    material_key: { type: "string" },
+    kind: { const: "paper" },
+    slug: { type: "string" },
+    output_path: { type: "string" },
+    artifact_roles: {
       type: "array",
       minItems: 1,
       maxItems: 1,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: [
-          "kind",
-          "slug",
-          "status",
-          "disposition",
-          "identity_verified",
-          "source",
-          "attempts",
-        ],
-        properties: {
-          kind: { const: "paper" },
-          slug: { type: "string" },
-          status: {
-            type: "string",
-            enum: ["ok", "download_failed", "blocked"],
-          },
-          disposition: {
-            type: ["string", "null"],
-            enum: ["created", "reused", null],
-          },
-          identity_verified: { type: "boolean" },
-          path: { type: "string" },
-          source: { type: ["string", "null"] },
-          doi: { type: ["string", "null"] },
-          verdict_note: { type: "string" },
-          failure_reason: { type: "string" },
-          attempts: {
-            type: "array",
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["source", "status", "error"],
-              properties: {
-                source: { type: "string" },
-                status: { type: "string" },
-                error: { type: ["string", "null"] },
-              },
-            },
-          },
-        },
-      },
+      items: { const: "source" },
     },
+    disposition: {
+      type: ["string", "null"],
+      enum: ["created", "reused", null],
+    },
+    write_state: {
+      type: "string",
+      enum: ["written", "not_written", "unknown"],
+    },
+    identity_verified: { type: "boolean" },
+    source: { type: ["string", "null"], maxLength: 200 },
+    doi: { type: ["string", "null"], maxLength: 300 },
+    failure_reason: { type: ["string", "null"], maxLength: 4000 },
+    attempts: acquireAttemptsSchema,
+    failure: acquireFailureSchema("paper.acquire"),
   },
 };
 
-export const BOOK_TEMP_PATH =
-  /^\.quasi\/temp\/downloads\/[A-Za-z0-9][A-Za-z0-9._-]{0,220}\.(?:epub|pdf)$/;
-
-const nullableYear = (value) =>
-  value === null ||
-  (Number.isInteger(value) && value >= 1000 && value <= 2500);
-
-// Closed year-evidence object carried by Book acquisition receipts and year
-// gate decisions. A MATCH verdict must be independently supported at least
-// twice; MISMATCH must name a different year; AMBIGUOUS must name none.
-export function validYearEvidence(evidence, expectedYear) {
-  if (
-    !exactKeys(evidence, [
-      "slug_year",
-      "source_years",
-      "pdf_signals",
-      "recommended_year",
-      "recommendation_reason",
-      "verdict",
-    ]) ||
-    evidence.slug_year !== expectedYear ||
-    !evidence.source_years ||
-    typeof evidence.source_years !== "object" ||
-    Array.isArray(evidence.source_years) ||
-    Object.keys(evidence.source_years).length > 64 ||
-    Object.entries(evidence.source_years).some(
-      ([source, year]) =>
-        !validText(source, 1, 200) || !nullableYear(year) || year === null,
-    ) ||
-    !exactKeys(evidence.pdf_signals, [
-      "first_published",
-      "copyright_year",
-      "original_year",
-      "other_years",
-    ]) ||
-    !nullableYear(evidence.pdf_signals.first_published) ||
-    !nullableYear(evidence.pdf_signals.copyright_year) ||
-    !nullableYear(evidence.pdf_signals.original_year) ||
-    !Array.isArray(evidence.pdf_signals.other_years) ||
-    evidence.pdf_signals.other_years.length > 64 ||
-    evidence.pdf_signals.other_years.some(
-      (year) => !nullableYear(year) || year === null,
-    ) ||
-    !nullableYear(evidence.recommended_year) ||
-    !validText(evidence.recommendation_reason, 1, 4000) ||
-    !["MATCH", "MISMATCH", "AMBIGUOUS"].includes(evidence.verdict)
-  )
-    return false;
-  if (evidence.verdict === "MATCH") {
-    const support = [
-      ...Object.values(evidence.source_years),
-      evidence.pdf_signals.first_published,
-      evidence.pdf_signals.copyright_year,
-      ...evidence.pdf_signals.other_years,
-    ].filter((year) => year === evidence.recommended_year).length;
-    return (
-      evidence.recommended_year === expectedYear &&
-      support >= 2
-    );
-  }
-  if (evidence.verdict === "MISMATCH")
-    return (
-      evidence.recommended_year !== null &&
-      evidence.recommended_year !== expectedYear
-    );
-  return evidence.recommended_year === null;
-}
-
-// The one-item book acquisition matrix rides the composed schema: counts,
-// dispositions, exact slug const, format↔path pairing against the allowed
-// sources, and field presence per status (a year gate carries a fenced
-// tmp_path and never an accepted output). Year-evidence semantics — the
-// closed evidence object, MATCH support counting, and the human decision
-// replay — are arithmetic over arrays and stay in the contract.
-const bookYearGateItem = (slug, allowedSources) => ({
-  properties: {
-    slug: { const: slug },
-    disposition: { type: "null" },
-    identity_verified: { const: true },
-    format: { type: "null" },
-    tmp_path: {
-      type: "string",
-      pattern:
-        "^\\.quasi/temp/downloads/[A-Za-z0-9][A-Za-z0-9._-]{0,220}\\.(?:" +
-        allowedSources.map(({ format }) => format).join("|") +
-        ")$",
-    },
-    year_evidence: { type: "object" },
-  },
-  required: ["tmp_path", "year_evidence"],
-  not: {
-    anyOf: [
-      { required: ["path"] },
-      { required: ["source"] },
-      { required: ["failure_reason"] },
-    ],
-  },
-});
-
-const bookRefusedItem = (slug) => ({
-  properties: {
-    slug: { const: slug },
-    disposition: { type: "null" },
-    identity_verified: { const: false },
-    format: { type: "null" },
-    failure_reason: {
-      type: "string",
-      minLength: 1,
-      maxLength: 4000,
-    },
-  },
-  required: ["failure_reason"],
-  not: {
-    anyOf: [
-      { required: ["path"] },
-      { required: ["tmp_path"] },
-      { required: ["source"] },
-      { required: ["isbn"] },
-      { required: ["verdict_note"] },
-      { required: ["year_evidence"] },
-    ],
-  },
-});
-
 const bookAcquireBranches = ({ slug, allowedSources }) => ({
-  ok: {
+  accepted: {
     properties: {
-      acquired: { const: 1 },
-      failed: { const: 0 },
-      per_item: {
-        items: {
-          properties: {
-            status: { const: "ok" },
-            slug: { const: slug },
-            disposition: { enum: ["created", "reused"] },
-            identity_verified: { const: true },
-            source: {
-              type: "string",
-              minLength: 1,
-              maxLength: 200,
-            },
-            year_evidence: { type: "object" },
-          },
-          required: ["path", "source", "year_evidence"],
-          not: {
-            anyOf: [
-              { required: ["tmp_path"] },
-              { required: ["failure_reason"] },
-            ],
-          },
-          anyOf: allowedSources.map(({ format, path }) => ({
-            properties: {
-              format: { const: format },
-              path: { const: path },
-            },
-          })),
-        },
-      },
+      status: { const: "succeeded" },
+      signal: { const: "accepted" },
+      slug: { const: slug },
+      disposition: { enum: ["created", "reused"] },
+      write_state: { enum: ["written", "not_written"] },
+      identity_verified: { const: true },
+      tmp_path: { type: "null" },
+      source: { type: "string", minLength: 1, maxLength: 200 },
+      year_evidence: { type: "object" },
+      failure_reason: { type: "null" },
+      failure: { type: "null" },
     },
+    anyOf: allowedSources.map(({ format, path }) => ({
+      properties: {
+        format: { const: format },
+        output_path: { const: path },
+      },
+    })),
   },
   year_mismatch: {
     properties: {
-      acquired: { const: 0 },
-      failed: { const: 1 },
-      per_item: {
-        items: {
-          ...bookYearGateItem(slug, allowedSources),
-          properties: {
-            ...bookYearGateItem(slug, allowedSources)
-              .properties,
-            status: { const: "year_mismatch" },
-          },
+      status: { const: "failed" },
+      signal: { const: "year_mismatch" },
+      slug: { const: slug },
+      output_path: { type: "null" },
+      disposition: { type: "null" },
+      write_state: { const: "not_written" },
+      identity_verified: { const: true },
+      format: { type: "null" },
+      tmp_path: {
+        type: "string",
+        pattern:
+          "^\\.quasi/temp/downloads/[A-Za-z0-9][A-Za-z0-9._-]{0,220}\\.(?:" +
+          allowedSources.map(({ format }) => format).join("|") +
+          ")$",
+      },
+      source: { type: "null" },
+      year_evidence: { type: "object" },
+      failure_reason: { type: "string", minLength: 1 },
+      failure: {
+        type: "object",
+        properties: {
+          code: { const: "book.year_mismatch" },
+          outcome: { const: "known" },
         },
       },
     },
   },
   year_ambiguous: {
     properties: {
-      acquired: { const: 0 },
-      failed: { const: 1 },
-      per_item: {
-        items: {
-          ...bookYearGateItem(slug, allowedSources),
-          properties: {
-            ...bookYearGateItem(slug, allowedSources)
-              .properties,
-            status: { const: "year_ambiguous" },
-          },
+      status: { const: "failed" },
+      signal: { const: "year_ambiguous" },
+      slug: { const: slug },
+      output_path: { type: "null" },
+      disposition: { type: "null" },
+      write_state: { const: "not_written" },
+      identity_verified: { const: true },
+      format: { type: "null" },
+      tmp_path: {
+        type: "string",
+        pattern:
+          "^\\.quasi/temp/downloads/[A-Za-z0-9][A-Za-z0-9._-]{0,220}\\.(?:" +
+          allowedSources.map(({ format }) => format).join("|") +
+          ")$",
+      },
+      source: { type: "null" },
+      year_evidence: { type: "object" },
+      failure_reason: { type: "string", minLength: 1 },
+      failure: {
+        type: "object",
+        properties: {
+          code: { const: "book.year_ambiguous" },
+          outcome: { const: "known" },
         },
       },
     },
   },
   download_failed: {
     properties: {
-      acquired: { const: 0 },
-      failed: { const: 1 },
-      per_item: {
-        items: {
-          ...bookRefusedItem(slug),
-          properties: {
-            ...bookRefusedItem(slug).properties,
-            status: { const: "download_failed" },
-            attempts: { minItems: 1 },
-          },
+      status: { const: "failed" },
+      signal: { const: "download_failed" },
+      slug: { const: slug },
+      output_path: { type: "null" },
+      disposition: { type: "null" },
+      write_state: { const: "not_written" },
+      identity_verified: { const: false },
+      format: { type: "null" },
+      tmp_path: { type: "null" },
+      source: { type: "null" },
+      isbn: { type: "null" },
+      year_evidence: { type: "null" },
+      failure_reason: { type: "string", minLength: 1 },
+      attempts: { minItems: 1 },
+      failure: {
+        type: "object",
+        properties: {
+          code: { const: "book.download_failed" },
+          outcome: { const: "known" },
         },
       },
     },
   },
   blocked: {
     properties: {
-      acquired: { const: 0 },
-      failed: { const: 0 },
-      per_item: {
-        items: {
-          ...bookRefusedItem(slug),
-          properties: {
-            ...bookRefusedItem(slug).properties,
-            status: { const: "blocked" },
-          },
+      status: { const: "blocked" },
+      signal: { const: "blocked" },
+      slug: { const: slug },
+      output_path: { type: "null" },
+      disposition: { type: "null" },
+      write_state: { const: "unknown" },
+      identity_verified: { const: false },
+      format: { type: "null" },
+      tmp_path: { type: "null" },
+      source: { type: "null" },
+      isbn: { type: "null" },
+      year_evidence: { type: "null" },
+      failure_reason: { type: "string", minLength: 1 },
+      failure: {
+        type: "object",
+        properties: {
+          code: { const: "book.acquire_blocked" },
+          outcome: { const: "unknown" },
         },
       },
     },
   },
 });
 
-export const bookAcquireSchema = (context) => ({
+export const bookAcquireSchema = ({ slug, allowedSources }) => ({
   ...BOOK_ACQUIRE_SCHEMA,
-  anyOf: Object.values(bookAcquireBranches(context)),
+  properties: {
+    ...BOOK_ACQUIRE_SCHEMA.properties,
+    material_key: { const: `book:${slug}` },
+    slug: { const: slug },
+    allowed_output_paths: {
+      const: allowedSources.map(({ path }) => path),
+    },
+  },
+  anyOf: Object.values(
+    bookAcquireBranches({ slug, allowedSources }),
+  ),
 });
+
+const failureMatchesReason = (receipt) =>
+  receipt.failure !== null &&
+  receipt.failure.message === receipt.failure_reason;
 
 export const BOOK_ACQUIRE_CONTRACT = {
   schema: BOOK_ACQUIRE_SCHEMA,
-  status: (receipt) => receipt.per_item[0].status,
+  status: (receipt) => receipt.signal,
   statuses: {
-    ok: (receipt, context) => {
-      const item = receipt.per_item[0];
+    accepted: (receipt, context) => {
+      const dispositionCoherent =
+        (receipt.disposition === "created" &&
+          receipt.write_state === "written") ||
+        (receipt.disposition === "reused" &&
+          receipt.write_state === "not_written");
       return (
+        dispositionCoherent &&
         (!context.yearDecision ||
-          (item.disposition === "created" &&
-            item.attempts.length > 0)) &&
+          (receipt.disposition === "created" &&
+            receipt.attempts.length > 0)) &&
         (context.yearDecision
           ? validYearEvidence(
-              item.year_evidence,
+              receipt.year_evidence,
               context.yearDecision.year_evidence.slug_year,
             ) &&
             sameClosedValue(
-              item.year_evidence,
+              receipt.year_evidence,
               context.yearDecision.year_evidence,
             )
           : validYearEvidence(
-              item.year_evidence,
+              receipt.year_evidence,
               context.expectedYear,
             ) &&
-            (item.year_evidence.verdict === "MATCH" ||
+            (receipt.year_evidence.verdict === "MATCH" ||
               context.batchAcceptYear === true))
       );
     },
     year_mismatch: (receipt, context) =>
+      failureMatchesReason(receipt) &&
       validYearEvidence(
-        receipt.per_item[0].year_evidence,
+        receipt.year_evidence,
         context.expectedYear,
       ) &&
-      receipt.per_item[0].year_evidence.verdict === "MISMATCH",
+      receipt.year_evidence.verdict === "MISMATCH",
     year_ambiguous: (receipt, context) =>
+      failureMatchesReason(receipt) &&
       validYearEvidence(
-        receipt.per_item[0].year_evidence,
+        receipt.year_evidence,
         context.expectedYear,
       ) &&
-      receipt.per_item[0].year_evidence.verdict ===
-        "AMBIGUOUS",
-    download_failed: () => true,
-    blocked: () => true,
+      receipt.year_evidence.verdict === "AMBIGUOUS",
+    download_failed: (receipt) => failureMatchesReason(receipt),
+    blocked: (receipt) => failureMatchesReason(receipt),
   },
   edges: {
-    ok: "ok",
+    accepted: "ok",
     year_mismatch: "failed",
     year_ambiguous: "failed",
     download_failed: "failed",
@@ -427,89 +419,132 @@ export const BOOK_ACQUIRE_CONTRACT = {
   },
 };
 
-// The per-status acquisition matrix rides the composed schema (parent counts,
-// item dispositions, exact slug/path consts, forbidden fields via `not`); the
-// contract keeps only the status accessor and edge map.
-const paperAcquireRefusedItem = (slug) => ({
-  properties: {
-    slug: { const: slug },
-    disposition: { type: "null" },
-    identity_verified: { const: false },
-    source: {
-      anyOf: [
-        { type: "null" },
-        { type: "string", minLength: 1 },
-      ],
-    },
-    failure_reason: { type: "string", minLength: 1 },
+export function validBookAcquireReceipt(
+  receipt,
+  {
+    slug,
+    expectedYear,
+    batchAcceptYear = false,
+    yearDecision = null,
   },
-  required: ["failure_reason"],
-  not: { required: ["path"] },
-});
+) {
+  const paths = receipt && receipt.allowed_output_paths;
+  const allowedSources = Array.isArray(paths)
+    ? paths.map((path) => ({
+        path,
+        format: path.endsWith(".epub")
+          ? "epub"
+          : path.endsWith(".pdf")
+            ? "pdf"
+            : null,
+      }))
+    : [];
+  if (
+    allowedSources.length < 1 ||
+    allowedSources.length > 2 ||
+    new Set(paths).size !== paths.length ||
+    allowedSources.some(
+      ({ path, format }) =>
+        format === null || path !== `sources/${slug}.${format}`,
+    ) ||
+    !validateSchema(
+      bookAcquireSchema({ slug, allowedSources }),
+      receipt,
+    )
+  )
+    return false;
+  const validator = BOOK_ACQUIRE_CONTRACT.statuses[receipt.signal];
+  return !!(
+    typeof validator === "function" &&
+    validator(receipt, {
+      expectedYear,
+      batchAcceptYear,
+      yearDecision,
+    }) === true
+  );
+}
 
 const paperAcquireBranches = ({ slug, output }) => ({
-  ok: {
+  succeeded: {
     properties: {
-      acquired: { const: 1 },
-      failed: { const: 0 },
-      per_item: {
-        items: {
-          properties: {
-            status: { const: "ok" },
-            slug: { const: slug },
-            disposition: { enum: ["created", "reused"] },
-            identity_verified: { const: true },
-            path: { const: output },
-            source: { type: "string", minLength: 1 },
-          },
-          required: ["path", "source"],
-          not: { required: ["failure_reason"] },
-        },
-      },
+      status: { const: "succeeded" },
+      slug: { const: slug },
+      output_path: { const: output },
+      disposition: { enum: ["created", "reused"] },
+      write_state: { enum: ["written", "not_written"] },
+      identity_verified: { const: true },
+      source: { type: "string", minLength: 1 },
+      failure_reason: { type: "null" },
+      failure: { type: "null" },
     },
   },
-  download_failed: {
+  failed: {
     properties: {
-      acquired: { const: 0 },
-      failed: { const: 1 },
-      per_item: {
-        items: {
-          ...paperAcquireRefusedItem(slug),
-          properties: {
-            ...paperAcquireRefusedItem(slug).properties,
-            status: { const: "download_failed" },
-            attempts: { minItems: 1 },
-          },
+      status: { const: "failed" },
+      slug: { const: slug },
+      output_path: { const: output },
+      disposition: { type: "null" },
+      write_state: { const: "not_written" },
+      identity_verified: { const: false },
+      failure_reason: { type: "string", minLength: 1 },
+      attempts: { minItems: 1 },
+      failure: {
+        type: "object",
+        properties: {
+          code: { const: "paper.download_failed" },
+          outcome: { const: "known" },
         },
       },
     },
   },
   blocked: {
     properties: {
-      acquired: { const: 0 },
-      failed: { const: 0 },
-      per_item: {
-        items: {
-          ...paperAcquireRefusedItem(slug),
-          properties: {
-            ...paperAcquireRefusedItem(slug).properties,
-            status: { const: "blocked" },
-          },
+      status: { const: "blocked" },
+      slug: { const: slug },
+      output_path: { const: output },
+      disposition: { type: "null" },
+      write_state: { const: "unknown" },
+      identity_verified: { const: false },
+      failure_reason: { type: "string", minLength: 1 },
+      failure: {
+        type: "object",
+        properties: {
+          code: { const: "paper.acquire_blocked" },
+          outcome: { const: "unknown" },
         },
       },
     },
   },
 });
 
-export const paperAcquireSchema = (context) => ({
+export const paperAcquireSchema = ({ slug, output, doi = null }) => ({
   ...PAPER_ACQUIRE_SCHEMA,
-  anyOf: Object.values(paperAcquireBranches(context)),
+  properties: {
+    ...PAPER_ACQUIRE_SCHEMA.properties,
+    material_key: { const: `paper:${slug}` },
+    slug: { const: slug },
+    output_path: { const: output },
+    doi: { const: doi },
+  },
+  anyOf: Object.values(paperAcquireBranches({ slug, output })),
 });
 
 export const PAPER_ACQUIRE_CONTRACT = {
   schema: PAPER_ACQUIRE_SCHEMA,
-  status: (receipt) => receipt.per_item[0].status,
-  edges: { ok: "ok", download_failed: "failed", blocked: "blocked" },
+  statuses: {
+    succeeded: (receipt) =>
+      (receipt.disposition === "created" &&
+        receipt.write_state === "written") ||
+      (receipt.disposition === "reused" &&
+        receipt.write_state === "not_written"),
+    failed: (receipt) => failureMatchesReason(receipt),
+    blocked: (receipt) => failureMatchesReason(receipt),
+  },
+  edges: {
+    succeeded: "ok",
+    failed: "failed",
+    blocked: "blocked",
+  },
 };
 
 const MATERIAL_SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
@@ -1088,7 +1123,7 @@ export const BOOK_ACQUISITION_POLICY = {
     known_exhaustion: "download_failed",
     uncertain_identity_path_or_writer: "blocked",
     success_source_required: true,
-    success_omits: ["tmp_path"],
+    success_nulls: ["tmp_path", "failure_reason", "failure"],
     success_source_examples: ["existing_file", "anna_archive", "doi_cascade"],
     path_echo: {
       source: "request.allowed_outputs[].path",
@@ -1187,11 +1222,11 @@ export function bookAcquirePrompt(
     operation_policy: BOOK_ACQUISITION_POLICY,
   };
   return `Execute one acquisition operation from this self-contained JSON request.
-For a succeeded item, receipt path must echo the chosen request.allowed_outputs[].path
-byte-for-byte. An absolute/resolved path printed by quasi-download is observation evidence only;
-never copy that rendering into the receipt. Every succeeded item must also name the stable source
-that proved the artifact, using source="existing_file" for verified reuse. Once a candidate is
-accepted or reused, omit tmp_path from the succeeded item.
+Return the single Book Acquire receipt directly, never a batch or per_item wrapper. For accepted
+source, output_path must echo the chosen request.allowed_outputs[].path byte-for-byte. An
+absolute/resolved path printed by quasi-download is observation evidence only; never copy that
+rendering into the receipt. Name the stable source that proved the artifact, using
+source="existing_file" for verified reuse. Fields that do not apply are JSON null.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}
 \`\`\``;
@@ -1210,18 +1245,18 @@ export function paperAcquirePrompt(slug, meta) {
     mode: "acquire",
     exact_output: exactOutput,
     kind: "paper",
-    items: [
-      {
-        slug,
-        expected_author: meta.authors[0],
-        expected_title: meta.title,
-        identifiers: {
-          doi: meta.doi || null,
-          oa_url: meta.oa_url || null,
-          url: meta.url || null,
-        },
-      },
-    ],
+    identity: {
+      slug,
+      title: meta.title,
+      authors: meta.authors,
+      year: meta.year,
+      journal: meta.journal,
+      doi: meta.doi || null,
+      oa_url: meta.oa_url || null,
+      url: meta.url || null,
+      confidence:
+        meta.confidence === "verified" ? "verified" : "provided",
+    },
     identity_contract: PAPER_ARTIFACT_CONTRACT.identity,
     output_dir: "sources/",
     shell_argv: {
@@ -1236,10 +1271,11 @@ export function paperAcquirePrompt(slug, meta) {
     operation_policy: PAPER_ACQUISITION_POLICY,
   };
   return `Execute one acquisition operation from this self-contained JSON request.
-For a succeeded item, receipt path must equal request.exact_output byte-for-byte. An
-absolute/resolved path printed by quasi-download is observation evidence only; never copy that
-rendering into the receipt. Every succeeded item must also name the stable source that proved the
-artifact, using source="existing_file" for verified reuse.
+Return the single Paper Acquire receipt directly, never a batch or per_item wrapper. output_path
+must equal request.exact_output byte-for-byte in every terminal branch. An absolute/resolved path
+printed by quasi-download is observation evidence only; never copy that rendering into the
+receipt. A succeeded receipt names the stable source that proved the artifact, using
+source="existing_file" for verified reuse. Fields that do not apply are JSON null.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}
 \`\`\``;

@@ -83,7 +83,7 @@ acquisition 等非产物结构的行为，由所属 `scripts/workflows/operation
 | `audit-agent` | vault consistency 检查和可修复项处理 |
 | `proofread-agent` | draft 局部校对 |
 | `citecheck-agent` | 引文 context-fit 审查 |
-| `transcribe-agent` | 完成 Talk Prepare：媒体、transcript generation 与语义分类 |
+| `transcribe-agent` | 完成 Talk Prepare：媒体、transcript generation、语义分类，以及 dead/empty 的 silent canonical |
 | `translate-agent` | 完成 Translation Prepare：source、翻译 generation、恢复与验证 |
 
 ### CLI

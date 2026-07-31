@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import stat
 import sys
 from pathlib import Path
+
+import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
@@ -87,6 +91,89 @@ def test_prepare_media_echoes_absolute_source_path(
     code, receipt = compress_media.run(args)
     assert code == 0
     assert receipt["input_path"] == str(source)
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "chflags") or not hasattr(stat, "UF_HIDDEN"),
+    reason="macOS file flags are unavailable",
+)
+def test_prepare_media_clears_hidden_flag_carried_by_staging_inode(
+    tmp_path: Path, monkeypatch
+):
+    source = tmp_path / "sources/input.mov"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"source-media")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(compress_media.shutil, "which", lambda _name: "/ffmpeg")
+
+    def run(command, text):
+        del text
+        calls.append(command)
+        stage = Path(command[-1])
+        stage.write_bytes(b"compressed-media")
+        os.chflags(stage, stage.stat().st_flags | stat.UF_HIDDEN)
+        return argparse.Namespace(returncode=0)
+
+    monkeypatch.setattr(compress_media.subprocess, "run", run)
+
+    code, receipt = compress_media.run(_args(tmp_path))
+
+    output = tmp_path / "vault/talks/compress-talk/recording.mp4"
+    assert code == 0
+    assert receipt["action"] == "create"
+    assert len(calls) == 1
+    assert output.stat().st_flags & stat.UF_HIDDEN == 0
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "chflags") or not hasattr(stat, "UF_HIDDEN"),
+    reason="macOS file flags are unavailable",
+)
+def test_prepare_media_reconcile_repairs_hidden_existing_output(
+    tmp_path: Path, monkeypatch
+):
+    source = tmp_path / "sources/input.mov"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"source-media")
+    calls: list[list[str]] = []
+    _stub_ffmpeg(monkeypatch, calls)
+    assert compress_media.run(_args(tmp_path))[0] == 0
+    output = tmp_path / "vault/talks/compress-talk/recording.mp4"
+    os.chflags(output, output.stat().st_flags | stat.UF_HIDDEN)
+    assert output.stat().st_flags & stat.UF_HIDDEN
+    calls.clear()
+
+    code, receipt = compress_media.run(_args(tmp_path))
+
+    assert code == 0
+    assert receipt["action"] == "reconciled"
+    assert calls == []
+    assert output.stat().st_flags & stat.UF_HIDDEN == 0
+
+
+def test_prepare_media_hidden_flag_failure_rolls_back_before_manifest(
+    tmp_path: Path, monkeypatch
+):
+    source = tmp_path / "sources/input.mov"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"source-media")
+    calls: list[list[str]] = []
+    _stub_ffmpeg(monkeypatch, calls)
+
+    def fail(_path: Path) -> bool:
+        raise OSError("cannot clear hidden flag")
+
+    monkeypatch.setattr(compress_media, "_clear_macos_hidden", fail)
+
+    code, receipt = compress_media.run(_args(tmp_path))
+
+    output = tmp_path / "vault/talks/compress-talk/recording.mp4"
+    manifest = output.parent / ".recording.mp4.quasi-compress.json"
+    assert code != 0
+    assert receipt["status"] == "blocked"
+    assert receipt["failure"]["code"] == "commit_failed"
+    assert not output.exists()
+    assert not manifest.exists()
 
 
 def test_prepare_media_rejects_unmanaged_and_symlink_targets(

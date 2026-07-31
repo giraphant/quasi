@@ -4,10 +4,44 @@
 // identity binding, canonical artifact, and clean final audit before admitting
 // a member — a child result is not trusted merely for arriving in-process.
 
-import { exactKeys, validText } from "../runtime.mjs";
+import {
+  exactKeys,
+  sameClosedValue,
+  validateSchema,
+  validText,
+} from "../runtime.mjs";
+import {
+  MATERIAL_SEARCH_STAGE_CONTRACT,
+  materialSearchStageSchema,
+  validBookAcquireReceipt,
+} from "../operations/acquire.mjs";
+import {
+  PAPER_AUDIT_CONTRACT,
+  paperAuditSchema,
+} from "../operations/audit.mjs";
+import {
+  applyBookYearDecision,
+  ingressUserGate,
+  validResolvedIngressEvidence,
+  validYearDecisionEnvelope,
+} from "./ingress.mjs";
+import {
+  validChapterSlot,
+} from "../operations/extract.mjs";
+import {
+  MATERIAL_RECEIPT_VERSION,
+  validUserGate,
+} from "./receipt.mjs";
+const INGRESS_RECEIPT_VERSION =
+  "quasi.material-ingress.receipt/0.2";
+const MATERIAL_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
-const MATERIAL_RECEIPT_VERSION =
-  "quasi.material-loop.receipt/0.1";
+const record = (value) =>
+  !!(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  );
 
 const sameStrings = (left, right) =>
   Array.isArray(left) &&
@@ -54,6 +88,71 @@ function validMaterialFailure(failure) {
   );
 }
 
+function projectFailure(failure) {
+  return {
+    code: failure.code,
+    operation_key: failure.operation_key,
+    outcome: failure.outcome,
+    retryable: failure.retryable,
+    message: failure.message || null,
+  };
+}
+
+function validResume(resume) {
+  if (resume === null) return true;
+  if (!record(resume)) return false;
+  const keys = Object.keys(resume);
+  return !!(
+    keys.length >= 1 &&
+    keys.length <= 3 &&
+    keys.every((key) =>
+      ["operation_key", "stage", "policy"].includes(key),
+    ) &&
+    validText(resume.operation_key, 1, 200) &&
+    (resume.stage === undefined ||
+      validText(resume.stage, 1, 100)) &&
+    (resume.policy === undefined ||
+      validText(resume.policy, 1, 400))
+  );
+}
+
+function projectResume(resume) {
+  if (resume === null) return null;
+  return {
+    operation_key: resume.operation_key,
+    ...(resume.stage === undefined ? {} : { stage: resume.stage }),
+    ...(resume.policy === undefined
+      ? {}
+      : { policy: resume.policy }),
+  };
+}
+
+function validBlockedResume(receipt) {
+  if (receipt.kind === "paper") {
+    if (
+      receipt.stage === "identity" &&
+      receipt.failure.operation_key === "paper.identity" &&
+      receipt.operations.length === 0
+    )
+      return receipt.resume === null;
+    return sameClosedValue(receipt.resume, {
+      operation_key: "paper.reconcile",
+    });
+  }
+  if (receipt.failure.outcome === "unknown")
+    return sameClosedValue(receipt.resume, {
+      operation_key: "book.reconcile",
+    });
+  return sameClosedValue(receipt.resume, {
+    operation_key: "book.user-gate",
+    stage: receipt.stage,
+    policy:
+      receipt.stage === "download"
+        ? "human-year-decision-or-correct-request"
+        : "caller-correct-request",
+  });
+}
+
 function validMaterialArtifact(artifact) {
   return !!(
     exactKeys(artifact, [
@@ -82,26 +181,16 @@ function validAuditDiagnostic(diagnostic) {
 
 function validPaperAudit(audit, expectedPath) {
   return !!(
-    exactKeys(audit, [
-      "schema_version",
-      "key",
-      "effect",
-      "status",
-      "attempt",
-      "target_path",
-      "remaining_violations",
-      "escalated",
-    ]) &&
-    audit.schema_version ===
-      "quasi.operation.paper.audit.agent-receipt/0.1" &&
-    audit.key === "paper.audit" &&
-    audit.effect === "writer" &&
+    audit &&
+    validateSchema(
+      paperAuditSchema({
+        target: expectedPath,
+        pass: audit.pass,
+      }),
+      audit,
+    ) &&
     audit.status === "clean" &&
-    audit.attempt === 1 &&
-    audit.target_path === expectedPath &&
-    audit.remaining_violations === 0 &&
-    Array.isArray(audit.escalated) &&
-    audit.escalated.length === 0
+    PAPER_AUDIT_CONTRACT.statuses.clean(audit) === true
   );
 }
 
@@ -159,6 +248,84 @@ function cleanMaterialAudit(receipt, demand) {
   );
 }
 
+function validBookCanonicalSet(receipt, demand) {
+  if (
+    !Array.isArray(receipt.expected_slots) ||
+    !Array.isArray(receipt.present_slots) ||
+    !Array.isArray(receipt.missing_slots) ||
+    !sameStrings(receipt.expected_slots, receipt.present_slots) ||
+    receipt.expected_slots.length < 1 ||
+    new Set(receipt.expected_slots).size !==
+      receipt.expected_slots.length ||
+    receipt.expected_slots.some(
+      (slot) => !validChapterSlot(slot),
+    ) ||
+    receipt.missing_slots.length !== 0
+  )
+    return false;
+  const chapterCanonicals = receipt.artifacts.filter(
+    (artifact) => artifact.role === "chapter_canonical",
+  );
+  if (chapterCanonicals.length !== receipt.expected_slots.length)
+    return false;
+  const root = `vault/books/${demand.id}/`;
+  const paths = new Set();
+  const chapterSlugs = new Set();
+  const slots = [];
+  for (const artifact of chapterCanonicals) {
+    if (
+      artifact.producer !== "chapter.analyse" ||
+      artifact.usable === false ||
+      !artifact.path.startsWith(root)
+    )
+      return false;
+    const relative = artifact.path.slice(root.length);
+    const match = relative.match(
+      /^ch([^-]+)-([a-z0-9][a-z0-9-]{0,79})\.md$/,
+    );
+    if (
+      !match ||
+      !validChapterSlot(match[1]) ||
+      paths.has(artifact.path) ||
+      chapterSlugs.has(match[2])
+    )
+      return false;
+    paths.add(artifact.path);
+    chapterSlugs.add(match[2]);
+    slots.push(match[1]);
+  }
+  return sameStrings(slots, receipt.expected_slots);
+}
+
+function bookYearWarning(receipt, demand) {
+  if (demand.kind !== "book") return null;
+  const expectedYear = demand.meta && demand.meta.year;
+  if (!Number.isInteger(expectedYear)) return null;
+  const acquire = [...receipt.operations]
+    .reverse()
+    .find(
+      (operation) =>
+        operation.schema_version ===
+          "quasi.operation.book.acquire.receipt/0.2" &&
+        operation.key === "book.acquire" &&
+        operation.material_key === demand.material_key &&
+        operation.kind === "book" &&
+        operation.slug === demand.id,
+    );
+  const evidence = acquire && acquire.year_evidence;
+  return evidence &&
+    acquire.signal === "accepted" &&
+    validBookAcquireReceipt(acquire, {
+      slug: demand.id,
+      expectedYear,
+      batchAcceptYear: true,
+      yearDecision: null,
+    }) &&
+    evidence.verdict !== "MATCH"
+    ? evidence
+    : null;
+}
+
 export function strictChildResult(result, demand) {
   if (
     !result ||
@@ -185,6 +352,7 @@ export function strictChildResult(result, demand) {
     "freshness",
     "warnings",
     "failure",
+    "user_gate",
     "resume",
   ];
   const bookInventoryKeys = [
@@ -222,19 +390,34 @@ export function strictChildResult(result, demand) {
     receipt.freshness.basis !==
       "operation-receipts-and-final-audit" ||
     typeof receipt.stage !== "string" ||
+    !validUserGate(receipt.user_gate, receipt, {
+      expectedYear: demand.meta && demand.meta.year,
+    }) ||
     receipt.artifacts.some(
       (artifact) => !validMaterialArtifact(artifact),
     )
   )
     return null;
   const expected = canonicalMemberPath(demand.kind, demand.id);
+  const canonicalProducers =
+    demand.kind === "book"
+      ? new Set([
+          "book.synthesise",
+          "book.synthesise:reconciled",
+        ])
+      : new Set([
+          "paper.analyse",
+          "paper.analyse:reconciled",
+        ]);
   const allCanonicals = receipt.artifacts.filter(
     (artifact) => artifact && artifact.role === "canonical",
   );
   const canonicals = allCanonicals.filter(
     (artifact) =>
       artifact.path === expected &&
-      artifact.exists === true,
+      artifact.exists === true &&
+      artifact.usable !== false &&
+      canonicalProducers.has(artifact.producer),
   );
   if (receipt.status === "complete") {
     if (
@@ -243,6 +426,7 @@ export function strictChildResult(result, demand) {
       ) ||
       receipt.stage !== "audit" ||
       receipt.failure !== null ||
+      receipt.user_gate !== null ||
       receipt.resume !== null ||
       receipt.operations.length < 1 ||
       allCanonicals.length !== 1 ||
@@ -251,41 +435,25 @@ export function strictChildResult(result, demand) {
     )
       return null;
     if (
-      demand.kind === "book" &&
-      Object.prototype.hasOwnProperty.call(
-        receipt,
-        "expected_slots",
-      ) &&
-      (!Array.isArray(receipt.expected_slots) ||
-        !Array.isArray(receipt.present_slots) ||
-        !Array.isArray(receipt.missing_slots) ||
-        !sameStrings(
-          receipt.expected_slots,
-          receipt.present_slots,
-        ) ||
-        receipt.expected_slots.some(
-          (slot) => !/^\d{2,3}$/.test(slot),
-        ) ||
-        receipt.missing_slots.length !== 0)
+      (demand.kind === "book" &&
+        !validBookCanonicalSet(receipt, demand)) ||
+      (demand.kind === "paper" &&
+        receipt.artifacts.some(
+          (artifact) => artifact.role === "chapter_canonical",
+        ))
     )
       return null;
   } else if (
     receipt.disposition !== null ||
     !validMaterialFailure(receipt.failure) ||
+    (receipt.status === "needs_input"
+      ? receipt.user_gate === null
+      : receipt.user_gate !== null) ||
     (receipt.status === "failed" && receipt.resume !== null) ||
     (receipt.status === "needs_input" &&
-      !(
-        receipt.resume &&
-        typeof receipt.resume === "object" &&
-        !Array.isArray(receipt.resume)
-      )) ||
+      (receipt.resume === null || !validResume(receipt.resume))) ||
     (receipt.status === "blocked" &&
-      !(
-        receipt.resume === null ||
-        (receipt.resume &&
-          typeof receipt.resume === "object" &&
-          !Array.isArray(receipt.resume))
-      ))
+      !validBlockedResume(receipt))
   ) {
     return null;
   }
@@ -297,10 +465,358 @@ export function strictChildResult(result, demand) {
     canonical_path:
       receipt.status === "complete" ? expected : null,
     receipt,
-    year_warning:
-      demand.kind === "book" && result.year_warning
-        ? result.year_warning
-        : null,
+    year_warning: bookYearWarning(receipt, demand),
     title: demand.title,
+  };
+}
+
+function validIngressReceipt(receipt, expected) {
+  const expectedKind = expected.kind;
+  const expectedRequestKey = expected.ok
+    ? expected.requestKey
+    : `${expectedKind}:invalid-request`;
+  const expectedQuery = expected.ok ? expected.query : null;
+  if (
+    !exactKeys(receipt, [
+      "schema_version",
+      "request_key",
+      "kind",
+      "status",
+      "stage",
+      "request",
+      "operations",
+      "identity",
+      "failure",
+      "user_gate",
+      "resume",
+    ]) ||
+    receipt.schema_version !== INGRESS_RECEIPT_VERSION ||
+    receipt.kind !== expectedKind ||
+    receipt.request_key !== expectedRequestKey ||
+    !sameClosedValue(receipt.request, expectedQuery) ||
+    !validText(receipt.request_key, 1, 300) ||
+    !receipt.request_key.startsWith(`${expectedKind}:`) ||
+    !["resolved", "needs_input", "blocked", "failed"].includes(
+      receipt.status,
+    ) ||
+    !validText(receipt.stage, 1, 100) ||
+    !(receipt.request === null || record(receipt.request)) ||
+    !Array.isArray(receipt.operations) ||
+    receipt.operations.some((operation) => !record(operation)) ||
+    !validResume(receipt.resume)
+  )
+    return false;
+  if (receipt.status === "resolved")
+    return !!(
+      exactKeys(receipt.identity, ["slug", "meta"]) &&
+      MATERIAL_SLUG.test(receipt.identity.slug) &&
+      record(receipt.identity.meta) &&
+      receipt.failure === null &&
+      receipt.user_gate === null &&
+      receipt.resume === null &&
+      validResolvedIngressEvidence(
+        receipt,
+        expected,
+        expected.yearDecision || null,
+      )
+    );
+  if (
+    receipt.identity !== null ||
+    !validMaterialFailure(receipt.failure)
+  )
+    return false;
+  const expectedGate = ingressUserGate(
+    receipt.status,
+    receipt.operations,
+    receipt.failure,
+  );
+  if (
+    (receipt.status === "needs_input"
+      ? !sameClosedValue(receipt.user_gate, expectedGate)
+      : receipt.user_gate !== null)
+  )
+    return false;
+  const exactResume = (operationKey) =>
+    exactKeys(receipt.resume, ["operation_key"]) &&
+    receipt.resume.operation_key === operationKey;
+  if (!expected.ok)
+    return !!(
+      receipt.operations.length === 0 &&
+      receipt.status === "needs_input" &&
+      receipt.stage === "search" &&
+      sameClosedValue(receipt.failure, {
+        code: "material.request_invalid",
+        operation_key: "material.search",
+        outcome: "known",
+        retryable: false,
+        message: expected.message,
+      }) &&
+      exactResume("material.user-gate")
+    );
+
+  if (receipt.operations.length === 0) {
+    const conflict = sameClosedValue(receipt.failure, {
+      code: "material.request_identity_conflict",
+      operation_key: "material.search",
+      outcome: "known",
+      retryable: false,
+      message:
+        "same-run raw requests share one request key but disagree",
+    });
+    const invalidYearDecision =
+      expected.kind === "book" &&
+      expected.yearDecision !== null &&
+      !validYearDecisionEnvelope(expected.yearDecision) &&
+      sameClosedValue(receipt.failure, {
+        code: "book.year_decision_invalid",
+        operation_key: "material.search",
+        outcome: "known",
+        retryable: false,
+        message: "year_decision is not one exact prior Book gate",
+      });
+    return !!(
+      (conflict || invalidYearDecision) &&
+      receipt.status === "needs_input" &&
+      receipt.stage === "search" &&
+      exactResume("material.user-gate")
+    );
+  }
+  if (receipt.operations.length !== 1) return false;
+  const search = receipt.operations[0];
+  const schemaValid = validateSchema(
+    materialSearchStageSchema({
+      request_key: expected.requestKey,
+      kind: expected.kind,
+    }),
+    search,
+  );
+  if (schemaValid) {
+    const terminal = search.terminal.status;
+    if (terminal === "complete") {
+      const contractComplete =
+        MATERIAL_SEARCH_STAGE_CONTRACT.statuses.complete(search) ===
+        true;
+      if (!contractComplete)
+        return !!(
+          receipt.status === "failed" &&
+          receipt.stage === "search" &&
+          receipt.resume === null &&
+          sameClosedValue(receipt.failure, {
+            code: "material.search_receipt_invalid",
+            operation_key: "material.search",
+            outcome: "known",
+            retryable: false,
+            message:
+              "Search did not return the exact identity contract",
+          })
+        );
+      const adjusted =
+        expected.kind === "book"
+          ? applyBookYearDecision(
+              search.identity,
+              expected.yearDecision || null,
+            )
+          : { ok: true, picked: search.identity };
+      if (!adjusted.ok)
+        return !!(
+          receipt.status === "needs_input" &&
+          receipt.stage === "search" &&
+          exactResume("material.user-gate") &&
+          sameClosedValue(receipt.failure, {
+            code: "book.year_decision_invalid",
+            operation_key: "material.search",
+            outcome: "known",
+            retryable: false,
+            message: adjusted.message,
+          })
+        );
+      const owner = search.local_owner;
+      const ownerMismatch =
+        owner !== null &&
+        owner.identity_slug !== adjusted.picked.slug;
+      return !!(
+        ownerMismatch &&
+        receipt.status === "failed" &&
+        receipt.stage === "resolve" &&
+        receipt.resume === null &&
+        sameClosedValue(receipt.failure, {
+          code: "material.search_owner_mismatch",
+          operation_key: "material.search",
+          outcome: "known",
+          retryable: false,
+          message:
+            "Search did not resolve the selected canonical slug",
+        })
+      );
+    }
+    const issue = search.terminal.issue;
+    const status =
+      terminal === "needs_input"
+        ? "needs_input"
+        : terminal === "blocked"
+          ? "blocked"
+          : "failed";
+    const outcome = terminal === "blocked" ? "unknown" : "known";
+    const expectedFailure = {
+      code: issue.code,
+      operation_key: "material.search",
+      outcome,
+      retryable: issue.retryable,
+      message: issue.user_question || issue.summary,
+    };
+    return !!(
+      terminal !== "complete" &&
+      receipt.status === status &&
+      receipt.stage === "search" &&
+      sameClosedValue(receipt.failure, expectedFailure) &&
+      (status === "needs_input"
+        ? exactResume("material.user-gate")
+        : status === "blocked"
+          ? exactResume("material.search")
+          : receipt.resume === null)
+    );
+  }
+
+  const runtimeUnknown = exactKeys(search, [
+    "schema_version",
+    "key",
+    "effect",
+    "status",
+    "attempt",
+    "artifact_roles",
+    "replay",
+    "signal",
+    "failure",
+  ]) &&
+    search.schema_version ===
+      "quasi.operation.runtime.receipt/0.1" &&
+    search.key === "material.search" &&
+    search.effect === "readonly" &&
+    search.status === "failed" &&
+    search.attempt === 1 &&
+    Array.isArray(search.artifact_roles) &&
+    search.artifact_roles.length === 0 &&
+    search.replay === "safe" &&
+    search.signal === null &&
+    sameClosedValue(search.failure, {
+      code: "material.readonly_outcome_unknown",
+      operation_key: "material.search",
+      outcome: "unknown",
+      retryable: true,
+    });
+  if (runtimeUnknown)
+    return !!(
+      receipt.status === "blocked" &&
+      receipt.stage === "search" &&
+      exactResume("material.search") &&
+      sameClosedValue(receipt.failure, {
+        code: "material.readonly_outcome_unknown",
+        operation_key: "material.search",
+        outcome: "unknown",
+        retryable: false,
+        message: "material.search outcome was not observed",
+      })
+    );
+
+  return !!(
+    receipt.status === "failed" &&
+    receipt.stage === "search" &&
+    receipt.resume === null &&
+    sameClosedValue(receipt.failure, {
+      code: "material.search_receipt_invalid",
+      operation_key: "material.search",
+      outcome: "known",
+      retryable: false,
+      message: "Search did not return the exact identity contract",
+    })
+  );
+}
+
+function projectAdmittedMaterial(admitted, ingress) {
+  const receipt = admitted.receipt;
+  const status = receipt.status;
+  const issue =
+    status === "complete" ? null : projectFailure(receipt.failure);
+  return {
+    material_key: receipt.material_key,
+    kind: receipt.kind,
+    id: receipt.id,
+    status,
+    canonical_artifacts:
+      status === "complete"
+        ? receipt.artifacts.filter(
+            (artifact) =>
+              artifact.role === "canonical" ||
+              artifact.role === "chapter_canonical",
+          )
+        : [],
+    user_gate: receipt.user_gate,
+    issue,
+    resume: projectResume(receipt.resume),
+  };
+}
+
+// One authoritative Batch/Collection-facing projection. It accepts either an
+// exact child MaterialReceipt or an ingress terminal that stopped before a
+// material identity existed. Public/legacy status fields are deliberately not
+// consulted, and the projection never carries the child's full raw result.
+export function projectChildMaterialResult(result, expected) {
+  if (
+    !record(result) ||
+    !record(expected) ||
+    !["book", "paper"].includes(expected.kind)
+  )
+    return null;
+  const expectedKind = expected.kind;
+  const hasIngress = Object.prototype.hasOwnProperty.call(
+    result,
+    "ingress_receipt",
+  );
+  const ingress = hasIngress ? result.ingress_receipt : null;
+  if (!hasIngress || !validIngressReceipt(ingress, expected))
+    return null;
+
+  if (record(result.material_receipt)) {
+    const receipt = result.material_receipt;
+    if (
+      receipt.kind !== expectedKind ||
+      !validText(receipt.id, 1, 80) ||
+      !MATERIAL_SLUG.test(receipt.id)
+    )
+      return null;
+    const demand = {
+      material_key: `${expectedKind}:${receipt.id}`,
+      kind: expectedKind,
+      id: receipt.id,
+      title: null,
+      meta: ingress.identity.meta,
+    };
+    const admitted = strictChildResult(result, demand);
+    if (
+      !admitted ||
+      ingress.status !== "resolved" ||
+      ingress.identity.slug !== receipt.id
+    )
+      return null;
+    return projectAdmittedMaterial(admitted, ingress);
+  }
+
+  if (ingress.status === "resolved") return null;
+  const issue = projectFailure(ingress.failure);
+  const userGate =
+    ingress.status === "needs_input"
+      ? ingress.user_gate
+      : null;
+  if (ingress.status === "needs_input" && userGate === null)
+    return null;
+  return {
+    material_key: null,
+    kind: ingress.kind,
+    id: null,
+    status: ingress.status,
+    canonical_artifacts: [],
+    user_gate: userGate,
+    issue,
+    resume: projectResume(ingress.resume),
   };
 }

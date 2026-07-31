@@ -1,6 +1,9 @@
 import { cardPath, itemPath } from "./steer.mjs";
 import { composedSchema } from "./shared.mjs";
-import { BOOK_ARTIFACT_CONTRACT } from "../artifact-contracts/generated.mjs";
+import {
+  AUTHOR_ARTIFACT_CONTRACT,
+  BOOK_ARTIFACT_CONTRACT,
+} from "../artifact-contracts/generated.mjs";
 
 export const SY_SCHEMA = {
   type: "object",
@@ -357,16 +360,6 @@ export function bookSynthesiseOperationPrompt(
   return JSON.stringify(request, null, 2);
 }
 
-export const AUTHOR_SYNTHESIS_INSTRUCTIONS = `author-synthesis/1
-
-- Use only the supplied author identity and actual canonical Book/Paper analyses.
-- YAML: type=author, name=identity.full_name, themes derived from the corpus; omit an
-  unsupported rating. H1 is identity.full_name. Required H2 order: 思想肖像, 学术轨迹,
-  关键概念, 理论网络, 金句要点, 项目关联. Add 代表著作 when the corpus contains a
-  Book. Preserve evidence type and do not invent a chronology or quotation.
-- First mention of every supplied work carries a wikilink derived from its exact canonical
-  path: Book [[id/00-overview|title]], Paper [[id|title]].`;
-
 export function authorSynthesiseOperationPrompt(
   name,
   full,
@@ -381,7 +374,6 @@ export function authorSynthesiseOperationPrompt(
     schema_version:
       "quasi.operation.author.synthesise.request/0.1",
     operation: "author.synthesise",
-    prompt_pack: "author-synthesis/1",
     collection_key: `author:${name}`,
     inputs: inputs.map((input) => ({
       material_key: input.material_key,
@@ -401,10 +393,14 @@ export function authorSynthesiseOperationPrompt(
       full_name: full,
       topic,
     },
+    artifact_contract: AUTHOR_ARTIFACT_CONTRACT,
+    frontmatter_seed: {
+      type: "author",
+      name: full,
+    },
     mode,
     overwrite: repair,
     repair_diagnostics: repair ? diagnostics : [],
-    operation_instructions: AUTHOR_SYNTHESIS_INSTRUCTIONS,
   };
   return JSON.stringify(request, null, 2);
 }

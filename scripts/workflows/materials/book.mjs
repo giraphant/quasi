@@ -1,10 +1,12 @@
 import {
   BOOK_ACQUIRE_CONTRACT,
-  BOOK_TEMP_PATH,
   bookAcquirePrompt,
   bookAcquireSchema,
-  validYearEvidence,
 } from "../operations/acquire.mjs";
+import {
+  BOOK_TEMP_PATH,
+  validYearEvidence,
+} from "../operations/book-year-evidence.mjs";
 import {
   CHAPTER_ANALYSE_CONTRACT,
   chapterAnalyseOperationPrompt,
@@ -26,14 +28,17 @@ import {
   bookSynthesiseSchema,
 } from "../operations/synthesise.mjs";
 import {
-  classifyReceipt,
   exactKeys,
   optionalText,
   validText,
 } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
+import {
+  MATERIAL_RECEIPT_VERSION,
+  bookYearUserGate,
+  stageUserGate,
+} from "./receipt.mjs";
 
-const MATERIAL_RECEIPT_VERSION = "quasi.material-loop.receipt/0.1";
 const BOOK_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const CATEGORIES = new Set([
   "monograph",
@@ -176,6 +181,7 @@ function createBookState(slug, meta) {
     repaired: false,
     chapterInventory: null,
     yearEvidence: null,
+    userGate: null,
     budgets: {
       refill: { used: 0, limit: 1 },
       auditRepair: { used: 0, limit: 1 },
@@ -212,6 +218,7 @@ function materialReceipt(
     },
     warnings: state.warnings,
     failure,
+    user_gate: state.userGate || null,
     ...(inventory
       ? {
           expected_slots: [...inventory.expected_slots],
@@ -235,7 +242,10 @@ function materialReceipt(
           ? {
               operation_key: "book.user-gate",
               stage,
-              policy: "answer-the-stage-question",
+              policy:
+                stage === "download"
+                  ? "human-year-decision-or-correct-request"
+                  : "answer-the-stage-question",
             }
           : null,
   };
@@ -253,11 +263,11 @@ function result(
     terminalOverride ||
     (publicStatus === "ok"
       ? "complete"
-      : publicStatus === "needs_input"
-        ? "needs_input"
-      : publicStatus === "blocked" ||
+      : publicStatus === "needs_input" ||
           publicStatus === "year_mismatch" ||
           publicStatus === "year_ambiguous"
+        ? "needs_input"
+      : publicStatus === "blocked"
         ? "blocked"
         : "failed");
   return {
@@ -291,6 +301,7 @@ function rejectedBookResult(slug, validation, code = null) {
     warnings: [],
     disposition: null,
     repaired: false,
+    userGate: null,
   };
   return {
     slug: state.slug,
@@ -387,64 +398,6 @@ function validateYearDecision(decision, slug, meta) {
   return { ok: true, value: decision };
 }
 
-function normaliseBookDownloadReceipt(receipt) {
-  if (
-    !receipt ||
-    typeof receipt !== "object" ||
-    Array.isArray(receipt) ||
-    !Array.isArray(receipt.per_item) ||
-    receipt.per_item.length !== 1
-  )
-    return receipt;
-  const item = receipt.per_item[0];
-  if (
-    !item ||
-    typeof item !== "object" ||
-    Array.isArray(item) ||
-    item.status !== "ok" ||
-    !Object.prototype.hasOwnProperty.call(item, "tmp_path")
-  )
-    return receipt;
-  const { tmp_path: _acceptedTempPath, ...accepted } = item;
-  return { ...receipt, per_item: [accepted] };
-}
-
-function downloadOperation(item, allowedSources) {
-  const succeeded = item.status === "ok";
-  const unknown = item.status === "blocked";
-  return {
-    schema_version:
-      "quasi.operation.book.acquire.receipt/0.1",
-    key: "book.acquire",
-    effect: "writer",
-    status: succeeded
-      ? "succeeded"
-      : unknown
-        ? "blocked"
-        : "failed",
-    attempt: 1,
-    output_path: item.path || null,
-    allowed_output_paths: allowedSources.map(({ path }) => path),
-    format: item.format,
-    artifact_roles: ["source"],
-    disposition: item.disposition,
-    identity_verified: item.identity_verified,
-    source: item.source || null,
-    isbn: item.isbn || null,
-    year_evidence: item.year_evidence || null,
-    failure_reason:
-      item.failure_reason || item.verdict_note || null,
-    attempts: item.attempts,
-    failure: succeeded
-      ? null
-      : operationFailure(
-          `book.${item.status}`,
-          "book.acquire",
-          unknown ? "unknown" : "known",
-        ),
-  };
-}
-
 function prepareFailure(receipt, outcome = "known") {
   const issue = stageIssue(receipt);
   return operationFailure(
@@ -532,7 +485,8 @@ async function prepareBook(runtime, state) {
     return {
       terminal: mismatchBlocked(state, "prepare", "book.prepare"),
     };
-  if (run.edge === "needs_input")
+  if (run.edge === "needs_input") {
+    state.userGate = stageUserGate(run.receipt);
     return {
       terminal: result(
         state,
@@ -542,6 +496,7 @@ async function prepareBook(runtime, state) {
         prepareFailure(run.receipt),
       ),
     };
+  }
   if (run.edge === "failed")
     return {
       terminal: result(
@@ -853,7 +808,7 @@ function ownerMap(state, chapters) {
 }
 
 async function processValidatedBook(runtime, slug, meta, opts) {
-  const { log, parallel, phase, runOperation } = runtime;
+  const { log, parallel, phase } = runtime;
   phase("Acquire");
   const state = createBookState(slug, meta);
 
@@ -861,7 +816,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
     slug,
     allowedSources: state.allowedSources,
   });
-  const rawDownload = await runOperation(
+  const download = await runtime.operate(
     bookAcquirePrompt(
       slug,
       meta,
@@ -881,19 +836,15 @@ async function processValidatedBook(runtime, slug, meta, opts) {
       replay: "blocked",
       artifactRoles: ["source"],
       unknownFailureCode: "material.writer_outcome_unknown",
+      contract: BOOK_ACQUIRE_CONTRACT,
+      context: {
+        slug,
+        allowedSources: state.allowedSources,
+        expectedYear: meta.year,
+        batchAcceptYear: opts.batchYear === true,
+        yearDecision: opts.yearDecision,
+      },
     },
-  );
-  const download = classifyReceipt(
-    normaliseBookDownloadReceipt(rawDownload),
-    BOOK_ACQUIRE_CONTRACT,
-    {
-      slug,
-      allowedSources: state.allowedSources,
-      expectedYear: meta.year,
-      batchAcceptYear: opts.batchYear === true,
-      yearDecision: opts.yearDecision,
-    },
-    acquireSchema,
   );
   if (download.edge === "unknown") {
     state.operations.push(download.receipt);
@@ -912,14 +863,10 @@ async function processValidatedBook(runtime, slug, meta, opts) {
       "book.acquire",
     );
   }
-  const item = download.receipt.per_item[0];
-  const downloadReceipt = downloadOperation(
-    item,
-    state.allowedSources,
-  );
+  const downloadReceipt = download.receipt;
   state.operations.push(downloadReceipt);
-  state.yearEvidence = item.year_evidence || null;
-  if (item.status === "blocked")
+  state.yearEvidence = downloadReceipt.year_evidence || null;
+  if (downloadReceipt.signal === "blocked")
     return blocked(
       state,
       "download",
@@ -927,32 +874,34 @@ async function processValidatedBook(runtime, slug, meta, opts) {
       downloadReceipt,
     );
   if (
-    item.status === "year_mismatch" ||
-    item.status === "year_ambiguous"
-  )
+    downloadReceipt.signal === "year_mismatch" ||
+    downloadReceipt.signal === "year_ambiguous"
+  ) {
+    state.userGate = bookYearUserGate(downloadReceipt);
     return result(
       state,
-      item.status,
+      downloadReceipt.signal,
       "download",
       {
-        year_evidence: item.year_evidence,
-        tmp_path: item.tmp_path,
+        year_evidence: downloadReceipt.year_evidence,
+        tmp_path: downloadReceipt.tmp_path,
       },
       downloadReceipt.failure,
     );
-  if (item.status === "download_failed")
+  }
+  if (downloadReceipt.signal === "download_failed")
     return result(
       state,
       "download_failed",
       "download",
       {
-        failure_reason: item.failure_reason,
-        attempts: item.attempts,
+        failure_reason: downloadReceipt.failure_reason,
+        attempts: downloadReceipt.attempts,
       },
       downloadReceipt.failure,
     );
-  state.source = item.path;
-  meta = { ...meta, format: item.format };
+  state.source = downloadReceipt.output_path;
+  meta = { ...meta, format: downloadReceipt.format };
   state.meta = meta;
   state.artifacts.push({
     role: "source",
@@ -960,7 +909,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
     exists: true,
     usable: null,
     producer:
-      item.disposition === "reused"
+      downloadReceipt.disposition === "reused"
         ? "book.acquire:reconciled"
         : "book.acquire",
   });
@@ -1027,12 +976,11 @@ async function processValidatedBook(runtime, slug, meta, opts) {
   const missing = chapters.filter(
     (chapter) => !presentSlots.has(chapter.slot),
   );
-  if (missing.length)
-    state.chapterInventory = {
-      expected_slots: expectedSlots,
-      present_slots: presentSlotsOrdered,
-      missing_slots: missing.map((chapter) => chapter.slot),
-    };
+  state.chapterInventory = {
+    expected_slots: expectedSlots,
+    present_slots: presentSlotsOrdered,
+    missing_slots: missing.map((chapter) => chapter.slot),
+  };
   if (missing.length)
     return result(
       state,

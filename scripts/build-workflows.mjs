@@ -24,6 +24,7 @@ const ARTIFACT_CONTRACT_MODULE = join(
 const CHECK = process.argv.slice(2).includes("--check");
 
 const ARTIFACT_CONTRACTS = [
+  { type: "author", exportName: "AUTHOR_ARTIFACT_CONTRACT" },
   { type: "paper", exportName: "PAPER_ARTIFACT_CONTRACT" },
   { type: "chapter", exportName: "CHAPTER_ARTIFACT_CONTRACT" },
   { type: "book", exportName: "BOOK_ARTIFACT_CONTRACT" },

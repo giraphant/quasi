@@ -29,12 +29,13 @@ reconcile
   → operation receipt
   → reconcile
   → ...
-  → complete | blocked | failed
+  → complete | needs_input | blocked | failed
 ```
 
 终态语义：
 
 - `complete`：canonical 产物存在，且最后一次 audit 对当前目标返回 clean。
+- `needs_input`：专业判断已收敛到一个真实用户决定，并携带闭合 `user_gate`。
 - `blocked`：唯一安全的下一步需要外部事件、用户决定、资源恢复，或无法确认旧 writer 已停止。
 - `failed`：当前输入与预算下已经没有合法恢复边。
 - `partial` 不属于单份 Material；它只属于 Author、Journal、Topic 等 aggregator。
@@ -286,7 +287,7 @@ v0.1 不实现 lease/fencing。只有具备 cancellation acknowledgement、进�
 
 ```json
 {
-  "schema_version": "quasi.material-loop.receipt/0.1",
+  "schema_version": "quasi.material-loop.receipt/0.2",
   "material_key": "paper:canonical-slug",
   "kind": "paper",
   "id": "canonical-slug",
@@ -302,9 +303,15 @@ v0.1 不实现 lease/fencing。只有具备 cancellation acknowledgement、进�
   },
   "warnings": [],
   "failure": null,
+  "user_gate": null,
   "resume": null
 }
 ```
+
+`user_gate` 是必备闭合字段。`complete|blocked|failed` 时它为 `null`；`needs_input`
+时它是带固定 `schema_version`、`operation_key`、`kind` 与 `question` 的类型化对象，并携带
+该决定所需的 exact candidates、conflicts 或 evidence。上层 Skill 只展示这个 gate，不从
+Operation 日志或自由文本重新推断问题。
 
 成功 disposition：
 

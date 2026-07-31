@@ -38,17 +38,18 @@ Paper 可带 `translate:true`，让 Translation 作为独立 derivative 在同�
 Workflow 是材料状态的唯一所有者。它用 typed receipts 记录 identity、Stage terminal、
 artifacts、failure 和 resume。Skill 只保留本次用户意图与用户随后给出的决定。
 
-- 一项 Book/Paper：`quasi.material-ingress.receipt/0.1` 与
-  `quasi.material-loop.receipt/0.1`。
-- 一批材料：`quasi.collection.material-batch.receipt/0.1`，并保持输入顺序。
+- 一项 Book/Paper：`quasi.material-ingress.receipt/0.2` 与
+  `quasi.material-loop.receipt/0.2`。
+- 一批材料：`quasi.collection.material-batch.receipt/0.2`，并保持输入顺序。
 - Author：collection receipt。
 - Translation：`quasi.derivative.translation.receipt/0.1`。
 - Specialist Stage：`quasi.stage.receipt/0.2`，terminal 为
   `complete|needs_input|blocked|failed`。
 
-`complete` 证明了本阶段交给下一阶段的 exact artifacts；`needs_input` 带一个用户可以回答的
-问题，Search 还带候选身份与冲突字段；`blocked` 表示现有能力或 writer outcome 无法可靠继续；
-`failed` 是 specialist 已经尽力调查后的确定失败。
+`complete` 证明了本阶段交给下一阶段的 exact artifacts。MaterialReceipt 的 `user_gate` 始终
+存在：`needs_input` 时它是闭合的 typed gate，带用户可以回答的问题以及所需 candidates、
+conflicts 或 evidence；其它 terminal 时为 `null`。`blocked` 表示现有能力或 writer outcome
+无法可靠继续；`failed` 是 specialist 已经尽力调查后的确定失败。
 
 ## Agent / Helper 合同
 
@@ -123,7 +124,7 @@ result = run_graph(wf_args)
 if wf_args["kind"] == "batch":
     batch = require_receipt(
         result,
-        "quasi.collection.material-batch.receipt/0.1",
+        "quasi.collection.material-batch.receipt/0.2",
     )
     report_batch_progress(batch)
     report_completed_artifacts(batch)
@@ -139,10 +140,15 @@ if typed.status == "complete":
     maybe_localise_completed_books(typed)
     best_effort_open_primary_artifact(typed)
 elif typed.status == "needs_input":
+    gate = require_closed_user_gate(
+        typed.gate
+        if typed.schema_version == "quasi.derivative.translation.receipt/0.1"
+        else typed.user_gate
+    )
     present_question(
         stage=typed.stage,
-        question=typed.issue.user_question,
-        evidence=typed,
+        question=gate.question,
+        evidence=gate,
     )
 elif typed.status == "blocked":
     explain_block(

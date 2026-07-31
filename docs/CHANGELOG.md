@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.52.26** (2026-07-31): **清理 Workflow、Stage specialist 与外层 Skill 的职责边界。**
+  - Paper/Book 批次继续只启动一张顶层图；runtime 现在以 `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit` 的每阶段独立 FIFO lane 控制最多五个活跃 Operation。队列等待不算 invocation timeout，批次仍可流水推进而不是按五项 barrier 分组。
+  - Material ingress、child join 与 batch 汇总统一升到闭合的 0.2 receipts。Graph 只管理 exact refs、阶段推进、并发、coalesce 与 typed terminal；Search、Prepare 等 Stage specialist 对自己的目标、可用能力和 schema 负责，外层 `collect-material` 只启动图、处理真正的人类 gate 与安全 checkpoint。
+  - Book/Paper Acquire 改为直接返回单项 Operation receipt，Paper Audit 也删除中间 adapter；Author artifact contract 改由 schema registry 生成，Talk 的 silent canonical 合并进 Prepare specialist，避免额外 worker 和重复状态解释。
+  - `quasi-download accept` 增加同输出锁、sibling staging、流式 digest、fsync 与原子发布；Talk 压缩发布后清除 macOS staging inode 遗留的 hidden flag。生成 bundle 为 308,172 bytes；全库 810 项回归通过。
+
 - **0.52.25** (2026-07-31): **修复 Book EPUB chapter-ref 生成端，不再用放宽标准接纳坏 manifest。**
   - Sen 的 17 章 Prepare 并非因 `disposition:replaced` 失败；真实 seam 是旧 extractor 把 filename-derived title 的下划线保留进 chapter slug，而 StructuredOutput schema 又没有公开 Graph 实际要求的 ASCII kebab-case。Chapter slug 现在在 host schema 与 Graph backstop 中共同固定为 `^[a-z0-9][a-z0-9-]{0,79}$`，Agent 会在交付前看到精确要求；underscore、Unicode、空格、点与路径分隔符继续 fail closed。
   - EPUB extractor 原生读取 `.htm|.html|.xhtml`，NCX 标题先规范化空白，slug 只由确定性 CLI 生成；无法 ASCII 化的标题使用唯一 `section-{slot}`。0.52.23 曾为接纳真实 receipt 而允许 title tab，本版撤回该放宽并在 schema 中禁止控制字符。

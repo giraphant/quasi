@@ -10,17 +10,16 @@ import {
 } from "../operations/audit.mjs";
 import {
   TALK_PREPARE_STAGE_CONTRACT,
-  TALK_RENDER_SILENT_CONTRACT,
-  talkRenderSilentPrompt,
-  talkRenderSilentSchema,
   talkPrepareStagePrompt,
   talkPrepareStageSchema,
 } from "../operations/transcribe.mjs";
 import { validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
+import {
+  MATERIAL_RECEIPT_VERSION,
+  stageUserGate,
+} from "./receipt.mjs";
 
-const MATERIAL_RECEIPT_VERSION =
-  "quasi.material-loop.receipt/0.1";
 const TALK_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ENGINES = new Set([
@@ -211,9 +210,8 @@ function createState(slug, meta) {
       repair: { used: 0, limit: 1 },
       auditPasses: { used: 0, limit: 2 },
     },
-    warnings: [
-      "talk audit remains an explicitly named legacy composite",
-    ],
+    warnings: [],
+    userGate: null,
   };
 }
 
@@ -263,6 +261,7 @@ function materialReceipt(
     audit: state.audit,
     warnings: state.warnings,
     failure,
+    user_gate: state.userGate,
     resume:
       status === "blocked"
         ? { operation_key: "talk.reconcile" }
@@ -404,7 +403,7 @@ function prepareFailure(receipt, outcome = "known") {
   );
 }
 
-async function prepareTalk(runtime, state) {
+async function prepareTalk(runtime, state, repairDiagnostics = []) {
   const context = {
     media: state.media,
     manifest: state.manifest,
@@ -427,11 +426,13 @@ async function prepareTalk(runtime, state) {
     canonical: state.canonical,
   });
   const run = await runtime.operate(
-    talkPrepareStagePrompt(state),
+    talkPrepareStagePrompt(state, repairDiagnostics),
     {
       phase: "Prepare",
       agentType: "quasi:transcribe-agent",
-      label: `${state.slug}:prepare`,
+      label: repairDiagnostics.length
+        ? `${state.slug}:prepare-repair`
+        : `${state.slug}:prepare`,
       schema,
     },
     {
@@ -444,10 +445,14 @@ async function prepareTalk(runtime, state) {
         "transcript",
         "subtitle",
         "engine_transcript",
+        "canonical",
       ],
       unknownFailureCode: "talk.writer_outcome_unknown",
       contract: TALK_PREPARE_STAGE_CONTRACT,
-      context,
+      context: {
+        ...context,
+        repair: repairDiagnostics.length > 0,
+      },
     },
   );
   state.operations.push(run.receipt);
@@ -465,7 +470,8 @@ async function prepareTalk(runtime, state) {
     return {
       terminal: writerMismatch(state, "prepare", "talk.prepare"),
     };
-  if (run.edge === "needs_input")
+  if (run.edge === "needs_input") {
+    state.userGate = stageUserGate(run.receipt);
     return {
       terminal: terminal(
         state,
@@ -476,6 +482,7 @@ async function prepareTalk(runtime, state) {
         { question: stageIssue(run.receipt).user_question },
       ),
     };
+  }
   if (run.edge === "failed")
     return {
       terminal: terminal(
@@ -499,6 +506,10 @@ async function prepareTalk(runtime, state) {
   );
   addGeneratedArtifacts(state, receipt.artifacts, "talk.prepare");
   if (state.outputExists) {
+    const canonicalArtifact = receipt.artifacts.find(
+      (item) =>
+        item.role === "canonical" && item.path === state.canonical,
+    );
     state.artifacts = state.artifacts.filter(
       (item) => item.path !== state.canonical,
     );
@@ -506,13 +517,29 @@ async function prepareTalk(runtime, state) {
       artifact(
         "canonical",
         state.canonical,
-        "talk.prepare:observed",
+        receipt.canonical_action
+          ? `talk.prepare:${receipt.canonical_action}`
+          : "talk.prepare:observed",
         receipt.canonical_observation.sha256,
+        canonicalArtifact ? canonicalArtifact.size : null,
       ),
     );
-    state.disposition = "reused";
+    if (receipt.canonical_action === "create") {
+      state.disposition = "created";
+      if (!repairDiagnostics.length)
+        state.budgets.produce.used = 1;
+    } else if (receipt.canonical_action === "repair") {
+      state.repaired = true;
+      state.disposition = "repaired";
+      if (!repairDiagnostics.length)
+        state.budgets.produce.used = 1;
+    } else state.disposition = "reused";
   }
-  if (state.transcriptReplaced && state.outputExists) {
+  if (
+    state.classification === "live" &&
+    state.transcriptReplaced &&
+    state.outputExists
+  ) {
     state.repaired = true;
     state.disposition = "repaired";
   }
@@ -525,179 +552,87 @@ async function runProducer(
   mode,
   diagnostics,
 ) {
-  if (state.classification === "live") {
-    const inputs = analysisInputs(state);
-    if (!inputs.length)
-      return {
-        terminal: terminal(
-          state,
-          "analyse_failed",
-          "failed",
-          "analyse",
-          operationFailure(
-            "talk.transcript_generation_invalid",
-            "talk.analyse",
-            "known",
-            "live Talk has no exact committed transcript inputs",
-          ),
-        ),
-      };
-    const analysis = await runtime.operate(
-      talkAnalyseOperationPrompt(
-        state,
-        inputs,
-        mode,
-        diagnostics,
-      ),
-      {
-        phase: "Analyse",
-        agentType: "quasi:analyse-agent",
-        label:
-          mode === "repair"
-            ? `${state.slug}:analyse-repair`
-            : `${state.slug}:analyse`,
-        schema: talkAnalyseSchema({
-          inputs,
-          mode,
-          output: state.canonical,
-        }),
-      },
-      {
-        key: "talk.analyse",
-        effect: "writer",
-        retry: "forbidden",
-        replay: "blocked",
-        artifactRoles: ["canonical"],
-        unknownFailureCode: "talk.writer_outcome_unknown",
-        contract: TALK_ANALYSE_CONTRACT,
-        context: { inputs, mode, output: state.canonical },
-      },
-    );
-    const receipt = analysis.receipt;
-    state.operations.push(receipt);
-    if (
-      analysis.edge === "unknown" ||
-      analysis.edge === "mismatch"
-    )
-      return {
-        terminal: writerMismatch(
-          state,
-          "analyse",
-          "talk.analyse",
-        ),
-      };
-    if (analysis.edge === "blocked")
-      return {
-        terminal: terminal(
-          state,
-          "blocked",
-          "blocked",
-          "analyse",
-          receipt.failure,
-        ),
-      };
-    if (analysis.edge !== "ok")
-      return {
-        terminal: terminal(
-          state,
-          "analyse_failed",
-          "failed",
-          "analyse",
-          receipt.failure,
-        ),
-      };
-    state.talkProducer = "talk.analyse";
-    state.artifacts = state.artifacts.filter(
-      (item) => item.path !== state.canonical,
-    );
-    state.artifacts.push(
-      artifact(
-        "canonical",
-        state.canonical,
-        receipt.action === "reconciled"
-          ? "talk.analyse:reconciled"
-          : "talk.analyse",
-      ),
-    );
-    if (receipt.action === "repair") {
-      state.repaired = true;
-      state.disposition = "repaired";
-    } else if (receipt.action === "reconciled") {
-      state.disposition = state.disposition || "reused";
-    } else {
-      state.disposition = "created";
-    }
-    return { receipt };
-  }
-
-  const rendered = await runtime.operate(
-    talkRenderSilentPrompt(
-      state,
-      state.transcript,
-      state.classification,
-      mode,
-      diagnostics,
-    ),
-    {
-      phase: "Analyse",
-      agentType: "quasi:transcribe-agent",
-      label:
-        mode === "repair"
-          ? `${state.slug}:render-silent-repair`
-          : `${state.slug}:render-silent`,
-      schema: talkRenderSilentSchema({
-        materialKey: state.materialKey,
-        input: state.transcript,
-        output: state.canonical,
-        signal: state.classification,
-        mode,
-      }),
-    },
-    {
-      key: "talk.render-silent",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "blocked",
-      artifactRoles: ["canonical"],
-      unknownFailureCode: "talk.writer_outcome_unknown",
-      contract: TALK_RENDER_SILENT_CONTRACT,
-      context: { state, mode },
-    },
-  );
-  const receipt = rendered.receipt;
-  state.operations.push(receipt);
-  if (
-    rendered.edge === "unknown" ||
-    rendered.edge === "mismatch"
-  )
-    return {
-      terminal: writerMismatch(
-        state,
-        "render-silent",
-        "talk.render-silent",
-      ),
-    };
-  if (rendered.edge === "blocked")
-    return {
-      terminal: terminal(
-        state,
-        "blocked",
-        "blocked",
-        "render-silent",
-        receipt.failure,
-      ),
-    };
-  if (rendered.edge !== "ok")
+  const inputs = analysisInputs(state);
+  if (!inputs.length)
     return {
       terminal: terminal(
         state,
         "analyse_failed",
         "failed",
-        "render-silent",
+        "analyse",
+        operationFailure(
+          "talk.transcript_generation_invalid",
+          "talk.analyse",
+          "known",
+          "live Talk has no exact committed transcript inputs",
+        ),
+      ),
+    };
+  const analysis = await runtime.operate(
+    talkAnalyseOperationPrompt(
+      state,
+      inputs,
+      mode,
+      diagnostics,
+    ),
+    {
+      phase: "Analyse",
+      agentType: "quasi:analyse-agent",
+      label:
+        mode === "repair"
+          ? `${state.slug}:analyse-repair`
+          : `${state.slug}:analyse`,
+      schema: talkAnalyseSchema({
+        inputs,
+        mode,
+        output: state.canonical,
+      }),
+    },
+    {
+      key: "talk.analyse",
+      effect: "writer",
+      retry: "forbidden",
+      replay: "blocked",
+      artifactRoles: ["canonical"],
+      unknownFailureCode: "talk.writer_outcome_unknown",
+      contract: TALK_ANALYSE_CONTRACT,
+      context: { inputs, mode, output: state.canonical },
+    },
+  );
+  const receipt = analysis.receipt;
+  state.operations.push(receipt);
+  if (
+    analysis.edge === "unknown" ||
+    analysis.edge === "mismatch"
+  )
+    return {
+      terminal: writerMismatch(
+        state,
+        "analyse",
+        "talk.analyse",
+      ),
+    };
+  if (analysis.edge === "blocked")
+    return {
+      terminal: terminal(
+        state,
+        "blocked",
+        "blocked",
+        "analyse",
         receipt.failure,
       ),
     };
-  state.talkProducer = "talk.render-silent";
+  if (analysis.edge !== "ok")
+    return {
+      terminal: terminal(
+        state,
+        "analyse_failed",
+        "failed",
+        "analyse",
+        receipt.failure,
+      ),
+    };
+  state.talkProducer = "talk.analyse";
   state.artifacts = state.artifacts.filter(
     (item) => item.path !== state.canonical,
   );
@@ -706,10 +641,8 @@ async function runProducer(
       "canonical",
       state.canonical,
       receipt.action === "reconciled"
-        ? "talk.render-silent:reconciled"
-        : "talk.render-silent",
-      receipt.output_sha256,
-      receipt.size,
+        ? "talk.analyse:reconciled"
+        : "talk.analyse",
     ),
   );
   if (receipt.action === "repair") {
@@ -810,10 +743,13 @@ async function processTalkStrict(runtime, state) {
   state.talkProducer =
     state.classification === "live"
       ? "talk.analyse"
-      : "talk.render-silent";
+      : "talk.prepare";
 
-  runtime.phase("Analyse");
-  if (!state.outputExists || state.transcriptReplaced) {
+  if (
+    state.classification === "live" &&
+    (!state.outputExists || state.transcriptReplaced)
+  ) {
+    runtime.phase("Analyse");
     state.budgets.produce.used = 1;
     const produced = await runProducer(
       runtime,
@@ -831,8 +767,10 @@ async function processTalkStrict(runtime, state) {
         : [],
     );
     if (produced.terminal) return produced.terminal;
+  } else if (state.outputExists) {
+    state.disposition = state.disposition || "reused";
   } else {
-    state.disposition = "reused";
+    return writerMismatch(state, "prepare", "talk.prepare");
   }
 
   runtime.phase("Audit");
@@ -840,13 +778,23 @@ async function processTalkStrict(runtime, state) {
   if (audited.terminal) return audited.terminal;
   if (!audited.clean) {
     state.budgets.repair.used = 1;
-    runtime.phase("Analyse");
-    const repaired = await runProducer(
-      runtime,
-      state,
-      "repair",
-      audited.diagnostics,
-    );
+    let repaired;
+    if (state.classification === "live") {
+      runtime.phase("Analyse");
+      repaired = await runProducer(
+        runtime,
+        state,
+        "repair",
+        audited.diagnostics,
+      );
+    } else {
+      runtime.phase("Prepare");
+      repaired = await prepareTalk(
+        runtime,
+        state,
+        audited.diagnostics,
+      );
+    }
     if (repaired.terminal) return repaired.terminal;
     runtime.phase("Audit");
     audited = await runAudit(runtime, state, 2);

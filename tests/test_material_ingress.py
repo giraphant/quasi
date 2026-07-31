@@ -165,23 +165,32 @@ def search_receipt(
 
 def download_failed(slug: str) -> dict[str, Any]:
     return {
-        "acquired": 0,
-        "failed": 1,
-        "per_item": [
-            {
-                "kind": "paper",
-                "slug": slug,
-                "status": "download_failed",
-                "disposition": None,
-                "identity_verified": False,
-                "source": None,
-                "doi": "10.1000/safety",
-                "failure_reason": "not available",
-                "attempts": [
-                    {"source": "oa", "status": "failed", "error": "404"}
-                ],
-            }
+        "schema_version": "quasi.operation.paper.acquire.receipt/0.2",
+        "key": "paper.acquire",
+        "effect": "writer",
+        "status": "failed",
+        "attempt": 1,
+        "material_key": f"paper:{slug}",
+        "kind": "paper",
+        "slug": slug,
+        "output_path": f"sources/{slug}.pdf",
+        "artifact_roles": ["source"],
+        "disposition": None,
+        "write_state": "not_written",
+        "identity_verified": False,
+        "source": None,
+        "doi": "10.1000/safety",
+        "failure_reason": "not available",
+        "attempts": [
+            {"source": "oa", "status": "failed", "error": "404"}
         ],
+        "failure": {
+            "code": "paper.download_failed",
+            "operation_key": "paper.acquire",
+            "outcome": "known",
+            "retryable": False,
+            "message": "not available",
+        },
     }
 
 
@@ -272,6 +281,9 @@ def test_search_identity_conflict_preserves_candidate_and_question(
 
     assert report["result"]["status"] == "needs_input"
     ingress = report["result"]["ingress_receipt"]
+    assert ingress["schema_version"] == (
+        "quasi.material-ingress.receipt/0.2"
+    )
     assert ingress["stage"] == "search"
     assert ingress["failure"]["code"] == "material.identity_conflict"
     assert "evidence-backed candidate" in ingress["failure"]["message"]
@@ -280,6 +292,15 @@ def test_search_identity_conflict_preserves_candidate_and_question(
     assert search["terminal"]["candidates"][0]["authors"] == [
         "Bea Different"
     ]
+    assert ingress["user_gate"] == {
+        "schema_version": "quasi.user-gate.stage/0.1",
+        "operation_key": "material.search",
+        "kind": "stage_needs_input",
+        "issue": search["terminal"]["issue"],
+        "candidates": search["terminal"]["candidates"],
+        "conflicts": ["authors"],
+        "question": search["terminal"]["issue"]["user_question"],
+    }
 
 
 def test_search_owner_observation_must_bind_selected_identity(
@@ -365,3 +386,8 @@ def test_invalid_raw_request_starts_no_agent(tmp_path: Path) -> None:
     )
     assert report["result"]["status"] == "needs_input"
     assert report["trace"] == []
+    ingress = report["result"]["ingress_receipt"]
+    assert ingress["user_gate"]["operation_key"] == "material.search"
+    assert ingress["user_gate"]["issue"]["code"] == (
+        "material.request_invalid"
+    )

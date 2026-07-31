@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import hashlib
+import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -141,6 +145,167 @@ def test_accept_moves_temp_file_to_sources(tmp_path):
     assert Path(payload["path"]).name == "author-title-2024.pdf"
     assert Path(payload["path"]).exists()
     assert not src.exists()
+
+
+def test_accept_overwrite_uses_one_sibling_atomic_replace(tmp_path, monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_accept_atomic_under_test")
+    source_dir = tmp_path / ".quasi" / "temp" / "downloads"
+    output_dir = tmp_path / "sources"
+    source_dir.mkdir(parents=True)
+    output_dir.mkdir()
+    src = source_dir / "candidate.pdf"
+    dest = output_dir / "author-title-2024.pdf"
+    src.write_bytes(b"new generation")
+    dest.write_bytes(b"old generation")
+
+    replaced: list[tuple[Path, Path]] = []
+    real_replace = os.replace
+
+    def observing_replace(source, target):
+        source_path = Path(source)
+        target_path = Path(target)
+        assert target_path == dest
+        assert dest.read_bytes() == b"old generation"
+        assert source_path.parent == dest.parent
+        assert source_path.name.startswith(f"{dest.name}.quasi-stage-")
+        replaced.append((source_path, target_path))
+        real_replace(source, target)
+
+    monkeypatch.setattr(mod.os, "replace", observing_replace)
+    payload, code = mod._accept_to_output(
+        src,
+        dest,
+        kind="paper",
+        overwrite=True,
+    )
+
+    assert code == 0
+    assert payload["status"] == "ok"
+    assert payload["published"] is True
+    assert payload["source_removed"] is True
+    assert payload["sha256"] == hashlib.sha256(b"new generation").hexdigest()
+    assert replaced and dest.read_bytes() == b"new generation"
+    assert not src.exists()
+    assert not list(output_dir.glob(f"{dest.name}.quasi-stage-*"))
+
+
+def test_accept_failure_before_replace_preserves_previous_output(tmp_path, monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_accept_rollback_under_test")
+    source_dir = tmp_path / ".quasi" / "temp" / "downloads"
+    output_dir = tmp_path / "sources"
+    source_dir.mkdir(parents=True)
+    output_dir.mkdir()
+    src = source_dir / "candidate.pdf"
+    dest = output_dir / "author-title-2024.pdf"
+    src.write_bytes(b"new generation")
+    dest.write_bytes(b"old generation")
+
+    monkeypatch.setattr(
+        mod.os,
+        "replace",
+        lambda *_args: (_ for _ in ()).throw(OSError("replace failed")),
+    )
+    payload, code = mod._accept_to_output(
+        src,
+        dest,
+        kind="paper",
+        overwrite=True,
+    )
+
+    assert code == 1
+    assert payload["status"] == "blocked"
+    assert payload["reason"] == "accept_commit_failed"
+    assert payload["published"] is False
+    assert payload["previous_output_preserved"] is True
+    assert src.read_bytes() == b"new generation"
+    assert dest.read_bytes() == b"old generation"
+    assert not list(output_dir.glob(f"{dest.name}.quasi-stage-*"))
+
+
+def test_accept_post_replace_fsync_failure_reports_coherent_unknown(
+    tmp_path,
+    monkeypatch,
+):
+    mod = _load_module(DOWNLOAD, "download_accept_fsync_under_test")
+    source_dir = tmp_path / ".quasi" / "temp" / "downloads"
+    output_dir = tmp_path / "sources"
+    source_dir.mkdir(parents=True)
+    output_dir.mkdir()
+    src = source_dir / "candidate.pdf"
+    dest = output_dir / "author-title-2024.pdf"
+    src.write_bytes(b"new generation")
+    dest.write_bytes(b"old generation")
+
+    monkeypatch.setattr(
+        mod,
+        "_fsync_directory",
+        lambda _path: (_ for _ in ()).throw(OSError("directory fsync failed")),
+    )
+    payload, code = mod._accept_to_output(
+        src,
+        dest,
+        kind="paper",
+        overwrite=True,
+    )
+
+    assert code == 1
+    assert payload["status"] == "blocked"
+    assert payload["published"] is True
+    assert payload["previous_output_preserved"] is False
+    assert payload["sha256"] == hashlib.sha256(b"new generation").hexdigest()
+    assert dest.read_bytes() == b"new generation"
+    assert src.read_bytes() == b"new generation"
+
+
+def test_accept_serializes_competing_writers_for_one_output(tmp_path, monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_accept_lock_under_test")
+    source_dir = tmp_path / ".quasi" / "temp" / "downloads"
+    output_dir = tmp_path / "sources"
+    source_dir.mkdir(parents=True)
+    output_dir.mkdir()
+    first = source_dir / "first.pdf"
+    second = source_dir / "second.pdf"
+    dest = output_dir / "author-title-2024.pdf"
+    first.write_bytes(b"first generation")
+    second.write_bytes(b"second generation")
+
+    first_inside_replace = threading.Event()
+    release_first = threading.Event()
+    real_replace = os.replace
+
+    def paused_replace(source, target):
+        if not first_inside_replace.is_set():
+            first_inside_replace.set()
+            assert release_first.wait(timeout=2)
+        real_replace(source, target)
+
+    monkeypatch.setattr(mod.os, "replace", paused_replace)
+    results: dict[str, tuple[dict, int]] = {}
+
+    def accept(name: str, source: Path) -> None:
+        results[name] = mod._accept_to_output(
+            source,
+            dest,
+            kind="paper",
+            overwrite=False,
+        )
+
+    one = threading.Thread(target=accept, args=("first", first))
+    two = threading.Thread(target=accept, args=("second", second))
+    one.start()
+    assert first_inside_replace.wait(timeout=2)
+    two.start()
+    time.sleep(0.1)
+    assert "second" not in results
+    release_first.set()
+    one.join(timeout=2)
+    two.join(timeout=2)
+
+    assert results["first"][1] == 0
+    assert results["second"][1] == 1
+    assert results["second"][0]["status"] == "conflict"
+    assert dest.read_bytes() == b"first generation"
+    assert second.exists()
 
 
 def _load_module(path: Path, name: str):

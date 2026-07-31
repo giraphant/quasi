@@ -84,6 +84,9 @@ const chapterRefSchema = {
 const CHAPTER_SLOT = new RegExp(CHAPTER_SLOT_PATTERN);
 const CHAPTER_SLUG = new RegExp(CHAPTER_SLUG_PATTERN);
 
+export const validChapterSlot = (value) =>
+  typeof value === "string" && CHAPTER_SLOT.test(value);
+
 const validChapterRef = (chapter) => {
   const filenameIsSafe =
     validText(chapter && chapter.filename, 1, 128) &&
@@ -94,7 +97,7 @@ const validChapterRef = (chapter) => {
     !chapter.filename.includes("..");
   if (
     !chapter ||
-    !CHAPTER_SLOT.test(chapter.slot) ||
+    !validChapterSlot(chapter.slot) ||
     !CHAPTER_SLUG.test(chapter.slug) ||
     !filenameIsSafe ||
     !validText(chapter.title, 1, 500)

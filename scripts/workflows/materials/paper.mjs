@@ -20,8 +20,11 @@ import {
 } from "../operations/extract.mjs";
 import { optionalText, validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
+import {
+  MATERIAL_RECEIPT_VERSION,
+  stageUserGate,
+} from "./receipt.mjs";
 
-const MATERIAL_RECEIPT_VERSION = "quasi.material-loop.receipt/0.1";
 const PAPER_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
 function validatePaperIdentity(slug, meta) {
@@ -127,70 +130,6 @@ const operationFailure = (
   ...(message ? { message } : {}),
 });
 
-function auditOperation(receipt, output, pass) {
-  const escalated = Array.isArray(receipt && receipt.escalated)
-    ? receipt.escalated
-    : [];
-  const clean =
-    receipt.status === "clean" &&
-    escalated.length === 0 &&
-    receipt.remaining_violations === 0;
-  return {
-    schema_version: "quasi.operation.paper.audit.receipt/0.1",
-    key: "paper.audit",
-    effect: "writer",
-    status: receipt.status === "error" ? "failed" : "succeeded",
-    attempt: 1,
-    input_path: output,
-    output_path: output,
-    artifact_roles: ["canonical"],
-    signal: clean ? "clean" : "escalated",
-    pass,
-    failure:
-      receipt.status === "error"
-        ? operationFailure(
-          "paper.audit_failed",
-          "paper.audit",
-        )
-        : null,
-  };
-}
-
-function downloadOperation(item, output) {
-  const succeeded = item && item.status === "ok";
-  const blockedOutcome = item && item.status === "blocked";
-  return {
-    schema_version:
-      "quasi.operation.paper.acquire.receipt/0.1",
-    key: "paper.acquire",
-    effect: "writer",
-    status: succeeded
-      ? "succeeded"
-      : blockedOutcome
-        ? "blocked"
-        : "failed",
-    attempt: 1,
-    output_path: (item && item.path) || output,
-    artifact_roles: ["source"],
-    disposition: (item && item.disposition) || null,
-    identity_verified:
-      (item && item.identity_verified) || false,
-    doi: (item && item.doi) || null,
-    source: (item && item.source) || null,
-    failure_reason:
-      (item && (item.failure_reason || item.verdict_note)) || null,
-    attempts:
-      item && Array.isArray(item.attempts) ? item.attempts : [],
-    failure: succeeded
-      ? null
-      : operationFailure(
-          `paper.${(item && item.status) || "download_failed"}`,
-          "paper.acquire",
-          blockedOutcome ? "unknown" : "known",
-        ),
-  };
-}
-
 function createPaperState(slug) {
   return {
     slug,
@@ -206,6 +145,7 @@ function createPaperState(slug) {
     warnings: [],
     repaired: false,
     disposition: null,
+    userGate: null,
   };
 }
 
@@ -240,6 +180,7 @@ function materialReceipt(
     },
     warnings: state.warnings,
     failure,
+    user_gate: state.userGate,
     resume:
       status === "blocked"
         ? { operation_key: "paper.reconcile" }
@@ -275,10 +216,11 @@ function rejectedPaperResult(slug, validation, code = null) {
       audit: null,
       freshness: {
         observation: "unknown",
-        basis: "identity-validation",
+        basis: "operation-receipts-and-final-audit",
       },
       warnings: [],
       failure,
+      user_gate: null,
       resume: null,
     },
   };
@@ -402,7 +344,8 @@ async function prepare(runtime, state) {
     return {
       terminal: mismatchBlocked(state, "prepare", "paper.prepare"),
     };
-  if (run.edge === "needs_input")
+  if (run.edge === "needs_input") {
+    state.userGate = stageUserGate(run.receipt);
     return {
       terminal: result(
         state,
@@ -412,6 +355,7 @@ async function prepare(runtime, state) {
         prepareFailure(run.receipt),
       ),
     };
+  }
   if (run.edge === "failed")
     return {
       terminal: result(
@@ -530,7 +474,10 @@ async function audit(runtime, state, pass) {
       phase: "Audit",
       agentType: "quasi:audit-agent",
       label: `${state.slug}:audit`,
-      schema: paperAuditSchema({ target: state.canonical }),
+      schema: paperAuditSchema({
+        target: state.canonical,
+        pass,
+      }),
     },
     {
       key: "paper.audit",
@@ -565,9 +512,12 @@ async function audit(runtime, state, pass) {
       ),
     };
   }
-  const operation = auditOperation(receipt, state.canonical, pass);
-  state.operations.push(operation);
+  state.operations.push(receipt);
   state.audit = receipt;
+  if (receipt.mutated_paths.includes(state.canonical)) {
+    state.repaired = true;
+    state.disposition = "repaired";
+  }
   if (auditRun.edge !== "ok")
     return {
       terminal: result(
@@ -575,7 +525,7 @@ async function audit(runtime, state, pass) {
         "audit_escalated",
         "audit",
         {},
-        operation.failure,
+        receipt.failure,
       ),
     };
   const escalated = receipt.escalated;
@@ -600,6 +550,7 @@ async function processValidatedPaper(runtime, slug, meta) {
       schema: paperAcquireSchema({
         slug,
         output: state.source,
+        doi: meta.doi,
       }),
     },
     {
@@ -629,8 +580,7 @@ async function processValidatedPaper(runtime, slug, meta) {
       "paper.acquire",
     );
   }
-  const item = download.receipt.per_item[0];
-  const downloadReceipt = downloadOperation(item, state.source);
+  const downloadReceipt = download.receipt;
   state.operations.push(downloadReceipt);
   if (download.edge === "blocked")
     return blocked(
@@ -645,10 +595,10 @@ async function processValidatedPaper(runtime, slug, meta) {
       "download_failed",
       "download",
       {
-        doi: item.doi || meta.doi || null,
-        source: item.source || null,
-        failure_reason: item.failure_reason || item.verdict_note,
-        attempts: item.attempts || [],
+        doi: downloadReceipt.doi || meta.doi || null,
+        source: downloadReceipt.source || null,
+        failure_reason: downloadReceipt.failure_reason,
+        attempts: downloadReceipt.attempts,
       },
       downloadReceipt.failure,
     );
@@ -659,7 +609,7 @@ async function processValidatedPaper(runtime, slug, meta) {
     exists: true,
     usable: null,
     producer:
-      item.disposition === "reused"
+      downloadReceipt.disposition === "reused"
         ? "paper.acquire:reconciled"
         : "paper.acquire",
   });
