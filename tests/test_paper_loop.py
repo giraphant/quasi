@@ -10,23 +10,22 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "scripts" / "pi-runner.mjs"
-WORKFLOW = ROOT / "workflows" / "process-material.mjs"
+ENTRY = ROOT / "scripts" / "workflows" / "process-material.entry.mjs"
 
 NODE_HARNESS = r"""
-import { createRunner } from __RUNNER_URI__
+import { run } from __ENTRY_URI__
 const config = JSON.parse(process.argv[1])
 const indexes = new Map()
 const trace = []
 const missing = []
-const invokeAgent = async ({ definition, prompt, options }) => {
-  const label = options.label || definition.name
+const agent = async (prompt, options = {}) => {
+  const label = options.label || options.agentType || "agent"
   const occurrence = indexes.get(label) || 0
   indexes.set(label, occurrence + 1)
   trace.push({
     label,
     occurrence: occurrence + 1,
-    agent_type: options.agentType || definition.name,
+    agent_type: options.agentType || null,
     phase: options.phase || null,
     prompt: String(prompt),
     schema: options.schema || null,
@@ -39,15 +38,12 @@ const invokeAgent = async ({ definition, prompt, options }) => {
   if (step?.throw) throw new Error(step.throw)
   return JSON.parse(JSON.stringify(step?.result ?? step))
 }
-const runner = createRunner({
-  pluginRoot: config.plugin_root,
-  projectCwd: config.project_cwd,
-  concurrency: 4,
-  timeoutMs: 5000,
-  invokeAgent,
+const result = await run({
+  agent,
+  parallel: tasks => Promise.all(tasks.map(task => Promise.resolve().then(task))),
+  phase: () => {},
   log: () => {},
-})
-const result = await runner.runFile(config.workflow, config.args)
+}, config.args)
 const unused = Object.fromEntries(
   Object.entries(config.responses)
     .map(([label, steps]) => [label, steps.length - (indexes.get(label) || 0)])
@@ -65,11 +61,8 @@ def run_paper(
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
-    script = NODE_HARNESS.replace("__RUNNER_URI__", json.dumps(RUNNER.as_uri()))
+    script = NODE_HARNESS.replace("__ENTRY_URI__", json.dumps(ENTRY.as_uri()))
     config = {
-        "plugin_root": str(ROOT),
-        "project_cwd": str(tmp_path),
-        "workflow": str(WORKFLOW),
         "args": {
             "kind": "paper",
             "slug": slug,

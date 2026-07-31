@@ -51,6 +51,10 @@ DEAD_NAMES = [
     "mode: journal",
     "profile-agent",
     "overview-agent",
+    "quasi-pi-runner",
+    "quasi-codex-runner",
+    "quasi-codex-driver",
+    "quasi-codex-agents",
 ]
 
 
@@ -85,8 +89,15 @@ def test_active_agents_and_skills_do_not_reference_dead_names():
 
 
 def test_removed_legacy_bins_are_not_present():
-    assert not (PLUGIN_ROOT / "bin" / "quasi-citation").exists()
-    assert not (PLUGIN_ROOT / "bin" / "quasi-proofread").exists()
+    for name in (
+        "quasi-citation",
+        "quasi-proofread",
+        "quasi-pi-runner",
+        "quasi-codex-runner",
+        "quasi-codex-driver",
+        "quasi-codex-agents",
+    ):
+        assert not (PLUGIN_ROOT / "bin" / name).exists()
 
 
 def test_removed_public_skill_directories_are_not_present():

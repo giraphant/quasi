@@ -27,8 +27,15 @@ skills and agent contracts must not cite it at runtime.
 
 - **Shape is proven by the host.** The schema handed to StructuredOutput is
   the only shape validation. The graph does not re-validate shape.
-  (The runtime backstop validator exists solely for non-Claude hosts and is
-  scheduled for deletion under the Claude-only decision.)
+  (Foreign-receipt admission performs its own validation because it does not
+  cross the host boundary.) One narrow exception survives at the trust
+  boundary: a receipt whose four-terminal structure cannot even be read is
+  an **unknown outcome** and fails closed (blocked, never replayed, never
+  ok). This is the writer-safety rule applied to unintelligible output, not
+  a second validation of host-proven shape. Operations still on pre-stage
+  `quasi.operation.*` contracts (author discovery, the legacy topic loop)
+  keep the old backstop validation as a deliberately shrinking
+  compatibility island until their migration rounds retire them.
 - **Facts are proven by the disk.** A writer stage's postcondition is an
   artifact probe (`quasi-status` is the shared prover), never
   cross-examination of receipt fields. Receipts can lie; the disk cannot.
@@ -115,6 +122,5 @@ internals.
   slimmed onto shared validators; legacy operation IDs removed.
 - **Next round (constitution round)**: operations-as-data call tables and
   the single interpreter; disk-postcondition verification replacing receipt
-  contracts; disk-based join admission; deletion of the runtime backstop
-  validator and the three non-Claude host adapters; topic merged into the
-  material tree; `precise-topic` renamed.
+  contracts; disk-based join admission; topic merged into the material tree;
+  `precise-topic` renamed.

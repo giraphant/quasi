@@ -56,11 +56,6 @@ conflicts 或 evidence；其它 terminal 时为 `null`。`blocked` 表示现有�
 统一入口是 `$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs`：
 
 - Claude Code 使用 Workflow 工具。
-- Pi 把 args 写到 `.quasi/temp/`，再调用 `quasi-pi-runner`。
-- Codex GUI 先读取
-  [`references/codex-native-driver.md`](references/codex-native-driver.md)，使用
-  `quasi-codex-driver` 让当前 thread 的原生 subagents 回应图内请求；缺少该能力时使用
-  `quasi-codex-runner`。
 
 图选择 specialist、注入 goal/capabilities/exact refs 和 output schema。Specialist 在自己的
 能力范围内完成调查或局部恢复，再返回一个 Stage terminal。Skill 根据 terminal 与用户沟通，
@@ -109,11 +104,6 @@ else:
     wf_args = project_single_request(requests[0])
 
 def run_graph(args):
-    args_file = write_temp_json(args)  # .quasi/temp/
-    if env("PI_CODING_AGENT") == "true":
-        return run_pi_graph(args_file)
-    if env("CODEX_THREAD_ID"):
-        return run_codex_graph(args_file)
     return Workflow(
         scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs",
         args=args,

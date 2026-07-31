@@ -563,7 +563,7 @@ async function prepareTalk(runtime, state, repairDiagnostics = []) {
           state.repaired = true;
           state.disposition = "repaired";
         }
-        return { receipt };
+        return { value: { receipt } };
       },
     },
   );
@@ -654,7 +654,7 @@ async function runProducer(
         } else if (action === "reconciled") {
           state.disposition = state.disposition || "reused";
         } else state.disposition = "created";
-        return { receipt };
+        return { value: { receipt } };
       },
     },
   );
@@ -752,11 +752,13 @@ async function runAudit(runtime, state, pass) {
           state.disposition = "repaired";
         }
         return {
-          clean:
-            receipt.terminal.status === "complete" &&
-            receipt.remaining_violations === 0 &&
-            receipt.escalated.length === 0,
-          diagnostics: receipt.escalated,
+          value: {
+            clean:
+              receipt.terminal.status === "complete" &&
+              receipt.remaining_violations === 0 &&
+              receipt.escalated.length === 0,
+            diagnostics: receipt.escalated,
+          },
         };
       },
     },

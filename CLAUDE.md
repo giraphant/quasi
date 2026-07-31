@@ -6,7 +6,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 
 - Installed plugins load components from root-level `skills/`, `workflows/`, `agents/`, `bin/`, `hooks/`, `monitors/`, `.mcp.json`, and `.lsp.json`.
 - `.claude-plugin/plugin.json` is metadata only. Do not place components inside `.claude-plugin/`.
-- `.codex-plugin/plugin.json` is the Codex-native package manifest. Codex discovers `skills/` and default `hooks/hooks.json`; it does not currently install plugin-root `agents/` as custom roles. Quasi loads those Markdown contracts through its runners, and `quasi-codex-agents` explicitly generates project/user Codex TOML roles when requested.
+- `.codex-plugin/plugin.json` is the Codex-native package manifest for its own skill and hook discovery; leave it alone when changing Claude Code runtime components.
 - `CLAUDE.md` and `AGENTS.md` must stay byte-for-byte identical. They are mirrored instruction files for different agent frameworks, not separate reader-specific guides.
 - Claude Code does not load a plugin-root `CLAUDE.md` as context when quasi is installed as a plugin. Runtime guidance must live in skills, agents, hooks, or scripts.
 
@@ -116,10 +116,6 @@ quasi-helpers localise scan|write ...
 quasi-helpers vault resolve --items-json|--items-file ...
 quasi-doctor [--json] [--sync] [--profile ...]
 quasi-translate SLUG [--backend immersive|pdf2zh] ...
-quasi-pi-runner --script PATH --args-file JSON [--cwd PROJECT] ...
-quasi-codex-agents (--project PATH|--user) [--check] [--json]
-quasi-codex-driver --script PATH --args-file JSON [--cwd PROJECT] ...
-quasi-codex-runner --script PATH --args-file JSON [--cwd PROJECT] ...
 ```
 
 `scripts/workflows/` contains the modular Claude Workflow graph source and generated
@@ -170,8 +166,8 @@ through Analyse, Synthesise, and Audit.
 
 Receipt validation is centralised in `runtime.mjs::operate`. The host validates
 the closed `quasi.stage.receipt/0.2` schema for every material/document
-operation; the runtime backstop mirrors it for non-Claude hosts. Each Stage
-contract then checks only the exact postcondition needed by the next stage. The
+operation. Each Stage contract then checks only the exact postcondition needed
+by the next stage. The
 shared `scripts/workflows/materials/route.mjs` edge router maps each schema-valid
 `needs_input|blocked|failed` terminal to its declared graph edge; the graph must
 not reinterpret it as malformed because it disagrees with the specialist's
@@ -191,13 +187,7 @@ canonical artifacts, and clean final audit for Author, Batch, and strict Topic
 recall. The rolling `research/topic.mjs` loop remains legacy; its
 `topic.audit.legacy` identifier is intentional debt until the topic-merge round.
 
-`quasi-pi-runner` is the Pi-only adapter for the existing `workflows/process-material.mjs` graph. It uses the official Pi SDK already installed with Pi, loads `quasi:<name>` definitions from root `agents/`, and deliberately implements only `agent`, `parallel`, `phase`, `log`, and `args`; do not add a third-party workflow compatibility dependency. Claude Code keeps using its native Workflow path.
-
-`quasi-codex-runner` reuses the same `createRunner` graph runtime and replaces only the worker invoker with ephemeral `codex exec --output-schema` calls. Codex runs workers in `workspace-write`, grants network because acquisition commands require it, and adds only plugin data as an extra writable root. Claude agent model aliases are not mapped in this first compatibility release; their reasoning tiers map to `opus=high`, `sonnet=medium`, and general-purpose `low`. `QUASI_CODEX_MODEL` and `QUASI_CODEX_REASONING_LEVEL` may override the Codex worker defaults.
-
-`quasi-codex-agents` is the explicit native-role installation boundary. Root `agents/*.md` remains the sole source of truth; `--project PATH` generates `PATH/.codex/agents/quasi_*.toml`, while `--user` targets `${CODEX_HOME:-~/.codex}/agents`. It writes only `name`, `description`, and `developer_instructions`, inherits the coordinator model, does not delete unrelated files, and supports a non-mutating `--check`. Codex loads these files at thread startup, so a new thread is required after syncing.
-
-`quasi-codex-driver` is the Codex GUI path. It runs the same graph but turns each `agent()` into a bidirectional JSONL `agent_request`; each event carries both the cross-host `agent_type` and the registered `codex_agent_type` (`quasi_download`, `quasi_analyse`, etc., or built-in `worker` fallback). The full worker contract is stored in the event's short-lived `.quasi/temp/...` `request_path`, avoiding terminal truncation. The active skill answers through the current thread's native `spawn_agent` tools, serializes each full result to the assigned `receipt_path`, and writes only a short `result_path` event to the driver's PTY stdin. Those workers therefore appear in the current Codex agent tree, while large diagnostic receipts cannot be truncated by the PTY/tool input limit. The driver keeps graph continuations in memory, validates returned receipts against the graph schema, caps requests at three so the coordinator retains one thread slot, and emits `agent_cancel` when the graph aborts. `quasi-codex-runner` remains the headless/CI fallback when native subagent or resumable-exec tools are unavailable.
+quasi targets Claude Code only; the retired Pi and Codex host adapters are recoverable from git history.
 
 Public skill routing separates material intake from topic research. `collect-material` owns paper, book, author, Talk, and Translation; `precise-topic` owns vault recall, outline steering, evidence cards, human seed gates, and topic synthesis. Both still call `workflows/process-material.mjs`, so topic candidates reuse the same paper/book router without duplicating graph nodes. Draft proofreading and citation closure use `finalise-draft`.
 
@@ -207,7 +197,7 @@ For a single Book or Paper request, `collect-material` passes only user-provided
 
 Paper metadata merging treats Crossref as the authority for the journal container title and decodes its HTML entities at the adapter boundary. Do not let asynchronous adapter completion order choose `venue`; OpenAlex may omit meaningful punctuation from the same journal name.
 
-Codex does not inject Claude plugin Configure options, and a native subagent may not inherit the coordinator's plugin hook. Every Python-facing `quasi-*` shim therefore sources `scripts/load-keychain-env.sh`, which fills missing `QUASI_*` values at runtime from the existing encrypted `Claude Code-credentials` Keychain record. On macOS the PreToolUse hook uses the same `--keychain-exports` helper for coordinator commands, including Claude-hosted commands whose `CLAUDE_PLUGIN_OPTION_*` values are visible only to the hook. Command argv contains only helper paths, never secret values; explicit `QUASI_*` values take precedence because the helper fills only missing keys. This is also the config source used by the Pi bridge; secrets are not written to request envelopes or plugin data. Non-macOS currently keeps the older direct-export hook fallback because it has no shared Keychain provider.
+Every Python-facing `quasi-*` shim sources `scripts/load-keychain-env.sh`, which fills missing `QUASI_*` values at runtime from the existing encrypted `Claude Code-credentials` Keychain record. On macOS the PreToolUse hook uses the same `--keychain-exports` helper for coordinator commands, including Claude-hosted commands whose `CLAUDE_PLUGIN_OPTION_*` values are visible only to the hook. Command argv contains only helper paths, never secret values; explicit `QUASI_*` values take precedence because the helper fills only missing keys. Non-macOS currently keeps the older direct-export hook fallback because it has no shared Keychain provider.
 
 `quasi-translate` has two interchangeable backends behind one output contract (`processing/translations/{slug}-{full-target-tag-lower}.pdf`, for example `-zh-cn.pdf`; alternating original/translated pages, bookmarks): `immersive` (default, Immersive Translate Zotero API) and `pdf2zh` (local `pdf2zh-next` via uvx, driving a user-supplied OpenAI-compatible endpoint). Backend selection is user config (`translate_backend`), not a free caller argument. `translate-agent` owns the Translation Prepare Stage: it observes candidates, runs the configured backend, interprets validation, and may use layout OCR recovery when the evidence calls for it. The deterministic CLI still owns fenced generation, manifest-last publication, page-count, ToUnicode, and coverage checks. For pdf2zh, a root-only `translate_base_url` gets `/v1` appended; any explicit path is preserved because compatible providers also use paths such as `/api/paas/v4` and `/openai/v1`. The pdf2zh path uses `--use-alternating-pages-dual`, which emits the same page layout Immersive produces *after* `split_dual_pdf()`, so the TOC helpers are shared verbatim. Provider credentials stay out of argv. Rejected or uncertain generations remain in their fenced `processing/translations/.{stem}.translate-*` directory and never become canonical output.
 
@@ -268,7 +258,6 @@ When changing config, runtime state, or handoff contracts:
 5. Update agent files when an agent input/output contract changes.
 6. Update tests that guard dead names, frontmatter routing hints, CLI surface, or manifest schema.
 7. Run `claude plugin validate plugins/quasi` after manifest/marketplace changes.
-8. After releasing, sync `~/.agents/plugins/quasi/` from the new version — the Pi extension symlink reads from there, so a stale copy means Pi discovers old skills.
 
 ## Verification
 

@@ -484,7 +484,9 @@ async function processStrict(runtime, state) {
         },
         "translation.prepare",
       );
-      return terminal(state, "complete", "validation");
+      return {
+        terminal: terminal(state, "complete", "validation"),
+      };
     },
   });
   return routed.terminal || routed.value;

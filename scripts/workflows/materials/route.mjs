@@ -3,10 +3,18 @@ import { stageUserGate } from "./receipt.mjs";
 const valueFor = (value, receipt) =>
   typeof value === "function" ? value(receipt) : value;
 
-const routedValue = (value) =>
-  value && typeof value === "object" && "terminal" in value
-    ? value
-    : { value };
+// Only an exact one-key tag is a routing directive. Receipts are data even
+// though their own terminal field names a Stage Unit outcome.
+const routedResult = (value) => {
+  if (
+    value &&
+    typeof value === "object" &&
+    Object.keys(value).length === 1 &&
+    (Object.hasOwn(value, "terminal") || Object.hasOwn(value, "value"))
+  )
+    return value;
+  return { value };
+};
 
 // Material loops share one closed runtime edge algebra. Each call site declares
 // only its observable terminal status, evidence extras, and success handling;
@@ -50,7 +58,7 @@ export function routeStageEdge(run, {
 
   if (edge === "blocked") {
     if (onBlocked)
-      return routedValue(onBlocked(receipt, state, stage, operationKey));
+      return routedResult(onBlocked(receipt, state, stage, operationKey));
     return {
       terminal: emit({
         status: blockedStatus,
@@ -66,7 +74,7 @@ export function routeStageEdge(run, {
 
   if (edge === "needs_input") {
     if (onNeedsInput)
-      return routedValue(
+      return routedResult(
         onNeedsInput(receipt, state, stage, operationKey),
       );
     const gate =
@@ -92,7 +100,7 @@ export function routeStageEdge(run, {
 
   if (edge === "failed") {
     if (onFailed)
-      return routedValue(onFailed(receipt, state, stage, operationKey));
+      return routedResult(onFailed(receipt, state, stage, operationKey));
     if (failedStatus === null)
       throw new Error(`unhandled material failed edge: ${operationKey}`);
     return {
@@ -109,17 +117,13 @@ export function routeStageEdge(run, {
   }
 
   if (edge === "reconcile")
-    return routedValue(
-      onReconcile
-        ? onReconcile(receipt, state, stage, operationKey)
-        : receipt,
-    );
+    return onReconcile
+      ? routedResult(onReconcile(receipt, state, stage, operationKey))
+      : { value: receipt };
   if (edge === "ok")
-    return routedValue(
-      onOk
-        ? onOk(receipt, state, stage, operationKey)
-        : receipt,
-    );
+    return onOk
+      ? routedResult(onOk(receipt, state, stage, operationKey))
+      : { value: receipt };
 
   throw new Error(`unhandled material operation edge: ${edge}`);
 }

@@ -116,6 +116,7 @@ export function stageReceiptSchema({
 // next stage.
 export function stageContract({ schema, complete }) {
   return {
+    stage: true,
     schema,
     status: (receipt) => receipt.terminal.status,
     statuses: {

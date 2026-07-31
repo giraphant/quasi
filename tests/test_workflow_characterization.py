@@ -9,12 +9,11 @@ from typing import Any
 import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-RUNNER = PLUGIN_ROOT / "scripts" / "pi-runner.mjs"
-WORKFLOW = PLUGIN_ROOT / "workflows" / "process-material.mjs"
+ENTRY = PLUGIN_ROOT / "scripts" / "workflows" / "process-material.entry.mjs"
 
 
 NODE_HARNESS = r"""
-import { createRunner } from __RUNNER_URI__
+import { run } from __ENTRY_URI__
 
 const config = JSON.parse(process.argv[1])
 const responseIndexes = new Map()
@@ -42,8 +41,8 @@ function normalizedPrompt(prompt) {
   return String(prompt).replace(/\r\n/g, "\n").trim()
 }
 
-const invokeAgent = async ({ definition, prompt, options }) => {
-  const label = options.label || definition.name
+const agent = async (prompt, options = {}) => {
+  const label = options.label || options.agentType || "agent"
   const occurrence = responseIndexes.get(label) || 0
   responseIndexes.set(label, occurrence + 1)
   const id = `${label}#${occurrence + 1}`
@@ -52,7 +51,7 @@ const invokeAgent = async ({ definition, prompt, options }) => {
     label,
     occurrence: occurrence + 1,
     phase: options.phase || null,
-    agent_type: options.agentType || definition.name,
+    agent_type: options.agentType || null,
     schema_fingerprint: schemaFingerprint(options.schema),
     prompt: normalizedPrompt(prompt),
     start: ++clock,
@@ -77,15 +76,12 @@ const invokeAgent = async ({ definition, prompt, options }) => {
   return JSON.parse(JSON.stringify(step.result))
 }
 
-const runner = createRunner({
-  pluginRoot: config.plugin_root,
-  projectCwd: config.project_cwd,
-  concurrency: config.concurrency || 4,
-  timeoutMs: 5000,
-  invokeAgent,
+const result = await run({
+  agent,
+  parallel: tasks => Promise.all(tasks.map(task => Promise.resolve().then(task))),
+  phase: () => {},
   log: message => logs.push(String(message)),
-})
-const result = await runner.runFile(config.workflow, config.args)
+}, config.args)
 const unused = Object.fromEntries(
   Object.entries(config.responses)
     .map(([label, steps]) => [
@@ -630,12 +626,9 @@ def run_workflow(
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
-    script = NODE_HARNESS.replace("__RUNNER_URI__", json.dumps(RUNNER.as_uri()))
+    script = NODE_HARNESS.replace("__ENTRY_URI__", json.dumps(ENTRY.as_uri()))
     ingress = material_ingress_responses(args, responses)
     config = {
-        "plugin_root": str(PLUGIN_ROOT),
-        "project_cwd": str(tmp_path),
-        "workflow": str(WORKFLOW),
         "args": args,
         "responses": {**ingress, **responses},
     }

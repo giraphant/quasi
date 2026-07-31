@@ -382,7 +382,7 @@ async function prepare(runtime, state) {
             ...artifact,
             producer: "paper.prepare",
           });
-        return { input: receipt.selected_input };
+        return { value: { input: receipt.selected_input } };
       },
     },
   );
@@ -460,7 +460,7 @@ async function analyse(
           state.repaired = false;
           state.disposition = "reused";
         } else state.disposition = "created";
-        return { action };
+        return { value: { action } };
       },
     },
   );
@@ -509,12 +509,14 @@ async function audit(runtime, state, pass) {
       blockedStatus: "audit_escalated",
       failedStatus: "audit_escalated",
       onOk: (receipt) => ({
-        receipt,
-        escalated: receipt.escalated,
-        clean:
-          receipt.terminal.status === "complete" &&
-          receipt.escalated.length === 0 &&
-          receipt.remaining_violations === 0,
+        value: {
+          receipt,
+          escalated: receipt.escalated,
+          clean:
+            receipt.terminal.status === "complete" &&
+            receipt.escalated.length === 0 &&
+            receipt.remaining_violations === 0,
+        },
       }),
     },
   );
@@ -578,6 +580,7 @@ async function processValidatedPaper(runtime, slug, meta) {
               ? "paper.acquire:reconciled"
               : "paper.acquire",
         });
+        return { value: undefined };
       },
     },
   );

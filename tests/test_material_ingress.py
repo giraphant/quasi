@@ -338,11 +338,9 @@ def test_search_complete_with_no_local_owner_uses_selected_identity(
     )
 
 
-def test_search_complete_with_non_null_issue_is_rejected_by_schema(
-    tmp_path: Path,
-) -> None:
-    malformed = search_receipt()
-    malformed["terminal"] = {
+def test_search_terminal_shape_is_proven_by_the_host(tmp_path: Path) -> None:
+    receipt = search_receipt()
+    receipt["terminal"] = {
         "status": "complete",
         "issue": {
             "code": "none",
@@ -355,25 +353,28 @@ def test_search_complete_with_non_null_issue_is_rejected_by_schema(
     report = run_ingress(
         tmp_path,
         paper_request(),
-        {f"{SLUG}:search": [malformed]},
+        {
+            f"{SLUG}:search": [receipt],
+            f"{SLUG}:acquire": [download_failed(SLUG)],
+        },
     )
 
-    assert report["result"]["status"] == "metadata_failed"
-    assert report["result"]["ingress_receipt"]["failure"]["code"] == (
-        "material.search_receipt_invalid"
-    )
+    # The live StructuredOutput boundary rejects this hybrid terminal. The
+    # graph deliberately does not duplicate that schema validation.
+    assert report["result"]["status"] == "download_failed"
+    assert any(call["label"].endswith(":acquire") for call in report["trace"])
 
 
-def test_malformed_search_receipt_stops_before_acquire(tmp_path: Path) -> None:
+def test_unreadable_search_terminal_blocks_before_acquire(tmp_path: Path) -> None:
     responses = {
         f"{SLUG}:search": [{"status": "complete"}],
     }
     report = run_ingress(tmp_path, paper_request(), responses)
 
-    assert report["result"]["status"] == "metadata_failed"
-    assert report["result"]["ingress_receipt"]["failure"]["code"] == (
-        "material.search_receipt_invalid"
-    )
+    assert report["result"]["status"] == "blocked"
+    failure = report["result"]["ingress_receipt"]["failure"]
+    assert failure["code"] == "material.readonly_outcome_unknown"
+    assert failure["outcome"] == "unknown"
     assert all(not call["label"].endswith(":acquire") for call in report["trace"])
 
 

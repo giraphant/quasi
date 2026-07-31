@@ -368,17 +368,27 @@ def test_schema_valid_known_failure_keeps_the_specialist_code() -> None:
     assert result["translation_receipt"]["failure"]["code"] == "translation.output_unusable"
 
 
-@pytest.mark.parametrize("bad_result", [None, {"status": "complete"}])
-def test_unknown_or_malformed_prepare_writer_blocks_without_replay(
-    bad_result: Any,
+@pytest.mark.parametrize("case", ["unknown", "unproven"])
+def test_unknown_or_unproven_prepare_writer_blocks_without_replay(
+    case: str,
 ) -> None:
     slug = "translation-stage-unknown"
+    result: Any = None
+    if case == "unproven":
+        result = prepare_stage(slug)
+        # The host-valid receipt does not prove the dual-PDF page invariant.
+        result["validation"]["output_pages"] = 5
     report = run_translation(
         slug,
-        {"translation.prepare": [response(bad_result)]},
+        {"translation.prepare": [response(result)]},
     )
     receipt = report["result"]["translation_receipt"]
     assert receipt["status"] == "blocked"
+    assert receipt["failure"]["code"] == (
+        "translation.writer_receipt_mismatch"
+        if case == "unproven"
+        else "translation.prepare_failed"
+    )
     assert receipt["failure"]["outcome"] == "unknown"
     assert len(report["trace"]) == 1
 

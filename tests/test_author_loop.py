@@ -1253,39 +1253,25 @@ def test_out_of_order_children_join_before_stable_order_synthesis(
 
 
 @pytest.mark.parametrize(
-    ("writer", "bad_receipt", "expected_stage"),
+    ("writer", "case", "expected_stage"),
     [
-        ("author.synthesise", None, "synthesis"),
-        (
-            "author.synthesise",
-            synthesis_receipt(
-                "ada-example",
-                [
-                    ("book", book_candidate()["slug"]),
-                    ("paper", paper_candidate()["slug"]),
-                ],
-                output_path="vault/authors/foreign.md",
-            ),
-            "synthesis",
-        ),
-        ("author.audit", None, "audit"),
-        (
-            "author.audit",
-            audit_receipt(
-                "ada-example",
-                target_path="vault/authors/foreign.md",
-            ),
-            "audit",
-        ),
+        ("author.synthesise", "unknown", "synthesis"),
+        ("author.audit", "unknown", "audit"),
+        ("author.audit", "unproven", "audit"),
     ],
 )
-def test_writer_unknown_or_malformed_is_called_once_then_blocks(
+def test_writer_unknown_or_unproven_is_called_once_then_blocks(
     tmp_path: Path,
     writer: str,
-    bad_receipt: dict[str, Any] | None,
+    case: str,
     expected_stage: str,
 ) -> None:
     name = "ada-example"
+    bad_receipt: dict[str, Any] | None = None
+    if case == "unproven":
+        bad_receipt = audit_receipt(name)
+        # The receipt has the host-valid shape but cannot prove a clean audit.
+        bad_receipt["remaining_violations"] = 1
     responses = base_responses(name)
     responses[writer] = [reply(bad_receipt)]
     if writer == "author.synthesise":
@@ -1301,6 +1287,7 @@ def test_writer_unknown_or_malformed_is_called_once_then_blocks(
     receipt = collection(result)
     assert receipt["status"] == "blocked"
     assert receipt["stage"] == expected_stage
+    assert receipt["failure"]["code"] == "author.writer_receipt_mismatch"
     assert receipt["failure"]["operation_key"] == writer
     assert receipt["failure"]["outcome"] == "unknown"
     assert receipt["failure"]["retryable"] is False
@@ -1310,7 +1297,7 @@ def test_writer_unknown_or_malformed_is_called_once_then_blocks(
         assert calls(report, "author.audit") == []
 
 
-def test_synthesis_failure_without_required_message_is_writer_mismatch(
+def test_synthesis_known_failure_stops_without_replay(
     tmp_path: Path,
 ) -> None:
     name = "ada-example"
@@ -1322,12 +1309,6 @@ def test_synthesis_failure_without_required_message_is_writer_mismatch(
         ],
         status="failed",
     )
-    failed["failure"] = {
-        "code": "author.synthesis_failed",
-        "operation_key": "author.synthesise",
-        "outcome": "known",
-        "retryable": False,
-    }
     responses = base_responses(name)
     responses["author.synthesise"] = [reply(failed)]
     responses.pop("author.audit")
@@ -1340,10 +1321,10 @@ def test_synthesis_failure_without_required_message_is_writer_mismatch(
     )
 
     result = report["result"]
-    assert result["status"] == "blocked"
+    assert result["status"] == "synth_failed"
     receipt = collection(result)
-    assert receipt["failure"]["code"] == "author.writer_receipt_mismatch"
-    assert receipt["failure"]["outcome"] == "unknown"
+    assert receipt["failure"]["code"] == "author.synthesise_failed"
+    assert receipt["failure"]["outcome"] == "known"
     assert len(calls(report, "author.synthesise")) == 1
     assert calls(report, "author.audit") == []
 

@@ -168,12 +168,8 @@ def main() -> None:
     # back to `~/.cache/quasi` for the venv and lose the bundled-path fast
     # path. Re-injecting here keeps everything pointing at the official
     # `$CLAUDE_PLUGIN_DATA` (= `~/.claude/plugins/data/<id>/`) location.
-    plugin_root = os.environ.get(
-        "PLUGIN_ROOT", os.environ.get("CLAUDE_PLUGIN_ROOT", "")
-    ).strip()
-    plugin_data = os.environ.get(
-        "PLUGIN_DATA", os.environ.get("CLAUDE_PLUGIN_DATA", "")
-    ).strip()
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "").strip()
+    plugin_data = os.environ.get("CLAUDE_PLUGIN_DATA", "").strip()
     plugin_vars = {
         "CLAUDE_PLUGIN_ROOT": plugin_root,
         "CLAUDE_PLUGIN_DATA": plugin_data,
@@ -182,10 +178,8 @@ def main() -> None:
         if val:
             exports.append(f"{plugin_var}={shlex.quote(val)}")
 
-    # Claude Code exposes plugin bins directly; Codex deliberately discovers
-    # only skills/hooks/MCP. Add quasi's stable shell surface when this hook is
-    # already rewriting a quasi-* command, so the same skill text works in both
-    # hosts without hard-coding an installed cache path.
+    # Add quasi's stable shell surface when this hook is already rewriting a
+    # quasi-* command, without hard-coding an installed cache path.
     if plugin_root:
         path = os.pathsep.join(
             [os.path.join(plugin_root, "bin"), os.environ.get("PATH", "")]
@@ -197,14 +191,12 @@ def main() -> None:
         for key in _KEYS
     }
 
-    # On macOS Claude, Codex, and Pi all share Claude's encrypted Keychain
-    # record. Resolve it inside the Bash process instead of serialising plugin
+    # On macOS, resolve Claude's encrypted Keychain record inside the Bash
+    # process instead of serialising plugin
     # option values into updatedInput: process argv contains only this helper
     # path. Explicit QUASI_* values are ordinary inherited environment and the
     # helper deliberately leaves them untouched.
-    use_keychain_helper = sys.platform == "darwin" and (
-        bool(os.environ.get("CODEX_THREAD_ID")) or any(host_options.values())
-    )
+    use_keychain_helper = sys.platform == "darwin" and any(host_options.values())
     if use_keychain_helper:
         hook_path = os.path.realpath(__file__)
         prelude.append(

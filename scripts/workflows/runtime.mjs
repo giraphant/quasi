@@ -86,10 +86,9 @@ const matchesType = (value, type) => {
   }
 };
 
-// Backstop validator for the same StructuredOutput schema handed to the host.
-// Hosts with full JSON Schema enforcement make this a no-op; hosts with weaker
-// --output-schema support still converge on one shared verdict here. Covers the
-// closed keyword subset the operation receipt schemas are allowed to use.
+// Schema validator used by foreign-receipt admission and pre-stage legacy
+// operations, where Claude's terminal contract is not present. Covers the closed
+// keyword subset the receipt schemas are allowed to use.
 export function validateSchema(schema, value) {
   if (!schema || typeof schema !== "object") return true;
   if (
@@ -186,11 +185,26 @@ const DEFAULT_EDGES = {
   blocked: "blocked",
 };
 
+const TERMINAL_STATUSES = new Set([
+  "complete",
+  "needs_input",
+  "blocked",
+  "failed",
+]);
+
+const readableTerminal = (receipt) =>
+  !!(
+    receipt.terminal &&
+    typeof receipt.terminal === "object" &&
+    !Array.isArray(receipt.terminal) &&
+    TERMINAL_STATUSES.has(receipt.terminal.status)
+  );
+
 // One shared receipt verdict for every Operation call. A contract lives beside
 // its schema in scripts/workflows/operations/ and owns the status invariants;
 // the graph consumes only the closed edge algebra:
 //   unknown   — runtime receipt, the worker outcome was never observed
-//   mismatch  — receipt failed schema, echo, or a status invariant
+//   mismatch  — receipt failed an echo or a status invariant
 //   reconcile — worker proved an existing output instead of writing
 //   blocked   — typed unknown writer outcome, resume/reconcile territory
 //   failed    — typed known failure
@@ -209,8 +223,13 @@ export function classifyReceipt(
     return { edge: "unknown", receipt };
   if (receipt.schema_version === RUNTIME_RECEIPT_VERSION)
     return { edge: "unknown", receipt };
-  if (!validateSchema(hostSchema || contract.schema, receipt))
+  if (contract.stage === true) {
+    if (!readableTerminal(receipt)) return { edge: "unknown", receipt };
+  } else if (!validateSchema(hostSchema || contract.schema, receipt)) {
+    // Legacy operation receipts have not yet migrated to a host-enforced stage
+    // terminal. Keep their shrinking compatibility boundary fail-closed.
     return { edge: "mismatch", receipt };
+  }
   if (contract.echo && contract.echo(receipt, context) !== true)
     return { edge: "mismatch", receipt };
   const status = contract.status
@@ -499,7 +518,7 @@ export function createRuntime({ agent, parallel, phase, log }) {
       receipt,
       spec.contract,
       spec.context || {},
-      opts.schema || null,
+      spec.contract.stage === true ? null : opts.schema || null,
     );
   };
 

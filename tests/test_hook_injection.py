@@ -96,8 +96,8 @@ def test_hook_existing_quasi_env_is_not_serialised_into_command():
         "quasi-search paper --title X",
         {
             "QUASI_KAGI_SESSION_TOKEN": "from-env",
-            "PLUGIN_ROOT": "/codex/plugin",
-            "PLUGIN_DATA": "/codex/data",
+            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
+            "CLAUDE_PLUGIN_DATA": "/plugin/data",
             "PATH": "/usr/bin:/bin",
         },
     )
@@ -229,22 +229,22 @@ def test_macos_hook_never_serialises_plugin_secret_into_updated_input():
     assert marker not in updated
 
 
-def test_hook_uses_codex_plugin_vars_and_adds_plugin_bin_to_path():
+def test_hook_uses_claude_plugin_vars_and_adds_plugin_bin_to_path():
     out = run_hook(
-        "quasi-codex-runner --args-json '{}'",
+        "quasi-search paper --title X",
         {
-            "PLUGIN_ROOT": "/codex/plugin",
-            "PLUGIN_DATA": "/codex/data",
+            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
+            "CLAUDE_PLUGIN_DATA": "/plugin/data",
+            "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
             "PATH": "/usr/bin:/bin",
-            "CODEX_THREAD_ID": "thread-test",
         },
     )
 
     updated = out["hookSpecificOutput"]["updatedInput"]["command"]
     assert "--keychain-exports" in updated
-    assert "CLAUDE_PLUGIN_ROOT=/codex/plugin" in updated
-    assert "CLAUDE_PLUGIN_DATA=/codex/data" in updated
-    assert "PATH=/codex/plugin/bin:/usr/bin:/bin" in updated
+    assert "CLAUDE_PLUGIN_ROOT=/plugin/root" in updated
+    assert "CLAUDE_PLUGIN_DATA=/plugin/data" in updated
+    assert "PATH=/plugin/root/bin:/usr/bin:/bin" in updated
 
 
 def test_hook_ignores_quoted_quasi_command_text_without_target_command():

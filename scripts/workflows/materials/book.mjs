@@ -543,7 +543,7 @@ async function prepareBook(runtime, state) {
             ...artifact,
             producer: "book.prepare",
           });
-        return { receipt };
+        return { value: { receipt } };
       },
     },
   );
@@ -608,8 +608,10 @@ async function analyseChapter(
     {
       failure: analyseFailure,
       blockedFailure: (receipt) => analyseFailure(receipt, "unknown"),
-      onFailed: (receipt) => ({ receipt, present: false }),
-      onOk: (receipt) => ({ receipt, present: true }),
+      onFailed: (receipt) => ({
+        value: { receipt, present: false },
+      }),
+      onOk: (receipt) => ({ value: { receipt, present: true } }),
     },
   );
   return routed.terminal ? { terminal: routed.terminal } : routed.value;
@@ -676,7 +678,7 @@ async function synthesise(
       state.disposition = state.disposition || "reused";
     } else if (reconciled) state.disposition = "reused";
     else state.disposition = "created";
-    return { receipt, reconciled };
+    return { value: { receipt, reconciled } };
   };
   const routed = routeBookStage(
     synthesis,
@@ -776,11 +778,13 @@ async function audit(runtime, state, pass, owners) {
         return terminal
           ? { terminal }
           : {
-              receipt,
-              clean:
-                receipt.terminal.status === "complete" &&
-                receipt.remaining_violations === 0 &&
-                receipt.escalated.length === 0,
+              value: {
+                receipt,
+                clean:
+                  receipt.terminal.status === "complete" &&
+                  receipt.remaining_violations === 0 &&
+                  receipt.escalated.length === 0,
+              },
             };
       },
     },
@@ -889,6 +893,7 @@ async function processValidatedBook(runtime, slug, meta, opts) {
               ? "book.acquire:reconciled"
               : "book.acquire",
         });
+        return { value: undefined };
       },
     },
   );

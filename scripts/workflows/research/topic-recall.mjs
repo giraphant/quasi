@@ -517,7 +517,7 @@ function routeTopicStage(
     failedStatus = "all_failed",
     needsInputStatus = "needs_seeds",
     needsInputExtra = null,
-    onOk = (receipt) => ({ edge: "ok", receipt }),
+    onOk = (receipt) => ({ value: { edge: "ok", receipt } }),
     onFailed = null,
   },
 ) {
@@ -861,8 +861,8 @@ async function runMaterialRound(
         mismatchCode: "topic.discovery_receipt_invalid",
         mismatchMessage:
           "discovery receipt did not prove the exact demand contract",
-        onOk: (receipt) => ({ edge: "ok", receipt }),
-        onFailed: (receipt) => ({ edge: "failed", receipt }),
+        onOk: (receipt) => ({ value: { edge: "ok", receipt } }),
+        onFailed: (receipt) => ({ value: { edge: "failed", receipt } }),
       },
     ),
   );
@@ -1036,8 +1036,8 @@ async function processStrict(runtime, router, slug, meta) {
     {
       mismatchCode: "topic.recall_receipt_invalid",
       mismatchMessage: "recall receipt did not prove the exact contract",
-      onOk: (receipt) => ({ edge: "ok", receipt }),
-      onFailed: (receipt) => ({ edge: "failed", receipt }),
+      onOk: (receipt) => ({ value: { edge: "ok", receipt } }),
+      onFailed: (receipt) => ({ value: { edge: "failed", receipt } }),
     },
   );
   if (recallRoute.terminal) return recallRoute.terminal;

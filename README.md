@@ -2,7 +2,7 @@
 
 > 仿佛读过、仿佛想过、仿佛写过。
 
-Claude Code / Codex / Pi 共用的知识库插件。quasi 的维护逻辑是: 上层只看
+Claude Code 的知识库插件。quasi 的维护逻辑是: 上层只看
 `skills → workflows → agents → bin/quasi-*`,底层实现收束在少数大入口脚本里,方便
 agent 一次读完整条能力链。
 
@@ -101,26 +101,9 @@ quasi-helpers citation parse|biblio|resolve|review-cards|emit-bib ...
 quasi-helpers localise scan|write ...
 quasi-doctor [--json] [--sync] [--profile ...]
 quasi-translate SLUG [--backend immersive|pdf2zh] ...
-quasi-pi-runner --script PATH --args-file JSON [--cwd PROJECT] ...
-quasi-codex-agents (--project PATH|--user) [--check] [--json]
-quasi-codex-driver --script PATH --args-file JSON [--cwd PROJECT] ...
-quasi-codex-runner --script PATH --args-file JSON [--cwd PROJECT] ...
 ```
 
-`quasi-pi-runner` 是 Pi 下的最小 material 图执行器:直接用 Pi 官方 SDK
-加载 `agents/*.md`,只实现现有图使用的 `agent` / `parallel` / `phase` / `log` /
-`args`;Claude Code 仍走原 Workflow 工具。
-
-Codex GUI 默认走 `quasi-codex-driver`:driver 只发带临时 `request_path` /
-`receipt_path` 的短 JSONL worker 请求,完整合同由当前 thread 的原生 subagent
-自行读取,完整回执也经文件返回,所以长 prompt / result 都不会被终端截断;并行分支和
-agent 状态则在 GUI 可见。
-Codex 插件当前不会从插件包直接注册 `agents/*.md`;运行
-`quasi-codex-agents --project /path/to/vault` 可把这些唯一源码生成成该项目的
-`.codex/agents/quasi_*.toml` 原生角色（`--user` 则安装到用户级）。driver 会优先请求
-这些角色,未安装或当前宿主没有 role selector 时仍回退通用 worker。同步后需开启新的
-Codex thread 才会加载新角色。
-`quasi-codex-runner` 用独立 `codex exec` worker,保留作 headless / CI fallback。
+quasi targets Claude Code only; retired Pi and Codex host adapters are recoverable from git history.
 只给题名的单本/论文请求会先由可见 `metadata-agent` 核定 DOI/ISBN、作者顺序、年份和
 canonical slug;主线程不会自行 WebSearch 猜 metadata。
 

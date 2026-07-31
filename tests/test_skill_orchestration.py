@@ -115,18 +115,14 @@ def test_collect_material_starts_one_graph_and_does_not_shadow_ingress() -> None
     assert "report_blocked_and_failed_items" in skill
 
 
-def test_collect_material_keeps_host_adapters_and_large_receipts_out_of_pty() -> None:
+def test_collect_material_uses_native_claude_workflow_only() -> None:
     skill = (ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
         encoding="utf-8"
     )
-    reference = (
-        ROOT / "skills" / "collect-material" / "references" / "codex-native-driver.md"
-    ).read_text(encoding="utf-8")
+    assert "Workflow(" in skill
+    assert 'scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs"' in skill
     for name in ("quasi-pi-runner", "quasi-codex-driver", "quasi-codex-runner"):
-        assert name in skill
-    assert "request_path" in reference
-    assert "receipt_path" in reference
-    assert "result_path" in reference
+        assert name not in skill
 
 
 def test_metadata_agent_is_a_goal_owning_investigator() -> None:

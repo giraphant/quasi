@@ -15,7 +15,7 @@ L4 scripts/workflows/ modular source for host-neutral stage graphs
 L4 workflows/       generated, host-loadable workflow entries
 L3 agents/          specialist LLM workers, only calls quasi-* bins
 L2 bin/             stable command surface
-L1 scripts/         capability entrypoints, host adapters, and build sources
+L1 scripts/         capability entrypoints and build sources
 L0 core/            runtime plumbing
 L0 scripts/schemas/ vault domain spec
 ```
@@ -41,10 +41,6 @@ separate:
 | `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write`; `talk compress-media` |
 | `quasi-doctor` | runtime healthcheck: venv sync, core Python deps, optional external tools by profile |
 | `quasi-translate` | configured `immersive|pdf2zh` PDF translation; shared alternating-page, TOC, ToUnicode, and coverage contract |
-| `quasi-pi-runner` | minimal Pi SDK runner for the existing deterministic `process-material` graph |
-| `quasi-codex-agents` | explicit `agents/*.md` → project/user `.codex/agents/quasi_*.toml` native-role sync |
-| `quasi-codex-driver` | Codex GUI bridge: graph requests → current-thread native subagents → validated receipts |
-| `quasi-codex-runner` | minimal Codex CLI runner for the same deterministic `process-material` graph |
 
 Removed legacy bins:
 
@@ -67,10 +63,6 @@ Removed legacy bins:
 - `scripts/proofread/proofread.py`: deterministic proofread setup/cleanup only.
 - `scripts/doctor/doctor.py`: runtime healthcheck for venv sync, core Python deps, and optional system tools by profile.
 - `scripts/translate/immersive_translate.py` and `pdf2zh_translate.py`: interchangeable PDF translation backends behind the `quasi-translate` shim. Both run `tounicode.py` repair followed by `coverage.py` acceptance; DS OCR2/MinerU are recovery dependencies only after `Under-translated`, not pdf2zh startup requirements.
-- `scripts/pi-runner.mjs`: Pi SDK adapter for `workflows/process-material.mjs`; owns agent-definition loading, Claude→Pi tool mapping, bounded subagent concurrency, structured receipts, and aborts, but no generic workflow features.
-- `scripts/codex-agents.mjs`: deterministic native-role generator. Root `agents/*.md` remains the sole role source; explicit project/user sync writes only supported Codex TOML fields and never silently mutates global config.
-- `scripts/codex-driver.mjs`: interactive Codex adapter over the same `createRunner`. It never launches a worker itself; it holds graph continuations while exchanging short JSONL path events with the active skill, which uses native current-thread subagents. Each request carries a `codex_agent_type` such as `quasi_download`, with generic `worker` fallback. Full worker contracts and receipts live in paired per-request files under `.quasi/temp/`, so neither large prompts/schemas nor rich results cross the terminal event buffer.
-- `scripts/codex-runner.mjs`: Codex adapter over `pi-runner.mjs::createRunner`; launches one ephemeral `codex exec` per graph worker and converts the graph's ordinary receipt schemas into strict Codex output schemas.
 
 ## Workflow source and runtime
 
