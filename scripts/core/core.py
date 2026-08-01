@@ -39,7 +39,7 @@ def plugin_root(anchor: str | Path | None = None) -> Path:
     """
 
     if anchor is None:
-        return Path(__file__).resolve().parents[1]
+        return Path(__file__).resolve().parents[2]
 
     path = Path(anchor).resolve()
     current = path if path.is_dir() else path.parent

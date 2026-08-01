@@ -22,7 +22,7 @@ from pydantic import ValidationError
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
-from core import atomic_write_text, read_frontmatter, write_frontmatter, write_json  # noqa: E402
+from scripts.core import atomic_write_text, read_frontmatter, write_frontmatter, write_json  # noqa: E402
 from scripts.citation.slug import parse_author_token  # noqa: E402
 from scripts.localise.localise import normalise_isbn  # noqa: E402
 from scripts.schemas import __version__ as SCHEMA_VERSION, canonical_type  # noqa: E402

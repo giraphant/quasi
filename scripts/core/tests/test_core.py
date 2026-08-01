@@ -4,10 +4,10 @@ import json
 import sys
 from pathlib import Path
 
-PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
-from core import (  # noqa: E402
+from scripts.core import (  # noqa: E402
     dump_frontmatter,
     plugin_root,
     project_root,

@@ -16,7 +16,7 @@ SCRIPTS_ROOT = PLUGIN_ROOT / "scripts"
 sys.path.insert(0, str(PLUGIN_ROOT))
 sys.path.insert(0, str(SCRIPTS_ROOT))
 
-from core import load_script_module, print_json, project_root, resolve_project_path  # noqa: E402
+from scripts.core import load_script_module, print_json, project_root, resolve_project_path  # noqa: E402
 
 FM_RE = re.compile(r"^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$")
 FLOW_ARRAY_RE = re.compile(r"^([A-Za-z_][\w-]*):\s*\[[^\]]*\]\s*(?:#.*)?$")

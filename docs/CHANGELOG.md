@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.57.8** (2026-08-01): **根目录 `core/` 迁入 `scripts/core/`，插件根只剩宿主要加载的组件目录。**
+  - 起因：根目录的 `core/` 与 `skills/`、`workflows/`、`agents/`、`bin/` 混排，看起来像宿主组件，实际是纯 Python 管道，已被误判为死代码而误删过一次。迁移后 L0 边界不变，仍靠导入方向执行（`scripts/core/` 不得 import 兄弟域或 `scripts/schemas/`），目录位置不再承担这个语义。
+  - 改动面：`git mv` 三文件；`plugin_root()` 无锚分支 `parents[1]`→`parents[2]`；10 个脚本的 `from core import` 统一改 `from scripts.core import`（全部已插 PLUGIN_ROOT 进 sys.path，`scripts.` 命名空间导入既有先例，不新增路径黑客）；`test_core.py` 自身 `parents[2]`→`parents[3]`；CLAUDE.md（=AGENTS.md）与 ARCHITECTURE.md 的三处路径提法同步。全量 510 测试过，`vault resolve`/`audit` shim 冒烟过。修改由 Codex worker 按配方执行。
+
 - **0.57.7** (2026-08-01): **指令文档重构：CLAUDE.md（=AGENTS.md）降为纯维护合同，实测技术记忆整体迁入 `docs/PDF_PIPELINE.md`，README 重写为用户向。**
   - 0.57.6 的瘦身把 OCR/翻译七大段实测长文原地保留在 CLAUDE.md；本轮按「细节归 docs」原则把它们逐字迁出（byte 级校验通过），新家是 `docs/PDF_PIPELINE.md`，CLAUDE.md 原地只留「Extraction and translation invariants」不变量清单加指针，262 行收敛到 133 行。userConfig 映射表与 Keychain 流程段迁入 `docs/ARCHITECTURE.md`，该文件同时补齐 CLI 表漏项（`quasi-status`、`quasi-transcribe`、`vault resolve`）、新增 per-agent 写权属清单与 collect-material 单本/批量、topic 产物的路由细节；维护文档清单加入 PDF_PIPELINE。CLAUDE.md 不再记载「Current version」——版本唯一事实源是 `plugin.json`，少一处同步负担。
   - README 从维护者摘要重写为合格的用户向 README：是什么、安装（marketplace 命令）、配置、可选系统依赖、数据布局；构建命令、agent 依赖表、CLI 清单等维护者内容全部让位给 docs/ 指针。修改由 Codex worker 按配方执行。验收期间发现工作树中 `core/` 三文件被未知来源删除（worker 报告其开工前已存在，非其所为），已从 HEAD 恢复并以全量 510 测试确认仓库健康。

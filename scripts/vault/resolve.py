@@ -47,7 +47,7 @@ from typing import Any
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
-from core import print_json, project_root, read_frontmatter  # noqa: E402
+from scripts.core import print_json, project_root, read_frontmatter  # noqa: E402
 from scripts.localise.localise import normalise_isbn  # noqa: E402
 
 

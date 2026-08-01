@@ -16,17 +16,17 @@ L4 workflows/       generated, host-loadable workflow entries
 L3 agents/          specialist LLM workers, only calls quasi-* bins
 L2 bin/             stable command surface
 L1 scripts/         capability entrypoints and build sources
-L0 core/            runtime plumbing
+L0 scripts/core/    runtime plumbing
 L0 scripts/schemas/ vault domain spec
 ```
 
-`core/` and `scripts/schemas/` are both foundational, but intentionally
+`scripts/core/` and `scripts/schemas/` are both foundational, but intentionally
 separate:
 
-- `core/` knows paths, frontmatter, JSON, atomic writes, and module loading.
+- `scripts/core/` knows paths, frontmatter, JSON, atomic writes, and module loading.
 - `scripts/schemas/` knows vault types, frontmatter schemas, body schemas, and
   type aliases. It is the single source of truth for artifact structure.
-- `core/` must not import `scripts` or `schemas`.
+- `scripts/core/` must not import sibling script domains or `scripts/schemas/`.
 - agents and skills must not import Python packages directly; the Workflow
   build injects canonical artifact projections generated from this registry.
 
@@ -201,7 +201,7 @@ Every Python-facing `quasi-*` shim sources `scripts/load-keychain-env.sh`, which
 
 - Keep scripts as large, sectioned entrypoints unless splitting removes real
   duplication.
-- Add shared code to `core/` only when at least two capability domains need the
+- Add shared code to `scripts/core/` only when at least two capability domains need the
   exact same runtime policy.
 - Keep schema changes in `scripts/schemas/`; do not duplicate schema facts in
   agents or skill prose.

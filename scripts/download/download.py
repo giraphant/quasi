@@ -48,7 +48,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 
 import requests
 from aa import aa_request, get_aa_base_url, load_aa_config, search_aa  # noqa: E402
-from core import print_json, project_root, resolve_project_path  # noqa: E402
+from scripts.core import print_json, project_root, resolve_project_path  # noqa: E402
 
 # --- Config ---
 

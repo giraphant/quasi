@@ -32,7 +32,7 @@ import biblio as biblio_mod        # noqa: E402
 import resolve as resolve_mod      # noqa: E402
 import emit_bib as emit_bib_mod    # noqa: E402
 import review_cards as review_cards_mod  # noqa: E402
-from core import atomic_write_text, project_root as core_project_root, write_json  # noqa: E402
+from scripts.core import atomic_write_text, project_root as core_project_root, write_json  # noqa: E402
 
 
 def _project_root(explicit: str | None) -> Path:

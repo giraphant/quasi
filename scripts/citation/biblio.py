@@ -34,7 +34,7 @@ from typing import Any
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
-from core import read_frontmatter as core_read_frontmatter  # noqa: E402
+from scripts.core import read_frontmatter as core_read_frontmatter  # noqa: E402
 
 
 PAPERS_GLOB = "vault/papers/*.md"

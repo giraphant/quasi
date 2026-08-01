@@ -39,7 +39,7 @@ SCRIPTS_ROOT = PLUGIN_ROOT / "scripts"
 sys.path.insert(0, str(PLUGIN_ROOT))
 sys.path.insert(0, str(SCRIPTS_ROOT))
 
-from core import project_root, write_json  # noqa: E402
+from scripts.core import project_root, write_json  # noqa: E402
 from schemas import TYPE_REGISTRY, __version__ as SCHEMA_VERSION  # noqa: E402
 
 SNAPSHOT_VERSION = "quasi-schema-snapshot.v1"

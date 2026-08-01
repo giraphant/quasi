@@ -32,7 +32,7 @@ sys.path.insert(0, str(SCRIPTS_ROOT))
 import yaml  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
-from core import project_root  # noqa: E402
+from scripts.core import project_root  # noqa: E402
 from schemas import (  # noqa: E402
     BodySchema,
     canonical_type,

@@ -20,7 +20,7 @@ This file holds only the contracts a maintainer needs before editing. The detail
 
 ## Layers
 
-`skills/` (user-facing drivers) → `workflows/run-stage.mjs` (the only Workflow entry, generated) → `agents/` (goal-owning specialists) → `bin/quasi-*` (stable shell surface) → `scripts/` (deterministic capabilities; `scripts/workflows/` is the editable run-stage source; `scripts/schemas/` is the single source of truth for artifact structure) → `core/` (minimal runtime base for path/frontmatter/json/module-loading helpers).
+`skills/` (user-facing drivers) → `workflows/run-stage.mjs` (the only Workflow entry, generated) → `agents/` (goal-owning specialists) → `bin/quasi-*` (stable shell surface) → `scripts/` (deterministic capabilities; `scripts/workflows/` is the editable run-stage source; `scripts/schemas/` is the single source of truth for artifact structure) → `scripts/core/` (minimal runtime base for path/frontmatter/json/module-loading helpers; imports nothing above itself).
 
 ## Runtime contract
 
