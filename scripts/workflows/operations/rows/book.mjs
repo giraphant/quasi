@@ -235,10 +235,8 @@ export const bookOperationRows = [
         "output_path",
         "format",
         "allowed_output_paths",
-        "disposition",
         "write_state",
         "identity_verified",
-        "source",
         "isbn",
         "attempts",
         "year_evidence",
@@ -253,23 +251,27 @@ export const bookOperationRows = [
         allowed_output_paths: {
           const: allowedSources.map(({ path }) => path),
         },
-        disposition: {
-          type: ["string", "null"],
-          enum: ["created", "reused", null],
-        },
         write_state: {
           type: "string",
           enum: ["written", "not_written", "unknown"],
         },
         identity_verified: { type: "boolean" },
-        source: { type: ["string", "null"], maxLength: 200 },
         isbn: { type: ["string", "null"], maxLength: 100 },
         attempts: ATTEMPT_SCHEMA,
         year_evidence: { type: ["object", "null"] },
         tmp_path: { type: ["string", "null"], pattern: BOOK_TEMP_PATH.source },
       },
     }),
+    // disposition/source describe an accepted write, so they exist only in
+    // the complete terminal; a failed run cannot echo "created" out of habit.
     terminalPayloads: () => ({
+      complete: {
+        required: ["disposition", "source"],
+        properties: {
+          disposition: { type: "string", enum: ["created", "reused"] },
+          source: { type: "string", minLength: 1, maxLength: 200 },
+        },
+      },
       failed: {
         properties: {
           issue: issueSchema(["book.download_failed"]),
@@ -303,8 +305,9 @@ export const bookOperationRows = [
           receipt.output_path === path && receipt.format === format,
       );
       const dispositionCoherent =
-        (receipt.disposition === "created" && receipt.write_state === "written") ||
-        (receipt.disposition === "reused" &&
+        (receipt.terminal.disposition === "created" &&
+          receipt.write_state === "written") ||
+        (receipt.terminal.disposition === "reused" &&
           receipt.write_state === "not_written");
       const expectedYear = context.yearDecision
         ? context.yearDecision.year_evidence.slug_year

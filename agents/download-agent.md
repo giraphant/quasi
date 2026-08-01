@@ -57,7 +57,9 @@ signed URL 与 raw command 不进入 receipt。
 ## 结果判断
 
 成功意味着 exact output 已由实际 identity/path/format 证据证明：新 accept 为 created，既有
-核验为 reused 且 `source:"existing_file"`。所有访问路径以已知结果失败时返回 failed/known，
+核验为 reused 且 `source:"existing_file"`。`disposition` 与 `source` 只存在于 complete
+terminal 内部；其余 terminal 的 receipt 形状不含这两个字段，不要在失败时回显它们。
+所有访问路径以已知结果失败时返回 failed/known，
 保留 failure reason 与 attempts。身份、path 或 writer durable outcome 无法确认时返回
 blocked/unknown，交给后续 reconcile 观察。你只负责访问与 source acceptance，不重新定义
 bibliographic identity，也不处理正文。

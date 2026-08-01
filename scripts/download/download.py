@@ -1265,100 +1265,101 @@ def _extract_year_signals(text):
     }
 
 
+_DOI_TEXT_RE = re.compile(r"\b10\.\d{4,9}/[^\s\"'<>)\]},;]+")
+
+
+def _normalise_doi(doi: str) -> str:
+    return doi.strip().lower().rstrip(".,;:!?'\")]}")
+
+
+def _dois_in_text(text: str) -> set:
+    return {_normalise_doi(match) for match in _DOI_TEXT_RE.findall(text)}
+
+
 def _verify_text_content(text, expected_author=None, expected_title=None,
-                         min_keyword_matches=2):
-    """Verify extracted source text matches expected paper metadata."""
+                         expected_doi=None, expected_year=None):
+    """Accept extracted source text only on one strong identity proof.
+
+    Either the requested DOI is embedded in the text, or the full normalised
+    title appears as a contiguous phrase with the author present and no year
+    conflict. Keyword overlap alone is not identity: a same-subfield paper
+    contains every title word and cites the expected author, which is exactly
+    how a wrong PDF once cleared this check with `status: ok`.
+    """
     if not expected_author and not expected_title:
-        return True  # Nothing to verify
+        return True  # Nothing verifiable; DOI absence alone must not reject old scans
 
     if not text:
         print(f"  Verify: could not extract text, skipping check", file=sys.stderr)
         return True  # Can't verify, assume OK
 
     text = text.lower()
+
+    if expected_doi:
+        wanted_doi = _normalise_doi(expected_doi)
+        if wanted_doi in _dois_in_text(text):
+            print(f"  Verify: PASS (embedded DOI {wanted_doi})", file=sys.stderr)
+            return True
+
     normalised_text = " ".join(re.findall(r"[a-z0-9]+", text))
-    matches = 0
-    needed = min_keyword_matches
 
-    # Check author surname
+    author_found = None
     if expected_author:
-        # Extract surname (last word, or first word if Asian name)
         author_lower = expected_author.lower().strip()
-        # Try full author string and individual words
-        if author_lower in text:
-            matches += 2  # Strong signal
-            print(f"  Verify: author '{expected_author}' found", file=sys.stderr)
-        else:
-            # Try surname only (last word for Western names)
-            parts = author_lower.split()
-            surname = parts[-1] if parts else author_lower
-            if len(surname) >= 3 and surname in text:
-                matches += 1
-                print(f"  Verify: surname '{surname}' found", file=sys.stderr)
-            else:
-                print(f"  Verify: author '{expected_author}' NOT found", file=sys.stderr)
+        parts = author_lower.split()
+        surname = parts[-1] if parts else author_lower
+        author_found = author_lower in text or (
+            len(surname) >= 3
+            and (surname in text or surname in normalised_text)
+        )
+        if not author_found:
+            print(f"  Verify: author '{expected_author}' NOT found", file=sys.stderr)
 
-    # Check title keywords
-    if expected_title:
-        title_lower = expected_title.lower()
-        # Extract meaningful words (skip short/common ones)
-        stop_words = {
-            "the", "a", "an", "of", "in", "on", "and", "or", "for", "to",
-            "is", "are", "was", "with", "from", "by", "at", "as", "its",
-            "this", "that", "how", "what", "why", "new", "between",
-        }
-        words = []
-        seen_words = set()
-        for word in re.findall(r"[a-z]{3,}", title_lower):
-            if word in stop_words or word in seen_words:
-                continue
-            seen_words.add(word)
-            words.append(word)
-
-        found_words = [w for w in words if w in text]
-        normalised_title = " ".join(re.findall(r"[a-z0-9]+", title_lower))
-        title_needed = min(len(words), max(3, (len(words) * 3 + 4) // 5))
-        title_matches = bool(normalised_title and normalised_title in normalised_text)
-        title_matches = title_matches or (bool(words) and len(found_words) >= title_needed)
-        if found_words:
-            matches += len(found_words)
-            print(f"  Verify: title words found: {found_words[:5]}", file=sys.stderr)
-        else:
-            print(f"  Verify: no title keywords found in source", file=sys.stderr)
-        if not title_matches:
-            print(
-                f"  Verify: title match too weak ({len(found_words)}/{len(words)} words)",
-                file=sys.stderr,
-            )
+    if expected_year:
+        years = {int(y) for y in re.findall(_YEAR_RE, text)}
+        if years and not any(abs(y - int(expected_year)) <= 1 for y in years):
+            print(f"  Verify: year conflict (expected {expected_year}, "
+                  f"saw {sorted(years)[:6]})", file=sys.stderr)
             return False
 
-    if matches >= needed:
-        print(f"  Verify: PASS ({matches} matches)", file=sys.stderr)
+    if expected_title:
+        normalised_title = " ".join(re.findall(r"[a-z0-9]+", expected_title.lower()))
+        if not (normalised_title and normalised_title in normalised_text):
+            print(f"  Verify: title phrase not found — wrong paper?", file=sys.stderr)
+            return False
+        if author_found is False:
+            print(f"  Verify: title present but author missing — wrong paper?",
+                  file=sys.stderr)
+            return False
+        print(f"  Verify: PASS (title phrase" +
+              (" + author" if author_found else "") + ")", file=sys.stderr)
         return True
-    else:
-        print(f"  Verify: FAIL ({matches}/{needed} matches) — wrong paper?",
-              file=sys.stderr)
-        return False
+
+    if author_found:
+        print(f"  Verify: PASS (author only)", file=sys.stderr)
+        return True
+    return False
 
 
 def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
-                       min_keyword_matches=2):
-    """Verify downloaded PDF matches expected paper.
+                       expected_doi=None, expected_year=None):
+    """Verify downloaded PDF matches the expected paper identity.
 
-    Extracts text from first 2 pages and checks for author surname
-    and title keywords. Returns True if content matches, False otherwise.
+    Extracts text from the first pages and applies the strong-identity
+    contract of `_verify_text_content`.
     """
     text = _extract_pdf_text(pdf_path)
     return _verify_text_content(
         text,
         expected_author,
         expected_title,
-        min_keyword_matches,
+        expected_doi=expected_doi,
+        expected_year=expected_year,
     )
 
 
 def verify_source_content(source_path, expected_author=None, expected_title=None,
-                          min_keyword_matches=2):
+                          expected_doi=None, expected_year=None):
     """Verify downloaded source content, supporting text and PDF sources."""
     path = Path(source_path)
     if path.suffix.lower() == ".txt":
@@ -1370,10 +1371,12 @@ def verify_source_content(source_path, expected_author=None, expected_title=None
             text,
             expected_author,
             expected_title,
-            min_keyword_matches,
+            expected_doi=expected_doi,
+            expected_year=expected_year,
         )
     return verify_pdf_content(str(path), expected_author, expected_title,
-                              min_keyword_matches)
+                              expected_doi=expected_doi,
+                              expected_year=expected_year)
 
 
 def _build_ezproxy_session(config):
@@ -2322,7 +2325,7 @@ def _kagi_discover_paper(title, author=None):
 
 def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                    filename=None, retry_wayback=True,
-                   verify_author=None, verify_title=None):
+                   verify_author=None, verify_title=None, verify_year=None):
     """Download a paper PDF by DOI or URL. Returns file path or None.
 
     Cascade:
@@ -2332,9 +2335,13 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
       Phase 2 (recovery — when Phase 1 fails and title available):
         Kagi discovery → retry with discovered DOIs/URLs
 
-    If verify_author/verify_title are provided, each downloaded PDF is checked
-    for content match. Mismatches are deleted and the cascade continues.
+    If verify_author/verify_title are provided, every candidate — including a
+    pre-existing temp file — must prove the requested identity (embedded DOI,
+    or contiguous title phrase plus author with no verify_year conflict).
+    Mismatches are deleted and the cascade continues.
     """
+    requested_doi = doi
+
     if filename:
         safe_name = filename
     elif doi:
@@ -2346,24 +2353,27 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
     dest = os.path.join(output_dir, f"{safe_name}.pdf")
     text_dest = os.path.join(output_dir, f"{safe_name}.txt")
 
-    if os.path.exists(dest) and os.path.getsize(dest) > 1000:
-        print(f"  EXISTS {dest}", file=sys.stderr)
-        return dest
-    if os.path.exists(text_dest) and os.path.getsize(text_dest) > 1000:
-        print(f"  EXISTS {text_dest}", file=sys.stderr)
-        return text_dest
-
     def _verify_and_accept(path, source_name):
         """Verify downloaded file. Returns True if accepted, False if rejected."""
         if not verify_author and not verify_title:
             return True
-        if verify_source_content(path, verify_author, verify_title):
+        if verify_source_content(path, verify_author, verify_title,
+                                 expected_doi=requested_doi,
+                                 expected_year=verify_year):
             return True
         print(f"  {source_name}: content mismatch, deleting and trying next source",
               file=sys.stderr)
         if os.path.exists(path):
             os.remove(path)
         return False
+
+    # A leftover temp file is a candidate like any other, not proof: a prior
+    # run may have parked a wrong-identity PDF here that its caller rejected.
+    for existing in (dest, text_dest):
+        if os.path.exists(existing) and os.path.getsize(existing) > 1000:
+            if _verify_and_accept(existing, "Existing temp"):
+                print(f"  EXISTS {existing}", file=sys.stderr)
+                return existing
 
     sciencedirect_urls: list[str] = []
 
@@ -2391,7 +2401,15 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
             _seen_urls.add(candidate_url)
             hint_urls.append(candidate_url)
 
-    for u in ([url] if url else []) + (urls or []):
+    seed_urls = ([url] if url else []) + (urls or [])
+    # 10.2307 is JSTOR's own DOI prefix; the stable page is deterministic and
+    # doi.org resolution adds nothing a DOI-only request can use.
+    if doi and doi.startswith("10.2307/"):
+        seed_urls.append(
+            f"https://www.jstor.org/stable/{doi.split('/', 1)[1]}"
+        )
+
+    for u in seed_urls:
         _remember_article_html_url(u)
         _add_hint_url(u)
         for pdf_url in _pdf_urls_from_article_url(u or ""):
@@ -2828,6 +2846,7 @@ def _cmd_paper_fetch(args) -> int:
         output_dir=str(temp_dir), filename=args.slug,
         retry_wayback=True,
         verify_title=args.title, verify_author=args.author,
+        verify_year=args.year,
     )
     if result:
         path_obj = Path(result).resolve()
@@ -3098,6 +3117,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_pf.add_argument("--url", action="append", help="Direct PDF URL (repeatable)")
     p_pf.add_argument("--title", help="Paper title (enables Kagi recovery)")
     p_pf.add_argument("--author", help="Paper author (improves Kagi recovery)")
+    p_pf.add_argument("--year", type=int,
+                      help="Expected publication year (identity conflict check)")
     p_pf.add_argument("--slug", required=True, help="Target work slug for temp filename")
     p_pf.add_argument("--retry-wayback", action="store_true",
                       help=argparse.SUPPRESS)  # no-op since cascade always tries Wayback

@@ -117,29 +117,31 @@ export const paperOperationRows = [
       required: [
         "output_path",
         "doi",
-        "disposition",
         "write_state",
         "identity_verified",
-        "source",
         "attempts",
       ],
       properties: {
         output_path: { const: output },
         doi: { const: doi },
-        disposition: {
-          type: ["string", "null"],
-          enum: ["created", "reused", null],
-        },
         write_state: {
           type: "string",
           enum: ["written", "not_written", "unknown"],
         },
         identity_verified: { type: "boolean" },
-        source: { type: ["string", "null"], maxLength: 200 },
         attempts: ATTEMPT_SCHEMA,
       },
     }),
+    // disposition/source describe an accepted write, so they exist only in
+    // the complete terminal; a failed run cannot echo "created" out of habit.
     terminalPayloads: () => ({
+      complete: {
+        required: ["disposition", "source"],
+        properties: {
+          disposition: { type: "string", enum: ["created", "reused"] },
+          source: { type: "string", minLength: 1, maxLength: 200 },
+        },
+      },
       failed: {
         properties: {
           attempts: { ...ATTEMPT_SCHEMA, minItems: 1 },
@@ -154,9 +156,9 @@ export const paperOperationRows = [
     }),
     complete: (receipt) =>
       receipt.identity_verified === true &&
-      ((receipt.disposition === "created" &&
+      ((receipt.terminal.disposition === "created" &&
         receipt.write_state === "written") ||
-        (receipt.disposition === "reused" &&
+        (receipt.terminal.disposition === "reused" &&
           receipt.write_state === "not_written")),
     envelope: ({ slug, meta, materialKey }, { output }) => ({
       schema_version: "quasi.stage.paper-acquire.request/0.1",
@@ -186,12 +188,13 @@ export const paperOperationRows = [
         exact_output: posixSingleQuote(output),
         expected_title: posixSingleQuote(meta.title),
         expected_author: posixSingleQuote(meta.authors[0]),
+        expected_year: meta.year == null ? null : String(meta.year),
         doi: quoteOrNull(meta.doi),
         oa_url: quoteOrNull(meta.oa_url),
         url: quoteOrNull(meta.url),
       },
       capabilities: [
-        "quasi-download paper fetch --slug SLUG (--doi DOI | --url URL ...) [--title TITLE] [--author AUTHOR] [--temp-dir DIR] --json",
+        "quasi-download paper fetch --slug SLUG (--doi DOI | --url URL ...) [--title TITLE] [--author AUTHOR] [--year YEAR] [--temp-dir DIR] --json",
         "quasi-download paper diagnose --url URL [--via-ezproxy] [--timeout SECONDS] --json",
         "quasi-download accept --path INPUT --slug SLUG --kind paper --json",
         "Read the exact output only to verify title, authors, and DOI evidence",

@@ -381,6 +381,35 @@ def test_every_row_schema_types_its_consts(kind: str, stage: str) -> None:
     assert _bare_consts(schema) == []
 
 
+@pytest.mark.parametrize("kind", ["paper", "book"])
+def test_acquire_write_outcome_lives_only_in_complete_terminal(kind: str) -> None:
+    # disposition/source describe an accepted write; on any non-complete
+    # terminal the closed branch shape makes echoing them impossible.
+    report = run_stage(
+        {
+            "kind": kind,
+            "slug": "example",
+            "stage": "acquire",
+            "context": stage_context(kind, "acquire"),
+        }
+    )
+    schema = report["direct"]["schema"]
+    assert "disposition" not in schema["properties"]
+    assert "source" not in schema["properties"]
+    branches = {
+        branch["properties"]["status"]["const"]: branch
+        for branch in schema["properties"]["terminal"]["anyOf"]
+    }
+    complete = branches["complete"]
+    assert {"disposition", "source"}.issubset(set(complete["required"]))
+    assert complete["properties"]["disposition"]["enum"] == ["created", "reused"]
+    assert complete["properties"]["source"]["type"] == "string"
+    for status in ("needs_input", "blocked", "failed"):
+        assert branches[status]["additionalProperties"] is False
+        assert "disposition" not in branches[status]["properties"]
+        assert "source" not in branches[status]["properties"]
+
+
 def test_audit_echo_consts_carry_value_types() -> None:
     report = run_stage(
         {"kind": "paper", "slug": "example", "stage": "audit", "context": {}}

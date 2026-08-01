@@ -15,6 +15,11 @@ Newest first. Entries record what changed and why at the time each release shipp
   - JSTOR stable URL 的 native 请求曾只留下 `FAIL HTTP Error 403`，无法区分 access denial、登录页和 Cloudflare challenge；新命令只观察一条 direct 或显式 EZProxy 路径，返回脱敏的状态、响应类别与路由事实。
   - Diagnose 不写临时或 canonical 文件、不派生 PDF URL、不运行 OA/Kagi/代理下载 cascade，也不输出 cookie、Authorization、原始响应体或 URL query；它是 failed receipt 的证据工具，不是付费墙规避能力。
 
+- **0.56.1** (2026-08-01): **`paper fetch` 的成功条件改为强身份证明，词汇重叠不再等于身份。**
+  - 实测事故：对精确 DOI `10.5840/philtopics19962427`（Clarke 1996）请求，cascade 把 Wong 2021（`10.2478/disp-2021-0008`）当 `status: ok` 返回——同子领域论文含有全部题名关键词并引用了目标作者，旧的关键词计数验证正好被这种形状骗过。新契约：嵌入文本的规范化 DOI 精确等于请求 DOI 即通过；否则要求整句归一化题名连续命中 + 首作者在场 + 年份不冲突（新增 `--year`，envelope 带 `expected_year`）。DOI-only 请求（无题名/作者）保持旧信任，避免误拒没有印 DOI 的老扫描件。
+  - 遗留临时文件不再免检：`EXISTS` 短路分支现在先过同一身份门，不符即删并继续 cascade——此前一次错误下载会永久卡住该 slug 的重试。JSTOR 自有前缀 `10.2307/` 的 DOI 直接推导 stable URL hint，DOI-only 请求也能进 0.56.0 的 EZProxy 主机改写通路（实测经代理拿到正确的 Clarke 1996 全文）。
+  - Receipt 一致性：`disposition`/`source` 描述的是一次被接受的写入，移入 complete terminal 分支内部（枚举收紧为非空）；failed/blocked/needs_input 分支是闭合对象，形状上不可能再回显 `disposition:"created"` 这类误导组合。新增验证契约 10 个单元测试与 paper/book acquire 的 terminal 形状钉子。
+
 - **0.55.1** (2026-08-01): **给 receipt schema 里所有 exact-echo `const` 补显式 `type` 注解，弱模型宿主不再把非字符串 echo 串化到撞死重试上限。**
   - 实测故障：一次 paper Audit 连续 5 次 StructuredOutput 校验失败（重试上限），worker 模型是 glm-5.2，它把 `pass: 1` 发成 `"1"`、`artifact_roles: ["canonical"]` 发成字符串化数组——schema 里裸 `const`（无 `type`）会让弱模型默认按字符串输出，而同一收据里带 `type: "integer"` 的顶层 `attempt: 1` 是对的。Claude worker 在相同 row 上从未失败，说明这是 type 提示缺失、不是合同错误。
   - 修复只落在唯一咽喉 `stage.mjs::stageReceiptSchema`：`annotateConstTypes` 递归给每个缺 `type` 的 `const` 节点按值推断补注解，不改 `const`/`enum`/`default`/`examples` 的字面值。exact-echo 纪律原样保留——echo 仍是把 receipt 绑到 exact refs 的身份证明，只是现在弱模型也能满足它。

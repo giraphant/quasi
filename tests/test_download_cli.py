@@ -1590,3 +1590,171 @@ def test_try_ezproxy_url_download_skips_throttle_when_unconfigured(tmp_path, mon
 
     assert result is False
     assert calls == []
+
+
+# --- paper fetch identity gate ---
+
+# The false-positive shape that once cleared verification with `status: ok`:
+# a same-subfield paper contains every title keyword and cites the expected
+# author, but is a different work under a different DOI.
+_WRONG_PAPER_TEXT = (
+    "agent causation is not prior to event causation\n"
+    "soo lam wong\n"
+    "disputatio, 2021. doi: 10.2478/disp-2021-0008\n"
+    "keywords: agent causation, event causation, free action, production\n"
+    "randolph clarke argues that agents produce free action by causing events.\n"
+)
+
+_RIGHT_PAPER_TEXT = (
+    "agent causation and event causation in the production of free action\n"
+    "author(s): randolph clarke\n"
+    "source: philosophical topics, fall 1996, vol. 24, no. 2, pp. 19-48\n"
+)
+
+_CLARKE_IDENTITY = {
+    "expected_author": "Randolph Clarke",
+    "expected_title": (
+        "Agent Causation and Event Causation in the Production of Free Action"
+    ),
+    "expected_doi": "10.5840/philtopics19962427",
+    "expected_year": 1996,
+}
+
+
+def test_verify_rejects_same_subfield_paper_despite_full_keyword_overlap():
+    mod = _load_module(DOWNLOAD, "verify_gate_wrong_paper_under_test")
+    assert mod._verify_text_content(_WRONG_PAPER_TEXT, **_CLARKE_IDENTITY) is False
+
+
+def test_verify_accepts_contiguous_title_phrase_with_author():
+    mod = _load_module(DOWNLOAD, "verify_gate_right_paper_under_test")
+    assert mod._verify_text_content(_RIGHT_PAPER_TEXT, **_CLARKE_IDENTITY) is True
+
+
+def test_verify_accepts_embedded_requested_doi_without_title_phrase():
+    mod = _load_module(DOWNLOAD, "verify_gate_doi_under_test")
+    text = "untitled scan cover\nhttps://doi.org/10.5840/philtopics19962427\n"
+    assert mod._verify_text_content(text, **_CLARKE_IDENTITY) is True
+
+
+def test_verify_rejects_year_conflict_even_with_title_and_author():
+    mod = _load_module(DOWNLOAD, "verify_gate_year_under_test")
+    text = (
+        "agent causation and event causation in the production of free action\n"
+        "randolph clarke\n"
+        "© 2021 some other journal\n"
+    )
+    assert mod._verify_text_content(text, **_CLARKE_IDENTITY) is False
+
+
+def test_verify_unextractable_text_still_passes():
+    mod = _load_module(DOWNLOAD, "verify_gate_empty_under_test")
+    assert mod._verify_text_content("", **_CLARKE_IDENTITY) is True
+
+
+def test_verify_doi_only_request_keeps_old_scan_flow():
+    mod = _load_module(DOWNLOAD, "verify_gate_doi_only_under_test")
+    assert mod._verify_text_content(
+        "an old scan with no printed doi",
+        expected_doi="10.5840/philtopics19962427",
+    ) is True
+
+
+def _stub_paper_network(mod, monkeypatch):
+    monkeypatch.setattr(mod, "download_pdf_from_url", lambda *a, **k: False)
+    monkeypatch.setattr(mod, "find_oa_url", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "try_scihub_download", lambda *a, **k: False)
+    monkeypatch.setattr(mod, "_try_publisher_direct", lambda *a, **k: False)
+    monkeypatch.setattr(mod, "_try_ezproxy_with_refresh", lambda *a, **k: False)
+    monkeypatch.setattr(mod, "_try_ezproxy_urls_with_refresh", lambda *a, **k: False)
+    monkeypatch.setattr(mod, "find_wayback_url", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "_kagi_discover_paper", lambda *a, **k: ([], []))
+
+
+def test_download_paper_reverifies_and_deletes_wrong_existing_temp(
+    monkeypatch, tmp_path
+):
+    mod = _load_module(DOWNLOAD, "download_exists_reverify_under_test")
+    _stub_paper_network(mod, monkeypatch)
+    monkeypatch.setattr(
+        mod, "_extract_pdf_text", lambda *a, **k: _WRONG_PAPER_TEXT
+    )
+    leftover = tmp_path / "clarke-1996.pdf"
+    leftover.write_bytes(b"%PDF- wrong paper " + b"x" * 2000)
+
+    result = mod.download_paper(
+        doi="10.5840/philtopics19962427",
+        output_dir=str(tmp_path),
+        filename="clarke-1996",
+        verify_author="Randolph Clarke",
+        verify_title=(
+            "Agent Causation and Event Causation in the Production of Free Action"
+        ),
+        verify_year=1996,
+    )
+
+    assert result is None
+    assert not leftover.exists()
+
+
+def test_download_paper_serves_existing_temp_that_proves_identity(
+    monkeypatch, tmp_path
+):
+    mod = _load_module(DOWNLOAD, "download_exists_proven_under_test")
+
+    def _forbidden(*a, **k):
+        raise AssertionError("network path must not run for a proven temp file")
+
+    for name in (
+        "download_pdf_from_url", "find_oa_url", "try_scihub_download",
+        "_try_publisher_direct", "_try_ezproxy_with_refresh",
+        "_try_ezproxy_urls_with_refresh", "find_wayback_url",
+        "_kagi_discover_paper",
+    ):
+        monkeypatch.setattr(mod, name, _forbidden)
+    monkeypatch.setattr(
+        mod, "_extract_pdf_text", lambda *a, **k: _RIGHT_PAPER_TEXT
+    )
+    existing = tmp_path / "clarke-1996.pdf"
+    existing.write_bytes(b"%PDF- right paper " + b"x" * 2000)
+
+    result = mod.download_paper(
+        doi="10.5840/philtopics19962427",
+        output_dir=str(tmp_path),
+        filename="clarke-1996",
+        verify_author="Randolph Clarke",
+        verify_title=(
+            "Agent Causation and Event Causation in the Production of Free Action"
+        ),
+        verify_year=1996,
+    )
+
+    assert result == str(existing)
+
+
+def test_download_paper_derives_jstor_stable_hint_from_jstor_doi(
+    monkeypatch, tmp_path
+):
+    mod = _load_module(DOWNLOAD, "download_jstor_doi_hint_under_test")
+    tried: list[str] = []
+
+    def fake_download_pdf_from_url(url, output_path, timeout=60, **kwargs):
+        tried.append(url)
+        if "/stable/pdf/" in url:
+            Path(output_path).write_bytes(b"%PDF- jstor")
+            return True
+        return False
+
+    monkeypatch.setattr(mod, "download_pdf_from_url", fake_download_pdf_from_url)
+
+    result = mod.download_paper(
+        doi="10.2307/43154235",
+        output_dir=str(tmp_path),
+        filename="jstor-doi-paper",
+    )
+
+    assert result == str(tmp_path / "jstor-doi-paper.pdf")
+    assert tried == [
+        "https://www.jstor.org/stable/43154235",
+        "https://www.jstor.org/stable/pdf/43154235.pdf?acceptTC=1",
+    ]
