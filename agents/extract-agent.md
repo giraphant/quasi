@@ -43,6 +43,17 @@ usable 的 exact normalized artifact。
   fingerprint 做 exact slot repair；整体计划不合适时，以当前证据重拟计划并通过事务 CLI
   发布新 generation。继续工作，直到章节集合 ready，或你判断现有 source/能力无法解决。
 
+复用已有 generation 与新建同一个证明标准：必须实际读 manifest 和代表性章节文本，
+"文件存在 + fingerprint 匹配"不构成 complete 的充分证据。以下任一观察即取消复用
+资格，应以当前证据重拟计划并通过事务 CLI 发布新 generation：
+
+- manifest 标题是内部资源标识符或文件名 stem（如出版社前缀的
+  `Publisher_9780..._epub_c01_r1` 形状），而非人类可读的语义标题；
+- 章节集合混入非阅读材料：封面、书名页、版权页、目录页、宣传页、作者介绍、
+  他作列表、插图清单；
+- 阅读顺序破损：前言/导言类排在正文章节之后，或注释文件次序与实际章节阅读顺序
+  不符。
+
 最终 `chapters` 逐字采用最新 committed manifest 的完整有序表；filename、slot、slug、页码
 和 fingerprint 不手抄改写。可交付 manifest 的每个 slug 都必须匹配
 `^[a-z0-9][a-z0-9-]{0,79}$`；若旧 manifest 不符合，使用 exact source 和当前 CLI 发布
