@@ -28,14 +28,12 @@ skills and agent contracts must not cite it at runtime.
 - **Shape is proven by the host.** The schema handed to StructuredOutput is
   the only shape validation. The graph does not re-validate shape.
   (Foreign-receipt admission performs its own validation because it does not
-  cross the host boundary.) One narrow exception survives at the trust
-  boundary: a receipt whose four-terminal structure cannot even be read is
-  an **unknown outcome** and fails closed (blocked, never replayed, never
-  ok). This is the writer-safety rule applied to unintelligible output, not
-  a second validation of host-proven shape. Operations still on pre-stage
-  `quasi.operation.*` contracts (author discovery, the legacy topic loop)
-  keep the old backstop validation as a deliberately shrinking
-  compatibility island until their migration rounds retire them.
+  cross the host boundary.) Every Operation then passes the same narrow,
+  contract-relative terminal readability gate: a receipt whose required
+  terminal structure cannot even be read is an **unknown outcome** and fails
+  closed (blocked, never replayed, never ok). This is the writer-safety rule
+  applied uniformly to unintelligible output, not a second validation of
+  host-proven shape.
 - **Facts are proven by the disk.** A writer stage's postcondition is an
   artifact probe (`quasi-status` is the shared prover), never
   cross-examination of receipt fields. Receipts can lie; the disk cannot.
@@ -76,9 +74,8 @@ Every agent invocation is a **data row**, not a code entity:
 
 ## Target shape
 
-- One interpreter plus per-kind call tables (paper / book / talk /
-  translation rows; topic joins as another row when it merges into this
-  tree — same internals, different entry).
+- One interpreter plus declarative operation rows for material, collection,
+  and research graphs — same internals, different owners and entries.
 - One shared receipt shape with small per-row payloads (diary fields, not
   contract fields).
 - One source of truth for stage order and artifact layout, read by the
@@ -131,3 +128,20 @@ internals.
   admit children from `member.admission-probe` disk testimony via
   `quasi-status --identity`; because audit has no durable disk signal yet,
   clean-audit proof deliberately remains receipt-based.
+- **0.54.0 (Topic-merge round)**: the Author discovery family moved onto
+  descriptor rows, followed by Topic steer and webcard. The rolling Topic loop
+  was retired in favour of one bounded modern graph owned solely by
+  `research/topic-recall.mjs`: its `maxRounds` loop fans out web cards, reuses
+  shared material dispatch and disk-backed child admission, and closes through
+  canonical `topic.audit`. The compatibility island and the old
+  `guard`/`retryNull` helpers were deleted, so every Operation now crosses the
+  same terminal gate. Topic dossier pages were retired as a product decision;
+  the public `precise-topic` skill became `research-topic`.
+
+## Next focus
+
+Reduce graph and graph-internal test mass toward the 4–6k-line budget by
+factoring shared payload vocabularies out of descriptor rows, establishing one
+source of truth for artifact layout, and adding a durable audit disk record so
+collection/research admission can finish moving from receipt proof to disk
+testimony.

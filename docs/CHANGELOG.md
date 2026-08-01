@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.54.0** (2026-08-01): **Topic 合入共享 material machinery，不再维护一座会继续漂移的第二套 Graph。**
+  - Author discovery family、Topic steer 与 webcard 全部成为 descriptor rows；rolling Topic loop 由 `research/topic-recall.mjs` 唯一拥有的 bounded `maxRounds` graph 取代。Webcard fan-out 与材料 fan-out 并行，子材料复用共享 dispatch、`quasi-status --identity` disk admission 和 canonical `topic.audit`，所以 Topic 的专业步骤和其它 Operation 经过同一个 terminal gate。
+  - 随着最后一个 pre-stage island 搬完，compatibility backstop、`guard` 和 `retryNull` 一并删除：readonly 的有限恢复和 writer 的禁止 replay 只由共享 runtime contract 表达，不再留 Topic 特例。
+  - Topic dossier pages 明确作为产品决策退役，只保留 overview、resources 和可由用户编辑的 outline；公共 Skill 从 `precise-topic` 改名为 `research-topic`，且不提供 legacy alias，让用户路由与唯一 Topic owner 对齐。
+
 - **0.53.0** (2026-08-01): **Constitution round：Graph 不再为每个 operation 和 material kind 各自成为一份代码实体。**
   - 一个 `defineOperation` factory 解释 Paper、Book、Talk、Translation 的 descriptor rows；一个 182 行 material interpreter 执行各 kind 的 declarative table。共享调用、terminal routing、fan-out、repair 与 coalescing 语义只写一次，新增阶段改数据而不是复制控制流。
   - Claude 成为唯一运行宿主，Pi/Codex adapters 与 modern runtime schema backstop 已删除；Stage receipt 只经过 contract-relative terminal gate，未迁移的 author discovery 与 rolling Topic 明确留在 legacy island。Graph doctrine tests 从约 23.5k 行裁到 14.8k 行，守协议与边界而不固化内部实现。

@@ -134,7 +134,9 @@ Artifact writing has three ownership layers:
 - `scripts/workflows/operations/define.mjs` is the one Operation factory;
   descriptor rows under `scripts/workflows/operations/rows/` own request/receipt
   schemas, exact refs, dynamic frontmatter seeds, and operation-only evidence
-  rules. They must not duplicate artifact structure.
+  rules. They must not duplicate artifact structure. Author discovery and
+  membership resolution are descriptor rows in `rows/author.mjs`; Topic steer,
+  webcard, synthesis, and canonical audit are rows in `rows/topic.mjs`.
 
 For an Agent-owned boundary, prefer a self-contained JSON envelope: goal,
 bounded identity, exact refs, available capabilities, and the receipt schema.
@@ -167,10 +169,10 @@ The graph sees the resulting exact artifacts, then routes the same stage receipt
 through Analyse, Synthesise, and Audit.
 
 The host validates the closed `quasi.stage.receipt/0.2` schema for every
-material/document operation. `runtime.mjs::operate` then applies the shared
-contract-relative terminal gate and the row-owned postcondition needed by the
-next stage; only the pre-stage author/Topic legacy island retains backstop
-schema validation. The
+material, document, collection, and research Operation.
+`runtime.mjs::operate` then applies the same contract-relative terminal gate
+and the row-owned postcondition needed by the next stage; there is no separate
+compatibility backstop. The
 shared `scripts/workflows/materials/route.mjs` edge router maps each schema-valid
 `needs_input|blocked|failed` terminal to its declared graph edge; the graph must
 not reinterpret it as malformed because it disagrees with the specialist's
@@ -188,12 +190,13 @@ purpose — the dispatch seam is host-pluggable, so `member.admission-probe` run
 `quasi-status --identity` and `scripts/workflows/materials/member.mjs` admits
 identity and canonical artifacts from that disk testimony for Author, Batch,
 and strict Topic recall. Audit has no durable disk signal yet, so clean final
-audit remains receipt-proven. The rolling `research/topic.mjs` loop remains legacy; its
-`topic.audit.legacy` identifier is intentional debt until the topic-merge round.
+audit remains receipt-proven. `research/topic-recall.mjs` is the sole Topic
+owner: one bounded `maxRounds` graph fans out web cards alongside shared
+material dispatch and admission, then closes through canonical `topic.audit`.
 
 quasi targets Claude Code only; the retired Pi and Codex host adapters are recoverable from git history.
 
-Public skill routing separates material intake from topic research. `collect-material` owns paper, book, author, Talk, and Translation; `research-topic` owns vault recall, outline steering, evidence cards, human seed gates, and topic synthesis. Both still call `workflows/process-material.mjs`, so topic candidates reuse the same paper/book router without duplicating graph nodes. Draft proofreading and citation closure use `finalise-draft`.
+Public skill routing separates material intake from topic research. `collect-material` owns paper, book, author, Talk, and Translation; the public `research-topic` entry owns vault recall, outline steering, evidence cards, human seed gates, and topic synthesis, with no compatibility alias. Both call `workflows/process-material.mjs`, so topic candidates reuse the same paper/book router without duplicating graph nodes. Topic synthesis produces only `00-overview.md` and `01-resources.md` beside the user-editable `02-outline.md`; per-subquestion dossier pages are retired as a product decision. Draft proofreading and citation closure use `finalise-draft`.
 
 One user request containing 2–32 top-level Books/Papers enters `process-material.mjs` once as `{kind:"batch",items:[...]}`. The batch coordinator shares one runtime across independent material loops, preserves input order, coalesces duplicate identities before any duplicate writer, and returns `quasi.collection.material-batch.receipt/0.2`. Do not expand a batch into one Workflow invocation per item; that produces multiple top-level UI graphs and prevents aggregate progress management.
 
@@ -272,10 +275,9 @@ When changing config, runtime state, or handoff contracts:
 ## Debugging gotchas
 
 - `$CLAUDE_PROJECT_DIR` is fixed at session start; a `cd` inside a dispatched worker's *prompt* does not redirect where the orchestration graph writes. Dispatch E2E workers with the correct cwd; never rely on an in-prompt `cd`.
-- A dead Workflow subagent writes no `result` line in `journal.jsonl` — its key stays `started`-only forever, and a retry shows up as a *new* started+result pair. Count `started` vs `result` keys to find deaths; do not look for `result: null`.
-- `agent()` returns `null` when a subagent dies on a terminal API error after retries. `process-material.mjs::retryNull` pays exactly one retry per null, because a `null` cannot distinguish a deterministic failure from a transient one.
-- A run that looks hung is usually harness backoff, not deadlock. A dying subagent's transcript ends in a synthetic `API Error: …` assistant message, but the harness can sit in invisible retry backoff for 20–40 minutes before `agent()` finally sees `null` — no result line, no progress, nothing a script can observe or shorten. Before declaring a run dead, check each no-result agent's transcript mtime: still advancing = live agent (a `0 tok` display can just be a slow provider), stale with an API-error tail = a death still waiting to be reported. Every Agent call enters its phase's FIFO lane (at most five active calls); queue wait is not invocation time. Modern writer Operations deliberately await their exact Agent call without a timer race: a timed-out Promise could continue writing after the graph had followed another edge. Resume or reconciliation, not a concurrent retry, is the safe recovery for an unknown writer outcome. `research/topic.mjs` remains legacy graph debt and may still use `guard` / `retryNull`; do not extend those primitives into the migrated base loops.
+- A dead Workflow subagent writes no `result` line in `journal.jsonl` — its key stays `started`-only forever. The shared runtime treats a null receipt as an unknown outcome: a side-effect-free Operation declared retry-safe may run once more, while a writer is never replayed. Count `started` vs `result` keys to find deaths; do not look for `result: null`.
+- A run that looks hung is usually harness backoff, not deadlock. A dying subagent's transcript ends in a synthetic `API Error: …` assistant message, but the harness can sit in invisible retry backoff for 20–40 minutes before `agent()` finally sees `null` — no result line, no progress, nothing a script can observe or shorten. Before declaring a run dead, check each no-result agent's transcript mtime: still advancing = live agent (a `0 tok` display can just be a slow provider), stale with an API-error tail = a death still waiting to be reported. Every Agent call enters its phase's FIFO lane (at most five active calls); queue wait is not invocation time. Writer Operations deliberately await their exact Agent call without a timer race: a timed-out Promise could continue writing after the graph had followed another edge. Resume or reconciliation, not a concurrent retry, is the safe recovery for an unknown writer outcome.
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.53.0.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.54.0.
