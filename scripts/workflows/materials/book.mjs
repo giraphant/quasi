@@ -1,38 +1,14 @@
-import {
-  BOOK_TEMP_PATH,
-  validYearEvidence,
-} from "../operations/book-year-evidence.mjs";
-import {
-  bookAcquire,
-  bookAudit,
-  bookPrepare,
-  bookSynthesise,
-  chapterAnalyse,
-} from "../operations/rows/book.mjs";
-import {
-  exactKeys,
-  optionalText,
-  validText,
-} from "../runtime.mjs";
+import { BOOK_TEMP_PATH, validYearEvidence } from "../operations/book-year-evidence.mjs";
+import { bookAcquire, bookAudit, bookPrepare, bookSynthesise, chapterAnalyse } from "../operations/rows/book.mjs";
+import { exactKeys, optionalText, validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
-import { MATERIAL_RECEIPT_VERSION, stageUserGate } from "./receipt.mjs";
-import { routeStageEdge } from "./route.mjs";
+import { runMaterialLoop } from "./interpreter.mjs";
+import { assembleMaterialReceipt, stageUserGate } from "./receipt.mjs";
 
 const BOOK_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
-const CATEGORIES = new Set([
-  "monograph",
-  "edited-volume",
-  "handbook",
-  "other",
-]);
+const CATEGORIES = new Set(["monograph", "edited-volume", "handbook", "other"]);
 
-const operationFailure = (
-  code,
-  operationKey,
-  outcome = "known",
-  retryable = false,
-  message = null,
-) => ({
+const operationFailure = (code, operationKey, outcome = "known", retryable = false, message = null) => ({
   code,
   operation_key: operationKey,
   outcome,
@@ -42,77 +18,22 @@ const operationFailure = (
 
 function validateBookIdentity(slug, meta) {
   if (typeof slug !== "string" || !BOOK_SLUG.test(slug))
-    return {
-      ok: false,
-      code: "book.slug_invalid",
-      message: "book slug is not canonical",
-      canonicalSlug: null,
-    };
+    return { ok: false, code: "book.slug_invalid", message: "book slug is not canonical", canonicalSlug: null };
   if (!meta || typeof meta !== "object" || Array.isArray(meta))
-    return {
-      ok: false,
-      code: "book.identity_invalid",
-      message: "book metadata must be an object",
-      canonicalSlug: slug,
-    };
+    return { ok: false, code: "book.identity_invalid", message: "book metadata must be an object", canonicalSlug: slug };
   if (!validText(meta.title, 1, 500))
-    return {
-      ok: false,
-      code: "book.identity_invalid",
-      message: "title is missing or invalid",
-      canonicalSlug: slug,
-    };
-  if (
-    !Array.isArray(meta.authors) ||
-    meta.authors.length < 1 ||
-    meta.authors.length > 32 ||
-    meta.authors.some((author) => !validText(author, 1, 200))
-  )
-    return {
-      ok: false,
-      code: "book.identity_invalid",
-      message: "authors must be a bounded non-empty string array",
-      canonicalSlug: slug,
-    };
-  if (
-    !Number.isInteger(meta.year) ||
-    meta.year < 1500 ||
-    meta.year > 2030
-  )
-    return {
-      ok: false,
-      code: "book.identity_invalid",
-      message: "year must be an integer in the supported range",
-      canonicalSlug: slug,
-    };
+    return { ok: false, code: "book.identity_invalid", message: "title is missing or invalid", canonicalSlug: slug };
+  if (!Array.isArray(meta.authors) || meta.authors.length < 1 || meta.authors.length > 32 || meta.authors.some((author) => !validText(author, 1, 200)))
+    return { ok: false, code: "book.identity_invalid", message: "authors must be a bounded non-empty string array", canonicalSlug: slug };
+  if (!Number.isInteger(meta.year) || meta.year < 1500 || meta.year > 2030)
+    return { ok: false, code: "book.identity_invalid", message: "year must be an integer in the supported range", canonicalSlug: slug };
   if (!validText(meta.publisher, 2, 500))
-    return {
-      ok: false,
-      code: "book.identity_invalid",
-      message: "publisher is required for canonical synthesis",
-      canonicalSlug: slug,
-    };
+    return { ok: false, code: "book.identity_invalid", message: "publisher is required for canonical synthesis", canonicalSlug: slug };
   const category = meta.category || "other";
   if (!CATEGORIES.has(category))
-    return {
-      ok: false,
-      code: "book.identity_invalid",
-      message: "category is invalid",
-      canonicalSlug: slug,
-    };
-  if (
-    !optionalText(meta.isbn, 100) ||
-    (meta.format != null &&
-      !["pdf", "epub"].includes(meta.format)) ||
-    (meta.confidence !== undefined &&
-      !["provided", "verified"].includes(meta.confidence))
-  )
-    return {
-      ok: false,
-      code: "book.identity_invalid",
-      message: "optional identity fields are invalid",
-      canonicalSlug: slug,
-    };
+    return { ok: false, code: "book.identity_invalid", message: "category is invalid", canonicalSlug: slug };
+  if (!optionalText(meta.isbn, 100) || (meta.format != null && !["pdf", "epub"].includes(meta.format)) || (meta.confidence !== undefined && !["provided", "verified"].includes(meta.confidence)))
+    return { ok: false, code: "book.identity_invalid", message: "optional identity fields are invalid", canonicalSlug: slug };
   const normalized = {
     title: meta.title,
     authors: [...meta.authors],
@@ -121,31 +42,38 @@ function validateBookIdentity(slug, meta) {
     isbn: meta.isbn || null,
     category,
     format: meta.format || null,
-    confidence:
-      meta.confidence === "verified" ? "verified" : "provided",
+    confidence: meta.confidence === "verified" ? "verified" : "provided",
   };
-  return {
-    ok: true,
-    canonicalSlug: slug,
-    meta: normalized,
-    fingerprint: JSON.stringify(normalized),
-  };
+  return { ok: true, canonicalSlug: slug, meta: normalized, fingerprint: JSON.stringify(normalized) };
+}
+
+function validateYearDecision(decision, slug, meta) {
+  if (decision == null) return { ok: true, value: null };
+  if (!exactKeys(decision, ["action", "tmp_path", "year_evidence"]) || !["accept-current", "use-recommended-year"].includes(decision.action) || typeof decision.tmp_path !== "string" || !BOOK_TEMP_PATH.test(decision.tmp_path) || !validYearEvidence(decision.year_evidence, decision.year_evidence && decision.year_evidence.slug_year) || !["MISMATCH", "AMBIGUOUS"].includes(decision.year_evidence.verdict) || (meta.format != null && !decision.tmp_path.endsWith(`.${meta.format}`)))
+    return { ok: false, code: "book.year_decision_invalid", message: "year_decision must exactly identify a prior year gate and temp artifact" };
+  if (decision.action === "accept-current" && meta.year !== decision.year_evidence.slug_year)
+    return { ok: false, code: "book.year_decision_invalid", message: "accept-current requires the unchanged prior canonical year" };
+  if (decision.action === "use-recommended-year" && (decision.year_evidence.verdict !== "MISMATCH" || decision.year_evidence.recommended_year === null || meta.year !== decision.year_evidence.recommended_year || meta.year === decision.year_evidence.slug_year || !slug.endsWith(`-${meta.year}`)))
+    return { ok: false, code: "book.year_decision_invalid", message: "use-recommended-year requires an updated canonical slug and metadata year" };
+  return { ok: true, value: decision };
+}
+
+function normalizeBookOptions(slug, meta, opts) {
+  const yearDecision = validateYearDecision(opts.yearDecision, slug, meta);
+  if (!yearDecision.ok || (yearDecision.value && opts.batchYear === true))
+    return { ok: false, code: "book.year_decision_invalid", message: yearDecision.message || "year_decision is not an Author batch policy" };
+  return { ok: true, value: { ...opts, yearDecision: yearDecision.value } };
 }
 
 function createBookState(slug, meta) {
   const root = `processing/chapters/${slug}`;
-  const allowedFormats = meta.format
-    ? [meta.format]
-    : ["epub", "pdf"];
+  const allowedFormats = meta.format ? [meta.format] : ["epub", "pdf"];
   return {
     slug,
     meta,
     materialKey: `book:${slug}`,
     source: null,
-    allowedSources: allowedFormats.map((format) => ({
-      format,
-      path: `sources/${slug}.${format}`,
-    })),
+    allowedSources: allowedFormats.map((format) => ({ format, path: `sources/${slug}.${format}` })),
     sourceText: `${root}/source.txt`,
     ocrSource: `${root}/ocr.pdf`,
     ocrText: `${root}/ocr.txt`,
@@ -159,976 +87,268 @@ function createBookState(slug, meta) {
     disposition: null,
     repaired: false,
     chapterInventory: null,
+    chapters: [],
+    chapterOutputs: [],
+    owners: null,
+    refillPresent: new Set(),
+    chapterChanged: false,
     yearEvidence: null,
     userGate: null,
-    budgets: {
-      refill: { used: 0, limit: 1 },
-      auditRepair: { used: 0, limit: 1 },
-      auditPasses: { used: 0, limit: 2 },
-    },
+    budgets: { refill: { used: 0, limit: 1 }, auditRepair: { used: 0, limit: 1 }, auditPasses: { used: 0, limit: 2 } },
   };
 }
 
-function materialReceipt(
-  state,
-  { status, stage, failure = null, disposition = null },
-) {
+function bookReceipt(state, status, stage, failure = null) {
   const inventory = state.chapterInventory;
-  return {
-    schema_version: MATERIAL_RECEIPT_VERSION,
-    material_key: state.materialKey,
+  return assembleMaterialReceipt(state, {
     kind: "book",
-    id: state.slug,
     status,
-    disposition:
-      disposition ||
-      (status === "complete"
-        ? state.repaired
-          ? "repaired"
-          : state.disposition || "created"
-        : null),
     stage,
-    artifacts: state.artifacts,
-    operations: state.operations,
-    audit: state.audit,
-    freshness: {
-      observation: "unknown",
-      basis: "operation-receipts-and-final-audit",
-    },
-    warnings: state.warnings,
     failure,
-    user_gate: state.userGate || null,
-    ...(inventory
-      ? {
-          expected_slots: [...inventory.expected_slots],
-          present_slots: [...inventory.present_slots],
-          missing_slots: [...inventory.missing_slots],
-        }
-      : {}),
+    fields: inventory ? { expected_slots: [...inventory.expected_slots], present_slots: [...inventory.present_slots], missing_slots: [...inventory.missing_slots] } : {},
     resume:
       status === "blocked"
         ? failure && failure.outcome === "unknown"
           ? { operation_key: "book.reconcile" }
-          : {
-              operation_key: "book.user-gate",
-              stage,
-              policy:
-                stage === "download"
-                  ? "human-year-decision-or-correct-request"
-                  : "caller-correct-request",
-            }
+          : { operation_key: "book.user-gate", stage, policy: stage === "download" ? "human-year-decision-or-correct-request" : "caller-correct-request" }
         : status === "needs_input"
-          ? {
-              operation_key: "book.user-gate",
-              stage,
-              policy:
-                stage === "download"
-                  ? "human-year-decision-or-correct-request"
-                  : "answer-the-stage-question",
-            }
+          ? { operation_key: "book.user-gate", stage, policy: stage === "download" ? "human-year-decision-or-correct-request" : "answer-the-stage-question" }
           : null,
-  };
-}
-
-function result(
-  state,
-  publicStatus,
-  stage,
-  extra = {},
-  failure = null,
-  terminalOverride = null,
-) {
-  const terminal =
-    terminalOverride ||
-    (publicStatus === "ok"
-      ? "complete"
-      : publicStatus === "needs_input"
-        ? "needs_input"
-      : publicStatus === "blocked"
-        ? "blocked"
-        : "failed");
-  return {
-    slug: state.slug,
-    status: publicStatus,
-    ...extra,
-    material_receipt: materialReceipt(state, {
-      status: terminal,
-      stage,
-      failure,
-    }),
-  };
-}
-
-function rejectedBookResult(slug, validation, code = null) {
-  const canonical =
-    typeof slug === "string" && BOOK_SLUG.test(slug);
-  const failure = operationFailure(
-    code || validation.code,
-    "book.identity",
-    "known",
-    false,
-    validation.message || "conflicting book identity",
-  );
-  const state = {
-    slug: typeof slug === "string" ? slug : null,
-    materialKey: canonical ? `book:${slug}` : null,
-    operations: [],
-    artifacts: [],
-    audit: [],
-    warnings: [],
-    disposition: null,
-    repaired: false,
-    userGate: null,
-  };
-  return {
-    slug: state.slug,
-    status: "blocked",
-    material_receipt: materialReceipt(state, {
-      status: "blocked",
-      stage: "identity",
-      failure,
-    }),
-  };
-}
-
-function blocked(state, stage, operationKey, receipt = null) {
-  const failure =
-    (receipt && receipt.failure) ||
-    operationFailure(
-      "material.writer_outcome_unknown",
-      operationKey,
-      "unknown",
-    );
-  return result(state, "blocked", stage, {}, failure);
-}
-
-function mismatchBlocked(state, stage, operationKey) {
-  return result(
-    state,
-    "blocked",
-    stage,
-    {},
-    operationFailure(
-      "book.writer_receipt_mismatch",
-      operationKey,
-      "unknown",
-      false,
-      "writer receipt did not prove the exact contract",
-    ),
-  );
-}
-
-function routeBookStage(run, state, stage, operationKey, options) {
-  return routeStageEdge(run, {
-    ...options,
-    state,
-    stage,
-    operationKey,
-    emit: ({ status, extra, failure }) =>
-      result(state, status, stage, extra, failure),
-    unknown: (receipt) =>
-      blocked(state, stage, operationKey, receipt),
-    mismatch: () =>
-      mismatchBlocked(state, stage, operationKey),
   });
 }
 
-function validateYearDecision(decision, slug, meta) {
-  if (decision == null) return { ok: true, value: null };
-  if (
-    !exactKeys(decision, [
-      "action",
-      "tmp_path",
-      "year_evidence",
-    ]) ||
-    !["accept-current", "use-recommended-year"].includes(
-      decision.action,
-    ) ||
-    typeof decision.tmp_path !== "string" ||
-    !BOOK_TEMP_PATH.test(decision.tmp_path) ||
-    !validYearEvidence(
-      decision.year_evidence,
-      decision.year_evidence &&
-        decision.year_evidence.slug_year,
-    ) ||
-    !["MISMATCH", "AMBIGUOUS"].includes(
-      decision.year_evidence.verdict,
-    ) ||
-    (meta.format != null &&
-      !decision.tmp_path.endsWith(`.${meta.format}`))
-  )
-    return {
-      ok: false,
-      code: "book.year_decision_invalid",
-      message:
-        "year_decision must exactly identify a prior year gate and temp artifact",
-    };
-  if (
-    decision.action === "accept-current" &&
-    meta.year !== decision.year_evidence.slug_year
-  )
-    return {
-      ok: false,
-      code: "book.year_decision_invalid",
-      message:
-        "accept-current requires the unchanged prior canonical year",
-    };
-  if (
-    decision.action === "use-recommended-year" &&
-    (decision.year_evidence.verdict !== "MISMATCH" ||
-      decision.year_evidence.recommended_year === null ||
-      meta.year !== decision.year_evidence.recommended_year ||
-      meta.year === decision.year_evidence.slug_year ||
-      !slug.endsWith(`-${meta.year}`))
-  )
-    return {
-      ok: false,
-      code: "book.year_decision_invalid",
-      message:
-        "use-recommended-year requires an updated canonical slug and metadata year",
-    };
-  return { ok: true, value: decision };
+function bookResult(state, publicStatus, stage, extra = {}, failure = null, terminalOverride = null) {
+  const status = terminalOverride || (publicStatus === "ok" ? "complete" : publicStatus === "needs_input" ? "needs_input" : publicStatus === "blocked" ? "blocked" : "failed");
+  return { slug: state.slug, status: publicStatus, ...extra, material_receipt: bookReceipt(state, status, stage, failure) };
 }
 
-function acquireFailure(receipt, outcome = "known") {
+function rejectedBookResult(slug, validation) {
+  const safe = typeof slug === "string" ? slug : null;
+  const state = createBookState(safe, { format: null });
+  state.materialKey = typeof slug === "string" && BOOK_SLUG.test(slug) ? `book:${slug}` : null;
+  return bookResult(state, "blocked", "identity", {}, operationFailure(validation.code, "book.identity", "known", false, validation.message || "conflicting book identity"));
+}
+
+const stageFailure = (fallback, operationKey) => (receipt, outcome = "known") => {
   const issue = stageIssue(receipt);
-  return operationFailure(
-    (issue && issue.code) || "book.acquire_failed",
-    "book.acquire",
-    outcome,
-    !!(issue && issue.retryable),
-    (issue && issue.summary) || "Book Acquire did not complete",
-  );
-}
+  return operationFailure((issue && issue.code) || fallback, operationKey, outcome, !!(issue && issue.retryable), (issue && issue.summary) || `${operationKey} did not complete`);
+};
+const acquireFailure = stageFailure("book.acquire_failed", "book.acquire");
+const prepareFailure = stageFailure("book.prepare_failed", "book.prepare");
+const analyseFailure = stageFailure("book.chapter_analysis_failed", "chapter.analyse");
+const synthesiseFailure = stageFailure("book.synthesise_failed", "book.synthesise");
+const auditFailure = stageFailure("book.audit_failed", "book.audit");
 
-function prepareFailure(receipt, outcome = "known") {
-  const issue = stageIssue(receipt);
-  return operationFailure(
-    (issue && issue.code) || "book.prepare_failed",
-    "book.prepare",
-    outcome,
-    !!(issue && issue.retryable),
-    (issue && issue.summary) || "Book Prepare did not complete",
-  );
-}
+const chapterInputPath = (state, chapter) => `${state.chaptersDir}/${chapter.filename}`;
+const chapterOutputPath = (state, chapter) => `vault/books/${state.slug}/ch${chapter.slot}-${chapter.slug}.md`;
 
-function analyseFailure(receipt, outcome = "known") {
-  const issue = stageIssue(receipt);
-  return operationFailure(
-    (issue && issue.code) || "book.chapter_analysis_failed",
-    "chapter.analyse",
-    outcome,
-    !!(issue && issue.retryable),
-    (issue && issue.summary) || "Chapter Analyse did not complete",
-  );
-}
-
-function synthesiseFailure(receipt, outcome = "known") {
-  const issue = stageIssue(receipt);
-  return operationFailure(
-    (issue && issue.code) || "book.synthesise_failed",
-    "book.synthesise",
-    outcome,
-    !!(issue && issue.retryable),
-    (issue && issue.summary) || "Book Synthesise did not complete",
-  );
-}
-
-function auditFailure(receipt, outcome = "known") {
-  const issue = stageIssue(receipt);
-  return operationFailure(
-    (issue && issue.code) || "book.audit_failed",
-    "book.audit",
-    outcome,
-    !!(issue && issue.retryable),
-    (issue && issue.summary) || "Book Audit did not complete",
-  );
-}
-
-async function prepareBook(runtime, state) {
-  const context = {
-    materialKey: state.materialKey,
-    identity: state.meta,
-    source: state.source,
-    format: state.meta.format,
-    outputDir: state.chaptersDir,
-    manifest: state.manifest,
-    normalized: state.sourceText,
-    recoverySource: state.ocrSource,
-    recoveryText: state.ocrText,
-    artifactRoles: [
-      "normalized_document",
-      "recovery_source",
-      "chapter_manifest",
-      "normalized_chapter",
-    ],
-  };
-  const spec = bookPrepare.spec(context);
-  const run = await runtime.operate(
-    bookPrepare.prompt(context),
-    {
-      phase: spec.stage,
-      agentType: spec.agentType,
-      label: `${state.slug}:prepare`,
-      schema: bookPrepare.schema(context),
-    },
-    spec,
-  );
-  const routed = routeBookStage(
-    run,
-    state,
-    "prepare",
-    "book.prepare",
-    {
-      failure: prepareFailure,
-      blockedExtra: (receipt) => ({ problems: receipt.diagnostics }),
-      needsInputExtra: (receipt) => ({
-        question: receipt.terminal.issue.user_question,
-      }),
-      failedStatus: "extract_failed",
-      failedExtra: (receipt) => ({ problems: receipt.diagnostics }),
-      onOk: (receipt) => {
-        state.artifacts = state.artifacts.filter(
-          (artifact) =>
-            ![
-              "normalized_document",
-              "recovery_source",
-              "chapter_manifest",
-              "normalized_chapter",
-            ].includes(artifact.role),
-        );
-        for (const artifact of receipt.artifacts)
-          state.artifacts.push({
-            ...artifact,
-            producer: "book.prepare",
-          });
-        return { value: { receipt } };
-      },
-    },
-  );
-  return routed.terminal ? { terminal: routed.terminal } : routed.value;
-}
-
-const chapterInputPath = (state, chapter) =>
-  `${state.chaptersDir}/${chapter.filename}`;
-const chapterOutputPath = (state, chapter) =>
-  `vault/books/${state.slug}/ch${chapter.slot}-${chapter.slug}.md`;
-
-async function analyseChapter(
-  runtime,
-  state,
-  chapter,
-  mode = "create",
-  diagnostics = [],
-  label = null,
-) {
-  const input = chapterInputPath(state, chapter);
-  const output = chapterOutputPath(state, chapter);
-  const context = {
-    materialKey: state.materialKey,
-    bookSlug: state.slug,
-    meta: state.meta,
-    chapter,
-    input,
-    output,
-    mode,
-    diagnostics,
-    replay: mode === "repair" ? "reconciled" : "blocked",
-    artifactRoles: ["chapter_canonical"],
-  };
-  const spec = chapterAnalyse.spec(context);
-  const analysis = await runtime.operate(
-    chapterAnalyse.prompt(context),
-    {
-      phase: spec.stage,
-      agentType: spec.agentType,
-      label: `${state.slug}:${
-        label ||
-        `ch${chapter.slot}:${mode === "repair" ? "repair" : "analyse"}`
-      }`,
-      schema: chapterAnalyse.schema(context),
-    },
-    spec,
-  );
-  const routed = routeBookStage(
-    analysis,
-    state,
-    "chapter-analyse",
-    "chapter.analyse",
-    {
-      failure: analyseFailure,
-      blockedFailure: (receipt) => analyseFailure(receipt, "unknown"),
-      onFailed: (receipt) => ({
-        value: { receipt, present: false },
-      }),
-      onOk: (receipt) => ({ value: { receipt, present: true } }),
-    },
-  );
-  return routed.terminal ? { terminal: routed.terminal } : routed.value;
-}
-
-async function synthesise(
-  runtime,
-  state,
-  inputPaths,
-  mode = "create",
-  diagnostics = [],
-) {
-  const context = {
-    materialKey: state.materialKey,
-    slug: state.slug,
-    meta: state.meta,
-    inputPaths,
-    output: state.canonical,
-    mode,
-    diagnostics,
-    replay: mode === "repair" ? "reconciled" : "blocked",
-    artifactRoles: ["canonical"],
-  };
-  const spec = bookSynthesise.spec(context);
-  const synthesis = await runtime.operate(
-    bookSynthesise.prompt(context),
-    {
-      phase: spec.stage,
-      agentType: spec.agentType,
-      label: `${state.slug}:${
-        mode === "repair" ? "synthesise-repair" : "synthesise"
-      }`,
-      schema: bookSynthesise.schema(context),
-    },
-    spec,
-  );
-  const complete = (receipt) => {
-    const { action } = receipt.terminal;
-    const reconciled = action === "reconciled";
-    state.artifacts = state.artifacts.filter(
-      (artifact) => artifact.role !== "canonical",
-    );
-    state.artifacts.push({
-      role: "canonical",
-      path: state.canonical,
-      exists: true,
-      usable: null,
-      producer: reconciled
-        ? "book.synthesise:reconciled"
-        : "book.synthesise",
-    });
-    if (mode === "repair" && action === "repair") {
-      state.repaired = true;
-      state.disposition = "repaired";
-    } else if (mode === "repair" && reconciled) {
-      state.disposition = state.disposition || "reused";
-    } else if (reconciled) state.disposition = "reused";
-    else state.disposition = "created";
-    return { value: { receipt, reconciled } };
-  };
-  const routed = routeBookStage(
-    synthesis,
-    state,
-    "synthesise",
-    "book.synthesise",
-    {
-      failure: synthesiseFailure,
-      blockedFailure: (receipt) =>
-        synthesiseFailure(receipt, "unknown"),
-      failedStatus: "synth_failed",
-      failedExtra: (receipt) => ({ notes: stageIssue(receipt).code }),
-      onOk: complete,
-    },
-  );
-  return routed.terminal ? { terminal: routed.terminal } : routed.value;
-}
-
-async function audit(runtime, state, pass, owners) {
-  state.budgets.auditPasses.used += 1;
-  const context = {
-    materialKey: state.materialKey,
-    target: `vault/books/${state.slug}`,
-    pass,
-    replay: "reconciled",
-    artifactRoles: ["canonical"],
-  };
-  const spec = bookAudit.spec(context);
-  const auditRun = await runtime.operate(
-    bookAudit.prompt(context),
-    {
-      phase: spec.stage,
-      agentType: spec.agentType,
-      label: `${state.slug}:audit${pass === 1 ? "" : `-${pass}`}`,
-      schema: bookAudit.schema(context),
-    },
-    spec,
-  );
-  const unknownPath = (receipt) =>
-    [
-      ...receipt.escalated.map((diagnostic) => diagnostic.path),
-      ...receipt.mutated_paths,
-    ].find((path) => !owners.has(path));
-  const escalated = (receipt) => {
-    const path = unknownPath(receipt);
-    return path && !receipt.escalated.some(
-      (diagnostic) => diagnostic.path === path,
-    )
-      ? [
-          ...receipt.escalated,
-          {
-            path,
-            kind: "mutation_owner_unknown",
-            reason:
-              "audit mutated a path with no exact Book producer owner",
-          },
-        ]
-      : receipt.escalated;
-  };
-  const ownershipTerminal = (receipt) => {
-    if (!unknownPath(receipt)) return null;
-    return result(
-      state,
-      "audit_escalated",
-      "audit",
-      { escalated: escalated(receipt) },
-      operationFailure("book.repair_owner_unknown", "book.audit"),
-    );
-  };
-  const routed = routeBookStage(
-    auditRun,
-    state,
-    "audit",
-    "book.audit",
-    {
-      failure: (receipt, outcome = "known") =>
-        unknownPath(receipt)
-          ? operationFailure("book.repair_owner_unknown", "book.audit")
-          : auditFailure(receipt, outcome),
-      blockedFailure: (receipt) =>
-        unknownPath(receipt)
-          ? operationFailure("book.repair_owner_unknown", "book.audit")
-          : auditFailure(receipt, "unknown"),
-      onReceipt: (receipt, edge) => {
-        if (edge !== "unknown" && edge !== "mismatch")
-          state.audit.push(receipt);
-      },
-      failedStatus: "audit_escalated",
-      failedExtra: (receipt) => ({ escalated: escalated(receipt) }),
-      onOk: (receipt) => {
-        const terminal = ownershipTerminal(receipt);
-        return terminal
-          ? { terminal }
-          : {
-              value: {
-                receipt,
-                clean:
-                  receipt.terminal.status === "complete" &&
-                  receipt.remaining_violations === 0 &&
-                  receipt.escalated.length === 0,
-              },
-            };
-      },
-    },
-  );
-  return routed.terminal ? { terminal: routed.terminal } : routed.value;
-}
-
-function ownerMap(state, chapters) {
-  const owners = new Map([
-    [
-      state.canonical,
-      { key: "book.synthesise", chapter: null },
-    ],
-  ]);
-  for (const chapter of chapters)
-    owners.set(chapterOutputPath(state, chapter), {
-      key: "chapter.analyse",
-      chapter,
-    });
+function chapterOwners(state) {
+  const owners = new Map([[state.canonical, { key: "book.synthesise", chapter: null }]]);
+  for (const chapter of state.chapters)
+    owners.set(chapterOutputPath(state, chapter), { key: "chapter.analyse", chapter });
   return owners;
 }
 
-async function processValidatedBook(runtime, slug, meta, opts) {
-  const { log, parallel, phase } = runtime;
-  phase("Acquire");
-  const state = createBookState(slug, meta);
+function addPreparedBook(state, receipt, _meta, _opts, _call, _context, runtime) {
+  state.artifacts = state.artifacts.filter((artifact) => !["normalized_document", "recovery_source", "chapter_manifest", "normalized_chapter"].includes(artifact.role));
+  for (const artifact of receipt.artifacts) state.artifacts.push({ ...artifact, producer: "book.prepare" });
+  state.chapters = receipt.chapters;
+  runtime.log(`${state.slug}: validated ${state.chapters.length} exact chapters`);
+  return { receipt };
+}
 
-  const acquireContext = {
-    materialKey: state.materialKey,
-    slug,
-    meta,
-    allowedSources: state.allowedSources,
-    expectedYear: meta.year,
-    batchAcceptYear: opts.batchYear === true,
-    yearDecision: opts.yearDecision,
-    artifactRoles: ["source"],
-  };
-  const acquireSpec = bookAcquire.spec(acquireContext);
-  const download = await runtime.operate(
-    bookAcquire.prompt(acquireContext),
-    {
-      phase: acquireSpec.stage,
-      agentType: acquireSpec.agentType,
-      label: `${slug}:acquire`,
-      schema: bookAcquire.schema(acquireContext),
-    },
-    acquireSpec,
-  );
-  const routed = routeBookStage(
-    download,
-    state,
-    "download",
-    "book.acquire",
-    {
-      failure: acquireFailure,
-      onReceipt: (receipt, edge) => {
-        if (edge !== "unknown" && edge !== "mismatch")
-          state.yearEvidence = receipt.year_evidence || null;
-      },
-      needsInputGate: (receipt) => {
-        const { year_evidence, tmp_path, proposed_actions } =
-          receipt.terminal;
-        state.yearEvidence = year_evidence;
-        return stageUserGate(receipt, {
-          year_evidence,
-          tmp_path,
-          proposed_actions,
-        });
-      },
-      needsInputExtra: (receipt) => ({
-        question: receipt.terminal.issue.user_question,
-        year_evidence: receipt.terminal.year_evidence,
-        tmp_path: receipt.terminal.tmp_path,
-        proposed_actions: receipt.terminal.proposed_actions,
-      }),
-      failedStatus: "download_failed",
-      failedExtra: (receipt) => ({
-        failure_reason: receipt.terminal.issue.summary,
-        attempts: receipt.attempts,
-      }),
-      onOk: (receipt) => {
-        state.source = receipt.output_path;
-        meta = { ...meta, format: receipt.format };
-        state.meta = meta;
-        state.artifacts.push({
-          role: "source",
-          path: state.source,
-          exists: true,
-          usable: null,
-          producer:
-            receipt.disposition === "reused"
-              ? "book.acquire:reconciled"
-              : "book.acquire",
-        });
-        return { value: undefined };
-      },
-    },
-  );
-  if (routed.terminal) return routed.terminal;
-
-  phase("Prepare");
-  const prepared = await prepareBook(runtime, state);
-  if (prepared.terminal) return prepared.terminal;
-  const chapters = prepared.receipt.chapters;
-  log(`${slug}: validated ${chapters.length} exact chapters`);
-  phase("Analyse");
-  const firstPass = await parallel(
-    chapters.map(
-      (chapter) => () =>
-        analyseChapter(runtime, state, chapter),
-    ),
-  );
-  for (const entry of firstPass)
-    if (entry.terminal) return entry.terminal;
-
-  let refill = [];
-  const presentSlots = new Set();
-  for (let index = 0; index < chapters.length; index += 1) {
-    const chapter = chapters[index];
-    const entry = firstPass[index];
-    if (entry.present) {
-      presentSlots.add(chapter.slot);
-      continue;
+function joinChapters(state, values, items, _meta, _opts, call) {
+  if (call.mode === "repair") {
+    for (const entry of values) {
+      if (entry.receipt.terminal.status !== "complete")
+        return { terminal: bookResult(state, "audit_escalated", "repair", { escalated: call.auditEscalated || [] }, analyseFailure(entry.receipt)) };
+      if (entry.receipt.terminal.action === "repair") state.chapterChanged = true;
     }
-    const receipt = entry.receipt;
-    if (
-      receipt.terminal.status === "failed" &&
-      receipt.terminal.issue.retryable === true &&
-      receipt.terminal.write_state === "not_written"
-    )
-      refill.push(chapter);
+    if (state.chapterChanged) state.repaired = true;
+    return { repaired: values };
   }
-  if (refill.length) {
-    state.budgets.refill.used += 1;
-    const refillResults = await parallel(
-      refill.map(
-        (chapter) => () =>
-          analyseChapter(
-            runtime,
-            state,
-            chapter,
-            "create",
-            [],
-            `ch${chapter.slot}:refill`,
-          ),
-      ),
-    );
-    for (let index = 0; index < refillResults.length; index += 1) {
-      const entry = refillResults[index];
-      if (entry.terminal) return entry.terminal;
-      if (entry.present)
-        presentSlots.add(refill[index].slot);
-    }
-  }
-  const expectedSlots = chapters.map((chapter) => chapter.slot);
-  const presentSlotsOrdered = expectedSlots.filter((slot) =>
-    presentSlots.has(slot),
-  );
-  const missing = chapters.filter(
-    (chapter) => !presentSlots.has(chapter.slot),
-  );
+  const present = new Set(state.refillPresent);
+  values.forEach((entry, index) => { if (entry.present) present.add(items[index].slot); });
+  const expectedSlots = items.map((chapter) => chapter.slot);
+  const missing = items.filter((chapter) => !present.has(chapter.slot));
   state.chapterInventory = {
     expected_slots: expectedSlots,
-    present_slots: presentSlotsOrdered,
+    present_slots: expectedSlots.filter((slot) => present.has(slot)),
     missing_slots: missing.map((chapter) => chapter.slot),
   };
   if (missing.length)
-    return result(
-      state,
-      "chapters_incomplete",
-      "chapter-join",
-      {
-        analysed: chapters.length - missing.length,
-        expected: chapters.length,
-        expected_slots: [...state.chapterInventory.expected_slots],
-        present_slots: [...state.chapterInventory.present_slots],
-        missing_slots: [...state.chapterInventory.missing_slots],
-      },
-      operationFailure(
-        "book.chapters_incomplete",
-        "book.join",
-      ),
-    );
+    return { terminal: bookResult(state, "chapters_incomplete", "chapter-join", { analysed: items.length - missing.length, expected: items.length, expected_slots: [...state.chapterInventory.expected_slots], present_slots: [...state.chapterInventory.present_slots], missing_slots: [...state.chapterInventory.missing_slots] }, operationFailure("book.chapters_incomplete", "book.join")) };
+  state.chapterOutputs = items.map((chapter) => chapterOutputPath(state, chapter));
+  state.artifacts = state.artifacts.filter((artifact) => artifact.role !== "chapter_canonical");
+  for (const path of state.chapterOutputs)
+    state.artifacts.push({ role: "chapter_canonical", path, exists: true, usable: null, producer: "chapter.analyse" });
+  state.owners = chapterOwners(state);
+  return { chapters: values };
+}
 
-  const chapterOutputs = chapters.map((chapter) =>
-    chapterOutputPath(state, chapter),
-  );
-  state.artifacts = state.artifacts.filter(
-    (artifact) => artifact.role !== "chapter_canonical",
-  );
-  for (const path of chapterOutputs)
-    state.artifacts.push({
-      role: "chapter_canonical",
-      path,
-      exists: true,
-      usable: null,
-      producer: "chapter.analyse",
-    });
-
-  phase("Synthesise");
-  const synthesis = await synthesise(
-    runtime,
-    state,
-    chapterOutputs,
-  );
-  if (synthesis.terminal) return synthesis.terminal;
-
-  const owners = ownerMap(state, chapters);
-  phase("Audit");
-  let audited = await audit(runtime, state, 1, owners);
-  if (audited.terminal) return audited.terminal;
-  if (audited.receipt.mutated_paths.length)
+function applySynthesis(state, receipt, _meta, _opts, call) {
+  const { action } = receipt.terminal;
+  const reconciled = action === "reconciled";
+  state.artifacts = state.artifacts.filter((artifact) => artifact.role !== "canonical");
+  state.artifacts.push({ role: "canonical", path: state.canonical, exists: true, usable: null, producer: reconciled ? "book.synthesise:reconciled" : "book.synthesise" });
+  if (call.mode === "repair" && action === "repair") {
     state.repaired = true;
-  if (
-    audited.clean &&
-    audited.receipt.mutated_paths.length === 0
-  )
-    return result(state, "ok", "audit", {
-      year_warning:
-        state.yearEvidence &&
-        state.yearEvidence.verdict !== "MATCH"
-          ? state.yearEvidence
-          : null,
-    });
+    state.disposition = "repaired";
+  } else if (call.mode === "repair" && reconciled) state.disposition = state.disposition || "reused";
+  else if (reconciled) state.disposition = "reused";
+  else state.disposition = "created";
+  return { receipt, reconciled };
+}
 
+function unknownAuditPath(receipt, state) {
+  return [...receipt.escalated.map((item) => item.path), ...receipt.mutated_paths].find((path) => !state.owners.has(path));
+}
+
+function auditEscalations(receipt, state) {
+  const path = unknownAuditPath(receipt, state);
+  return path && !receipt.escalated.some((item) => item.path === path)
+    ? [...receipt.escalated, { path, kind: "mutation_owner_unknown", reason: "audit mutated a path with no exact Book producer owner" }]
+    : receipt.escalated;
+}
+
+function applyBookAudit(state, receipt) {
+  if (unknownAuditPath(receipt, state))
+    return { terminal: bookResult(state, "audit_escalated", "audit", { escalated: auditEscalations(receipt, state) }, operationFailure("book.repair_owner_unknown", "book.audit")) };
+  return { receipt, clean: receipt.terminal.status === "complete" && receipt.remaining_violations === 0 && receipt.escalated.length === 0 };
+}
+
+function bookRepairInput(state, audited) {
+  if (audited.receipt.mutated_paths.length) state.repaired = true;
+  if (audited.clean && audited.receipt.mutated_paths.length === 0) return null;
   state.budgets.auditRepair.used += 1;
   const byTarget = new Map();
   for (const diagnostic of audited.receipt.escalated) {
     const entries = byTarget.get(diagnostic.path) || [];
-    if (
-      !entries.some(
-        (entry) =>
-          entry.kind === diagnostic.kind &&
-          entry.reason === diagnostic.reason,
-      )
-    )
-      entries.push(diagnostic);
+    if (!entries.some((entry) => entry.kind === diagnostic.kind && entry.reason === diagnostic.reason)) entries.push(diagnostic);
     byTarget.set(diagnostic.path, entries);
   }
-  const chapterRepairs = chapters
-    .map((chapter) => ({
-      chapter,
-      diagnostics:
-        byTarget.get(chapterOutputPath(state, chapter)) || [],
-    }))
+  const chapterRepairs = state.chapters
+    .map((chapter) => ({ chapter, diagnostics: byTarget.get(chapterOutputPath(state, chapter)) || [] }))
     .filter((entry) => entry.diagnostics.length);
-  let chapterChanged = false;
-  if (chapterRepairs.length) {
-    phase("Analyse");
-    const repaired = await parallel(
-      chapterRepairs.map(
-        ({ chapter, diagnostics }) => () =>
-          analyseChapter(
-            runtime,
-            state,
-            chapter,
-            "repair",
-            diagnostics,
-            `ch${chapter.slot}:repair`,
-          ),
-      ),
-    );
-    for (const entry of repaired) {
-      if (entry.terminal) return entry.terminal;
-      if (entry.receipt.terminal.status !== "complete")
-        return result(
-          state,
-          "audit_escalated",
-          "repair",
-          { escalated: audited.receipt.escalated },
-          analyseFailure(entry.receipt),
-        );
-      if (entry.receipt.terminal.action === "repair")
-        chapterChanged = true;
-    }
-    if (chapterChanged) state.repaired = true;
-  }
-
-  const overviewDiagnostics =
-    byTarget.get(state.canonical) || [];
-  const chapterMutatedByAudit =
-    audited.receipt.mutated_paths.some(
-      (path) =>
-        owners.get(path) &&
-        owners.get(path).key === "chapter.analyse",
-    );
-  const dependencyChanged =
-    chapterChanged ||
-    chapterMutatedByAudit;
-  if (dependencyChanged || overviewDiagnostics.length) {
-    const diagnostics = overviewDiagnostics.length
-      ? overviewDiagnostics
-      : [
-          {
-            path: state.canonical,
-            kind: "chapter_dependency_changed",
-            reason:
-              "an audited chapter or overview changed after synthesis",
-          },
-        ];
-    phase("Synthesise");
-    const repairedSynthesis = await synthesise(
-      runtime,
-      state,
-      chapterOutputs,
-      "repair",
-      diagnostics,
-    );
-    if (repairedSynthesis.terminal)
-      return repairedSynthesis.terminal;
-    if (repairedSynthesis.receipt.terminal.status !== "complete")
-      return result(
-        state,
-        "audit_escalated",
-        "repair",
-        { escalated: audited.receipt.escalated },
-        synthesiseFailure(repairedSynthesis.receipt),
-      );
-  }
-
-  phase("Audit");
-  audited = await audit(runtime, state, 2, owners);
-  if (audited.terminal) return audited.terminal;
-  if (audited.receipt.mutated_paths.length)
-    state.repaired = true;
-  const staleAfterSecondAudit =
-    audited.receipt.mutated_paths.some(
-      (path) => path !== state.canonical,
-    );
-  if (!audited.clean || staleAfterSecondAudit) {
-    const exhaustedDiagnostics = [
-      ...audited.receipt.escalated,
-    ];
-    for (const path of audited.receipt.mutated_paths)
-      if (
-        path !== state.canonical &&
-        !exhaustedDiagnostics.some(
-          (diagnostic) =>
-            diagnostic.path === path &&
-            diagnostic.kind === "mutation_after_repair_budget",
-        )
-      )
-        exhaustedDiagnostics.push({
-          path,
-          kind: "mutation_after_repair_budget",
-          reason:
-            "re-audit changed a chapter after the single synthesis repair budget",
-        });
-    return result(
-      state,
-      "audit_escalated",
-      "audit",
-      { escalated: exhaustedDiagnostics },
-      operationFailure(
-        "book.repair_exhausted",
-        "book.audit",
-      ),
-    );
-  }
-
-  return result(state, "ok", "audit", {
-    year_warning:
-      state.yearEvidence &&
-      state.yearEvidence.verdict !== "MATCH"
-        ? state.yearEvidence
-        : null,
-  });
+  const overviewDiagnostics = byTarget.get(state.canonical) || [];
+  const chapterMutatedByAudit = audited.receipt.mutated_paths.some((path) => state.owners.get(path) && state.owners.get(path).key === "chapter.analyse");
+  return { audit: audited.receipt, chapterRepairs, overviewDiagnostics, chapterMutatedByAudit };
 }
 
-export async function processBook(runtime, slug, meta, opts = {}) {
-  const validation = validateBookIdentity(slug, meta);
-  if (!validation.ok)
-    return rejectedBookResult(slug, validation);
-  const yearDecision = validateYearDecision(
-    opts.yearDecision,
-    slug,
-    validation.meta,
-  );
-  if (!yearDecision.ok || (yearDecision.value && opts.batchYear === true))
-    return rejectedBookResult(slug, {
-      code: "book.year_decision_invalid",
-      message: yearDecision.message ||
-        "year_decision is not an Author batch policy",
-    });
-  const normalizedOpts = {
-    ...opts,
-    yearDecision: yearDecision.value,
-  };
-  return runtime.coalesce(
-    `book:${slug}`,
-    validation.fingerprint,
-    () =>
-      processValidatedBook(
-        runtime,
-        slug,
-        validation.meta,
-        normalizedOpts,
-      ),
-    () =>
-      rejectedBookResult(
-        slug,
-        {
-          code: "book.identity_conflict",
-          message:
-            "same-run requests disagree on the book identity",
+function bookRepairTargets(state, plan) {
+  const diagnostics = plan.overviewDiagnostics.length
+    ? plan.overviewDiagnostics
+    : [{ path: state.canonical, kind: "chapter_dependency_changed", reason: "an audited chapter or overview changed after synthesis" }];
+  return [
+    { stage: "Analyse", when: () => plan.chapterRepairs.length > 0, call: { items: plan.chapterRepairs, auditEscalated: plan.audit.escalated } },
+    { stage: "Synthesise", when: (state) => state.chapterChanged || plan.chapterMutatedByAudit || plan.overviewDiagnostics.length > 0, diagnostics },
+  ];
+}
+
+function exhaustedBookRepair(state, audited) {
+  if (audited.receipt.mutated_paths.length) state.repaired = true;
+  const stale = audited.receipt.mutated_paths.some((path) => path !== state.canonical);
+  if (audited.clean && !stale) return null;
+  const diagnostics = [...audited.receipt.escalated];
+  for (const path of audited.receipt.mutated_paths)
+    if (path !== state.canonical && !diagnostics.some((item) => item.path === path && item.kind === "mutation_after_repair_budget"))
+      diagnostics.push({ path, kind: "mutation_after_repair_budget", reason: "re-audit changed a chapter after the single synthesis repair budget" });
+  return bookResult(state, "audit_escalated", "audit", { escalated: diagnostics }, operationFailure("book.repair_exhausted", "book.audit"));
+}
+
+const bookTable = {
+  kind: "book",
+  identity: {
+    pattern: BOOK_SLUG,
+    validate: validateBookIdentity,
+    key: (slug) => `book:${slug}`,
+    fingerprint: (_slug, meta) => JSON.stringify(meta),
+    conflict: () => ({ code: "book.identity_conflict", message: "same-run requests disagree on the book identity" }),
+  },
+  options: normalizeBookOptions,
+  state: createBookState,
+  receipt: bookReceipt,
+  reject: rejectedBookResult,
+  emit: (state, { status, receiptStatus, stage, extra, failure }) => bookResult(state, status, stage, extra, failure, receiptStatus || null),
+  unknown: (state, descriptor, receipt) => bookResult(state, "blocked", descriptor.receiptStage, {}, (receipt && receipt.failure) || operationFailure("material.writer_outcome_unknown", descriptor.operationKey, "unknown")),
+  mismatch: (state, descriptor) => bookResult(state, "blocked", descriptor.receiptStage, {}, operationFailure("book.writer_receipt_mismatch", descriptor.operationKey, "unknown", false, "writer receipt did not prove the exact contract")),
+  stages: [
+    {
+      stage: "Acquire", receiptStage: "download", operationKey: "book.acquire", row: bookAcquire,
+      label: (state) => `${state.slug}:acquire`,
+      context: (state, _meta, opts) => ({ materialKey: state.materialKey, slug: state.slug, meta: state.meta, allowedSources: state.allowedSources, expectedYear: state.meta.year, batchAcceptYear: opts.batchYear === true, yearDecision: opts.yearDecision, artifactRoles: ["source"] }),
+      routeOptions: (state) => ({
+        failure: acquireFailure,
+        onReceipt: (receipt, edge) => { if (edge !== "unknown" && edge !== "mismatch") state.yearEvidence = receipt.year_evidence || null; },
+        needsInputGate: (receipt) => { const { year_evidence, tmp_path, proposed_actions } = receipt.terminal; state.yearEvidence = year_evidence; return stageUserGate(receipt, { year_evidence, tmp_path, proposed_actions }); },
+        needsInputExtra: (receipt) => ({ question: receipt.terminal.issue.user_question, year_evidence: receipt.terminal.year_evidence, tmp_path: receipt.terminal.tmp_path, proposed_actions: receipt.terminal.proposed_actions }),
+        failedStatus: "download_failed",
+        failedExtra: (receipt) => ({ failure_reason: receipt.terminal.issue.summary, attempts: receipt.attempts }),
+      }),
+      apply: (state, receipt) => {
+        state.source = receipt.output_path;
+        state.meta = { ...state.meta, format: receipt.format };
+        state.artifacts.push({ role: "source", path: state.source, exists: true, usable: null, producer: receipt.disposition === "reused" ? "book.acquire:reconciled" : "book.acquire" });
+      },
+    },
+    {
+      stage: "Prepare", receiptStage: "prepare", operationKey: "book.prepare", row: bookPrepare,
+      label: (state) => `${state.slug}:prepare`,
+      context: (state) => ({ materialKey: state.materialKey, identity: state.meta, source: state.source, format: state.meta.format, outputDir: state.chaptersDir, manifest: state.manifest, normalized: state.sourceText, recoverySource: state.ocrSource, recoveryText: state.ocrText, artifactRoles: ["normalized_document", "recovery_source", "chapter_manifest", "normalized_chapter"] }),
+      routeOptions: () => ({ failure: prepareFailure, blockedExtra: (receipt) => ({ problems: receipt.diagnostics }), needsInputExtra: (receipt) => ({ question: receipt.terminal.issue.user_question }), failedStatus: "extract_failed", failedExtra: (receipt) => ({ problems: receipt.diagnostics }) }),
+      apply: addPreparedBook,
+    },
+    {
+      stage: "Analyse", receiptStage: "chapter-analyse", operationKey: "chapter.analyse", row: chapterAnalyse,
+      label: () => "unused",
+      context: () => ({}),
+      routeOptions: () => ({}),
+      apply: () => undefined,
+      fanOut: {
+        lane: "Analyse",
+        items: (state) => state.chapters,
+        row: chapterAnalyse,
+        label: (state, call) => `${state.slug}:ch${(call.item.chapter || call.item).slot}:${call.refill ? "refill" : call.mode === "repair" ? "repair" : "analyse"}`,
+        context: (state, _meta, _opts, call) => {
+          const chapter = call.item.chapter || call.item;
+          const diagnostics = call.item.diagnostics || call.diagnostics;
+          return { materialKey: state.materialKey, bookSlug: state.slug, meta: state.meta, chapter, input: chapterInputPath(state, chapter), output: chapterOutputPath(state, chapter), mode: call.mode, diagnostics, replay: call.mode === "repair" ? "reconciled" : "blocked", artifactRoles: ["chapter_canonical"] };
         },
-        "book.identity_conflict",
-      ),
-  );
+        routeOptions: () => ({ failure: analyseFailure, blockedFailure: (receipt) => analyseFailure(receipt, "unknown"), onFailed: (receipt) => ({ value: { receipt, present: false } }) }),
+        apply: (_state, receipt) => ({ receipt, present: true }),
+        retry: {
+          items: (_state, values, items, call) => call.mode === "repair" ? [] : items.filter((_item, index) => { const receipt = values[index].receipt; return !values[index].present && receipt.terminal.status === "failed" && receipt.terminal.issue.retryable === true && receipt.terminal.write_state === "not_written"; }),
+          before: (state) => { state.budgets.refill.used += 1; },
+          apply: (state, values, items) => { values.forEach((entry, index) => { if (entry.present) state.refillPresent.add(items[index].slot); }); },
+        },
+        join: joinChapters,
+      },
+    },
+    {
+      stage: "Synthesise", receiptStage: "synthesise", operationKey: "book.synthesise", row: bookSynthesise,
+      label: (state, call) => `${state.slug}:${call.mode === "repair" ? "synthesise-repair" : "synthesise"}`,
+      context: (state, _meta, _opts, call) => ({ materialKey: state.materialKey, slug: state.slug, meta: state.meta, inputPaths: state.chapterOutputs, output: state.canonical, mode: call.mode, diagnostics: call.diagnostics, replay: call.mode === "repair" ? "reconciled" : "blocked", artifactRoles: ["canonical"] }),
+      routeOptions: () => ({ failure: synthesiseFailure, blockedFailure: (receipt) => synthesiseFailure(receipt, "unknown"), failedStatus: "synth_failed", failedExtra: (receipt) => ({ notes: stageIssue(receipt).code }) }),
+      apply: applySynthesis,
+    },
+    {
+      stage: "Audit", receiptStage: "audit", operationKey: "book.audit", row: bookAudit,
+      label: (state, call) => `${state.slug}:audit${call.pass === 1 ? "" : `-${call.pass}`}`,
+      context: (state, _meta, _opts, call) => { state.budgets.auditPasses.used += 1; return { materialKey: state.materialKey, target: `vault/books/${state.slug}`, pass: call.pass, replay: "reconciled", artifactRoles: ["canonical"] }; },
+      routeOptions: (state) => ({
+        failure: (receipt, outcome = "known") => unknownAuditPath(receipt, state) ? operationFailure("book.repair_owner_unknown", "book.audit") : auditFailure(receipt, outcome),
+        blockedFailure: (receipt) => unknownAuditPath(receipt, state) ? operationFailure("book.repair_owner_unknown", "book.audit") : auditFailure(receipt, "unknown"),
+        onReceipt: (receipt, edge) => { if (edge !== "unknown" && edge !== "mismatch") state.audit.push(receipt); },
+        failedStatus: "audit_escalated",
+        failedExtra: (receipt) => ({ escalated: auditEscalations(receipt, state) }),
+      }),
+      apply: applyBookAudit,
+      repair: { once: true, escalationsFrom: bookRepairInput, target: bookRepairTargets, exhausted: exhaustedBookRepair },
+    },
+  ],
+  complete: (state) => bookResult(state, "ok", "audit", { year_warning: state.yearEvidence && state.yearEvidence.verdict !== "MATCH" ? state.yearEvidence : null }),
+};
+
+export async function processBook(runtime, slug, meta, opts = {}) {
+  return runMaterialLoop(runtime, bookTable, slug, meta, opts);
 }

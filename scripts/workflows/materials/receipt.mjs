@@ -19,6 +19,44 @@ import {
 export const MATERIAL_RECEIPT_VERSION =
   "quasi.material-loop.receipt/0.2";
 
+export function assembleMaterialReceipt(state, {
+  kind,
+  status,
+  stage,
+  failure = null,
+  disposition = null,
+  fields = {},
+  resume = null,
+}) {
+  return {
+    schema_version: MATERIAL_RECEIPT_VERSION,
+    material_key: state.materialKey,
+    kind,
+    id: state.slug,
+    status,
+    disposition:
+      disposition ||
+      (status === "complete"
+        ? state.repaired
+          ? "repaired"
+          : state.disposition || "created"
+        : null),
+    stage,
+    artifacts: state.artifacts,
+    operations: state.operations,
+    audit: state.audit,
+    freshness: {
+      observation: "unknown",
+      basis: "operation-receipts-and-final-audit",
+    },
+    warnings: state.warnings,
+    failure,
+    user_gate: state.userGate || null,
+    ...fields,
+    resume,
+  };
+}
+
 const record = (value) =>
   !!(
     value &&
