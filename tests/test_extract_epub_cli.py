@@ -181,3 +181,77 @@ def test_epub_invalid_archive_preserves_previous_generation(tmp_path: Path):
     ).hexdigest()
     assert receipt["previous_manifest_preserved"] is True
     assert (output / "manifest.json").read_bytes() == manifest_before
+
+
+def test_epub_uses_opf_spine_order_and_keeps_unlisted_heading(tmp_path: Path):
+    source = tmp_path / "book.epub"
+    output = tmp_path / "chapters"
+    body = "substantial body text " * 20
+    members = {
+        "aa_promo.htm": f"<html><body><h1>Promotion</h1><p>{body}</p></body></html>",
+        "zz_preface.htm": f"<html><body><h1>Preface heading</h1><p>{body}</p></body></html>",
+        "a_ch1.htm": f"<html><body><h1>Alpha heading</h1><p>{body}</p></body></html>",
+        "b_ch2.htm": f"<html><body><h1>Beta heading</h1><p>{body}</p></body></html>",
+        "m_notes.htm": f"<html><body><h2>Notes heading</h2><p>{body}</p></body></html>",
+        "n_notes2.htm": f"<html><body><h3>Chapter 2 notes</h3><p>{body}</p></body></html>",
+        "ab_junk.htm": f"<html><body><p>{body}</p></body></html>",
+    }
+    spine_order = [
+        "promo", "preface", "ch1", "ch2", "notes", "notes2", "junk",
+    ]
+    filenames_by_id = dict(zip(spine_order, members))
+    navpoints = [
+        ("promo", "Other Books by This Author"),
+        ("preface", "Preface"),
+        ("ch1", "1 - Alpha"),
+        ("ch2", "2 - Beta"),
+        ("notes", "Notes"),
+    ]
+
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr(
+            "META-INF/container.xml",
+            '<container><rootfiles><rootfile full-path="pkg_opf_r1.opf"/></rootfiles></container>',
+        )
+        archive.writestr(
+            "pkg_opf_r1.opf",
+            "<package><manifest>"
+            + "".join(
+                f'<item href="OEBPS/{filename}" id="{item_id}" media-type="application/xhtml+xml"/>'
+                for item_id, filename in filenames_by_id.items()
+            )
+            + '<item href="pkg_ncx_r1.ncx" id="ncx" media-type="application/x-dtbncx+xml"/>'
+            + "</manifest><spine toc=\"ncx\">"
+            + "".join(f'<itemref idref="{item_id}" linear="yes"/>' for item_id in spine_order)
+            + "</spine></package>",
+        )
+        archive.writestr(
+            "pkg_ncx_r1.ncx",
+            "<ncx><navMap>"
+            + "".join(
+                f'<navPoint id="{item_id}"><navLabel><text>{title}</text></navLabel>'
+                f'<content src="OEBPS/{filenames_by_id[item_id]}"/></navPoint>'
+                for item_id, title in navpoints
+            )
+            + "</navMap></ncx>",
+        )
+        for filename, html in members.items():
+            archive.writestr(f"OEBPS/{filename}", html)
+
+    result = _run("epub", str(source), str(output), "--json")
+
+    receipt = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert [row["title"] for row in receipt["chapters"]] == [
+        "Preface", "1 - Alpha", "2 - Beta", "Notes", "Chapter 2 notes",
+    ]
+    assert [row["slot"] for row in receipt["chapters"]] == [
+        "01", "02", "03", "04", "05",
+    ]
+    assert manifest["total_chapters_in_toc"] == 7
+    assert "Other Books by This Author" not in [
+        row["title"] for row in manifest["chapters"]
+    ]
+    assert "ab_junk" not in [row["title"] for row in manifest["chapters"]]
+    assert any(row["reason"] == "furniture" for row in manifest["skipped"])

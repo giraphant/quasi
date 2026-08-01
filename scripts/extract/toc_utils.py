@@ -39,7 +39,7 @@ SKIP_TITLES_EXACT = {
     'acknowledgments', 'acknowledgements',
     'dedication', 'epigraph',
     'about the author', 'about the authors', 'about the book',
-    'author biographies',
+    'author biographies', 'other books by this author', 'illustrations',
 }
 
 SKIP_PATTERNS = [

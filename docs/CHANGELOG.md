@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.56.4** (2026-08-01): **`quasi-extract epub` 以 OPF spine 为章节清单权威，Random House 形状的 EPUB 不再产出乱序垃圾 manifest。**
+  - 实测事故（Sen《Development as Freedom》2000 电子版）：NCX 探测只认字面量 `toc.ncx` 四个候选路径，而该书的 NCX 叫 `Sen_..._epub_ncx_r1.ncx` 且放在 zip 根目录——探测落空后掉进"HTML 文件名字母序 + stem 当标题"的兜底，Preface 排到 slot 22、两份 Notes 倒置、宣传页混入，标题全是内部文件标识符；继续 Analyse 会把错误结构固化进 vault。
+  - 修复按 EPUB 标准走发现链：`META-INF/container.xml` → OPF → spine itemref 顺序为权威（`linear="no"` 跳过），NCX 只供标签（经 media-type 或 `.ncx` 后缀定位；属性逐个抓取、不依赖顺序——该书 OPF 的 href 写在 id 前，组合正则在这里已实际踩过坑）。无 NCX 标签的 spine 条目取首个 h1–h4 当标题；标签、标题两者皆无的按 furniture 跳过（挡住该书无题宣传页 col1）。选 spine 而非纯 NCX 是因为实测 `nts1`（第 11–12 章注释，约 3400 词）在 spine 里却不在 navMap——纯 NCX 修复会静默丢内容。
+  - 降级阶梯保留：无 OPF → NCX 顺序路径（探测放宽为任意 `*.ncx` 成员）；无 NCX → 字母序兜底，既有六个测试全部原样通过。`SKIP_TITLES_EXACT` 补 `other books by this author`、`illustrations` 两个实测漏网词条。Sen 冒烟结果为 16 条正确阅读序（Preface → Introduction → 12 章 → 两份 Notes）。修改由 Codex worker 按配方执行；配方里"期望 17 条"是主进程的算术错误，worker 以 26 条 spine − 10 条排除 = 16 的证据如实交付而未弱化 skip 规则。
+
 - **0.56.3** (2026-08-01): **Kagi 恢复阶段发现的 URL 补走 EZProxy 通道，付费墙落地页不再只做裸抓。**
   - `download_paper` Phase 2 里由 Kagi 按题名发现的 URL 此前只尝试无代理直抓，而同一阶段发现的 DOI 却有 EZProxy 重试——不对称是疏漏。Kagi 对付费墙论文搜出的恰恰是只有机构代理才能取到的落地页（JSTOR/Springer/OUP 一类），裸抓必然 403，等于恢复阶段对最需要它的宿主类失效。现在幸存的发现 URL 汇总走一次步骤 5b 同款的 `_try_ezproxy_urls_with_refresh`，身份校验参数照传，0.56.1 的强身份门继续挡住 Kagi 词汇重叠带进的同作者姊妹论文。
   - 起因是一次 DOI-only 请求的复盘（`10.5840/philtopics19962427` 解析到 PDCNet 被 Cloudflare 拦截、全 cascade 正确耗尽后报 failed）：实测确认该论文属"无自动发现路径"类——JSTOR 页对 Kagi 不可见、OpenAlex locations 只有 doi.org、PhilPapers 有反爬，这类的真实出路仍是调用方补落地页 URL，本次不为它加投机通道；修的是恢复阶段对可发现宿主的真实缺口。修改由 Codex worker 按配方执行（净 +30 行），新增 Phase 2 代理路由单元测试。
