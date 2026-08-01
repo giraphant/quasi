@@ -62,7 +62,7 @@ acquisition 等非产物结构的行为，由所属 `scripts/workflows/operation
 | Skill | 功能 |
 |---|---|
 | `collect-material` | 统一采集→分析编排图:book / paper / author / talk / PDF translation |
-| `precise-topic` | topic 界定与研究循环:vault 召回、滚雪球、证据卡、研究大纲与主题综合 |
+| `research-topic` | topic 界定与研究循环:vault 召回、滚雪球、证据卡、研究大纲与主题综合 |
 | `finalise-draft` | draft 校对 + 引文审查 + references.bib |
 
 `process-journal` 当前已归档到 `deprecated/skills/`,等待 journal acquisition 重新设计。

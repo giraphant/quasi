@@ -102,6 +102,16 @@ def test_collect_material_uses_native_claude_workflow_only() -> None:
         assert name not in skill
 
 
+def test_research_topic_starts_the_shared_topic_graph() -> None:
+    skill = (ROOT / "skills" / "research-topic" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "name: research-topic" in skill
+    assert "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" in skill
+    assert '{"kind":"topic","slug":slug,"meta":meta}' in skill
+    assert "needs_seeds" in skill
+
+
 
 
 

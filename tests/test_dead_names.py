@@ -43,7 +43,7 @@ DEAD_NAMES = [
     "quasi:process-topic",
     "process-talk",
     "process-draft",
-    "research-topic",
+    "precise-topic",
     "quasi:process-material",
     "organise-topic",
     "finalize-draft",
@@ -107,6 +107,6 @@ def test_removed_public_skill_directories_are_not_present():
         "finalize-draft",
         "process-talk",
         "process-draft",
-        "research-topic",
+        "precise-topic",
     ):
         assert not (PLUGIN_ROOT / "skills" / name).exists()

@@ -193,7 +193,7 @@ audit remains receipt-proven. The rolling `research/topic.mjs` loop remains lega
 
 quasi targets Claude Code only; the retired Pi and Codex host adapters are recoverable from git history.
 
-Public skill routing separates material intake from topic research. `collect-material` owns paper, book, author, Talk, and Translation; `precise-topic` owns vault recall, outline steering, evidence cards, human seed gates, and topic synthesis. Both still call `workflows/process-material.mjs`, so topic candidates reuse the same paper/book router without duplicating graph nodes. Draft proofreading and citation closure use `finalise-draft`.
+Public skill routing separates material intake from topic research. `collect-material` owns paper, book, author, Talk, and Translation; `research-topic` owns vault recall, outline steering, evidence cards, human seed gates, and topic synthesis. Both still call `workflows/process-material.mjs`, so topic candidates reuse the same paper/book router without duplicating graph nodes. Draft proofreading and citation closure use `finalise-draft`.
 
 One user request containing 2–32 top-level Books/Papers enters `process-material.mjs` once as `{kind:"batch",items:[...]}`. The batch coordinator shares one runtime across independent material loops, preserves input order, coalesces duplicate identities before any duplicate writer, and returns `quasi.collection.material-batch.receipt/0.2`. Do not expand a batch into one Workflow invocation per item; that produces multiple top-level UI graphs and prevents aggregate progress management.
 

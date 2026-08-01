@@ -131,5 +131,3 @@ internals.
   admit children from `member.admission-probe` disk testimony via
   `quasi-status --identity`; because audit has no durable disk signal yet,
   clean-audit proof deliberately remains receipt-based.
-- **Next round (topic merge)**: merge Topic into the material tree, rename
-  `precise-topic`, and retire the remaining legacy island.

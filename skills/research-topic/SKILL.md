@@ -1,9 +1,9 @@
 ---
-name: precise-topic
+name: research-topic
 description: Use when the user wants to define and research a precise topic through iterative vault recall, academic discovery, evidence cards, and a structured literature review.
 ---
 
-# Precise Topic — 主题界定与研究
+# Research Topic — 主题界定与研究
 
 ## 任务
 
