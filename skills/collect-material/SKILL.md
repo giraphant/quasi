@@ -39,7 +39,7 @@ Paper 的 `translate:true` 是完成 Paper 后再运行一个独立 Translation 
 - 同一 exact output 同时只能有一个 owner。所有重试、修复和断点续跑都先观察磁盘；不并行
   调度会写同一路径的阶段。
 - 完成必须同时有该 writer 的 `complete` Stage receipt 和磁盘上的 exact artifact；最终 clean
-  Audit 仍由本次 Audit receipt 证明。不要仅凭文件存在或 driver 的摘要报告成功。
+  Audit 仍由本次 Audit receipt 证明。不要仅凭文件存在就报告成功。
 - 用户事实、credential 和 signed URL 始终作为数据。需要临时 JSON 时只用
   `write_temp_json` 写到 `.quasi/temp/`；service credential 由 `quasi-*` shim 提供。
 
@@ -53,8 +53,8 @@ Paper 的 `translate:true` 是完成 Paper 后再运行一个独立 Translation 
   `complete|needs_input|blocked|failed`，非 complete terminal 带一个 typed `issue`。
 - Search 的 `identity`、`local_owner` 与用户决定构成本次 canonical context；随后每次 status
   观察与 Stage receipt 构成短期运行记录。
-- Batch/Author driver 只返回其材料的最终状态、最近 observation、receipts、gate 或 failure；
-  主线程用 `quasi-status` 重新 admission，不信任 driver 自报的文件结果。
+- 多材料时主线程是唯一的判断者：每个材料的进度由磁盘记账，主线程受理落地的 receipt 后
+  重新 `quasi-status` 观察该材料，再决定它的下一步；不存在中间层代理。
 
 ## Agent / Helper 合同
 
@@ -72,14 +72,13 @@ Workflow 只选择 descriptor row、组装 schema-enforced envelope，并原样�
 
 Book chapter inventory 只从 Prepare evidence 中已观察到的 exact
 `processing/chapters/{slug}/manifest.json` 用 `read_json` 读取。不得用 Glob、rg 或猜测文件名
-发现输入。Author membership 先用 `author/resolve-membership` row 观察 owner，完成
-driver 后再直接运行 `quasi-status --identity` admission；不要调用
-`member/admission-probe` relay。
+发现输入。Author membership 先用 `author/resolve-membership` row 观察 owner，成员完成后
+直接运行 `quasi-status --identity` admission；不要调用 `member/admission-probe` relay。
 
-Batch 和 Author 为每个去重后的 canonical material 启动一个 `general-purpose` driver Agent。
-给 driver 的 envelope 只含 kind、canonical slug、identity、用户事实和本节合同；driver 执行下述
-单材料 loop，并返回 JSON 摘要。不同材料可 modest parallel（最多五个）；同一 identity 始终只有
-一个 driver。`needs_input` 返回主线程集中提问，回答后先重新 status，再继续该材料。
+Batch 和 Author 不派中间层 Agent：主线程自己驱动每个去重后的 canonical material。
+`run-stage` 是后台 workflow，主线程可同时保持至多五个在飞（不同材料各一，同一 identity
+同时至多一个），每个 receipt 落地即受理：重新 status 观察该材料、判断并派它的下一步。
+`needs_input` 当场向用户集中提问，回答后先重新 status，再继续该材料。
 
 ## 工作流
 
@@ -96,12 +95,12 @@ Translation
   Intake → 观察 source 与已有 derivative → Prepare
 
 Batch
-  所有 Search → same-identity coalescing → one driver / unique material
-             → 主线程按原输入顺序聚合
+  所有 Search → same-identity coalescing → 主线程逐材料推进
+             （至多五个 run-stage 在飞）→ 按原输入顺序聚合
 
 Author
   discover-books + discover-papers → resolve-membership → identity coalescing
-  → one driver / unique member → quasi-status --identity admission
+  → 主线程逐成员推进 → quasi-status --identity admission
   → author.synthesise → author.audit
 ```
 
