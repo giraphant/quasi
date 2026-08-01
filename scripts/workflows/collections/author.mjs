@@ -1,13 +1,8 @@
 import {
-  AUTHOR_DISCOVER_BOOKS_CONTRACT,
-  AUTHOR_DISCOVER_BOOKS_SCHEMA,
-  AUTHOR_DISCOVER_PAPERS_CONTRACT,
-  AUTHOR_DISCOVER_PAPERS_SCHEMA,
-  AUTHOR_RESOLVE_MEMBERSHIP_CONTRACT,
-  AUTHOR_RESOLVE_MEMBERSHIP_SCHEMA,
-  authorDiscoveryPrompt,
-  authorResolveMembershipPrompt,
-} from "../operations/acquire.mjs";
+  authorDiscoverBooks,
+  authorDiscoverPapers,
+  authorResolveMembership,
+} from "../operations/rows/author.mjs";
 import {
   AUTHOR_AUDIT_STAGE_CONTRACT,
   authorAuditPrompt,
@@ -20,6 +15,7 @@ import {
 } from "../operations/synthesise.mjs";
 import { AUTHOR_ARTIFACT_CONTRACT } from "../artifact-contracts/generated.mjs";
 import { admitChildResult } from "../materials/member.mjs";
+import { routeStageEdge } from "../materials/route.mjs";
 import { validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
 
@@ -290,10 +286,11 @@ function emptyDiscovery(state, kind) {
       ? "author.discover-books"
       : "author.discover-papers";
   return {
-    schema_version: `quasi.operation.${key}.receipt/0.1`,
-    key,
+    schema_version: "quasi.stage.receipt/0.2",
+    operation: key,
+    stage: "Search",
+    material_key: state.collectionKey,
     effect: "readonly",
-    status: "succeeded",
     attempt: 1,
     collection_key: state.collectionKey,
     kind,
@@ -301,7 +298,7 @@ function emptyDiscovery(state, kind) {
     topic: state.topic,
     count: 0,
     candidates: [],
-    failure: null,
+    terminal: { status: "complete", issue: null },
   };
 }
 
@@ -433,6 +430,135 @@ function stageFailure(receipt, fallback, operation, outcome = "known") {
     !!(issue && issue.retryable),
     (issue && issue.summary) || `${operation} did not complete`,
   );
+}
+
+function routeDiscovery(run, state) {
+  const invalid = (outcome) =>
+    terminal(
+      state,
+      "all_failed",
+      "failed",
+      "discovery",
+      operationFailure(
+        "author.discovery_receipt_invalid",
+        "author.discovery",
+        outcome,
+        false,
+        "discovery receipt did not prove the exact contract",
+      ),
+    );
+  return routeStageEdge(run, {
+    state,
+    stage: "discovery",
+    operationKey: run.receipt?.operation || "author.discovery",
+    unknown: () => invalid("unknown"),
+    mismatch: () => invalid("known"),
+    onBlocked: (receipt) => ({
+      terminal: terminal(
+        state,
+        "blocked",
+        "blocked",
+        "discovery",
+        stageFailure(
+          receipt,
+          "author.discovery_blocked",
+          receipt.operation,
+          "unknown",
+        ),
+      ),
+    }),
+    onNeedsInput: (receipt) => ({
+      terminal: terminal(
+        state,
+        "needs_input",
+        "needs_input",
+        "discovery",
+        stageFailure(
+          receipt,
+          "author.discovery_needs_input",
+          receipt.operation,
+        ),
+        { question: stageIssue(receipt).user_question },
+      ),
+    }),
+    onFailed: (receipt) => {
+      state.discoveryFailures.push(
+        stageFailure(
+          receipt,
+          "author.discovery_failed",
+          receipt.operation,
+        ),
+      );
+      return receipt;
+    },
+    onOk: (receipt) => receipt,
+  });
+}
+
+function routeMembership(run, state) {
+  const invalid = (outcome) =>
+    terminal(
+      state,
+      "blocked",
+      "blocked",
+      "membership",
+      operationFailure(
+        "author.membership_receipt_invalid",
+        "author.resolve-membership",
+        outcome,
+        false,
+        "membership receipt did not correlate exact requests",
+      ),
+    );
+  return routeStageEdge(run, {
+    state,
+    stage: "membership",
+    operationKey: "author.resolve-membership",
+    unknown: () => invalid("unknown"),
+    mismatch: () => invalid("known"),
+    onBlocked: (receipt) => ({
+      terminal: terminal(
+        state,
+        "blocked",
+        "blocked",
+        "membership",
+        stageFailure(
+          receipt,
+          "author.membership_blocked",
+          "author.resolve-membership",
+          "unknown",
+        ),
+      ),
+    }),
+    onNeedsInput: (receipt) => ({
+      terminal: terminal(
+        state,
+        "needs_input",
+        "needs_input",
+        "membership",
+        stageFailure(
+          receipt,
+          "author.membership_needs_input",
+          "author.resolve-membership",
+        ),
+        { question: stageIssue(receipt).user_question },
+      ),
+    }),
+    onFailed: (receipt) => ({
+      terminal: terminal(
+        state,
+        "all_failed",
+        "failed",
+        "membership",
+        stageFailure(
+          receipt,
+          "author.membership_failed",
+          "author.resolve-membership",
+        ),
+      ),
+    }),
+    onOk: (receipt) => receipt,
+  });
 }
 
 async function runSynthesis(
@@ -680,67 +806,51 @@ async function processAuthorStrict(
   const state = createState(name, meta);
   const discoveryTasks = [];
   if (state.maxBooks > 0)
-    discoveryTasks.push(() =>
-      runtime
-        .operate(
-          authorDiscoveryPrompt(
-            name,
-            state.full,
-            state.topic,
-            "book",
-            state.maxBooks,
-          ),
-          {
-            phase: "Search",
-            agentType: "quasi:discovery-agent",
-            label: `${name}:discover-books`,
-            schema: AUTHOR_DISCOVER_BOOKS_SCHEMA,
-          },
-          {
-            key: "author.discover-books",
-            effect: "readonly",
-            retry: "safe",
-            replay: "safe",
-            artifactRoles: [],
-            unknownFailureCode:
-              "author.readonly_outcome_unknown",
-            contract: AUTHOR_DISCOVER_BOOKS_CONTRACT,
-            context: { state, count: state.maxBooks },
-          },
-        )
-        .then((run) => ({ kind: "book", run })),
-    );
+    discoveryTasks.push(async () => {
+      const context = {
+        materialKey: state.collectionKey,
+        fullName: state.full,
+        topic: state.topic,
+        count: state.maxBooks,
+        replay: "safe",
+        unknownFailureCode: "author.readonly_outcome_unknown",
+      };
+      const spec = authorDiscoverBooks.spec(context);
+      const run = await runtime.operate(
+        authorDiscoverBooks.prompt(context),
+        {
+          phase: spec.stage,
+          agentType: spec.agentType,
+          label: `${name}:discover-books`,
+          schema: authorDiscoverBooks.schema(context),
+        },
+        spec,
+      );
+      return { kind: "book", run };
+    });
   if (state.maxPapers > 0)
-    discoveryTasks.push(() =>
-      runtime
-        .operate(
-          authorDiscoveryPrompt(
-            name,
-            state.full,
-            state.topic,
-            "paper",
-            state.maxPapers,
-          ),
-          {
-            phase: "Search",
-            agentType: "quasi:discovery-agent",
-            label: `${name}:discover-papers`,
-            schema: AUTHOR_DISCOVER_PAPERS_SCHEMA,
-          },
-          {
-            key: "author.discover-papers",
-            effect: "readonly",
-            retry: "safe",
-            replay: "safe",
-            artifactRoles: [],
-            unknownFailureCode:
-              "author.readonly_outcome_unknown",
-            contract: AUTHOR_DISCOVER_PAPERS_CONTRACT,
-            context: { state, count: state.maxPapers },
-          },
-        )
-        .then((run) => ({ kind: "paper", run })),
-    );
+    discoveryTasks.push(async () => {
+      const context = {
+        materialKey: state.collectionKey,
+        fullName: state.full,
+        topic: state.topic,
+        count: state.maxPapers,
+        replay: "safe",
+        unknownFailureCode: "author.readonly_outcome_unknown",
+      };
+      const spec = authorDiscoverPapers.spec(context);
+      const run = await runtime.operate(
+        authorDiscoverPapers.prompt(context),
+        {
+          phase: spec.stage,
+          agentType: spec.agentType,
+          label: `${name}:discover-papers`,
+          schema: authorDiscoverPapers.schema(context),
+        },
+        spec,
+      );
+      return { kind: "paper", run };
+    });
   const discoveries = await runtime.parallel(discoveryTasks);
   const bookRun =
     discoveries.find((item) => item.kind === "book")?.run ||
@@ -748,37 +858,15 @@ async function processAuthorStrict(
   const paperRun =
     discoveries.find((item) => item.kind === "paper")?.run ||
     { edge: "ok", receipt: emptyDiscovery(state, "paper") };
-  const bookDiscovery = bookRun.receipt;
-  const paperDiscovery = paperRun.receipt;
-  state.operations.push(bookDiscovery, paperDiscovery);
-  const invalid = [bookRun, paperRun].filter((run) =>
-    ["unknown", "mismatch"].includes(run.edge),
-  );
-  if (invalid.length) {
-    const failure = operationFailure(
-      "author.discovery_receipt_invalid",
-      "author.discovery",
-      invalid.some((run) => run.edge === "unknown")
-        ? "unknown"
-        : "known",
-      false,
-      "discovery receipt did not prove the exact contract",
-    );
-    return terminal(
-      state,
-      "all_failed",
-      "failed",
-      "discovery",
-      failure,
-    );
-  }
-  if (bookRun.edge === "failed")
-    state.discoveryFailures.push(bookDiscovery.failure);
-  if (paperRun.edge === "failed")
-    state.discoveryFailures.push(paperDiscovery.failure);
+  const bookRoute = routeDiscovery(bookRun, state);
+  const paperRoute = routeDiscovery(paperRun, state);
+  if (bookRoute.terminal || paperRoute.terminal)
+    return bookRoute.terminal || paperRoute.terminal;
+  const bookDiscovery = bookRoute.value;
+  const paperDiscovery = paperRoute.value;
   const candidates = [
-    ...bookDiscovery.candidates,
-    ...paperDiscovery.candidates,
+    ...(bookRun.edge === "ok" ? bookDiscovery.candidates : []),
+    ...(paperRun.edge === "ok" ? paperDiscovery.candidates : []),
   ];
   if (!candidates.length) {
     const failure = operationFailure(
@@ -803,64 +891,29 @@ async function processAuthorStrict(
     );
   }
 
+  const membershipContext = {
+    materialKey: state.collectionKey,
+    name,
+    output: state.output,
+    candidates,
+    replay: "safe",
+    unknownFailureCode: "author.readonly_outcome_unknown",
+  };
+  const membershipSpec =
+    authorResolveMembership.spec(membershipContext);
   const membershipRun = await runtime.operate(
-    authorResolveMembershipPrompt(
-      name,
-      state.output,
-      candidates,
-    ),
+    authorResolveMembership.prompt(membershipContext),
     {
-      phase: "Search",
-      agentType: "general-purpose",
+      phase: membershipSpec.stage,
+      agentType: membershipSpec.agentType,
       label: `${name}:resolve-membership`,
-      schema: AUTHOR_RESOLVE_MEMBERSHIP_SCHEMA,
+      schema: authorResolveMembership.schema(membershipContext),
     },
-    {
-      key: "author.resolve-membership",
-      effect: "readonly",
-      retry: "safe",
-      replay: "safe",
-      artifactRoles: [],
-      unknownFailureCode: "author.readonly_outcome_unknown",
-      contract: AUTHOR_RESOLVE_MEMBERSHIP_CONTRACT,
-      context: {
-        state,
-        requests: candidates.map(({ kind, slug }) => ({
-          kind,
-          slug,
-        })),
-      },
-    },
+    membershipSpec,
   );
-  const membership = membershipRun.receipt;
-  state.operations.push(membership);
-  if (
-    membershipRun.edge === "unknown" ||
-    membershipRun.edge === "mismatch"
-  ) {
-    const failure = operationFailure(
-      "author.membership_receipt_invalid",
-      "author.resolve-membership",
-      membershipRun.edge === "unknown" ? "unknown" : "known",
-      false,
-      "membership receipt did not correlate exact requests",
-    );
-    return terminal(
-      state,
-      "blocked",
-      "blocked",
-      "membership",
-      failure,
-    );
-  }
-  if (membershipRun.edge !== "ok")
-    return terminal(
-      state,
-      "all_failed",
-      "failed",
-      "membership",
-      membership.failure,
-    );
+  const membershipRoute = routeMembership(membershipRun, state);
+  if (membershipRoute.terminal) return membershipRoute.terminal;
+  const membership = membershipRoute.value;
   state.outputExists = membership.output_exists;
   const grouped = buildDemands(candidates, membership.resolved);
   if (!grouped.ok)

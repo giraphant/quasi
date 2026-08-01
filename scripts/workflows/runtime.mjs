@@ -86,9 +86,9 @@ const matchesType = (value, type) => {
   }
 };
 
-// Schema validator used by foreign-receipt admission and pre-stage legacy
-// operations, where Claude's terminal contract is not present. Covers the closed
-// keyword subset the receipt schemas are allowed to use.
+// Schema validator used by foreign-receipt admission and the rolling Topic
+// loop, the sole remaining pre-stage legacy tenant where Claude's terminal
+// contract is not present. Covers the closed keyword subset its schemas use.
 export function validateSchema(schema, value) {
   if (!schema || typeof schema !== "object") return true;
   if (
@@ -226,8 +226,8 @@ export function classifyReceipt(
   if (contract.stage === true) {
     if (!readableTerminal(receipt)) return { edge: "unknown", receipt };
   } else if (!validateSchema(hostSchema || contract.schema, receipt)) {
-    // Legacy operation receipts have not yet migrated to a host-enforced stage
-    // terminal. Keep their shrinking compatibility boundary fail-closed.
+    // Only the rolling Topic loop remains outside the host-enforced Stage
+    // terminal. Keep that named compatibility island fail-closed.
     return { edge: "mismatch", receipt };
   }
   if (contract.echo && contract.echo(receipt, context) !== true)

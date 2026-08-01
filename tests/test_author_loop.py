@@ -400,10 +400,11 @@ def discovery_receipt(
 ) -> dict[str, Any]:
     key = f"author.discover-{kind}s"
     return {
-        "schema_version": f"quasi.operation.{key}.receipt/0.1",
-        "key": key,
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": key,
+        "stage": "Search",
+        "material_key": f"author:{name}",
         "effect": "readonly",
-        "status": "succeeded",
         "attempt": 1,
         "collection_key": f"author:{name}",
         "kind": kind,
@@ -411,7 +412,7 @@ def discovery_receipt(
         "topic": topic,
         "count": len(candidates) if count is None else count,
         "candidates": candidates,
-        "failure": None,
+        "terminal": {"status": "complete", "issue": None},
     }
 
 
@@ -435,10 +436,11 @@ def resolver_receipt(
             for demand in demands
         ]
     return {
-        "schema_version": ("quasi.operation.author.resolve-membership.receipt/0.1"),
-        "key": "author.resolve-membership",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "author.resolve-membership",
+        "stage": "Search",
+        "material_key": f"author:{name}",
         "effect": "readonly",
-        "status": "succeeded",
         "attempt": 1,
         "collection_key": f"author:{name}",
         "output_path": f"vault/authors/{name}.md",
@@ -447,7 +449,7 @@ def resolver_receipt(
             {"kind": demand["kind"], "slug": demand["slug"]} for demand in demands
         ],
         "resolved": resolved,
-        "failure": None,
+        "terminal": {"status": "complete", "issue": None},
     }
 
 
