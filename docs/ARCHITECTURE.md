@@ -1,6 +1,6 @@
 # Quasi Architecture
 
-date: 2026-07-30
+date: 2026-08-01
 status: current contract
 
 Quasi is optimized for agent maintenance: keep a flat monorepo, keep each
@@ -38,7 +38,9 @@ separate:
 | `quasi-download` | `book candidates|fetch`; `paper fetch|diagnose`; `accept` |
 | `quasi-extract` | `epub|text|ocr|split` text extraction and normalisation (`ocr` default engine DS OCR2, `--engine dsocr2\|tesseract`, `--layout` replacement text layer) |
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
-| `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write`; `talk compress-media` |
+| `quasi-status` | read-only disk oracle: `--kind paper|book|talk --slug SLUG --json [--identity]`; `--scan --json` |
+| `quasi-transcribe` | `run|classify|silent` talk transcript engines |
+| `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write`; `talk compress-media`; `vault resolve` |
 | `quasi-doctor` | runtime healthcheck: venv sync, core Python deps, optional external tools by profile |
 | `quasi-translate` | configured `immersive|pdf2zh` PDF translation; shared alternating-page, TOC, ToUnicode, and coverage contract |
 
@@ -106,6 +108,17 @@ so unrelated subagents retain Claude Code's default row.
 | `transcribe-agent` | `quasi-transcribe` capabilities → Talk Prepare Stage |
 | `translate-agent` | `quasi-translate` + optional layout OCR → Translation Prepare Stage |
 
+### Write ownership
+
+- `metadata-agent`, `discovery-agent`, and `localisation-agent` return JSON and do not write files.
+- `download-agent` reconciles or accepts one exact Book/Paper source through `quasi-download`; it returns that material's direct Acquire receipt, including a standard `needs_input` terminal for a Book year gate, and does not own caller manifests. A failed download preserves `failure_reason` and per-source `attempts` in its receipt.
+- `extract-agent` owns Paper/Book Prepare judgement and local recovery over caller-named refs. It invokes deterministic `quasi-extract` transactions; those CLI transactions own chapter files and `processing/chapters/{slug}/manifest.json`.
+- `analyse-agent`, `synthesis-agent`, `proofread-agent`, and `citecheck-agent` write only the exact product path assigned by the caller.
+- `steer-agent` owns `vault/topics/{slug}/02-outline.md` (the topic research outline; users may hand-edit it between runs) and returns sub-question-targeted candidates; it writes nothing else.
+- `webcard-agent` turns one topic `web_task` into one evidence card at the caller-named `vault/topics/{slug}/cards/{card-slug}.md`; it writes nothing else, and returns `status: empty` rather than writing a card it could not verify. Cards travel on their own `cards` channel (outline `subquestions[].cards`, synth `card_paths`) and never enter the `book|paper|talk` corpus table.
+- `audit-agent` runs `quasi-audit --path`; it may apply local mechanical fixes but does not own workflow state.
+- `transcribe-agent` and `translate-agent` own Talk and Translation Prepare with the same terminal shape, preserving media reconciliation and fenced-generation publication contracts.
+
 Deprecated agents live under `deprecated/agents/` and must not be dispatched by
 active skills.
 
@@ -124,6 +137,23 @@ owns interactive proofreading, citation review, and bibliography closure.
 Journal has a schema but no active or archived workflow; its future entry will
 be a thin collection loop over Paper receipts.
 
+For a single Book or Paper request, `collect-material` begins from user-provided
+hints and current disk observations. One `material.search` Stage Unit gives
+`metadata-agent` both search and vault-resolution capabilities, so the
+specialist establishes the canonical identity and exact existing owner in one
+investigation; Search owns author order, year, identifiers, venue/publisher,
+access URLs, and canonical slug. Author/Topic candidate finding uses
+`discovery-agent`; Chinese-edition matching uses `localisation-agent`.
+
+For 2–32 top-level Books/Papers, the skill preserves input order, normalises
+and coalesces duplicate identities before any writer, and drives independent
+items with bounded host-level concurrency. Each Workflow call still owns
+exactly one stage for one material.
+
+Topic synthesis produces only `00-overview.md` and `01-resources.md` beside the
+user-editable `02-outline.md`; per-subquestion dossier pages are retired as a
+product decision.
+
 ## Material Loops
 
 Concrete materials are thin stage pipelines, not product categories layered
@@ -135,13 +165,37 @@ Agents own professional judgement; bins own deterministic effects; `sources/`,
 
 Design history (RFCs, campaign plans, review records) lives in git history
 and `docs/CHANGELOG.md`; this file plus `CLAUDE.md`,
-`docs/SKILL_ORCHESTRATION.md`, and `docs/GRAPH_COLLABORATION.md` are the
-only maintained maintainer documents.
+`docs/PDF_PIPELINE.md`, `docs/SKILL_ORCHESTRATION.md`, and
+`docs/GRAPH_COLLABORATION.md` are the only maintained maintainer documents.
 
 Active skill writing follows `docs/SKILL_ORCHESTRATION.md`: Skill owns user
 intent and decisions, Workflow owns material state and phase routing, Agent owns
 specialist judgement, and CLI owns deterministic writes. Active `SKILL.md`
 files contain runtime instructions, not links back to maintainer docs.
+
+## Configure options and env flow
+
+Authoritative sources are `.claude-plugin/plugin.json#userConfig` and
+`scripts/hooks/inject-userconfig.py::_KEYS`; the mapping below documents the
+current flow from Configure field to script consumer.
+
+| Configure field | Hook env input | Script env output | Main consumer |
+| --- | --- | --- | --- |
+| `anna_donator_key` | `CLAUDE_PLUGIN_OPTION_ANNA_DONATOR_KEY` | `QUASI_ANNA_DONATOR_KEY` | `scripts/download/aa.py` |
+| `cookiecloud_server` | `CLAUDE_PLUGIN_OPTION_COOKIECLOUD_SERVER` | `QUASI_COOKIECLOUD_SERVER` | `scripts/download/cookiecloud.py` |
+| `cookiecloud_uuid` | `CLAUDE_PLUGIN_OPTION_COOKIECLOUD_UUID` | `QUASI_COOKIECLOUD_UUID` | `scripts/download/cookiecloud.py` |
+| `cookiecloud_password` | `CLAUDE_PLUGIN_OPTION_COOKIECLOUD_PASSWORD` | `QUASI_COOKIECLOUD_PASSWORD` | `scripts/download/cookiecloud.py` |
+| `cookiecloud_ezproxy_domain` | `CLAUDE_PLUGIN_OPTION_COOKIECLOUD_EZPROXY_DOMAIN` | `QUASI_COOKIECLOUD_EZPROXY_DOMAIN` | `scripts/download/cookiecloud.py` |
+| `cookiecloud_ezproxy_base_url` | `CLAUDE_PLUGIN_OPTION_COOKIECLOUD_EZPROXY_BASE_URL` | `QUASI_COOKIECLOUD_EZPROXY_BASE_URL` | `scripts/download/cookiecloud.py` |
+| `immersive_auth_key` | `CLAUDE_PLUGIN_OPTION_IMMERSIVE_AUTH_KEY` | `QUASI_IMMERSIVE_AUTH_KEY` | `scripts/translate/immersive_translate.py` |
+| `translate_backend` | `CLAUDE_PLUGIN_OPTION_TRANSLATE_BACKEND` | `QUASI_TRANSLATE_BACKEND` | `bin/quasi-translate` |
+| `translate_base_url` | `CLAUDE_PLUGIN_OPTION_TRANSLATE_BASE_URL` | `QUASI_TRANSLATE_BASE_URL` | `scripts/translate/pdf2zh_translate.py` |
+| `translate_api_key` | `CLAUDE_PLUGIN_OPTION_TRANSLATE_API_KEY` | `QUASI_TRANSLATE_API_KEY` | `scripts/translate/pdf2zh_translate.py` |
+| `translate_model` | `CLAUDE_PLUGIN_OPTION_TRANSLATE_MODEL` | `QUASI_TRANSLATE_MODEL` | `scripts/translate/pdf2zh_translate.py` |
+| `kagi_session_token` | `CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN` | `QUASI_KAGI_SESSION_TOKEN` | `scripts/search/search.py`, `scripts/search/sources/douban_cn.py`, `scripts/download/download.py` |
+| `soniox_api_key` | `CLAUDE_PLUGIN_OPTION_SONIOX_API_KEY` | `QUASI_SONIOX_API_KEY` | `scripts/transcribe/engines.py` |
+
+Every Python-facing `quasi-*` shim sources `scripts/load-keychain-env.sh`, which fills missing `QUASI_*` values at runtime from the existing encrypted `Claude Code-credentials` Keychain record. On macOS the PreToolUse hook uses the same `--keychain-exports` helper for coordinator commands, including Claude-hosted commands whose `CLAUDE_PLUGIN_OPTION_*` values are visible only to the hook. Command argv contains only helper paths, never secret values; explicit `QUASI_*` values take precedence because the helper fills only missing keys. Non-macOS currently keeps the older direct-export hook fallback because it has no shared Keychain provider.
 
 ## Guardrails
 
