@@ -88,28 +88,6 @@ const auditStageContract = ({ schema, complete, failed = () => true }) => {
   };
 };
 
-export const paperAuditStageSchema = ({
-  materialKey,
-  target,
-  pass,
-}) =>
-  auditStageSchema({
-    operation: "paper.audit",
-    materialKey,
-    target,
-    pass,
-    artifactRoles: ["canonical"],
-  });
-
-export const PAPER_AUDIT_STAGE_CONTRACT = auditStageContract({
-  schema: paperAuditStageSchema({
-    materialKey: "paper:placeholder",
-    target: "vault/papers/placeholder.md",
-    pass: 1,
-  }),
-  complete: completeAudit,
-});
-
 const bookAuditReported = (receipt) =>
   receipt.mutated_paths.every((path) =>
     validText(path, 1, 2048),
@@ -207,21 +185,6 @@ export const TALK_AUDIT_STAGE_CONTRACT = auditStageContract({
     legacyAuditReported(receipt) && completeAudit(receipt),
   failed: closedAuditFailure,
 });
-
-export function paperAuditPrompt(slug, pass) {
-  const output = `vault/papers/${slug}.md`;
-  const request = {
-    schema_version: "quasi.operation.paper.audit.request/0.2",
-    operation: "paper.audit",
-    stage: "Audit",
-    material_key: `paper:${slug}`,
-    effect: "writer",
-    pass,
-    mode: pass === 1 ? "audit" : "re-audit",
-    target: { role: "canonical", path: output },
-  };
-  return JSON.stringify(request, null, 2);
-}
 
 export function bookAuditPrompt(slug, pass) {
   const scope = `vault/books/${slug}`;

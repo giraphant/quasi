@@ -9,12 +9,14 @@ import {
 } from "../operations/book-year-evidence.mjs";
 import {
   bookAcquireStageSchema,
-  paperAcquireStageSchema,
 } from "../operations/acquire.mjs";
 import {
   bookPrepareStageSchema,
-  paperPrepareStageSchema,
 } from "../operations/extract.mjs";
+import {
+  paperAcquire,
+  paperPrepare,
+} from "../operations/rows/paper.mjs";
 
 export const MATERIAL_RECEIPT_VERSION =
   "quasi.material-loop.receipt/0.2";
@@ -254,9 +256,8 @@ function stageGateBinding(receipt) {
     ? bookAcquireAllowedSources(operation, receipt.id)
     : null;
   const schema = paperAcquire
-    ? paperAcquireStageSchema({
+    ? paperAcquire.schema({
         materialKey: receipt.material_key,
-        slug: receipt.id,
         output: `sources/${receipt.id}.pdf`,
         doi: operation.doi,
       })
@@ -268,7 +269,7 @@ function stageGateBinding(receipt) {
           yearDecision: null,
         })
       : receipt.kind === "paper"
-        ? paperPrepareStageSchema({
+        ? paperPrepare.schema({
             materialKey: receipt.material_key,
             source: `sources/${receipt.id}.pdf`,
             normalized: `processing/papers/${receipt.id}/source.txt`,

@@ -1,23 +1,9 @@
 import {
-  PAPER_ACQUIRE_STAGE_CONTRACT,
-  paperAcquirePrompt,
-  paperAcquireStageSchema,
-} from "../operations/acquire.mjs";
-import {
-  PAPER_ANALYSE_STAGE_CONTRACT,
-  paperAnalyseOperationPrompt,
-  paperAnalyseStageSchema,
-} from "../operations/analyse.mjs";
-import {
-  PAPER_AUDIT_STAGE_CONTRACT,
-  paperAuditPrompt,
-  paperAuditStageSchema,
-} from "../operations/audit.mjs";
-import {
-  PAPER_PREPARE_STAGE_CONTRACT,
-  paperPrepareStagePrompt,
-  paperPrepareStageSchema,
-} from "../operations/extract.mjs";
+  paperAcquire,
+  paperAnalyse,
+  paperAudit,
+  paperPrepare,
+} from "../operations/rows/paper.mjs";
 import { optionalText, validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
 import { routeStageEdge } from "./route.mjs";
@@ -327,41 +313,24 @@ function auditFailure(receipt, outcome = "known") {
 }
 
 async function prepare(runtime, state) {
-  const schema = paperPrepareStageSchema({
+  const context = {
     materialKey: state.materialKey,
     source: state.source,
     normalized: state.sourceText,
     recoverySource: state.ocrSource,
     recoveryText: state.ocrText,
-  });
+    artifactRoles: ["normalized_text", "recovery_source"],
+  };
+  const spec = paperPrepare.spec(context);
   const run = await runtime.operate(
-    paperPrepareStagePrompt({
-      materialKey: state.materialKey,
-      source: state.source,
-      normalized: state.sourceText,
-      recoverySource: state.ocrSource,
-      recoveryText: state.ocrText,
-    }),
+    paperPrepare.prompt(context),
     {
-      phase: "Prepare",
-      agentType: "quasi:extract-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label: `${state.slug}:prepare`,
-      schema,
+      schema: paperPrepare.schema(context),
     },
-    {
-      key: "paper.prepare",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "blocked",
-      artifactRoles: ["normalized_text", "recovery_source"],
-      unknownFailureCode: "material.writer_outcome_unknown",
-      contract: PAPER_PREPARE_STAGE_CONTRACT,
-      context: {
-        normalized: state.sourceText,
-        recoverySource: state.ocrSource,
-        recoveryText: state.ocrText,
-      },
-    },
+    spec,
   );
   const routed = routePaperStage(
     run,
@@ -397,34 +366,28 @@ async function analyse(
   mode = "create",
   diagnostics = [],
 ) {
+  const context = {
+    materialKey: state.materialKey,
+    slug: state.slug,
+    meta,
+    input,
+    output: state.canonical,
+    mode,
+    diagnostics,
+    replay: mode === "repair" ? "reconciled" : "blocked",
+    artifactRoles: ["canonical"],
+    unknownFailureCode: "paper.writer_outcome_unknown",
+  };
+  const spec = paperAnalyse.spec(context);
   const analysis = await runtime.operate(
-    paperAnalyseOperationPrompt(
-      state.slug,
-      meta,
-      input,
-      mode,
-      diagnostics,
-    ),
+    paperAnalyse.prompt(context),
     {
-      phase: "Analyse",
-      agentType: "quasi:analyse-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label: `${state.slug}:analyse`,
-      schema: paperAnalyseStageSchema({
-        materialKey: state.materialKey,
-        mode,
-        input,
-        output: state.canonical,
-      }),
+      schema: paperAnalyse.schema(context),
     },
-    {
-      key: "paper.analyse",
-      effect: "writer",
-      retry: "forbidden",
-      replay: mode === "repair" ? "reconciled" : "blocked",
-      artifactRoles: ["canonical"],
-      contract: PAPER_ANALYSE_STAGE_CONTRACT,
-      context: { mode, input, output: state.canonical },
-    },
+    spec,
   );
   const routed = routePaperStage(
     analysis,
@@ -468,27 +431,25 @@ async function analyse(
 }
 
 async function audit(runtime, state, pass) {
+  const context = {
+    materialKey: state.materialKey,
+    slug: state.slug,
+    target: state.canonical,
+    pass,
+    replay: "reconciled",
+    artifactRoles: ["canonical"],
+    unknownFailureCode: "paper.writer_outcome_unknown",
+  };
+  const spec = paperAudit.spec(context);
   const auditRun = await runtime.operate(
-    paperAuditPrompt(state.slug, pass),
+    paperAudit.prompt(context),
     {
-      phase: "Audit",
-      agentType: "quasi:audit-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label: `${state.slug}:audit`,
-      schema: paperAuditStageSchema({
-        materialKey: state.materialKey,
-        target: state.canonical,
-        pass,
-      }),
+      schema: paperAudit.schema(context),
     },
-    {
-      key: "paper.audit",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "reconciled",
-      artifactRoles: ["canonical"],
-      contract: PAPER_AUDIT_STAGE_CONTRACT,
-      context: { target: state.canonical, pass },
-    },
+    spec,
   );
   const routed = routePaperStage(
     auditRun,
@@ -528,29 +489,24 @@ async function processValidatedPaper(runtime, slug, meta) {
   phase("Acquire");
   const state = createPaperState(slug);
 
+  const acquireContext = {
+    materialKey: state.materialKey,
+    slug,
+    meta,
+    output: state.source,
+    doi: meta.doi,
+    artifactRoles: ["source"],
+  };
+  const acquireSpec = paperAcquire.spec(acquireContext);
   const download = await runtime.operate(
-    paperAcquirePrompt(slug, meta),
+    paperAcquire.prompt(acquireContext),
     {
-      phase: "Acquire",
-      agentType: "quasi:download-agent",
+      phase: acquireSpec.stage,
+      agentType: acquireSpec.agentType,
       label: `${slug}:acquire`,
-      schema: paperAcquireStageSchema({
-        materialKey: state.materialKey,
-        slug,
-        output: state.source,
-        doi: meta.doi,
-      }),
+      schema: paperAcquire.schema(acquireContext),
     },
-    {
-      key: "paper.acquire",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "blocked",
-      artifactRoles: ["source"],
-      unknownFailureCode: "material.writer_outcome_unknown",
-      contract: PAPER_ACQUIRE_STAGE_CONTRACT,
-      context: { output: state.source },
-    },
+    acquireSpec,
   );
   const routed = routePaperStage(
     download,

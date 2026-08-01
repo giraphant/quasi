@@ -18,10 +18,9 @@ import {
 } from "../operations/acquire.mjs";
 import {
   BOOK_AUDIT_STAGE_CONTRACT,
-  PAPER_AUDIT_STAGE_CONTRACT,
   bookAuditStageSchema,
-  paperAuditStageSchema,
 } from "../operations/audit.mjs";
+import { paperAudit } from "../operations/rows/paper.mjs";
 import {
   applyBookYearDecision,
   ingressUserGate,
@@ -112,7 +111,7 @@ function validPaperAudit(audit, materialKey, expectedPath) {
   return !!(
     audit &&
     validateSchema(
-      paperAuditStageSchema({
+      paperAudit.schema({
         materialKey,
         target: expectedPath,
         pass: audit.pass,
@@ -120,7 +119,7 @@ function validPaperAudit(audit, materialKey, expectedPath) {
       audit,
     ) &&
     audit.terminal.status === "complete" &&
-    PAPER_AUDIT_STAGE_CONTRACT.statuses.complete(audit) === true
+    paperAudit.contract.statuses.complete(audit) === true
   );
 }
 

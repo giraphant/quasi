@@ -1,6 +1,5 @@
 import {
   CHAPTER_ARTIFACT_CONTRACT,
-  PAPER_ARTIFACT_CONTRACT,
   TALK_ARTIFACT_CONTRACT,
 } from "../artifact-contracts/generated.mjs";
 import {
@@ -54,40 +53,6 @@ const terminalActionPayloads = (mode, writeState = false) => ({
         : {}),
     },
   },
-});
-
-export const paperAnalyseStageSchema = ({
-  materialKey,
-  mode,
-  input,
-  output,
-}) =>
-  stageReceiptSchema({
-    operation: "paper.analyse",
-    stage: "Analyse",
-    materialKey,
-    effect: "writer",
-    required: ["input_path", "output_path", "artifact_roles"],
-    properties: {
-      input_path: { const: input },
-      output_path: { const: output },
-      artifact_roles: analysisArtifactRoles("canonical"),
-    },
-    terminalPayloads: terminalActionPayloads(mode),
-  });
-
-export const PAPER_ANALYSE_STAGE_CONTRACT = stageContract({
-  schema: paperAnalyseStageSchema({
-    materialKey: "paper:placeholder",
-    mode: "create",
-    input: "processing/papers/placeholder/source.txt",
-    output: "vault/papers/placeholder.md",
-  }),
-  complete: (receipt, context) =>
-    [
-      ...(context.mode === "create" ? ["create"] : ["repair"]),
-      "reconciled",
-    ].includes(receipt.terminal.action),
 });
 
 export const chapterAnalyseStageSchema = ({
@@ -183,55 +148,6 @@ export const TALK_EVIDENCE_RULES = [
   "对照时间戳、人名、同音词和专业术语；优先采用多引擎一致且符合实际语境的内容",
   "引文、人物、著作和时间脉络必须能在 transcript evidence 中定位",
 ];
-
-export function paperAnalyseOperationPrompt(
-  slug,
-  meta,
-  input,
-  mode = "create",
-  diagnostics = [],
-) {
-  const output = `vault/papers/${slug}.md`;
-  const repair = mode === "repair";
-  const request = {
-    schema_version: "quasi.operation.paper.analyse.request/0.1",
-    operation: "paper.analyse",
-    stage: "Analyse",
-    material_key: `paper:${slug}`,
-    input: {
-      role: "normalized_text",
-      path: input,
-    },
-    output: {
-      role: "canonical",
-      path: output,
-    },
-    identity: {
-      title: meta.title,
-      authors: meta.authors,
-      year: meta.year,
-      doi: meta.doi || null,
-      journal: meta.journal,
-      confidence:
-        meta.confidence === "verified" ? "verified" : "provided",
-    },
-    artifact_contract: PAPER_ARTIFACT_CONTRACT,
-    frontmatter_seed: {
-      type: "paper",
-      title: meta.title,
-      authors: meta.authors,
-      year: meta.year,
-      journal: meta.journal,
-      doi: meta.doi || null,
-    },
-    mode,
-    overwrite: repair,
-    repair_diagnostics: repair ? diagnostics : [],
-  };
-  return `Execute exactly one paper.analyse operation using this self-contained JSON request.
-Do not reinterpret it as another operation and do not read project instruction files.
-${JSON.stringify(request, null, 2)}`;
-}
 
 export function chapterAnalyseOperationPrompt(
   bookSlug,
