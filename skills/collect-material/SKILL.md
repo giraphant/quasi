@@ -181,9 +181,10 @@ Author
 
 8. Author 的 `discover-books` 与 `discover-papers` 可并行运行（count 分别来自 maxBooks、
    maxPapers），然后以全部 candidates 调用 `resolve-membership`。按 identity 去重后由主线程
-   逐成员推进其单材料 loop；每个成员完成后运行
-   `quasi-status --kind K --slug S --json --identity`，只有 disk identity、canonical path 和该
-   成员的 clean Audit receipt 都一致才 admission。把 admitted members 作为
+   逐成员推进其单材料 loop；admission 一律以
+   `quasi-status --kind K --slug S --json --identity` 的 disk identity 与 canonical path 为准。
+   本轮处理过的成员另需其 loop 的 clean Audit receipt；本轮之前已完成的成员直接视为已 audit
+   （审计漂移由维护者的周期性全库 audit 兜底）。把 admitted members 作为
    `{material_key,kind,id,path,title}` 传给 `stage:"synthesise"`；随后 Audit，必要时按第 6 步
    repair。Author page 始终是 `vault/authors/{slug}.md`。
 
