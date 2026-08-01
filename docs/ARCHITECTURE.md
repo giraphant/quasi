@@ -133,11 +133,10 @@ terminates through typed `complete|needs_input|blocked|failed` edges. Stage Unit
 Agents own professional judgement; bins own deterministic effects; `sources/`,
 `processing/`, and `vault/` are the persisted result space.
 
-The normative v0.1 contract and Paper reference implementation are documented in
-`docs/material-loop-protocol.md`. The accepted business hierarchy and rollout
-order are in `docs/workflow-universe-rfc.md`; operation ownership and Agent/Bin
-selection rules are in `docs/operation-layer-design.md`; the implemented source
-layout and rollout gates are in `docs/workflow-modularization-master.md`.
+Design history (RFCs, campaign plans, review records) lives in git history
+and `docs/CHANGELOG.md`; this file plus `CLAUDE.md`,
+`docs/SKILL_ORCHESTRATION.md`, and `docs/GRAPH_COLLABORATION.md` are the
+only maintained maintainer documents.
 
 Active skill writing follows `docs/SKILL_ORCHESTRATION.md`: Skill owns user
 intent and decisions, Workflow owns material state and phase routing, Agent owns

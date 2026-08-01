@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.57.5** (2026-08-01): **docs 瘦身：删除九项 0.50–0.55 战役期的陈年设计文档，维护面收敛到四份现行文件。**
+  - 删除 process-material-design、workflow-universe-rfc、workflow-modularization-master、operation-layer-design、material-loop-protocol、topic-steering-design、DOUBAN_LOCALISATION_HANDOFF 以及 reviews/、superpowers/ 两个目录（约 2100 行）——全部已落地或过时，git 历史完整保留，不留向下兼容。现行维护文档只剩 CLAUDE.md（=AGENTS.md）、docs/ARCHITECTURE.md、docs/SKILL_ORCHESTRATION.md、docs/GRAPH_COLLABORATION.md，外加 CHANGELOG 作历史。ARCHITECTURE 文末的设计文档索引段替换为一句指向 git 历史的说明；`scripts/schemas/topic.py` docstring 里最后一处失效引用一并清除。
+  - README 的 CLI 块与 CLAUDE.md 的 Active CLI surface 对齐（补 `quasi-status` 两行与 `quasi-helpers vault resolve`）。CLAUDE.md 本体经核查全部仍承重（QUA_PROJECT_ROOT 仍被 core 使用；OCR/翻译长段是防止重犯的新鲜教训），本轮不动。首个 worker 因配方自相矛盾（"零残留"与"schemas 不许动"冲突于 topic.py 的一行注释）如实报 failed 而不越界，配方错误由后续微任务修正——两次修改均由 Codex worker 执行。
+
 - **0.57.4** (2026-08-01): **talk.md 时间脉络恢复反引号时间戳的字面模板，时间轴重新可点击。**
   - 实测回归：新流程产出的 talk 时间脉络是裸 `[00:11]`，旧 talk 全是 `` `[00:00]` `` 反引号包裹——用户查看器的播放定位靠反引号代码格式识别，裸格式点不了。根因在 skill→schema 迁移：老 `<talk_mode>`（git 8ebe5b0）给的是转义反引号的字面行模板，迁进 `body.py` 后 description 只剩"带起始 `[mm:ss]`"，弱模型把反引号读成描述自身的排版而不是输出要求。transcript、silent 模板、schema 测试样例始终是反引号方言，唯独这一处合同投影丢了。
   - 修复：description 改为字面行模板「- `[mm:ss]` 主题 — 概括」并明说反引号必须按字面保留、超一小时用 `[h:mm:ss]`；重建 workflows 生成物；新增 registry 测试钉住模板不再在迁移中丢失。修改由 Codex worker 按配方执行。
