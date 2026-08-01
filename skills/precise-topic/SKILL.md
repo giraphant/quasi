@@ -16,13 +16,10 @@ description: Use when the user wants to define and research a precise topic thro
 - `slug`:主题的稳定 kebab-case 标识。
 - `meta.desc`:主题问题或范围说明。
 - `meta.maxRounds`:最多滚动轮数,可选;显式 `0` 选择只消费既有
-  book/paper/talk canonical 的严格 recall-only 路径。
-- `meta.strict`:迁移期严格路径开关。只有显式 `true` 且
-  `maxRounds=1,maxCardsPerRound=0` 时,图额外执行一轮有界 Book/Paper
-  发现并把候选交给共享 Material Loop;该路径仍不启动 cards 或 dossiers。
+  book/paper/talk canonical 的 recall-only 路径。
 - `meta.maxPerRound`:每轮最大候选数,可选。
+- `meta.maxCardsPerRound`:每轮最大证据卡任务数,可选;只是资源上限,不切换路径。
 - `meta.minItems`:允许最终综合所需的最小语料数,可选。
-- `meta.allowAuthors`:是否让作者候选进入扩展,可选。
 - `meta.seeds`:用户补充的检索词,仅在人工卡点后设置。
 - `meta.final`:用户决定不再补种子而直接收口时设为 `true`。
 
@@ -36,7 +33,7 @@ description: Use when the user wants to define and research a precise topic thro
 - `needs_seeds` 必须回到用户,不得把过薄语料静默综合成完成。
 - 图返回 `research_receipt` 时它是权威终态;`blocked` 表示 writer 结果未知,
   只能从 `topic.reconcile` 观察现有产物,不得自动重投整张图或该 writer。
-- 严格一轮路径只把 `material_receipt.status=complete` 且 canonical 与最终
+- 每轮只把 `material_receipt.status=complete` 且 canonical 与最终
   clean audit 均逐字匹配的 Book/Paper 接入 Topic 语料。失败或 blocked 的
   子材料保留在 `research_receipt.material_results`,不得凭 legacy `ok` 或文件存在接入。
 - topic 页面不复制 book/paper/talk 分析正文;它们通过 wikilink 进入语料。`cards/` 是独立证据通道,不算 vault 分析件。
@@ -67,13 +64,11 @@ description: Use when the user wants to define and research a precise topic thro
 ├─ 共享 graph(kind=topic)
 │  ├─ vault recall:已分析的 book/paper/talk
 │  ├─ steer:读取/更新 outline,提出定向候选与 web tasks
-│  ├─ strict one-round:每个候选先经 quasi search 得到权威 identity,
+│  ├─ bounded rounds:每个候选先经 quasi search 得到权威 identity,
 │  │  再递归走共享 paper/book router 并只接纳 exact complete MaterialReceipt
-│  ├─ legacy router:未迁移的多轮候选继续走现有 paper/book 节点
 │  ├─ webcard:独立产出可核验的一手证据卡
-│  └─ synthesis + audit:写主题脊柱与毕业子问题专章
+│  └─ synthesis + audit:写 overview、resources 和可手改 outline
 ├─ needs_seeds → 用户补检索词或选择 final=true → 重投
-├─ legacy synth_failed → 兼容路径自动原样重投一次
 ├─ typed research_receipt blocked/failed → 不重投 writer,fail closed
 ├─ 非 ok / audit_escalated → fail closed
 ├─ LOCALISE(result.book_slugs)
@@ -110,18 +105,12 @@ if result.status == "needs_seeds":
     decision = AskUserQuestion(
         present={"已收语料": result.collected,
                  "已收证据卡": result.cards,
+                 "用户问题": result.get("question"),
                  "建议检索词": result.suggested_queries})
     wf_args["meta"] |= (
         {"seeds": decision.seeds} if decision.seeds else {"final": True}
     )
     result = run_graph(wf_args)
-
-# 仅未迁移的 legacy Topic 仍保留一次整图兼容重投。严格路径的 writer
-# 结果由 research_receipt 证明;未知结果不得重放。
-if result.status == "synth_failed" and not result.get("research_receipt"):
-    result = run_graph(wf_args)
-    if result.status == "synth_failed":
-        report(f"synth 连续两次失败:{result.get('notes')};交人工"); return
 
 if result.status == "audit_escalated":
     report(f"audit 仍 escalated:{result.escalated};交人工"); return
@@ -149,8 +138,6 @@ report(f"主题完成:{result.items} 条语料 / {result.rounds} 轮滚雪球;"
        + (f";另有 {result.cards} 张圈外证据卡" if result.get("cards") else "")
        + (f";其中 {result.recalled} 条来自库内召回" if result.get("recalled") else "")
        + (f";{result.failures} 项获取失败" if result.failures else "")
-       + (f";专章生成失败:{', '.join(result.dossiers_failed)},重跑一次即补"
-          if result.get("dossiers_failed") else "")
        + (";掌舵判饱和,已收口" if result.get("saturated") else
           ("" if result.dead_end else ";候选未枯竭,可再跑一次继续扩充")))
 
@@ -179,7 +166,7 @@ Bash(f"/opt/homebrew/bin/marple-cli open '{product}' "
 | 材料节点 | 图内 vault resolve + 子 MaterialReceipt | 只有 exact complete + clean audit 的 canonical 进入语料;已存在材料仍必须由其 Material Loop reconcile 证明 |
 | evidence cards | outline 的 cards 通道和既有 card path | 已完成 card 不重复写;无法核验则 `status: empty` |
 | 人工卡点 | `seeds` / `final` | 带用户决定重投,已完成节点由幂等合同跳过 |
-| synth | `synth_failed` | 自动重投一次;第二次失败才交人工 |
+| synth | typed Stage receipt | failed/blocked 原样终止;writer 不自动重投 |
 | LOCALISE | `.quasi/localise/cndouban.json#by_isbn` | 已有 found/none 记录即跳过 |
 
 ## 输出
@@ -188,12 +175,11 @@ Bash(f"/opt/homebrew/bin/marple-cli open '{product}' "
 vault/topics/{topic-slug}/00-overview.md
 vault/topics/{topic-slug}/01-resources.md
 vault/topics/{topic-slug}/02-outline.md
-vault/topics/{topic-slug}/NN-*.md
 vault/topics/{topic-slug}/cards/*.md
 vault/books/... and vault/papers/...              # 共享 router 落地的材料分析
 .quasi/localise/cndouban.json                     # 图中书籍的中译本缓存
 ```
 
-topic 目录的三页脊柱分别是门面、语料清单和可手改研究大纲。毕业子问题写成
-`NN-*.md`;圈外一手材料写成 `cards/*.md`。书、论文和本地讲座分析留在各自 vault
+topic 目录的三页脊柱分别是门面、语料清单和可手改研究大纲。圈外一手材料写成
+`cards/*.md`。书、论文和本地讲座分析留在各自 vault
 命名空间,主题页只通过链接引用它们。

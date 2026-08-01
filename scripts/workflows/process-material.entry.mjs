@@ -9,7 +9,7 @@ import { processBook } from "./materials/book.mjs";
 import { processPaper } from "./materials/paper.mjs";
 import { MATERIAL_RECEIPT_VERSION } from "./materials/receipt.mjs";
 import { processTalk } from "./materials/talk.mjs";
-import { processTopic } from "./research/topic.mjs";
+import { processTopic } from "./research/topic-recall.mjs";
 import { createRuntime } from "./runtime.mjs";
 
 export const workflowMeta = {

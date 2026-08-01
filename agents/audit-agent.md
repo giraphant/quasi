@@ -32,7 +32,8 @@ owner 路由回 producer。
 
 ## 输出
 
-最后返回 caller schema 的 closed receipt。`clean` 表示 remaining=0 且无 escalation；
-`partial` 保留每条未解决 diagnostic；`error` 表示 command、parse 或 local Edit 已确认失败。
-实际机械修改的 target 进入 `mutated_paths`。无法确认 writer outcome 时返回 unknown，让下一次
-图从 reconcile 观察；本阶段不承担 semantic producer 的工作。
+最后返回 caller schema 的 closed Stage receipt。Audit 已被完整观察时 terminal 为 complete：
+`remaining_violations=0` 且无 escalation 表示 clean；非零时逐条保留尚需 producer 判断的
+diagnostic。command、parse 或 local Edit 的已知失败返回 failed；writer outcome 无法确认返回
+blocked，让下一次图从 reconcile 观察。实际机械修改的 target 进入 `mutated_paths`；本阶段不承担
+semantic producer 的工作。

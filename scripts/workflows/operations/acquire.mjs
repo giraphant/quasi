@@ -1,8 +1,6 @@
-import { cardPath, validCardSlug } from "./steer.mjs";
 import { posixSingleQuote } from "./shared.mjs";
 import {
   exactKeys,
-  validateSchema,
   validText,
 } from "../runtime.mjs";
 import {
@@ -201,76 +199,6 @@ export const MATERIAL_SEARCH_STAGE_CONTRACT = stageContract({
     validLocalOwner(receipt.local_owner, receipt.kind),
 });
 
-export const PROBE_SCHEMA = {
-  type: "object",
-  properties: {
-    resolved: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["slug"],
-        properties: {
-          kind: { type: "string" },
-          slug: { type: "string" },
-          vault_slug: { type: ["string", "null"] },
-          match: { type: ["string", "null"] },
-        },
-      },
-    },
-  },
-};
-
-export const RECALL_SCHEMA = {
-  type: "object",
-  properties: {
-    items: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["slug"],
-        properties: {
-          kind: { type: "string" },
-          slug: { type: "string" },
-        },
-      },
-    },
-  },
-};
-
-export const CARD_SCHEMA = {
-  type: "object",
-  required: ["status", "card_path", "subq"],
-  properties: {
-    status: {
-      type: "string",
-      enum: ["ok", "unchanged", "empty", "error"],
-    },
-    card_path: { type: "string" },
-    subq: { type: "string" },
-    title: { type: "string" },
-    objects: { type: "number" },
-    sources: { type: "number" },
-    evidence: { type: "string" },
-    note: { type: "string" },
-  },
-};
-
-export const CARD_PROBE_SCHEMA = {
-  type: "object",
-  required: ["existing"],
-  properties: {
-    existing: {
-      type: "array",
-      items: {
-        type: "string",
-        minLength: 2,
-        maxLength: 80,
-        pattern: "^[a-z0-9][a-z0-9-]*$",
-      },
-    },
-  },
-};
-
 export function materialSearchPrompt(request) {
   const identityContract =
     request.kind === "book"
@@ -327,83 +255,7 @@ export function materialSearchPrompt(request) {
   );
 }
 
-export function existsProbePrompt(books, papers) {
-  const items = [
-    ...books.map((book) => ({
-      kind: "book",
-      slug: book.slug,
-      isbn: book.isbn || null,
-      title: book.title || null,
-      authors: book.authors || null,
-    })),
-    ...papers.map((paper) => ({
-      kind: "paper",
-      slug: paper.slug,
-      doi: paper.doi || null,
-      title: paper.title || null,
-      authors: paper.authors || null,
-    })),
-  ];
-  return `task: 判断下列候选是否已在 vault(只读检查,不改任何文件)。
-**原样运行**下面这条命令,它会打印一个 JSON;把其中的 resolved 数组逐字作为你的返回结果,
-不要自行判断存在性、不要改写 vault_slug。
-\`\`\`bash
-quasi-helpers vault resolve --items-file - <<'JSON'
-${JSON.stringify(items)}
-JSON
-\`\`\`
-返回 {resolved:[{kind, slug, vault_slug, match}]}。vault_slug 为 null = 尚未处理;
-非 null 且与 slug 不同 = 同一作品已在 vault 但 slug 不同(标识符或标题命中),照抄即可。`;
-}
-
-export function vaultRecallPrompt(desc, max) {
-  return `task: 在本地 vault 里召回与主题 "${desc}" 相关的、**已经分析过**的作品(书/论文/讲座;只读,不写任何文件)。
-1. 给主题拟 6-12 个检索词:中英各半(库是双语的),含同义词与该主题的代表人名/术语。
-2. 逐个跑(一次一个 -e 参数堆在同一条命令里即可):
-   \`\`\`bash
-   rg -il -e '关键词1' -e '关键词2' ... vault/books vault/papers vault/talks | head -120
-   \`\`\`
-3. 命中路径 → slug:\`vault/books/{slug}/*.md\` 与 \`vault/talks/{slug}/*.md\` 取目录名,
-   \`vault/papers/{slug}.md\` 取文件名去掉 .md。同一作品多个文件命中算一条。
-4. 逐条 Read 该作品的产物首部(书 \`vault/books/{slug}/00-overview.md\`、论文 \`vault/papers/{slug}.md\`、
-   讲座 \`vault/talks/{slug}/talk.md\`)的 frontmatter 与开头几行,确认 title/themes 确实与主题相关;
-   只是正文顺带提了一句的丢弃。
-5. 按相关度排序,最多返回 ${max} 条。
-
-输出 {items:[{kind:"book"|"paper"|"talk", slug}]}。slug 必须是**磁盘上真实存在的**那个,不要改写、不要新造。
-一条都没有就返回 {items:[]}。`;
-}
-
-export function webcardPrompt(topicSlug, desc, task, steer) {
-  const subquestions = (steer && steer.subquestions) || [];
-  const subquestion =
-    subquestions.find((item) => item && item.id === task.subq) || {};
-  const known = subquestions.flatMap((item) => (item && item.cards) || []);
-  return `topic_slug: ${topicSlug}
-topic: ${desc}
-subq: ${task.subq}
-subq_question: ${subquestion.question || task.subq}
-query: ${task.query}
-note: ${task.note}
-card_path: ${cardPath(topicSlug, task.card_slug)}
-existing_cards: ${JSON.stringify(known)}`;
-}
-
-export function cardExistencePrompt(topicSlug, slugs) {
-  const items = slugs
-    .filter((card) => validCardSlug(card))
-    .map((card_slug) => ({
-      card_slug,
-      path: cardPath(topicSlug, card_slug),
-    }));
-  return `task: 只读检查这些证据卡是否真实存在且非空,不写任何文件。
-items: ${JSON.stringify(items)}
-逐项用 Bash 的 test -s 检查 exact path;不要模糊匹配、不要把目录算作文件。
-输出 {"existing":["card-slug", "..."]},只列 test -s 成功的 card_slug。`;
-}
-
-// Strict Topic recall-only Stage Units. These are deliberately separate from
-// the legacy Topic Loop's permissive RECALL_SCHEMA/PROBE_SCHEMA contracts above.
+// Topic recall and discovery Stage Units.
 
 const TOPIC_MEMBER_REQUEST_SCHEMA = {
   type: "object",

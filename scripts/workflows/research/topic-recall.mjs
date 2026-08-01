@@ -15,20 +15,14 @@ import {
 import { admitChildResult } from "../materials/member.mjs";
 import { routeStageEdge } from "../materials/route.mjs";
 import {
-  TOPIC_AUDIT_CONTRACT,
-  topicAuditLegacyPrompt,
-  topicAuditSchema,
-} from "../operations/audit.mjs";
-import {
-  TOPIC_OVERVIEW_SYNTHESISE_CONTRACT,
-  TOPIC_RESOURCES_SYNTHESISE_CONTRACT,
-  topicOverviewSynthesiseOperationPrompt as topicOverviewSynthesisePrompt,
-  topicOverviewSynthesiseSchema,
-  topicResourcesSynthesiseOperationPrompt as topicResourcesSynthesisePrompt,
-  topicResourcesSynthesiseSchema,
-} from "../operations/synthesise.mjs";
-import { topicSteer } from "../operations/rows/topic.mjs";
-import { exactKeys, validText } from "../runtime.mjs";
+  topicAudit,
+  topicOverview,
+  topicResources,
+  topicSteer,
+  topicWebcard,
+} from "../operations/rows/topic.mjs";
+import { cardPath } from "../operations/steer.mjs";
+import { validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
 
 const RESEARCH_RECEIPT_VERSION =
@@ -68,20 +62,26 @@ function validateIdentity(slug, meta) {
       code: "topic.identity_invalid",
       message: "topic description is missing or invalid",
     };
-  if (![0, 1].includes(meta.maxRounds))
+  const maxRounds =
+    meta.maxRounds === undefined ? 3 : meta.maxRounds;
+  if (
+    !Number.isInteger(maxRounds) ||
+    maxRounds < 0 ||
+    maxRounds > 8
+  )
     return {
       ok: false,
       code: "topic.mode_invalid",
       message:
-        "strict Topic mode requires maxRounds=0 (recall-only) or maxRounds=1 (one material round)",
+        "Topic maxRounds must be an integer from 0 (recall-only) through 8",
     };
   const maxItems =
     meta.maxPerRound === undefined ? 8 : meta.maxPerRound;
   const minItems =
-    meta.minItems === undefined ? 1 : meta.minItems;
+    meta.minItems === undefined ? 3 : meta.minItems;
   const maxCards =
     meta.maxCardsPerRound === undefined
-      ? 0
+      ? 3
       : meta.maxCardsPerRound;
   if (
     !Number.isInteger(maxItems) ||
@@ -90,13 +90,15 @@ function validateIdentity(slug, meta) {
     !Number.isInteger(minItems) ||
     minItems < 1 ||
     minItems > 16 ||
-    maxCards !== 0
+    !Number.isInteger(maxCards) ||
+    maxCards < 0 ||
+    maxCards > 6
   )
     return {
       ok: false,
       code: "topic.budget_invalid",
       message:
-        "strict Topic budgets require maxPerRound/minItems 1..16 and maxCardsPerRound=0",
+        "Topic budgets require maxPerRound/minItems 1..16 and maxCardsPerRound 0..6",
     };
   if (
     meta.final !== undefined &&
@@ -120,9 +122,9 @@ function validateIdentity(slug, meta) {
     };
   const normalized = {
     desc,
-    strict: meta.strict === true,
-    maxRounds: meta.maxRounds,
+    maxRounds,
     maxItems,
+    maxCards,
     minItems,
     final: meta.final === true,
     seeds,
@@ -140,9 +142,9 @@ function createState(slug, meta) {
     slug,
     researchKey: `topic:${slug}`,
     desc: meta.desc,
-    strict: meta.strict,
     maxRounds: meta.maxRounds,
     maxItems: meta.maxItems,
+    maxCards: meta.maxCards,
     minItems: meta.minItems,
     final: meta.final,
     seeds: meta.seeds,
@@ -154,34 +156,46 @@ function createState(slug, meta) {
     operations: [],
     audit: [],
     members: [],
+    cards: [],
     materialResults: [],
     discoveryFailures: [],
+    cardFailures: [],
     recallFailed: false,
     recalled: 0,
     rounds: 0,
     artifacts: [],
     subquestions: [],
+    memberAssignments: [],
+    attemptedDemands: new Set(),
+    attemptedCards: new Set(),
+    dispatchedMaterials: new Set(),
     repaired: false,
     disposition: null,
     signal: null,
     suggestedQueries: null,
-    warnings: [
+    deadEnd: true,
+    warnings:
       meta.maxRounds === 0
-        ? "strict recall-only Topic does not dispatch new materials, web cards, or dossiers"
-        : "strict one-round Topic dispatches only discovered Book/Paper materials; web cards and dossiers remain disabled",
-      "topic audit remains an explicitly named legacy composite",
-    ],
+        ? [
+            "recall-only Topic does not dispatch new materials or web cards",
+          ]
+        : [],
+    userGate: null,
     budgets: {
       recall: { used: 0, limit: meta.maxItems },
       discovery: {
         used: 0,
-        limit: meta.maxRounds === 1 ? meta.maxItems : 0,
+        limit: meta.maxRounds * meta.maxItems,
       },
       materials: {
         used: 0,
-        limit: meta.maxRounds === 1 ? meta.maxItems : 0,
+        limit: meta.maxRounds * meta.maxItems,
       },
-      steer: { used: 0, limit: 3 },
+      cards: {
+        used: 0,
+        limit: meta.maxRounds * meta.maxCards,
+      },
+      steer: { used: 0, limit: meta.maxRounds + 3 },
       synthesis: { used: 0, limit: 4 },
       repairRounds: { used: 0, limit: 1 },
       auditPasses: { used: 0, limit: 6 },
@@ -216,12 +230,14 @@ function researchReceipt(
     })),
     material_results: state.materialResults,
     discovery_failures: state.discoveryFailures,
+    card_failures: state.cardFailures,
     artifacts: state.artifacts,
     operations: state.operations,
     audit: state.audit,
     budgets: state.budgets,
     subquestions: state.subquestions,
     warnings: state.warnings,
+    user_gate: state.userGate,
     failure,
     resume:
       status === "blocked"
@@ -246,7 +262,7 @@ function terminal(
     status: legacyStatus,
     members: state.members,
     items: state.members.length,
-    cards: 0,
+    cards: state.cards.length,
     recalled: state.recalled,
     rounds: state.rounds,
     overview: state.paths.overview,
@@ -256,17 +272,16 @@ function terminal(
     subquestions: state.subquestions.map((subquestion) => ({
       id: subquestion.id,
       coverage: subquestion.coverage,
-      dossier: false,
     })),
-    dossiers_failed: [],
     book_slugs: books,
     failures:
       state.materialResults.filter(
         (member) => member.status !== "complete",
       ).length +
       state.discoveryFailures.length +
+      state.cardFailures.length +
       (failure ? 1 : 0),
-    dead_end: true,
+    dead_end: state.deadEnd,
     ...extra,
     research_receipt: researchReceipt(
       state,
@@ -282,8 +297,8 @@ function rejectedResult(slug, validation, conflict = false) {
     typeof slug === "string" && SLUG.test(slug);
   const state = createState(canonical ? slug : "", {
     desc: canonical ? slug : "",
-    strict: false,
     maxItems: 0,
+    maxCards: 0,
     maxRounds: 0,
     minItems: 1,
     final: false,
@@ -305,7 +320,7 @@ function rejectedResult(slug, validation, conflict = false) {
   );
 }
 
-async function strictMaterialResult(runtime, result, demand) {
+async function admittedMaterialResult(runtime, result, demand) {
   const admitted = await admitChildResult(runtime, result, demand);
   if (
     !admitted ||
@@ -421,47 +436,21 @@ function invalidMaterialResult(demand, message) {
   };
 }
 
-function writerMismatch(state, key, stage) {
-  return terminal(
-    state,
-    "blocked",
-    "blocked",
-    stage,
-    operationFailure(
-      "topic.writer_receipt_mismatch",
-      key,
-      "unknown",
-      "writer receipt did not prove the exact contract",
-    ),
-  );
-}
-
-function writerTerminal(state, receipt, key, stage) {
-  if (receipt.status === "blocked")
-    return terminal(
-      state,
-      "blocked",
-      "blocked",
-      stage,
-      receipt.failure,
-    );
-  if (receipt.status === "failed")
-    return terminal(
-      state,
-      key === "topic.audit.legacy"
-        ? "audit_escalated"
-        : "synth_failed",
-      "failed",
-      stage,
-      receipt.failure,
-    );
-  return null;
-}
-
 function applySteer(state, receipt) {
   state.signal = receipt.signal;
   state.subquestions = receipt.subquestions;
   state.suggestedQueries = receipt.suggested_queries;
+  for (const subquestion of receipt.subquestions) {
+    for (const slug of subquestion.cards) {
+      if (state.cards.some((card) => card.slug === slug)) continue;
+      state.cards.push({
+        slug,
+        path: cardPath(state.slug, slug),
+        subq: subquestion.id,
+        title: slug,
+      });
+    }
+  }
   const action = receipt.terminal.action;
   if (action === "repair") state.repaired = true;
   if (action === "create")
@@ -513,7 +502,9 @@ function routeTopicStage(
     mismatchMessage,
     failedStatus = "all_failed",
     needsInputStatus = "needs_seeds",
-    needsInputExtra = null,
+    needsInputExtra = (receipt) => ({
+      question: receipt.terminal.issue.user_question,
+    }),
     onOk = (receipt) => ({ value: { edge: "ok", receipt } }),
     onFailed = null,
   },
@@ -587,6 +578,8 @@ async function runSteer(
         ? `${state.desc}\nUser seeds: ${state.seeds.join("; ")}`
         : state.desc,
     memberRefs: members,
+    memberAssignments: state.memberAssignments,
+    cardRefs: state.cards,
     mode,
     diagnostics,
     artifactRoles: ["outline"],
@@ -616,6 +609,7 @@ async function runSteer(
         "writer receipt did not prove the exact contract",
       failedStatus: "synth_failed",
       needsInputExtra: (receipt) => ({
+        question: receipt.terminal.issue.user_question,
         suggested_queries: receipt.suggested_queries,
       }),
     },
@@ -638,77 +632,52 @@ async function runSynthesis(
   const key = overview
     ? "topic.synthesise.overview"
     : "topic.synthesise.resources";
-  const output = overview
-    ? state.paths.overview
-    : state.paths.resources;
   const role = overview ? "overview" : "resources";
-  const inputPaths = [
-    ...state.members.map((member) => member.path),
-  ];
-  const prompt = overview
-    ? topicOverviewSynthesisePrompt({
-        researchKey: state.researchKey,
-        topicSlug: state.slug,
-        topic: state.desc,
-        memberRefs: state.members,
-        mode,
-        diagnostics,
-      })
-    : topicResourcesSynthesisePrompt({
-        researchKey: state.researchKey,
-        topicSlug: state.slug,
-        topic: state.desc,
-        memberRefs: state.members,
-        mode,
-        diagnostics,
-      });
+  const operation = overview ? topicOverview : topicResources;
+  const context = {
+    materialKey: state.researchKey,
+    researchKey: state.researchKey,
+    topicSlug: state.slug,
+    topic: state.desc,
+    memberRefs: state.members,
+    cardRefs: state.cards,
+    mode,
+    diagnostics,
+    artifactRoles: [role],
+    replay: "blocked",
+    unknownFailureCode: "topic.writer_outcome_unknown",
+  };
+  const spec = operation.spec(context);
   const synthesis = await runtime.operate(
-    prompt,
+    operation.prompt(context),
     {
-      phase: "Synthesise",
-      agentType: "quasi:synthesis-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label,
-      schema: (overview
-        ? topicOverviewSynthesiseSchema
-        : topicResourcesSynthesiseSchema)({
-        researchKey: state.researchKey,
-        members: state.members,
-        inputPaths,
-        outline: state.paths.outline,
-        output,
-        mode,
-      }),
+      schema: operation.schema(context),
     },
-    operationOptions(
-      key,
-      "writer",
-      [role],
-      overview
-        ? TOPIC_OVERVIEW_SYNTHESISE_CONTRACT
-        : TOPIC_RESOURCES_SYNTHESISE_CONTRACT,
-      { state, inputPaths, output, role, mode },
-    ),
+    spec,
   );
   const receipt = synthesis.receipt;
-  state.operations.push(receipt);
   state.budgets.synthesis.used += 1;
-  if (
-    synthesis.edge === "unknown" ||
-    synthesis.edge === "mismatch"
-  )
-    return { terminal: writerMismatch(state, key, "synthesis") };
-  const stopped = writerTerminal(
+  const routed = routeTopicStage(
+    synthesis,
     state,
-    receipt,
-    key,
     "synthesis",
+    key,
+    {
+      mismatchCode: "topic.writer_receipt_mismatch",
+      mismatchMessage:
+        "writer receipt did not prove the exact contract",
+      failedStatus: "synth_failed",
+    },
   );
-  if (stopped) return { terminal: stopped };
-  if (receipt.action === "repair") state.repaired = true;
-  if (receipt.action === "create")
+  if (routed.terminal) return { terminal: routed.terminal };
+  if (receipt.terminal.action === "repair") state.repaired = true;
+  if (receipt.terminal.action === "create")
     state.disposition = "created";
   if (
-    receipt.action === "reconciled" &&
+    receipt.terminal.action === "reconciled" &&
     state.disposition === null
   )
     state.disposition = "reused";
@@ -716,40 +685,41 @@ async function runSynthesis(
 }
 
 async function runAudit(runtime, state, target, pass) {
+  const context = {
+    materialKey: state.researchKey,
+    target,
+    pass,
+    artifactRoles: ["topic_product"],
+    replay: "blocked",
+    unknownFailureCode: "topic.writer_outcome_unknown",
+  };
+  const spec = topicAudit.spec(context);
   const audited = await runtime.operate(
-    topicAuditLegacyPrompt(state.researchKey, target, pass),
+    topicAudit.prompt(context),
     {
-      phase: "Audit",
-      agentType: "quasi:audit-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label: `${state.slug}:audit-${pass}:${target.split("/").pop()}`,
-      schema: topicAuditSchema({
-        researchKey: state.researchKey,
-        target,
-      }),
+      schema: topicAudit.schema(context),
     },
-    operationOptions(
-      "topic.audit.legacy",
-      "writer",
-      ["topic_product"],
-      TOPIC_AUDIT_CONTRACT,
-      { researchKey: state.researchKey, target },
-    ),
+    spec,
   );
   const receipt = audited.receipt;
-  state.operations.push(receipt);
   state.audit.push(receipt);
   state.budgets.auditPasses.used += 1;
-  if (
-    audited.edge === "unknown" ||
-    audited.edge === "mismatch"
-  )
-    return {
-      terminal: writerMismatch(
-        state,
-        "topic.audit.legacy",
-        "audit",
-      ),
-    };
+  const routed = routeTopicStage(
+    audited,
+    state,
+    "audit",
+    "topic.audit",
+    {
+      mismatchCode: "topic.writer_receipt_mismatch",
+      mismatchMessage:
+        "writer receipt did not prove the exact contract",
+      failedStatus: "audit_escalated",
+    },
+  );
+  if (routed.terminal) return { terminal: routed.terminal };
   const owned = [
     ...receipt.escalated.map((item) => item.path),
     ...receipt.mutated_paths,
@@ -763,7 +733,7 @@ async function runAudit(runtime, state, target, pass) {
         "audit",
         operationFailure(
           "topic.repair_owner_unknown",
-          "topic.audit.legacy",
+          "topic.audit",
           "known",
           "audit reported a path outside the exact Topic producer map",
         ),
@@ -771,24 +741,83 @@ async function runAudit(runtime, state, target, pass) {
       ),
     };
   if (receipt.mutated_paths.length) state.repaired = true;
-  if (audited.edge !== "ok")
-    return {
-      terminal: terminal(
-        state,
-        receipt.failure.outcome === "unknown"
-          ? "blocked"
-          : "audit_escalated",
-        receipt.failure.outcome === "unknown"
-          ? "blocked"
-          : "failed",
-        "audit",
-        receipt.failure,
-      ),
-    };
   return {
     receipt,
-    clean: receipt.status === "clean",
+    clean: receipt.remaining_violations === 0,
     diagnostics: receipt.escalated,
+  };
+}
+
+async function runWebcardRound(runtime, state, tasks, round) {
+  if (!tasks.length) return { partial: false, added: 0 };
+  state.budgets.cards.used += tasks.length;
+  const runs = await runtime.parallel(
+    tasks.map((task) => () => {
+      const context = {
+        materialKey: `${state.researchKey}:card:${task.card_slug}`,
+        topicSlug: state.slug,
+        topic: state.desc,
+        task,
+        subquestions: state.subquestions,
+        artifactRoles: ["evidence_card"],
+        replay: "blocked",
+        unknownFailureCode: "topic.writer_outcome_unknown",
+      };
+      const spec = topicWebcard.spec(context);
+      return runtime.operate(
+        topicWebcard.prompt(context),
+        {
+          phase: spec.stage,
+          agentType: spec.agentType,
+          label: `${state.slug}:webcard:r${round}:${task.card_slug}`,
+          schema: topicWebcard.schema(context),
+        },
+        spec,
+      );
+    }),
+  );
+  const routes = runs.map((run) =>
+    routeTopicStage(
+      run,
+      state,
+      "webcard",
+      "topic.webcard",
+      {
+        mismatchCode: "topic.writer_receipt_mismatch",
+        mismatchMessage:
+          "webcard receipt did not prove its exact card contract",
+        onFailed: (receipt) => ({
+          value: { edge: "failed", receipt },
+        }),
+      },
+    ),
+  );
+  const stopped = routes.find((route) => route.terminal);
+  if (stopped) return { terminal: stopped.terminal };
+  let added = 0;
+  routes.forEach((route, index) => {
+    const { edge, receipt } = route.value;
+    if (edge !== "ok") {
+      state.cardFailures.push(
+        topicStageFailure(receipt, "topic.webcard"),
+      );
+      return;
+    }
+    if (!receipt.card_available) return;
+    const task = tasks[index];
+    if (state.cards.some((card) => card.slug === task.card_slug))
+      return;
+    state.cards.push({
+      slug: task.card_slug,
+      path: receipt.card_path,
+      subq: task.subq,
+      title: receipt.title || task.card_slug,
+    });
+    added += 1;
+  });
+  return {
+    partial: routes.some((route) => route.value.edge !== "ok"),
+    added,
   };
 }
 
@@ -797,16 +826,16 @@ async function runMaterialRound(
   router,
   state,
   candidateDemands,
+  round,
 ) {
   const ledger = candidateDemands
     .slice(0, state.maxItems)
     .map((demand, index) => ({
       demand,
-      demandId: `r1-d${String(index + 1).padStart(2, "0")}`,
+      demandId: `r${round}-d${String(index + 1).padStart(2, "0")}`,
     }));
   if (!ledger.length) return { partial: false };
-  state.rounds = 1;
-  state.budgets.discovery.used = ledger.length;
+  state.budgets.discovery.used += ledger.length;
   const discoveryRuns = await runtime.parallel(
     ledger.map(({ demand, demandId }) => () => {
       const book = demand.kind === "book";
@@ -896,7 +925,7 @@ async function runMaterialRound(
     {
       phase: "Recall",
       agentType: "general-purpose",
-      label: `${state.slug}:resolve-discovered:r1`,
+      label: `${state.slug}:resolve-discovered:r${round}`,
       schema: topicResolveMembershipStageSchema({
         researchKey: state.researchKey,
         requests,
@@ -937,9 +966,15 @@ async function runMaterialRound(
         grouped.failure,
       ),
     };
-  state.budgets.materials.used = grouped.demands.length;
+  const freshDemands = grouped.demands.filter(
+    (demand) => !state.dispatchedMaterials.has(demand.material_key),
+  );
+  freshDemands.forEach((demand) =>
+    state.dispatchedMaterials.add(demand.material_key),
+  );
+  state.budgets.materials.used += freshDemands.length;
   const childResults = await runtime.parallel(
-    grouped.demands.map((demand) => async () => {
+    freshDemands.map((demand) => async () => {
       try {
         const result = await router(
           demand.kind,
@@ -947,7 +982,7 @@ async function runMaterialRound(
           demand.kind === "book" ? { batchYear: true } : {},
         );
         return (
-          (await strictMaterialResult(runtime, result, demand)) ||
+          (await admittedMaterialResult(runtime, result, demand)) ||
           invalidMaterialResult(
             demand,
             "child result did not carry its exact MaterialReceipt",
@@ -977,6 +1012,28 @@ async function runMaterialRound(
     });
     existing.add(child.material_key);
   }
+  for (const demand of grouped.demands) {
+    const admitted = state.members.some(
+      (member) =>
+        `${member.kind}:${member.slug}` === demand.material_key,
+    );
+    if (!admitted) continue;
+    const assignment = {
+      member_key: demand.material_key,
+      subq: demand.subq,
+      role: demand.role,
+    };
+    if (
+      state.memberAssignments.some(
+        (entry) =>
+          entry.member_key === assignment.member_key &&
+          entry.subq === assignment.subq &&
+          entry.role === assignment.role,
+      )
+    )
+      continue;
+    state.memberAssignments.push(assignment);
+  }
   return {
     partial:
       state.discoveryFailures.length > 0 ||
@@ -984,10 +1041,55 @@ async function runMaterialRound(
   };
 }
 
-async function processStrict(runtime, router, slug, meta) {
+const demandFingerprint = (demand) =>
+  JSON.stringify([
+    demand.kind,
+    demand.query,
+    demand.subq,
+    demand.role,
+    demand.reason,
+  ]);
+
+function selectRoundWork(state, steer) {
+  const demands = [];
+  for (const demand of steer.candidate_demands) {
+    const key = demandFingerprint(demand);
+    if (state.attemptedDemands.has(key)) continue;
+    if (demands.length >= state.maxItems) break;
+    state.attemptedDemands.add(key);
+    demands.push(demand);
+  }
+  const cards = [];
+  for (const task of steer.web_tasks) {
+    if (state.attemptedCards.has(task.card_slug)) continue;
+    if (cards.length >= state.maxCards) break;
+    state.attemptedCards.add(task.card_slug);
+    cards.push(task);
+  }
+  return { demands, cards };
+}
+
+function hasFreshWork(state, steer) {
+  return (
+    steer.candidate_demands.some(
+      (demand) =>
+        !state.attemptedDemands.has(demandFingerprint(demand)),
+    ) ||
+    (state.maxCards > 0 &&
+      steer.web_tasks.some(
+        (task) => !state.attemptedCards.has(task.card_slug),
+      ))
+  );
+}
+
+async function processResearch(runtime, router, slug, meta) {
   const state = createState(slug, meta);
   runtime.log(
-    `${slug}: strict Topic ${meta.maxRounds === 0 ? "recall-only" : "one material round"}`,
+    `${slug}: Topic ${
+      meta.maxRounds === 0
+        ? "recall-only"
+        : `up to ${meta.maxRounds} research rounds`
+    }`,
   );
   state.budgets.recall.used = state.maxItems;
   const [recallRun, initialSteerResult] = await runtime.parallel([
@@ -1044,7 +1146,11 @@ async function processStrict(runtime, router, slug, meta) {
     return initialSteerResult.terminal;
   const { edge: recallEdge, receipt: recall } = recallRoute.value;
   const recallFailure = topicStageFailure(recall, "topic.recall");
-  if (recallEdge === "failed" && meta.maxRounds === 0)
+  if (
+    recallEdge === "failed" &&
+    meta.maxRounds === 0 &&
+    !state.cards.length
+  )
     return terminal(
       state,
       "no_works",
@@ -1060,7 +1166,11 @@ async function processStrict(runtime, router, slug, meta) {
   }
 
   const requests = recallEdge === "ok" ? recall.items : [];
-  if (!requests.length && meta.maxRounds === 0)
+  if (
+    !requests.length &&
+    meta.maxRounds === 0 &&
+    !state.cards.length
+  )
     return terminal(
       state,
       "no_works",
@@ -1132,7 +1242,11 @@ async function processStrict(runtime, router, slug, meta) {
       }));
     state.recalled = state.members.length;
   }
-  if (!state.members.length && meta.maxRounds === 0)
+  if (
+    !state.members.length &&
+    meta.maxRounds === 0 &&
+    !state.cards.length
+  )
     return terminal(
       state,
       state.final ? "no_works" : "needs_seeds",
@@ -1152,54 +1266,100 @@ async function processStrict(runtime, router, slug, meta) {
     planningSteer = await runSteer(
       runtime,
       state,
-      1,
+      0,
       state.members,
       "refresh",
       [],
       meta.maxRounds === 0
-        ? `${slug}:steer:r1-close`
-        : `${slug}:steer:r1-plan`,
+        ? `${slug}:steer:r0-close`
+        : `${slug}:steer:r0-plan`,
     );
     if (planningSteer.terminal) return planningSteer.terminal;
   }
-  if (meta.maxRounds === 1) {
-    const materialRound = await runMaterialRound(
-      runtime,
-      router,
-      state,
-      planningSteer.receipt.candidate_demands,
-    );
-    if (materialRound.terminal) return materialRound.terminal;
-    if (planningSteer.receipt.candidate_demands.length) {
-      const closingSteer = await runSteer(
-        runtime,
-        state,
-        1,
-        state.members,
-        "refresh",
-        [],
-        `${slug}:steer:r1-close`,
-      );
-      if (closingSteer.terminal) return closingSteer.terminal;
+
+  let currentSteer = planningSteer.receipt;
+  let partialRounds = false;
+  for (
+    let round = 1;
+    round <= state.maxRounds && state.signal !== "saturated";
+    round += 1
+  ) {
+    const work = selectRoundWork(state, currentSteer);
+    if (!work.demands.length && !work.cards.length) {
+      state.deadEnd = true;
+      break;
     }
+    state.rounds = round;
+    const [materialRound, cardRound] = await runtime.parallel([
+      () =>
+        runMaterialRound(
+          runtime,
+          router,
+          state,
+          work.demands,
+          round,
+        ),
+      () => runWebcardRound(runtime, state, work.cards, round),
+    ]);
+    if (materialRound.terminal) return materialRound.terminal;
+    if (cardRound.terminal) return cardRound.terminal;
+    partialRounds =
+      partialRounds || materialRound.partial || cardRound.partial;
+    const next = await runSteer(
+      runtime,
+      state,
+      round,
+      state.members,
+      "refresh",
+      [],
+      `${slug}:steer:r${round}-close`,
+    );
+    if (next.terminal) return next.terminal;
+    currentSteer = next.receipt;
+    const fresh = hasFreshWork(state, currentSteer);
+    state.deadEnd = state.signal === "saturated" || !fresh;
+    runtime.log(
+      `${slug}: round ${round} complete; ${state.members.length} materials / ${state.cards.length} cards; ${
+        state.deadEnd ? "converged" : "more work proposed"
+      }`,
+    );
+    if (state.deadEnd) break;
   }
-  if (!state.members.length)
+
+  if (
+    state.rounds === state.maxRounds &&
+    state.maxRounds > 0 &&
+    state.signal !== "saturated" &&
+    hasFreshWork(state, currentSteer)
+  )
+    state.deadEnd = false;
+
+  const evidence = state.members.length + state.cards.length;
+  if (!evidence)
     return terminal(
       state,
-      state.final ? "no_works" : "needs_seeds",
+      state.final
+        ? state.rounds
+          ? "all_failed"
+          : "no_works"
+        : "needs_seeds",
       state.final ? "failed" : "needs_input",
       state.rounds ? "material-join" : "steer",
       operationFailure(
-        state.final ? "topic.no_works" : "topic.needs_seeds",
+        state.final
+          ? state.rounds
+            ? "topic.all_failed"
+            : "topic.no_works"
+          : "topic.needs_seeds",
         "topic.join",
         "known",
         state.rounds
-          ? "the material round produced no complete canonical members"
-          : "steering produced no material demands",
+          ? "the bounded rounds produced no usable material or evidence card"
+          : "recall and steering produced no usable evidence",
       ),
       { suggested_queries: state.suggestedQueries },
     );
-  if (state.members.length < state.minItems && !state.final)
+  if (evidence < state.minItems && !state.final)
     return terminal(
       state,
       "needs_seeds",
@@ -1209,10 +1369,11 @@ async function processStrict(runtime, router, slug, meta) {
         "topic.needs_seeds",
         "topic.join",
         "known",
-        "resolved recall corpus is below the minimum evidence budget",
+        "the combined material and card evidence is below the minimum budget",
       ),
       {
         collected: state.members.length,
+        cards: state.cards.length,
         suggested_queries: state.suggestedQueries,
       },
     );
@@ -1317,7 +1478,7 @@ async function processStrict(runtime, router, slug, meta) {
         "audit",
         operationFailure(
           "topic.audit_repair_exhausted",
-          "topic.audit.legacy",
+          "topic.audit",
           "known",
           "Topic product remains non-clean after one repair round",
         ),
@@ -1344,10 +1505,18 @@ async function processStrict(runtime, router, slug, meta) {
       exists: true,
       producer: "topic.synthesise.resources",
     },
+    ...state.cards.map((card) => ({
+      role: "evidence_card",
+      path: card.path,
+      exists: true,
+      producer: "topic.webcard",
+    })),
   ];
   const partial =
+    partialRounds ||
     state.recallFailed ||
     state.discoveryFailures.length > 0 ||
+    state.cardFailures.length > 0 ||
     state.materialResults.some(
       (member) => member.status !== "complete",
     );
@@ -1359,7 +1528,7 @@ async function processStrict(runtime, router, slug, meta) {
   );
 }
 
-export async function processTopicStrict(
+export async function processTopic(
   runtime,
   router,
   slug,
@@ -1372,7 +1541,7 @@ export async function processTopicStrict(
   return runtime.coalesce(
     `topic:${slug}`,
     validation.fingerprint,
-    () => processStrict(runtime, router, slug, validation.meta),
+    () => processResearch(runtime, router, slug, validation.meta),
     () =>
       rejectedResult(
         slug,

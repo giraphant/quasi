@@ -1,15 +1,13 @@
-"""Strict module/mock tests for the bounded Topic vertical slices.
+"""Protocol tests for the bounded Topic research flow.
 
 These tests execute ``processTopic`` with the real shared runtime, scripted
 Agent replies, and an injected router stub.  They deliberately do not invoke
 Claude Workflow, Pi, Codex, the filesystem, or the network.
 
-The contract frozen here is intentionally narrow: ``maxRounds=0`` selects a
-bounded, recall-only graph, while explicit ``strict=true`` plus
-``maxRounds=1`` adds one Book/Paper discovery and shared Material Loop round.
-Both admit only exact typed receipts, use one no-replay writer invocation per
-operation, and expose the authoritative ``research_receipt`` while retaining
-the legacy result adapter.
+``maxRounds=0`` selects recall-only research; positive values bound repeated
+steer, webcard, and Book/Paper Material Loop rounds. Every path admits only
+exact typed receipts, uses one no-replay writer invocation per operation, and
+exposes the authoritative ``research_receipt`` plus the public result summary.
 """
 
 from __future__ import annotations
@@ -24,7 +22,7 @@ import pytest
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-TOPIC_MODULE = PLUGIN_ROOT / "scripts/workflows" / "research" / "topic.mjs"
+TOPIC_MODULE = PLUGIN_ROOT / "scripts/workflows" / "research" / "topic-recall.mjs"
 RUNTIME_MODULE = PLUGIN_ROOT / "scripts/workflows" / "runtime.mjs"
 
 RESEARCH_RECEIPT_VERSION = "quasi.research.topic.receipt/0.1"
@@ -410,6 +408,9 @@ def steer_receipt(
     status: str = "succeeded",
     signal: str = "continue",
     candidate_demands: list[dict[str, str]] | None = None,
+    web_tasks: list[dict[str, str]] | None = None,
+    cards: list[dict[str, str]] | None = None,
+    assignments: list[dict[str, str]] | None = None,
     failure: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     values = members or []
@@ -426,6 +427,9 @@ def steer_receipt(
         "research_key": f"topic:{topic_slug}",
         "member_refs": values,
         "input_paths": [item["path"] for item in values],
+        "member_assignments": assignments or [],
+        "card_refs": cards or [],
+        "card_paths": [item["path"] for item in cards or []],
         "output_path": output_path or f"vault/topics/{topic_slug}/02-outline.md",
         "signal": signal,
         "subquestions": [
@@ -434,17 +438,44 @@ def steer_receipt(
                 "question": "Which exact materials support the Topic contract?",
                 "coverage": "thin",
                 "channel": "academic",
-                "dossier": False,
-                "page": None,
                 "theory_used": 0,
                 "items": [],
                 "cards": [],
             }
         ],
         "candidate_demands": candidate_demands or [],
-        "web_tasks": [],
+        "web_tasks": web_tasks or [],
         "dirty": [],
         "suggested_queries": [],
+        "terminal": terminal,
+    }
+
+
+def webcard_receipt(
+    task: dict[str, str],
+    *,
+    topic_slug: str = TOPIC,
+    status: str = "complete",
+) -> dict[str, Any]:
+    terminal = stage_terminal("topic.webcard", status=status)
+    available = status == "complete"
+    return {
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "topic.webcard",
+        "stage": "Search",
+        "material_key": f"topic:{topic_slug}:card:{task['card_slug']}",
+        "effect": "writer",
+        "attempt": 1,
+        "card_path": f"vault/topics/{topic_slug}/cards/{task['card_slug']}.md",
+        "subq": task["subq"],
+        "card_status": "ok" if available else "empty",
+        "wrote_card": available,
+        "card_available": available,
+        "title": "Verified web evidence" if available else None,
+        "objects": 2 if available else 0,
+        "sources": 2 if available else 0,
+        "evidence": "confirmed" if available else None,
+        "note": "scripted evidence" if available else "user decision required",
         "terminal": terminal,
     }
 
@@ -609,24 +640,32 @@ def synthesis_receipt(
     status: str = "succeeded",
     output_path: str | None = None,
     failure: dict[str, Any] | None = None,
+    cards: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     key = f"topic.synthesise.{page}"
     filename = "00-overview.md" if page == "overview" else "01-resources.md"
+    card_values = cards or []
+    terminal = stage_terminal(key, status=status, failure=failure)
+    if terminal["status"] == "complete":
+        terminal["action"] = action
     return {
-        "schema_version": f"quasi.operation.{key}.receipt/0.1",
-        "key": key,
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": key,
+        "stage": "Synthesise",
+        "material_key": f"topic:{topic_slug}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "research_key": f"topic:{topic_slug}",
         "member_refs": members,
         "input_paths": [item["path"] for item in members],
+        "card_refs": card_values,
+        "card_paths": [item["path"] for item in card_values],
         "outline_path": f"vault/topics/{topic_slug}/02-outline.md",
         "output_path": output_path or f"vault/topics/{topic_slug}/{filename}",
         "artifact_roles": [page],
-        "action": action,
         "members_analyzed": len(members),
-        "failure": failure,
+        "cards_analyzed": len(card_values),
+        "terminal": terminal,
     }
 
 
@@ -638,20 +677,29 @@ def audit_receipt(
     escalated: list[dict[str, str]] | None = None,
     mutated_paths: list[str] | None = None,
     failure: dict[str, Any] | None = None,
+    pass_number: int = 1,
 ) -> dict[str, Any]:
     diagnostics = escalated or []
+    terminal = stage_terminal(
+        "topic.audit",
+        status={"clean": "complete", "partial": "complete", "error": "failed"}.get(
+            status, status
+        ),
+        failure=failure,
+    )
     return {
-        "schema_version": "quasi.operation.topic.audit.legacy.receipt/0.1",
-        "key": "topic.audit.legacy",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "topic.audit",
+        "stage": "Audit",
+        "material_key": f"topic:{topic_slug}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
-        "research_key": f"topic:{topic_slug}",
         "target_path": target_path,
+        "pass": pass_number,
         "remaining_violations": len(diagnostics),
         "escalated": diagnostics,
         "mutated_paths": mutated_paths or [],
-        "failure": failure,
+        "terminal": terminal,
     }
 
 
@@ -691,7 +739,7 @@ def base_responses(
         "topic.synthesise.resources": [
             reply(synthesis_receipt("resources", values, topic_slug=topic_slug))
         ],
-        "topic.audit.legacy": [
+        "topic.audit": [
             reply(audit_receipt(overview, topic_slug=topic_slug)),
             reply(audit_receipt(resources, topic_slug=topic_slug)),
             reply(audit_receipt(outline, topic_slug=topic_slug)),
@@ -768,7 +816,7 @@ def test_recall_only_happy_path_is_ordered_by_dependencies_not_clock_time(
     resolve = calls(report, "topic.resolve-membership")[0]
     overview = calls(report, "topic.synthesise.overview")[0]
     resources = calls(report, "topic.synthesise.resources")[0]
-    audits = calls(report, "topic.audit.legacy")
+    audits = calls(report, "topic.audit")
 
     assert result["status"] == "ok"
     assert research["status"] == "complete"
@@ -863,13 +911,12 @@ def test_strict_identity_and_bounded_recall_budget_precede_agents(
     assert research["resume"] == {"operation_key": "topic.reconcile"}
 
 
-def test_zero_rounds_is_the_explicit_strict_recall_only_selector() -> None:
+def test_zero_rounds_is_the_only_recall_only_selector() -> None:
     source = TOPIC_MODULE.read_text(encoding="utf-8")
 
     assert "meta.maxRounds === 0" in source
-    assert "meta.strict === true && meta.maxRounds === 1" in source
-    assert "return processTopicStrict(runtime, router, slug, meta)" in source
-    assert "return processTopicLegacy(runtime, router, slug, meta)" in source
+    assert "meta.strict" not in source
+    assert "export async function processTopic(" in source
 
 
 def test_one_round_strict_material_router_admits_only_exact_child_receipt(
@@ -912,7 +959,7 @@ def test_one_round_strict_material_router_admits_only_exact_child_receipt(
         "topic.synthesise.resources": [
             reply(synthesis_receipt("resources", members))
         ],
-        "topic.audit.legacy": [
+        "topic.audit": [
             reply(audit_receipt(f"vault/topics/{TOPIC}/00-overview.md")),
             reply(audit_receipt(f"vault/topics/{TOPIC}/01-resources.md")),
             reply(audit_receipt(f"vault/topics/{TOPIC}/02-outline.md")),
@@ -921,7 +968,7 @@ def test_one_round_strict_material_router_admits_only_exact_child_receipt(
     report = run_topic(
         tmp_path,
         meta=topic_meta(
-            strict=True,
+
             maxRounds=1,
             maxCardsPerRound=0,
         ),
@@ -940,7 +987,6 @@ def test_one_round_strict_material_router_admits_only_exact_child_receipt(
     assert len(calls(report, "topic.discover-paper")) == 1
     assert len(calls(report, "router:paper")) == 1
     assert not any("webcard" in call["route"] for call in report["trace"])
-    assert not any("dossier" in call["route"] for call in report["trace"])
 
 
 def test_one_round_can_start_from_discovery_when_recall_is_empty(
@@ -983,7 +1029,7 @@ def test_one_round_can_start_from_discovery_when_recall_is_empty(
         "topic.synthesise.resources": [
             reply(synthesis_receipt("resources", [discovered]))
         ],
-        "topic.audit.legacy": [
+        "topic.audit": [
             reply(audit_receipt(f"vault/topics/{TOPIC}/00-overview.md")),
             reply(audit_receipt(f"vault/topics/{TOPIC}/01-resources.md")),
             reply(audit_receipt(f"vault/topics/{TOPIC}/02-outline.md")),
@@ -992,7 +1038,7 @@ def test_one_round_can_start_from_discovery_when_recall_is_empty(
     report = run_topic(
         tmp_path,
         meta=topic_meta(
-            strict=True,
+
             maxRounds=1,
             maxCardsPerRound=0,
         ),
@@ -1047,7 +1093,7 @@ def test_malformed_discovery_receipt_blocks_before_material_router(
     report = run_topic(
         tmp_path,
         meta=topic_meta(
-            strict=True,
+
             maxRounds=1,
             maxCardsPerRound=0,
         ),
@@ -1103,7 +1149,7 @@ def test_failed_child_is_excluded_and_clean_recalled_corpus_is_partial(
         "topic.synthesise.resources": [
             reply(synthesis_receipt("resources", [recalled]))
         ],
-        "topic.audit.legacy": [
+        "topic.audit": [
             reply(audit_receipt(f"vault/topics/{TOPIC}/00-overview.md")),
             reply(audit_receipt(f"vault/topics/{TOPIC}/01-resources.md")),
             reply(audit_receipt(f"vault/topics/{TOPIC}/02-outline.md")),
@@ -1112,7 +1158,7 @@ def test_failed_child_is_excluded_and_clean_recalled_corpus_is_partial(
     report = run_topic(
         tmp_path,
         meta=topic_meta(
-            strict=True,
+
             maxRounds=1,
             maxCardsPerRound=0,
         ),
@@ -1191,7 +1237,7 @@ def test_duplicate_demands_resolving_to_one_identity_dispatch_one_material(
         "topic.synthesise.resources": [
             reply(synthesis_receipt("resources", members))
         ],
-        "topic.audit.legacy": [
+        "topic.audit": [
             reply(audit_receipt(f"vault/topics/{TOPIC}/00-overview.md")),
             reply(audit_receipt(f"vault/topics/{TOPIC}/01-resources.md")),
             reply(audit_receipt(f"vault/topics/{TOPIC}/02-outline.md")),
@@ -1200,7 +1246,7 @@ def test_duplicate_demands_resolving_to_one_identity_dispatch_one_material(
     report = run_topic(
         tmp_path,
         meta=topic_meta(
-            strict=True,
+
             maxRounds=1,
             maxCardsPerRound=0,
         ),
@@ -1233,7 +1279,7 @@ def test_operation_receipts_are_bound_to_the_requested_topic_identity(
     for call in report["trace"]:
         if call["type"] != "agent":
             continue
-        if call["route"] == "topic.audit.legacy":
+        if call["route"] == "topic.audit":
             assert call["request"]["exact_output"].startswith(
                 f"vault/topics/{slug}/"
             )
@@ -1251,7 +1297,7 @@ def test_foreign_topic_key_in_a_readonly_receipt_fails_closed(
     responses.pop("topic.resolve-membership")
     responses.pop("topic.synthesise.overview")
     responses.pop("topic.synthesise.resources")
-    responses.pop("topic.audit.legacy")
+    responses.pop("topic.audit")
     report = run_topic(tmp_path, responses=responses)
 
     research = receipt(report["result"])
@@ -1426,11 +1472,11 @@ def test_recall_stage_terminals_route_without_a_second_invocation(
                 output_path="vault/topics/foreign/01-resources.md",
             ),
         ),
-        ("topic.audit.legacy", None),
-        ("topic.audit.legacy", {"status": "cancelled"}),
-        ("topic.audit.legacy", {"status": "clean"}),
+        ("topic.audit", None),
+        ("topic.audit", {"status": "cancelled"}),
+        ("topic.audit", {"status": "clean"}),
         (
-            "topic.audit.legacy",
+            "topic.audit",
             audit_receipt("vault/topics/foreign/00-overview.md"),
         ),
     ],
@@ -1447,10 +1493,10 @@ def test_each_writer_unknown_or_invalid_outcome_blocks_without_replay(
         responses.pop("topic.resolve-membership")
         responses.pop("topic.synthesise.overview")
         responses.pop("topic.synthesise.resources")
-        responses.pop("topic.audit.legacy")
+        responses.pop("topic.audit")
     elif writer.startswith("topic.synthesise"):
         responses[writer] = [reply(bad)]
-        responses.pop("topic.audit.legacy")
+        responses.pop("topic.audit")
     else:
         responses[writer][0] = reply(bad)
 
@@ -1463,7 +1509,7 @@ def test_each_writer_unknown_or_invalid_outcome_blocks_without_replay(
     assert research["failure"]["outcome"] == "unknown"
     assert research["failure"]["retryable"] is False
     assert research["resume"] == {"operation_key": "topic.reconcile"}
-    if writer == "topic.audit.legacy":
+    if writer == "topic.audit":
         expected_target = f"vault/topics/{TOPIC}/00-overview.md"
         assert len(
             [
@@ -1492,7 +1538,7 @@ def test_foreign_audit_diagnostic_never_guesses_a_writer_owner(
         "kind": "foreign_owner",
         "reason": "outside Topic exact outputs",
     }
-    responses["topic.audit.legacy"][0] = reply(
+    responses["topic.audit"][0] = reply(
         audit_receipt(
             f"vault/topics/{TOPIC}/00-overview.md",
             status="partial",
@@ -1508,7 +1554,7 @@ def test_foreign_audit_diagnostic_never_guesses_a_writer_owner(
     assert research["failure"]["code"] == "topic.repair_owner_unknown"
     assert len(calls(report, "topic.synthesise.overview")) == 1
     assert len(calls(report, "topic.synthesise.resources")) == 1
-    assert len(calls(report, "topic.audit.legacy")) == 3
+    assert len(calls(report, "topic.audit")) == 3
 
 
 @pytest.mark.parametrize(
@@ -1551,7 +1597,7 @@ def test_one_exact_audit_diagnostic_repairs_its_single_owner_then_reaudits_once(
         f"vault/topics/{TOPIC}/01-resources.md",
         f"vault/topics/{TOPIC}/02-outline.md",
     ]
-    responses["topic.audit.legacy"] = [
+    responses["topic.audit"] = [
         reply(
             audit_receipt(path, status="partial", escalated=[diagnostic])
             if path == target
@@ -1562,7 +1608,7 @@ def test_one_exact_audit_diagnostic_repairs_its_single_owner_then_reaudits_once(
     report = run_topic(tmp_path, responses=responses)
 
     writer_calls = calls(report, writer)
-    audits = calls(report, "topic.audit.legacy")
+    audits = calls(report, "topic.audit")
     research = receipt(report["result"])
     assert len(writer_calls) == (3 if writer == "topic.steer" else 2)
     assert writer_calls[-1]["request"]["mode"] == "repair"
@@ -1590,7 +1636,7 @@ def test_residual_violation_after_one_repair_is_terminal_and_never_repaired_twic
         reply(synthesis_receipt("overview", members)),
         reply(synthesis_receipt("overview", members, action="repair")),
     ]
-    responses["topic.audit.legacy"] = [
+    responses["topic.audit"] = [
         reply(audit_receipt(overview_path, status="partial", escalated=[diagnostic])),
         reply(audit_receipt(f"vault/topics/{TOPIC}/01-resources.md")),
         reply(audit_receipt(f"vault/topics/{TOPIC}/02-outline.md")),
@@ -1604,7 +1650,7 @@ def test_residual_violation_after_one_repair_is_terminal_and_never_repaired_twic
     assert research["failure"]["code"] == "topic.audit_repair_exhausted"
     assert len(calls(report, "topic.synthesise.overview")) == 2
     assert len(calls(report, "topic.synthesise.resources")) == 1
-    assert len(calls(report, "topic.audit.legacy")) == 4
+    assert len(calls(report, "topic.audit")) == 4
 
 
 def test_same_runtime_identical_strict_requests_coalesce_one_graph(
@@ -1629,9 +1675,9 @@ def test_same_runtime_identical_strict_requests_coalesce_one_graph(
         "topic.resolve-membership",
         "topic.synthesise.overview",
         "topic.synthesise.resources",
-        "topic.audit.legacy",
+        "topic.audit",
     ]:
-        expected = 2 if route == "topic.steer" else 3 if route == "topic.audit.legacy" else 1
+        expected = 2 if route == "topic.steer" else 3 if route == "topic.audit" else 1
         assert len(calls(report, route)) == expected
 
 
@@ -1707,7 +1753,7 @@ def test_recall_only_terminal_matrices_preserve_typed_receipts(
     assert calls(report, "topic.synthesise.resources") == []
 
 
-def test_legacy_adapter_is_derived_from_authoritative_research_receipt(
+def test_result_summary_is_derived_from_authoritative_research_receipt(
     tmp_path: Path,
 ) -> None:
     members = [member("book", "exact-book-2024"), member("talk", "exact-talk-2026")]
@@ -1743,3 +1789,245 @@ def test_legacy_adapter_is_derived_from_authoritative_research_receipt(
         "overview": result["overview"],
         "resources": result["resources"],
     }
+
+
+def completion_responses(
+    members: list[dict[str, str]],
+    cards: list[dict[str, str]] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    card_values = cards or []
+    return {
+        "topic.synthesise.overview": [
+            reply(synthesis_receipt("overview", members, cards=card_values))
+        ],
+        "topic.synthesise.resources": [
+            reply(synthesis_receipt("resources", members, cards=card_values))
+        ],
+        "topic.audit": [
+            reply(audit_receipt(f"vault/topics/{TOPIC}/00-overview.md")),
+            reply(audit_receipt(f"vault/topics/{TOPIC}/01-resources.md")),
+            reply(audit_receipt(f"vault/topics/{TOPIC}/02-outline.md")),
+        ],
+    }
+
+
+def test_round_loop_continues_to_hard_bound_and_exposes_remaining_work(
+    tmp_path: Path,
+) -> None:
+    local = member("paper", "local-paper-2024")
+    candidates = [
+        paper_candidate("round-one-paper-2025"),
+        paper_candidate("round-two-paper-2026"),
+    ]
+    demands = [
+        {
+            "kind": "paper",
+            "query": f"round {index} exact evidence",
+            "subq": "sq-contract",
+            "role": "evidence",
+            "reason": f"continue round {index}",
+        }
+        for index in (1, 2, 3)
+    ]
+    final_members = [local] + [
+        member("paper", candidate["slug"]) for candidate in candidates
+    ]
+    responses = {
+        "topic.recall": [reply(recall_receipt([local]))],
+        "topic.steer": [
+            reply(steer_receipt(action="create")),
+            reply(
+                steer_receipt(
+                    action="refresh", members=[local], candidate_demands=[demands[0]]
+                )
+            ),
+            reply(
+                steer_receipt(
+                    action="refresh",
+                    members=final_members[:2],
+                    candidate_demands=[demands[1]],
+                )
+            ),
+            reply(
+                steer_receipt(
+                    action="refresh",
+                    members=final_members,
+                    candidate_demands=[demands[2]],
+                )
+            ),
+        ],
+        "topic.resolve-membership": [
+            reply(membership_receipt([local])),
+            *[
+                reply(membership_receipt([member("paper", candidate["slug"])]))
+                for candidate in candidates
+            ],
+        ],
+        "topic.discover-paper": [
+            reply(
+                discovery_receipt(
+                    demands[index], candidate, demand_id=f"r{index + 1}-d01"
+                )
+            )
+            for index, candidate in enumerate(candidates)
+        ],
+        **completion_responses(final_members),
+    }
+    report = run_topic(
+        tmp_path,
+        meta=topic_meta(maxRounds=2, maxCardsPerRound=0),
+        responses=responses,
+        router={
+            "router:paper": [
+                reply(paper_child_result(candidate["slug"]))
+                for candidate in candidates
+            ]
+        },
+    )
+
+    assert report["result"]["rounds"] == 2
+    assert report["result"]["dead_end"] is False
+    assert len(calls(report, "topic.discover-paper")) == 2
+    assert len(calls(report, "router:paper")) == 2
+    assert len(calls(report, "topic.steer")) == 4
+
+
+def test_material_demand_is_deduplicated_across_rounds(
+    tmp_path: Path,
+) -> None:
+    local = member("paper", "local-paper-2024")
+    candidate = paper_candidate("deduplicated-paper-2026")
+    demand = {
+        "kind": "paper",
+        "query": "same exact demand",
+        "subq": "sq-contract",
+        "role": "evidence",
+        "reason": "one material is enough",
+    }
+    final_members = [local, member("paper", candidate["slug"])]
+    responses = {
+        "topic.recall": [reply(recall_receipt([local]))],
+        "topic.steer": [
+            reply(steer_receipt(action="create")),
+            reply(
+                steer_receipt(
+                    action="refresh", members=[local], candidate_demands=[demand]
+                )
+            ),
+            reply(
+                steer_receipt(
+                    action="refresh",
+                    members=final_members,
+                    candidate_demands=[demand],
+                )
+            ),
+        ],
+        "topic.resolve-membership": [
+            reply(membership_receipt([local])),
+            reply(membership_receipt([member("paper", candidate["slug"])])),
+        ],
+        "topic.discover-paper": [
+            reply(discovery_receipt(demand, candidate, demand_id="r1-d01"))
+        ],
+        **completion_responses(final_members),
+    }
+    report = run_topic(
+        tmp_path,
+        meta=topic_meta(maxRounds=3, maxCardsPerRound=0),
+        responses=responses,
+        router={
+            "router:paper": [reply(paper_child_result(candidate["slug"]))]
+        },
+    )
+
+    assert report["result"]["rounds"] == 1
+    assert report["result"]["dead_end"] is True
+    assert len(calls(report, "topic.discover-paper")) == 1
+    assert len(calls(report, "router:paper")) == 1
+
+
+def test_webcards_remain_a_separate_synthesis_channel(
+    tmp_path: Path,
+) -> None:
+    local = member("paper", "local-paper-2024")
+    task = {
+        "subq": "sq-contract",
+        "query": "verified public evidence",
+        "note": "keep this outside the academic corpus",
+        "card_slug": "verified-public-evidence",
+    }
+    card = {
+        "slug": task["card_slug"],
+        "path": f"vault/topics/{TOPIC}/cards/{task['card_slug']}.md",
+        "subq": task["subq"],
+        "title": "Verified web evidence",
+    }
+    responses = {
+        "topic.recall": [reply(recall_receipt([local]))],
+        "topic.steer": [
+            reply(steer_receipt(action="create")),
+            reply(steer_receipt(action="refresh", members=[local], web_tasks=[task])),
+            reply(
+                steer_receipt(
+                    action="refresh",
+                    members=[local],
+                    cards=[card],
+                    signal="saturated",
+                )
+            ),
+        ],
+        "topic.resolve-membership": [reply(membership_receipt([local]))],
+        "topic.webcard": [reply(webcard_receipt(task))],
+        **completion_responses([local], [card]),
+    }
+    report = run_topic(
+        tmp_path,
+        meta=topic_meta(maxRounds=1, maxCardsPerRound=1),
+        responses=responses,
+    )
+
+    result = report["result"]
+    assert result["cards"] == 1
+    assert result["members"] == [local]
+    assert receipt(result)["material_results"] == []
+    request = calls(report, "topic.synthesise.overview")[0]["request"]
+    assert request["members"] == [local]
+    assert request["evidence_cards"] == [card]
+    assert request["input_paths"] == [local["path"]]
+    assert request["card_paths"] == [card["path"]]
+
+
+def test_webcard_needs_input_gate_passes_through_without_replay(
+    tmp_path: Path,
+) -> None:
+    local = member("paper", "local-paper-2024")
+    task = {
+        "subq": "sq-contract",
+        "query": "ambiguous public evidence",
+        "note": "user must choose the evidence boundary",
+        "card_slug": "ambiguous-public-evidence",
+    }
+    responses = {
+        "topic.recall": [reply(recall_receipt([local]))],
+        "topic.steer": [
+            reply(steer_receipt(action="create")),
+            reply(steer_receipt(action="refresh", members=[local], web_tasks=[task])),
+        ],
+        "topic.resolve-membership": [reply(membership_receipt([local]))],
+        "topic.webcard": [reply(webcard_receipt(task, status="needs_input"))],
+    }
+    report = run_topic(
+        tmp_path,
+        meta=topic_meta(maxRounds=2, maxCardsPerRound=1),
+        responses=responses,
+    )
+
+    result = report["result"]
+    assert result["status"] == "needs_seeds"
+    assert receipt(result)["status"] == "needs_input"
+    assert receipt(result)["stage"] == "webcard"
+    assert receipt(result)["failure"]["operation_key"] == "topic.webcard"
+    assert result["question"] == "Which candidate should be used?"
+    assert receipt(result)["user_gate"]["question"] == result["question"]
+    assert len(calls(report, "topic.webcard")) == 1
+    assert calls(report, "topic.synthesise.overview") == []

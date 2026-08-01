@@ -1,10 +1,9 @@
-"""topic schema: 主题 overview/resources/outline/dossier/card 页面。
+"""topic schema: 主题 overview/resources/outline/card 页面。
 
 frontmatter 需 type + kind + title(title 为人读主题标题,与 H1 一致);
 文件夹 slug 仍是稳定身份键。
 成员关系反向挂在实体的 `topics: [slug]` 上(见 paper/book/chapter/author)。
 outline 页(02-outline.md)是 steer-agent 维护的研究大纲状态,用户可手改;
-dossier 页(NN-{subq}.md)是毕业子问题的专章;
 card 页(cards/{card-slug}.md)是 webcard-agent 写的圈外证据卡。
 设计见 docs/topic-steering-design.md。
 """
@@ -42,8 +41,6 @@ class Subquestion(BaseModel):
     question: str = Field(min_length=4, max_length=280)
     coverage: Literal["gap", "thin", "covered", "saturated"]
     channel: Literal["academic", "web", "mixed"] = "academic"
-    dossier: bool = False
-    page: Optional[str] = None
     theory_used: int = 0
     items: Optional[List[SubqItem]] = None
     cards: List[CardSlug] = Field(
@@ -53,15 +50,15 @@ class Subquestion(BaseModel):
 
 
 class TopicSchema(BaseModel):
-    """A topic page: overview / resources spine, outline state, dossier chapter, or evidence card."""
+    """A topic overview, resources page, outline state, or evidence card."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
     type: Literal["topic"]
     title: Title
-    kind: Literal["overview", "resources", "outline", "dossier", "card"] = Field(
+    kind: Literal["overview", "resources", "outline", "card"] = Field(
         description="页面类型: overview 综合页 / resources 资源页 / outline 研究大纲 / "
-                    "dossier 子问题专章 / card 圈外证据卡"
+                    "card 圈外证据卡"
     )
     subquestions: Optional[list[Subquestion]] = None
     history: Optional[list[str]] = None

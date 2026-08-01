@@ -1,7 +1,4 @@
-// Shared execution shell. Legacy graph nodes keep retryNull; the Paper vertical slice
-// uses runOperation so a writer with an unknown outcome is never auto-replayed.
-
-export const OVERWRITE = "\noverwrite: true";
+// Shared execution shell for uniform Stage operations.
 
 export const RUNTIME_RECEIPT_VERSION =
   "quasi.operation.runtime.receipt/0.1";
@@ -86,9 +83,8 @@ const matchesType = (value, type) => {
   }
 };
 
-// Schema validator used by foreign-receipt admission and the rolling Topic
-// loop, the sole remaining pre-stage legacy tenant where Claude's terminal
-// contract is not present. Covers the closed keyword subset its schemas use.
+// Schema validator used by foreign-receipt admission. Covers the closed
+// keyword subset its schemas use.
 export function validateSchema(schema, value) {
   if (!schema || typeof schema !== "object") return true;
   if (
@@ -213,7 +209,6 @@ export function classifyReceipt(
   receipt,
   contract,
   context = {},
-  hostSchema = null,
 ) {
   if (
     !receipt ||
@@ -223,13 +218,7 @@ export function classifyReceipt(
     return { edge: "unknown", receipt };
   if (receipt.schema_version === RUNTIME_RECEIPT_VERSION)
     return { edge: "unknown", receipt };
-  if (contract.stage === true) {
-    if (!readableTerminal(receipt)) return { edge: "unknown", receipt };
-  } else if (!validateSchema(hostSchema || contract.schema, receipt)) {
-    // Only the rolling Topic loop remains outside the host-enforced Stage
-    // terminal. Keep that named compatibility island fail-closed.
-    return { edge: "mismatch", receipt };
-  }
+  if (!readableTerminal(receipt)) return { edge: "unknown", receipt };
   if (contract.echo && contract.echo(receipt, context) !== true)
     return { edge: "mismatch", receipt };
   const status = contract.status
@@ -276,7 +265,7 @@ export function createRuntime({ agent, parallel, phase, log }) {
     if (lane.poisoned) {
       // A poisoned lane is reset only after every underlying invocation that
       // caused the saturation has actually settled. Until then new work must
-      // fail closed instead of slipping in behind a timed-out guard.
+      // fail closed instead of slipping in behind a timed-out invocation.
       if (lane.active === 0) phaseLanes.delete(key);
       return;
     }
@@ -323,7 +312,7 @@ export function createRuntime({ agent, parallel, phase, log }) {
   // This is a stage-UI/pipeline bound, not a global provider cap: each visible
   // processing phase owns an independent FIFO lane. A host adapter may still
   // impose its own global provider limit. The slot follows the underlying Agent
-  // Promise, not a guard's timeout verdict, so a possibly-live background call
+  // Promise, not a timeout verdict, so a possibly-live background call
   // continues to count against its phase limit.
   const admitAgent = (opts, invoke, guarded = false) => {
     const key = phaseKey(opts);
@@ -380,7 +369,7 @@ export function createRuntime({ agent, parallel, phase, log }) {
   const callAgent = (prompt, opts) =>
     scheduleAgent(prompt, opts).promise;
 
-  const guard = (prompt, opts) => {
+  const invokeGuarded = (prompt, opts) => {
     let timer;
     let armTimeout;
     let admission;
@@ -406,13 +395,9 @@ export function createRuntime({ agent, parallel, phase, log }) {
     ]);
   };
 
-  const retryNull = async (prompt, opts, retrySuffix = "") =>
-    (await guard(prompt, opts)) ??
-    guard(prompt + retrySuffix, { ...opts, label: `${opts.label}:retry` });
-
   const invokeReadonly = async (prompt, opts) => {
     try {
-      const receipt = await guard(prompt, opts);
+      const receipt = await invokeGuarded(prompt, opts);
       if (
         receipt == null ||
         UNKNOWN_AGENT_STATUSES.has(
@@ -518,7 +503,6 @@ export function createRuntime({ agent, parallel, phase, log }) {
       receipt,
       spec.contract,
       spec.context || {},
-      spec.contract.stage === true ? null : opts.schema || null,
     );
   };
 
@@ -536,12 +520,10 @@ export function createRuntime({ agent, parallel, phase, log }) {
 
   return {
     coalesce,
-    guard,
     log,
     operate,
     parallel,
     phase,
-    retryNull,
     runOperation,
   };
 }

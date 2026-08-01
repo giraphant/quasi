@@ -38,8 +38,6 @@ const SUBQUESTION_SCHEMA = {
     "question",
     "coverage",
     "channel",
-    "dossier",
-    "page",
     "theory_used",
     "items",
     "cards",
@@ -57,12 +55,6 @@ const SUBQUESTION_SCHEMA = {
       enum: ["gap", "thin", "covered", "saturated"],
     },
     channel: { type: "string", enum: ["academic", "web", "mixed"] },
-    dossier: { type: "boolean" },
-    page: {
-      type: ["string", "null"],
-      maxLength: 120,
-      pattern: "^[0-9]{2}-[a-z0-9][a-z0-9-]*\\.md$",
-    },
     theory_used: { type: "integer", minimum: 0, maximum: 3 },
     items: {
       type: "array",
@@ -121,6 +113,8 @@ const steerRefs = ({
   topicSlug,
   query,
   memberRefs,
+  memberAssignments = [],
+  cardRefs = [],
   mode,
   diagnostics,
 }) => ({
@@ -134,6 +128,16 @@ const steerRefs = ({
     path,
   })),
   inputPaths: memberRefs.map(({ path }) => path),
+  memberAssignments: memberAssignments.map(
+    ({ member_key, subq, role }) => ({ member_key, subq, role }),
+  ),
+  cardRefs: cardRefs.map(({ slug, path, subq, title }) => ({
+    slug,
+    path,
+    subq,
+    title,
+  })),
+  cardPaths: cardRefs.map(({ path }) => path),
   outputPath: `vault/topics/${topicSlug}/02-outline.md`,
   mode,
   diagnostics: mode === "repair" ? diagnostics : [],
@@ -144,6 +148,9 @@ const steerPayload = (refs) => ({
     "research_key",
     "member_refs",
     "input_paths",
+    "member_assignments",
+    "card_refs",
+    "card_paths",
     "output_path",
     "signal",
     "subquestions",
@@ -156,6 +163,9 @@ const steerPayload = (refs) => ({
     research_key: { const: refs.researchKey },
     member_refs: { const: refs.memberRefs },
     input_paths: { const: refs.inputPaths },
+    member_assignments: { const: refs.memberAssignments },
+    card_refs: { const: refs.cardRefs },
+    card_paths: { const: refs.cardPaths },
     output_path: { const: refs.outputPath },
     signal: {
       type: "string",
@@ -284,6 +294,154 @@ const completeWebcard = (receipt) => {
   );
 };
 
+const synthesisRefs = ({
+  materialKey,
+  researchKey,
+  topicSlug,
+  topic,
+  memberRefs,
+  cardRefs = [],
+  outputRole,
+  mode,
+  diagnostics,
+}) => ({
+  materialKey,
+  researchKey,
+  topicSlug,
+  topic,
+  memberRefs: memberRefs.map(({ kind, slug, path }) => ({
+    kind,
+    slug,
+    path,
+  })),
+  inputPaths: memberRefs.map(({ path }) => path),
+  cardRefs: cardRefs.map(({ slug, path, subq, title }) => ({
+    slug,
+    path,
+    subq,
+    title,
+  })),
+  cardPaths: cardRefs.map(({ path }) => path),
+  outlinePath: `vault/topics/${topicSlug}/02-outline.md`,
+  outputRole,
+  outputPath: `vault/topics/${topicSlug}/${
+    outputRole === "overview" ? "00-overview.md" : "01-resources.md"
+  }`,
+  mode,
+  diagnostics: mode === "repair" ? diagnostics : [],
+});
+
+const synthesisPayload = (refs) => ({
+  required: [
+    "research_key",
+    "member_refs",
+    "input_paths",
+    "card_refs",
+    "card_paths",
+    "outline_path",
+    "output_path",
+    "artifact_roles",
+    "members_analyzed",
+    "cards_analyzed",
+  ],
+  properties: {
+    research_key: { const: refs.researchKey },
+    member_refs: { const: refs.memberRefs },
+    input_paths: { const: refs.inputPaths },
+    card_refs: { const: refs.cardRefs },
+    card_paths: { const: refs.cardPaths },
+    outline_path: { const: refs.outlinePath },
+    output_path: { const: refs.outputPath },
+    artifact_roles: { const: [refs.outputRole] },
+    members_analyzed: { const: refs.memberRefs.length },
+    cards_analyzed: { const: refs.cardRefs.length },
+  },
+});
+
+const synthesisTerminalPayloads = ({ mode }) => ({
+  complete: {
+    required: ["action"],
+    properties: {
+      action: {
+        type: "string",
+        enum: [mode, "reconciled"],
+      },
+    },
+  },
+});
+
+const synthesisEnvelope = (operation, refs) => ({
+  schema_version: "quasi.stage.request/0.2",
+  operation,
+  stage: "Synthesise",
+  material_key: refs.materialKey,
+  effect: "writer",
+  objective:
+    refs.outputRole === "overview"
+      ? "Establish the exact Topic overview from the outline, admitted academic corpus, and separately identified evidence cards."
+      : "Establish the exact Topic resources page from the outline, admitted academic corpus, and separately identified evidence cards.",
+  research_key: refs.researchKey,
+  topic: { slug: refs.topicSlug, description: refs.topic },
+  members: refs.memberRefs,
+  input_paths: refs.inputPaths,
+  evidence_cards: refs.cardRefs,
+  card_paths: refs.cardPaths,
+  outline: { role: "outline", path: refs.outlinePath },
+  output: { role: refs.outputRole, path: refs.outputPath },
+  mode: refs.mode,
+  overwrite: refs.mode !== "create",
+  repair_diagnostics: refs.diagnostics,
+  channel_policy:
+    "Academic Book/Paper/Talk members and web evidence cards are distinct channels. Never present a card as an academic analysis or add a card to the member corpus.",
+  scope:
+    "Read only the exact outline, member, and card paths in this request; write only output.path.",
+});
+
+const auditRefs = ({ materialKey, target, pass }) => ({
+  materialKey,
+  target,
+  pass,
+});
+
+const auditPayload = ({ target, pass }) => ({
+  required: [
+    "target_path",
+    "pass",
+    "remaining_violations",
+    "escalated",
+    "mutated_paths",
+  ],
+  properties: {
+    target_path: { const: target },
+    pass: { const: pass },
+    remaining_violations: { type: "integer", minimum: 0 },
+    escalated: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path", "kind", "reason"],
+        properties: {
+          path: { const: target },
+          kind: { type: "string", minLength: 1, maxLength: 200 },
+          reason: { type: "string", minLength: 1, maxLength: 4000 },
+        },
+      },
+    },
+    mutated_paths: {
+      type: "array",
+      uniqueItems: true,
+      items: { const: target },
+    },
+  },
+});
+
+const completeAudit = (receipt, context) =>
+  receipt.target_path === context.target &&
+  (receipt.remaining_violations === 0
+    ? receipt.escalated.length === 0
+    : receipt.remaining_violations === receipt.escalated.length);
+
 export const topicOperationRows = [
   {
     operation: "topic.steer",
@@ -309,13 +467,15 @@ export const topicOperationRows = [
       query: refs.query,
       members: refs.memberRefs,
       input_paths: refs.inputPaths,
+      member_assignments: refs.memberAssignments,
+      cards: refs.cardRefs,
+      card_paths: refs.cardPaths,
       output: { role: "outline", path: refs.outputPath },
       mode: refs.mode,
       overwrite: refs.mode !== "create",
       repair_diagnostics: refs.diagnostics,
-      strict_recall_only: true,
       scope:
-        "Read only the exact member and outline paths in this request; write only output.path and never dispatch the suggested demands.",
+        "Read only the exact member, card, and outline paths in this request; write only output.path and never dispatch the suggested demands.",
     }),
   },
   {
@@ -361,6 +521,47 @@ export const topicOperationRows = [
         "Never write an unverified or empty card and never write any path other than exact_output.",
     }),
   },
+  ...["overview", "resources"].map((outputRole) => ({
+    operation: `topic.synthesise.${outputRole}`,
+    stage: "Synthesise",
+    effect: "writer",
+    agentType: "quasi:synthesis-agent",
+    refs: (context) => synthesisRefs({ ...context, outputRole }),
+    payloadProperties: synthesisPayload,
+    terminalPayloads: synthesisTerminalPayloads,
+    complete: (receipt, context) =>
+      receipt.output_path ===
+      `vault/topics/${context.topicSlug}/${
+        outputRole === "overview" ? "00-overview.md" : "01-resources.md"
+      }`,
+    envelope: (_context, refs) =>
+      synthesisEnvelope(`topic.synthesise.${outputRole}`, refs),
+  })),
+  {
+    operation: "topic.audit",
+    stage: "Audit",
+    effect: "writer",
+    agentType: "quasi:audit-agent",
+    refs: auditRefs,
+    payloadProperties: auditPayload,
+    terminalPayloads: () => ({}),
+    complete: completeAudit,
+    envelope: (_context, refs) => ({
+      schema_version: "quasi.stage.request/0.2",
+      operation: "topic.audit",
+      stage: "Audit",
+      material_key: refs.materialKey,
+      effect: "writer",
+      objective:
+        "Audit the exact Topic artifact and apply only local mechanical fixes before returning one terminal judgement.",
+      pass: refs.pass,
+      mode: refs.pass === 1 ? "audit" : "re-audit",
+      target: { role: "topic_product", path: refs.target },
+      exact_output: refs.target,
+      scope:
+        "Read and mechanically repair only exact_output; never mutate or report another path.",
+    }),
+  },
 ];
 
 export const topicOperations = Object.fromEntries(
@@ -369,3 +570,8 @@ export const topicOperations = Object.fromEntries(
 
 export const topicSteer = topicOperations["topic.steer"];
 export const topicWebcard = topicOperations["topic.webcard"];
+export const topicOverview =
+  topicOperations["topic.synthesise.overview"];
+export const topicResources =
+  topicOperations["topic.synthesise.resources"];
+export const topicAudit = topicOperations["topic.audit"];
