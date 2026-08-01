@@ -96,7 +96,8 @@ const AUDIT_DIAGNOSTIC_SCHEMA = {
 export const TALK_EVIDENCE_RULES = [
   "inputs[0] 是 committed primary transcript，其余 inputs 是同一 generation 的 per-engine SRT evidence",
   "对照时间戳、人名、同音词和专业术语；优先采用多引擎一致且符合实际语境的内容",
-  "引文、人物、著作和时间脉络必须能在 transcript evidence 中定位",
+  "引文、人物和著作必须能在 transcript evidence 中定位",
+  "分节摘要的每组起止时间与时间脉络的每个时间点必须逐项对照 transcript evidence 定位，不得用相邻分节边界作未核对的推算",
 ];
 
 export const talkOperationRows = [

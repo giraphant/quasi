@@ -988,7 +988,7 @@ export const TALK_ARTIFACT_CONTRACT = {
       },
       {
         "child_kind": "paragraph",
-        "description": "按内容实质分节(H3 小标题);摘要主体;问答并入此处",
+        "description": "按内容实质分节(H3 小标题);摘要主体;问答并入此处;live talk 的每个 H3 下首行严格为「时间：`[mm:ss]`–`[mm:ss]`」,起止点逐项对照 transcript evidence 的实际发言范围核定,反引号必须按字面保留;超过一小时用 `[h:mm:ss]`",
         "h2": "分节摘要",
         "kind": "h3-sections",
         "required": true
@@ -1017,7 +1017,7 @@ export const TALK_ARTIFACT_CONTRACT = {
         "required": true
       },
       {
-        "description": "视频时间轴导航(talk 专属,置末);每行严格为「- `[mm:ss]` 主题 — 概括」,时间戳取自 transcript,反引号必须按字面保留在输出里(播放器定位依赖它);超过一小时用 `[h:mm:ss]`",
+        "description": "详尽视频时间索引(talk 专属,置末,粒度细于分节摘要,不得用分节起止范围替代);每行严格为「- `[mm:ss]` 主题 — 概括」,时间戳取自 transcript,反引号必须按字面保留在输出里(播放器定位依赖它);超过一小时用 `[h:mm:ss]`",
         "h2": "时间脉络",
         "kind": "bullet-list",
         "required": true

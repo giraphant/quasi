@@ -402,12 +402,21 @@ def test_talk_and_transcript_validate_frontmatter() -> None:
     assert transcript_body.sections == []
 
 
-def test_talk_timeline_description_pins_backticked_timestamp_template() -> None:
+def test_talk_timestamp_descriptions_pin_clickable_templates() -> None:
+    summary = next(
+        s for s in TALK_BODY.sections if s.h2 == "分节摘要"
+    )
     timeline = next(
         s for s in TALK_BODY.sections if s.h2 == "时间脉络"
     )
+
+    assert "时间：`[mm:ss]`–`[mm:ss]`" in summary.description
+    assert "逐项对照 transcript evidence" in summary.description
+    assert "反引号" in summary.description
     assert "`[mm:ss]`" in timeline.description
     assert "反引号" in timeline.description
+    assert "粒度细于分节摘要" in timeline.description
+    assert "不得用分节起止范围替代" in timeline.description
 
 
 def test_talk_and_transcript_reject_extra_and_missing_fields() -> None:
@@ -443,7 +452,8 @@ def test_typecheck_passes_full_and_silent_talk_bodies(tmp_path: Path) -> None:
         "media: recording.mp4\n"
         "---\n\n# 垃圾佬\n\n"
         "## 核心论点\n正文论点。\n\n"
-        "## 分节摘要\n### 研究起点\n展开。\n\n### 三阶段框架\n展开。\n\n"
+        "## 分节摘要\n### 研究起点\n时间：`[00:00]`–`[03:08]`\n\n展开。\n\n"
+        "### 三阶段框架\n时间：`[03:09]`–`[08:12]`\n\n展开。\n\n"
         "## 关键概念\n| 概念 | 英文 | 定义 |\n|------|------|------|\n| 垃圾佬 | Lajilao | 定义 |\n\n"
         "## 项目关联\n- 与 [[network-society-20241108]] 同场异源\n\n"
         "## 文献人物\n- Zhou Pengan — 讲者\n\n"

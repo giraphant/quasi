@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.57.9** (2026-08-01): **Talk 分节摘要补入经转写核对的可点击起止时间，同时保留文末详尽时间索引。**
+  - 新产物此前只有文末 `时间脉络` 的起始点，阅读摘要时看不到每个内容小节覆盖的录制范围；若直接把时间轴改成区间，又会失去章节内部的重要转折索引。
+  - 最小修复只改既有 producer 合同：live Talk 的每个 H3 下首行固定为「时间：`[mm:ss]`–`[mm:ss]`」，两个端点逐项对照同 generation 的 transcript evidence；文末 `时间脉络` 继续使用更细粒度的反引号时间点，不得由分节区间替代。未新增 H2、状态、receipt、helper 或 skill 路由；重建 workflow 投影并用 schema / prompt 回归测试钉住合同。
+
 - **0.57.8** (2026-08-01): **根目录 `core/` 迁入 `scripts/core/`，插件根只剩宿主要加载的组件目录。**
   - 起因：根目录的 `core/` 与 `skills/`、`workflows/`、`agents/`、`bin/` 混排，看起来像宿主组件，实际是纯 Python 管道，已被误判为死代码而误删过一次。迁移后 L0 边界不变，仍靠导入方向执行（`scripts/core/` 不得 import 兄弟域或 `scripts/schemas/`），目录位置不再承担这个语义。
   - 改动面：`git mv` 三文件；`plugin_root()` 无锚分支 `parents[1]`→`parents[2]`；10 个脚本的 `from core import` 统一改 `from scripts.core import`（全部已插 PLUGIN_ROOT 进 sys.path，`scripts.` 命名空间导入既有先例，不新增路径黑客）；`test_core.py` 自身 `parents[2]`→`parents[3]`；CLAUDE.md（=AGENTS.md）与 ARCHITECTURE.md 的三处路径提法同步。全量 510 测试过，`vault resolve`/`audit` shim 冒烟过。修改由 Codex worker 按配方执行。
