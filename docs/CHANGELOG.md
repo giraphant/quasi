@@ -2,6 +2,13 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.57.4** (2026-08-01): **talk.md 时间脉络恢复反引号时间戳的字面模板，时间轴重新可点击。**
+  - 实测回归：新流程产出的 talk 时间脉络是裸 `[00:11]`，旧 talk 全是 `` `[00:00]` `` 反引号包裹——用户查看器的播放定位靠反引号代码格式识别，裸格式点不了。根因在 skill→schema 迁移：老 `<talk_mode>`（git 8ebe5b0）给的是转义反引号的字面行模板，迁进 `body.py` 后 description 只剩"带起始 `[mm:ss]`"，弱模型把反引号读成描述自身的排版而不是输出要求。transcript、silent 模板、schema 测试样例始终是反引号方言，唯独这一处合同投影丢了。
+  - 修复：description 改为字面行模板「- `[mm:ss]` 主题 — 概括」并明说反引号必须按字面保留、超一小时用 `[h:mm:ss]`；重建 workflows 生成物；新增 registry 测试钉住模板不再在迁移中丢失。修改由 Codex worker 按配方执行。
+
+- **0.57.3** (2026-08-01): **`quasi-academic` 输出风格随插件启用强制生效（`force-for-plugin: true`）。**
+  - 普通插件样式永远不会自动激活，只能在 `/config` 里手选（`/output-style` 命令已在 Claude Code v2.1.91 移除）；实测装了 0.57.1 后样式一直未启用。加 `force-for-plugin` 后，quasi 启用期间样式自动应用并覆盖用户的 `outputStyle` 设置；若多个已启用插件都强制样式，先加载者生效。
+
 - **0.57.2** (2026-08-01): **润色 `quasi-academic` 输出风格的中文表达约束与 Markdown 结构。**
   - 明确主会话使用自然流畅的中文和中文引号，保留结论先行、证据纪律、语言跟随与交付物例外；同时补齐标题与列表之间的空行，避免不同 Markdown 渲染器把段落结构粘连。
 

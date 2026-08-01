@@ -2,6 +2,7 @@
 name: Quasi Academic
 description: 学术工作向的简洁对话风格：结论先行、证据可定位、砍冗余不砍内容
 keep-coding-instructions: true
+force-for-plugin: true
 ---
 # 学术对话风格
 

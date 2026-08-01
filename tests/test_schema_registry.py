@@ -11,7 +11,7 @@ SCRIPTS_ROOT = PLUGIN_ROOT / "scripts"
 sys.path.insert(0, str(PLUGIN_ROOT))
 sys.path.insert(0, str(SCRIPTS_ROOT))
 
-from schemas import registry  # noqa: E402
+from schemas import TALK_BODY, registry  # noqa: E402
 from scripts.typecheck.typecheck import check_file  # noqa: E402
 
 
@@ -400,6 +400,14 @@ def test_talk_and_transcript_validate_frontmatter() -> None:
     ]
     assert all(len(s.h2) == 4 for s in talk_body.sections)
     assert transcript_body.sections == []
+
+
+def test_talk_timeline_description_pins_backticked_timestamp_template() -> None:
+    timeline = next(
+        s for s in TALK_BODY.sections if s.h2 == "时间脉络"
+    )
+    assert "`[mm:ss]`" in timeline.description
+    assert "反引号" in timeline.description
 
 
 def test_talk_and_transcript_reject_extra_and_missing_fields() -> None:

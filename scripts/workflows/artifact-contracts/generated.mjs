@@ -1017,7 +1017,7 @@ export const TALK_ARTIFACT_CONTRACT = {
         "required": true
       },
       {
-        "description": "视频时间轴导航(talk 专属,置末);每行一段,带起始 `[mm:ss]`(取自 transcript)",
+        "description": "视频时间轴导航(talk 专属,置末);每行严格为「- `[mm:ss]` 主题 — 概括」,时间戳取自 transcript,反引号必须按字面保留在输出里(播放器定位依赖它);超过一小时用 `[h:mm:ss]`",
         "h2": "时间脉络",
         "kind": "bullet-list",
         "required": true
