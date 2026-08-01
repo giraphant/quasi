@@ -2,7 +2,7 @@
 
 ## 任务
 
-用 shared Workflow 把一份本地录制整理成可审计的 transcript 与 Talk 页面。
+用主线程状态观察与单阶段 run-stage 调用，把一份本地录制整理成可审计的 transcript 与 Talk 页面。
 
 ## 输入
 
@@ -15,22 +15,21 @@
 - `engines`、`lang`、`prepare_media`：仅在用户明确指定时传入。
 
 题名或日期确实存在多个可能且会改变 Talk 身份时才请用户确认。路径、枚举、日期、slug 与
-文件状态的闭合验证只由 Workflow 拥有；Skill 不维护第二份 Talk schema。
+文件状态由 `quasi-status` 观察，单阶段 receipt 的闭合结构由 descriptor row 拥有。
 
 ## 硬约束
 
-- 一次 Talk 请求只启动一次
-  `$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs`。
-- Workflow receipt 是状态与产物的权威来源；Skill 不从文件存在自行推断完成。
-- Writer outcome 未知时保留 `talk.reconcile`，等下一次明确请求重新观察 durable state。
+- 每轮先运行 `quasi-status --kind talk --slug SLUG --json`，再由主线程选择最多一个
+  `$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs` 调用。
+- disk observation 是产物事实来源；run-stage receipt 是当前 specialist terminal 的来源。
+- Writer outcome 未知时立即停止，重新观察 durable state 后才决定 resume 或 reconcile。
 - Service credential 由 `quasi-*` shim 提供，临时 JSON 放在 `.quasi/temp/`。
 
 ## 状态
 
-图内的 Talk 状态由 `quasi.material-loop.receipt/0.2` 表达。Prepare specialist 使用
-`quasi.stage.receipt/0.2`，terminal 为
-`complete|needs_input|blocked|failed`。
-其中 `needs_input` 必须携带闭合 `user_gate`；其它 terminal 的 `user_gate` 为 `null`。
+Talk 的每个 specialist 使用 `quasi.stage.receipt/0.2`，terminal 为
+`complete|needs_input|blocked|failed`。`needs_input` 的 issue 必须携带一个具体
+`user_question`；主线程原样展示。
 
 主要 artifacts：
 
@@ -51,16 +50,16 @@
   semantic diagnostics 交回 producer owner。
 
 CLI 拥有媒体转换、engine execution、锁、staging、generation fingerprint 和 publication；
-Agent 负责理解 receipts、文本质量和 `live|dead|empty` 的业务含义；Workflow 负责阶段、owner、
-writer safety 与 producer repair edge。
+Agent 负责理解 receipts、文本质量和 `live|dead|empty` 的业务含义；descriptor row 负责 exact
+refs 与 schema，主线程负责阶段、owner、writer safety 与 producer repair 判断。
 
 ## 工作流
 
 ```text
-Recall
-  → Prepare: transcript generation; dead/empty closes canonical here
-  → Analyse: live Talk only
-  → Audit: exact target validation; optional exact-owner repair + re-audit
+status observation
+  ⇄ Prepare(run-stage): transcript generation; dead/empty closes canonical here
+  ⇄ Analyse(run-stage): live Talk only
+  ⇄ Audit(run-stage): exact target validation; optional exact-owner repair + re-audit
 ```
 
 ## 执行流程
@@ -71,7 +70,7 @@ if request.title/date 存在真正的身份歧义:
     present_identity_question(request)
     return
 
-args = {
+context = {
     "kind": "talk",
     "slug": request.slug,
     "meta": {
@@ -82,18 +81,28 @@ args = {
 }
 for key in ["engines", "lang", "prepare_media"]:
     if key in request:
-        args["meta"][key] = request[key]
-return args  # collect-material 使用唯一共享 run_graph 与 terminal handler
+        context["meta"][key] = request[key]
+
+while True:
+    observed = run("quasi-status --kind talk --slug SLUG --json")
+    stage = choose_next_stage(observed, request.goal)
+    if stage is None:
+        break
+    receipt = Workflow("workflows/run-stage.mjs", {
+        "kind": "talk", "slug": request.slug,
+        "stage": stage, "context": context,
+    })
+    handle_terminal_once(receipt)
 ```
 
 ## 断点续跑
 
-- `complete`：展示 typed MaterialReceipt 中的 canonical artifacts 与 clean audit。
-- `needs_input`：展示 specialist 的一个具体问题；收到答案后开启新图。
-- `blocked`：解释不确定的 writer/generation owner，并保留 `talk.reconcile`。
+- `complete`：重新运行 `quasi-status`，只展示已证明的 canonical artifacts 与 clean audit。
+- `needs_input`：展示 specialist 的一个具体问题；收到答案后重新观察并调用适用 stage。
+- `blocked`：解释不确定的 writer/generation owner，并停止当前驱动。
 - `failed`：展示已经观察到的 source/engine/text evidence，帮助用户决定是否换材料。
 
 ## 输出
 
-成功只报告 receipt 已证明的 exact paths、hashes、disposition 与 final audit。中间 transcript
-可以供用户检查，但不替代 canonical Talk page 的 complete MaterialReceipt。
+成功只报告 disk observation 与当前 receipt 共同证明的 exact paths、hashes、disposition 与
+final audit。中间 transcript 可以供用户检查，但不替代 canonical Talk page。

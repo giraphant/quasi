@@ -1,7 +1,7 @@
 // Shared Stage Unit envelope. A Stage Unit is one goal-owning specialist
 // invocation: the worker may use its declared capabilities until it can make
-// one of four honest terminal judgements. The Workflow supplies boundaries,
-// validates this one receipt shape, and routes the resulting edge.
+// one of four honest terminal judgements. run-stage supplies the boundaries
+// and host-validated receipt shape; the driving skill consumes the terminal.
 
 export const STAGE_RECEIPT_VERSION = "quasi.stage.receipt/0.2";
 
@@ -68,7 +68,7 @@ const stageTerminalBranch = (
 
 // Claude rejects top-level schema combinators, so the discriminated union lives
 // inside one required property. The host can now reject hybrid terminals (for
-// example complete plus a non-null issue) before the receipt reaches the Graph.
+// example complete plus a non-null issue) before the receipt reaches the skill.
 export const stageTerminalSchema = (operation, payloads = {}) => ({
   anyOf: STAGE_STATUSES.map((status) =>
     stageTerminalBranch(operation, status, payloads),

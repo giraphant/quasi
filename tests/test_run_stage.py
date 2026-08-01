@@ -14,10 +14,37 @@ ENTRY = ROOT / "scripts" / "workflows" / "run-stage.entry.mjs"
 CONTEXT = ROOT / "scripts" / "workflows" / "run-stage-context.mjs"
 
 NODE_HARNESS = r"""
-import { resolveStage, run } from __ENTRY__
+import { RUN_STAGE_REGISTRY, resolveStage, run } from __ENTRY__
 import { makeOperationContext } from __CONTEXT__
+import { STAGE_STATUSES, stageReceiptSchema } from __STAGE__
 
 const config = JSON.parse(process.argv[1])
+if (config.args?.inspectProtocol) {
+  const registry = Object.fromEntries(
+    Object.entries(RUN_STAGE_REGISTRY).map(([kind, stages]) => [
+      kind,
+      Object.fromEntries(
+        Object.entries(stages).map(([stage, operation]) => {
+          const resolved = resolveStage(kind, stage)
+          return [stage, {
+            operation,
+            resolvedOperation: resolved?.operation || null,
+            agentType: resolved?.descriptor?.agentType || null,
+            phase: resolved?.descriptor?.stage || null,
+          }]
+        }),
+      ),
+    ]),
+  )
+  const stageSchema = stageReceiptSchema({
+    operation: "protocol.example",
+    stage: "Analyse",
+    materialKey: "paper:example",
+    effect: "writer",
+  })
+  process.stdout.write(JSON.stringify({ registry, statuses: STAGE_STATUSES, stageSchema }))
+  process.exit(0)
+}
 const trace = []
 const receipt = { sentinel: "returned-verbatim" }
 const result = await run({
@@ -52,6 +79,10 @@ def run_stage(args: dict[str, Any]) -> dict[str, Any]:
     script = (
         NODE_HARNESS.replace("__ENTRY__", json.dumps(ENTRY.as_uri()))
         .replace("__CONTEXT__", json.dumps(CONTEXT.as_uri()))
+        .replace(
+            "__STAGE__",
+            json.dumps((ROOT / "scripts" / "workflows" / "stage.mjs").as_uri()),
+        )
     )
     proc = subprocess.run(
         [node, "--input-type=module", "-e", script, json.dumps({"args": args})],
@@ -62,6 +93,75 @@ def run_stage(args: dict[str, Any]) -> dict[str, Any]:
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
+
+
+EXPECTED_REGISTRY = {
+    "paper": {
+        "search": "material.search",
+        "acquire": "paper.acquire",
+        "prepare": "paper.prepare",
+        "analyse": "paper.analyse",
+        "audit": "paper.audit",
+    },
+    "book": {
+        "search": "material.search",
+        "acquire": "book.acquire",
+        "prepare": "book.prepare",
+        "analyse": "chapter.analyse",
+        "synthesise": "book.synthesise",
+        "audit": "book.audit",
+    },
+    "talk": {
+        "prepare": "talk.prepare",
+        "analyse": "talk.analyse",
+        "audit": "talk.audit",
+    },
+    "translation": {"prepare": "translation.prepare"},
+    "topic": {
+        "recall": "topic.recall",
+        "steer": "topic.steer",
+        "webcard": "topic.webcard",
+        "synthesise-overview": "topic.synthesise.overview",
+        "synthesise-resources": "topic.synthesise.resources",
+        "audit": "topic.audit",
+    },
+    "author": {
+        "discover-books": "author.discover-books",
+        "discover-papers": "author.discover-papers",
+        "resolve-membership": "author.resolve-membership",
+        "synthesise": "author.synthesise",
+        "audit": "author.audit",
+    },
+    "member": {"admission-probe": "member.admission-probe"},
+    "translate": {"prepare": "translation.prepare"},
+}
+
+
+def protocol_report() -> dict[str, Any]:
+    return run_stage({"inspectProtocol": True})
+
+
+def test_every_registered_stage_resolves_to_its_descriptor_row() -> None:
+    registry = protocol_report()["registry"]
+    assert set(registry) == set(EXPECTED_REGISTRY)
+    for kind, stages in EXPECTED_REGISTRY.items():
+        assert set(registry[kind]) == set(stages)
+        for stage, operation in stages.items():
+            resolved = registry[kind][stage]
+            assert resolved["operation"] == operation
+            assert resolved["resolvedOperation"] == operation
+            assert resolved["agentType"] == "general-purpose" or resolved[
+                "agentType"
+            ].startswith("quasi:")
+            assert resolved["phase"] in {
+                "Recall",
+                "Search",
+                "Acquire",
+                "Prepare",
+                "Analyse",
+                "Synthesise",
+                "Audit",
+            }
 
 
 @pytest.mark.parametrize(
@@ -139,6 +239,44 @@ def test_prompt_and_schema_are_exactly_the_selected_row_pair() -> None:
     assert call["options"]["agentType"] == "quasi:extract-agent"
     assert call["options"]["phase"] == "Prepare"
     assert call["options"]["label"] == "example-paper:prepare"
+    schema = call["options"]["schema"]
+    assert schema["type"] == "object"
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["schema_version"]["const"] == (
+        "quasi.stage.receipt/0.2"
+    )
+    assert schema["properties"]["operation"]["const"] == "paper.prepare"
+    assert schema["properties"]["material_key"]["const"] == (
+        "paper:example-paper"
+    )
+    assert "terminal" in schema["required"]
+
+
+def test_stage_protocol_has_exactly_four_closed_terminal_branches() -> None:
+    report = protocol_report()
+    assert report["statuses"] == [
+        "complete",
+        "needs_input",
+        "blocked",
+        "failed",
+    ]
+    terminal = report["stageSchema"]["properties"]["terminal"]
+    branches = {
+        branch["properties"]["status"]["const"]: branch
+        for branch in terminal["anyOf"]
+    }
+    assert set(branches) == set(report["statuses"])
+    assert all(branch["additionalProperties"] is False for branch in branches.values())
+    assert branches["complete"]["properties"]["issue"] == {"type": "null"}
+    for status in ("needs_input", "blocked", "failed"):
+        issue = branches[status]["properties"]["issue"]
+        assert issue["additionalProperties"] is False
+        assert issue["properties"]["operation"]["const"] == "protocol.example"
+    assert (
+        branches["needs_input"]["properties"]["issue"]["properties"]
+        ["user_question"]["type"]
+        == "string"
+    )
 
 
 @pytest.mark.parametrize(

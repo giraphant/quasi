@@ -10,7 +10,7 @@ import { build } from "esbuild";
 const execFileAsync = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW_SOURCE_ROOT = join(ROOT, "scripts", "workflows");
-const WORKFLOWS = ["process-material", "run-stage"].map((name) => ({
+const WORKFLOWS = ["run-stage"].map((name) => ({
   name,
   entry: join(WORKFLOW_SOURCE_ROOT, `${name}.entry.mjs`),
   output: join(ROOT, "workflows", `${name}.mjs`),

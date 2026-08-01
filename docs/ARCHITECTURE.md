@@ -66,33 +66,22 @@ Removed legacy bins:
 
 ## Workflow source and runtime
 
-`scripts/workflows/**/*.mjs` is the only hand-maintained graph source. It separates
-material loops, collection loops, research loops, and narrow Operations while
-retaining a single logical Workflow universe. `npm run build:workflows` uses the
-pinned esbuild dependency to produce the committed
-`workflows/process-material.mjs`; `npm run check:workflows` rejects a stale
-bundle or forbidden runtime imports.
+`scripts/workflows/**/*.mjs` contains the hand-maintained descriptor rows,
+run-stage entry/context, and shared Stage schema. `npm run build:workflows` uses
+the pinned esbuild dependency to produce only the committed
+`workflows/run-stage.mjs`; `npm run check:workflows` rejects a stale bundle or
+forbidden runtime imports.
 
-Top-level requests containing 2–32 Books/Papers use one material-batch
-coordinator inside that same Workflow invocation. It shares the runtime and
-coalescing map with every child Material Loop, runs independent items through
-`parallel`, preserves input order in the aggregate receipt, and never creates a
-second Workflow per item. `quasi.collection.material-batch.receipt/0.2`
-contains one ordered, authoritative projection per input item: identity, status,
-canonical artifacts, user gate or issue, and resume. It deliberately omits
-duplicate raw child results; strict child MaterialReceipt admission happens at
-the shared join before that projection is emitted.
-
-The shared graph presents progress as
+Skills are the drivers. They observe exact disk state through `quasi-status`,
+normalise and coalesce identity before writers, preserve batch input order, and
+select an applicable stage from
 `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`.
-Non-trivial work such as bibliographic investigation, readable-text recovery,
-chapter preparation, Talk transcription, and Translation validation is a Stage
-Unit: one specialist receives a goal, exact refs, declared capabilities, and a
-closed `quasi.stage.receipt/0.2` schema. The terminal is a discriminated union,
-so complete and non-complete evidence cannot be mixed. The specialist owns method and local
-recovery; the graph checks only the exact artifacts needed by the next stage.
-Single-product Analyse/Synthesise/Audit operations remain narrow. Unknown writer
-outcomes block instead of racing a second writer.
+Each run-stage invocation selects one descriptor row, gives one specialist a
+goal, exact refs, declared capabilities, and a closed
+`quasi.stage.receipt/0.2` schema, then returns the terminal unchanged. The
+specialist owns method and local recovery; the skill interprets the terminal and
+re-observes disk before continuing. Unknown writer outcomes stop instead of
+racing a second writer.
 
 Root `settings.json` supplies a plugin-default `subagentStatusLine`. The
 zero-dependency `scripts/subagent-statusline.py` renders only quasi task rows,

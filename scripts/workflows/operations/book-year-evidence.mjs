@@ -8,7 +8,7 @@ const nullableYear = (value) =>
   (Number.isInteger(value) && value >= 1000 && value <= 2500);
 
 // One exact Book year-evidence contract is shared by Search decisions,
-// acquisition receipts, user gates, and material joins.
+// acquisition receipts and user gates.
 export function validYearEvidence(evidence, expectedYear) {
   if (
     !exactKeys(evidence, [

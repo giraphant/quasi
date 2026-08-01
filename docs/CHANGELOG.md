@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.55.0** (2026-08-01): **运行架构倒置为 Skill 驱动，删除已经没有职责的自运行 Graph driver。**
+  - 真实 clean-project E2E 已证明 `collect-material` 能以 `quasi-status` 磁盘观察和五次单阶段 `run-stage` 调用完成 Search → Acquire → Prepare → Analyse → Audit，全程没有触发旧 driver；这项 gate 通过后才删除大图 bundle、material/collection/research loops、router/join/scheduler/classifier machinery 及其 characterization tests，不留 alias。
+  - 运行时四层现在固定为 Skill driver → descriptor rows + `run-stage` → specialist Agents → transactional `quasi-*` CLIs。Skill 负责 identity coalescing、阶段选择、并发、gate 与 resume；每个 Workflow 只解析一行、调用一个 Agent、原样返回 `quasi.stage.receipt/0.2`。协议测试收敛到全 registry row resolution、schema generation 与四 terminal shape，capability/status/skill guards 保持原样。
+  - E2E 同时校正文档边界：Workflow specialist 的 `CLAUDE_PROJECT_DIR` 可能为空，故 cwd 是 project root、非空 env 才优先；Analyse 完成后由 Audit 做机械 normalization 是设计内行为；headless `--output-format json` stdout 只有最终 envelope，完整 driver 证据需查 session JSONL 与 per-Workflow sidecars。
+
 - **0.54.0** (2026-08-01): **Topic 合入共享 material machinery，不再维护一座会继续漂移的第二套 Graph。**
   - Author discovery family、Topic steer 与 webcard 全部成为 descriptor rows；rolling Topic loop 由 `research/topic-recall.mjs` 唯一拥有的 bounded `maxRounds` graph 取代。Webcard fan-out 与材料 fan-out 并行，子材料复用共享 dispatch、`quasi-status --identity` disk admission 和 canonical `topic.audit`，所以 Topic 的专业步骤和其它 Operation 经过同一个 terminal gate。
   - 随着最后一个 pre-stage island 搬完，compatibility backstop、`guard` 和 `retryNull` 一并删除：readonly 的有限恢复和 writer 的禁止 replay 只由共享 runtime contract 表达，不再留 Topic 特例。

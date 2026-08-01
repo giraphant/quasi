@@ -63,15 +63,14 @@ const recallEnvelope = ({
     : {}),
 });
 
-const recallPromptText = (request) => `Execute exactly one readonly topic.recall Stage Unit from this request. It is safe
-for the runtime to retry only if the entire worker invocation produces no result; do not replay
-commands or choose another graph edge yourself.
+const recallPromptText = (request) => `Execute exactly one readonly topic.recall Stage Unit from this request. Do not replay
+commands, dispatch another stage, or choose the caller's next action yourself.
 
 Use only the three named vault roots. Derive a bounded bilingual search vocabulary from query,
 use read-only search to identify possible existing products, then confirm relevance by reading
 only each candidate's canonical product: book
 vault/books/{slug}/00-overview.md, paper vault/papers/{slug}.md, or talk
-vault/talks/{slug}/talk.md. Do not write, edit, route a material loop, search the web, or invent
+vault/talks/{slug}/talk.md. Do not write, edit, dispatch a material stage, search the web, or invent
 an item. Deduplicate by exact kind+slug, order by observed relevance, and return at most
 max_items. A recalled item's path is an exact proved canonical path or explicit null: use a
 non-null path only when that product was proved present and read; otherwise return null rather

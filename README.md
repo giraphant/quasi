@@ -14,7 +14,7 @@ workflows/       # 构建生成、供宿主加载的单文件入口
 agents/          # LLM 代理壳,只调用 quasi-* CLI
 bin/             # 稳定外部入口
 scripts/         # deterministic 能力入口、构建源码和实现
-  workflows/     # 模块化 Graph 源码与构建生成的 schema projections
+  workflows/     # run-stage 源码、descriptor rows 与 schema projections
 scripts/schemas/ # vault 领域规范(Pydantic + body schema)
 core/            # 极小运行时地基(path/frontmatter/json/module loading)
 ```
@@ -23,16 +23,16 @@ core/            # 极小运行时地基(path/frontmatter/json/module loading)
 producer/search 所需的 canonical projection 注入 Workflow，typecheck、audit 和 migration
 则直接消费同一 registry。历史 aliases 只出现在 audit/migration 投影中。
 
-Skill 写作 schema 的维护者约定见 `docs/SKILL_ORCHESTRATION.md`：Skill 负责用户沟通，
-Workflow 负责阶段和状态，Agent 负责专业判断，CLI 负责确定性 I/O。Active skill 正文只
+Skill 写作 schema 的维护者约定见 `docs/SKILL_ORCHESTRATION.md`：Skill 驱动状态与阶段，
+run-stage 负责一次 schema-enforced 调用，Agent 负责专业判断，CLI 负责确定性 I/O。Active skill 正文只
 保留运行时需要的信息。
 
 Claude Workflow 的源码只在 `scripts/workflows/**/*.mjs` 维护；运行
 `npm run build:workflows` 会确定性生成并提交
-`workflows/process-material.mjs`，不要直接修改生成文件。材料图是阶段看板：
-`Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`。Search 和 Prepare
-等需要调查或局部恢复的阶段由一个 goal-owning specialist 完成；Workflow 只注入 goal、
-capabilities、exact refs 和 receipt schema，再根据 typed terminal 推进。
+`workflows/run-stage.mjs`，不要直接修改生成文件。Skill 通过 `quasi-status` 观察磁盘后选择
+`Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit` 中适用的一步；每次
+Workflow 只注入 goal、capabilities、exact refs 和 receipt schema，调用一个 goal-owning
+specialist，并原样返回 typed terminal。仓库没有自运行材料图。
 根目录 `settings.json` 还为 quasi 子代理提供紧凑状态行，其他子代理保持 Claude Code
 默认显示。
 
@@ -50,7 +50,7 @@ capabilities、exact refs 和 receipt schema，再根据 typed terminal 推进�
 修改 Paper、Chapter、Book overview 或 Talk 的结构时编辑 `scripts/schemas/`，然后运行
 `npm run build:workflows`。构建器会更新
 `scripts/workflows/artifact-contracts/generated.mjs` 和
-`workflows/process-material.mjs`；两者都是生成物，禁止手改。
+`workflows/run-stage.mjs`；两者都是生成物，禁止手改。
 acquisition 等非产物结构的行为，由所属 `scripts/workflows/operations/*.mjs`
 以结构化 policy 注入，不另建 prose prompt pack。`npm run check:workflows`
 检查 Schema、projection、operation 与最终 bundle 的一致性。
@@ -61,7 +61,7 @@ acquisition 等非产物结构的行为，由所属 `scripts/workflows/operation
 
 | Skill | 功能 |
 |---|---|
-| `collect-material` | 统一采集→分析编排图:book / paper / author / talk / PDF translation |
+| `collect-material` | skill-driven 采集→分析:book / paper / author / talk / PDF translation |
 | `research-topic` | topic 界定与研究循环:vault 召回、滚雪球、证据卡、研究大纲与主题综合 |
 | `finalise-draft` | draft 校对 + 引文审查 + references.bib |
 

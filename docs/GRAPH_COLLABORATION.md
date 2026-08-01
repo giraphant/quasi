@@ -1,149 +1,130 @@
-# Graph collaboration model
+# Skill-driven collaboration model
 
-Maintainer constitution for `scripts/workflows/`. This document pins how the
-process-material graph is allowed to collaborate with capabilities, agents,
-and the entry skill, so that judgment stops re-accumulating in the graph.
-Like `docs/SKILL_ORCHESTRATION.md`, this is maintainer guidance: active
-skills and agent contracts must not cite it at runtime.
+Maintainer constitution for quasi's stage collaboration. This document pins how
+skills, descriptor rows, specialist Agents, and deterministic capabilities share
+authority now that the self-running graph driver is gone. Like
+`docs/SKILL_ORCHESTRATION.md`, it is maintainer guidance: active skills and Agent
+contracts must contain only the runtime information their executing model needs.
 
 ## The four layers
 
-1. **Capabilities** (`bin/quasi-*`, `scripts/`): deterministic and, where
-   they write, transactional (fenced generation, manifest-last publication).
-   They own file writes, publication, and identity/state probes. They never
-   make fuzzy judgments. They have been stable; treat them as the bedrock.
-2. **Agents** (`agents/*.md`): own all fuzzy judgment — method choice,
-   interpretation of capability output, local recovery, stopping, and the
-   honesty of their terminal. An agent wraps capabilities precisely because
-   capability output sometimes needs judgment.
-3. **Graph** (`scripts/workflows/`): a thin interpreter. It exists to reduce
-   the agent's burden: assemble the envelope (feed external data in), let
-   the host enforce the output schema, route the terminal, and provide
-   concurrency and writer safety. It never re-judges specialist output.
-4. **Entry skill**: user intent, gate presentation, and fault tolerance
-   around whole runs. It owns no second state machine.
+1. **Skills** (`skills/*/SKILL.md`) are the drivers. They identify user intent,
+   normalise and coalesce requests, observe disk state through `quasi-status`,
+   select the next applicable stage, present typed human gates, and stop honestly
+   on blocked, failed, or unknown writer outcomes.
+2. **Rows plus run-stage** (`scripts/workflows/operations/rows/`,
+   `scripts/workflows/run-stage.entry.mjs`, and the generated
+   `workflows/run-stage.mjs`) form the host boundary. A descriptor row owns one
+   operation's exact refs, envelope, Agent type, phase, receipt schema, and narrow
+   completion contract. run-stage resolves one `kind + stage`, invokes exactly one
+   Agent with that row's prompt/schema, and returns its receipt verbatim. It has no
+   next-stage routing, retry, coalescing, join, or material-state loop.
+3. **Agents** (`agents/*.md`) own all fuzzy judgment: method choice,
+   interpretation of capability output, local recovery, stopping, and the honesty
+   of their terminal. An Agent reads or writes only the exact artifacts in its
+   request.
+4. **CLIs** (`bin/quasi-*`, `scripts/`) are deterministic and, where they write,
+   transactional through fenced generation and manifest-last or atomic
+   publication. They own file mutation and identity/state probes, never fuzzy
+   judgment.
 
-## Trust rules — who proves what
+## Trust rules
 
-- **Shape is proven by the host.** The schema handed to StructuredOutput is
-  the only shape validation. The graph does not re-validate shape.
-  (Foreign-receipt admission performs its own validation because it does not
-  cross the host boundary.) Every Operation then passes the same narrow,
-  contract-relative terminal readability gate: a receipt whose required
-  terminal structure cannot even be read is an **unknown outcome** and fails
-  closed (blocked, never replayed, never ok). This is the writer-safety rule
-  applied uniformly to unintelligible output, not a second validation of
-  host-proven shape.
-- **Facts are proven by the disk.** A writer stage's postcondition is an
-  artifact probe (`quasi-status` is the shared prover), never
-  cross-examination of receipt fields. Receipts can lie; the disk cannot.
-  This applies at joins too: child admission re-proves from disk, not by
-  introspecting the child's receipt. The oracle reports **observations,
-  not inferences**: stage order, dispatchability, and next-step choice are
-  the driving agent's judgment, never encoded into the status tool.
-- **Judgment is proven by no one.** The agent returns one honest terminal;
-  the graph routes it verbatim. A schema-valid failure receipt is never
-  reinterpreted as malformed because the graph disagrees with the method.
+- **Shape is proven by the host.** The schema passed to StructuredOutput is the
+  receipt-shape authority. run-stage returns that receipt unchanged; neither it
+  nor the skill adds a second schema validator.
+- **Facts are proven by disk observations.** `quasi-status` reports exact evidence
+  and refs. After a stage, the skill re-observes disk before choosing a later
+  writer. A receipt alone never proves a later-stage artifact exists.
+- **Judgment belongs to the specialist.** A schema-valid
+  `complete|needs_input|blocked|failed` terminal is consumed as returned. The
+  skill must not reinterpret a failure merely because it would prefer another
+  method.
+- **Routing belongs to the skill.** Stage order, bounded concurrency, duplicate
+  prevention, collection membership, and user-facing gates are explicit skill
+  actions over observations and receipts, not an implicit graph state machine.
 
-## The one call protocol
+## The one-call protocol
 
-Every agent invocation is a **data row**, not a code entity:
+Every Workflow invocation selects one data row:
 
+```text
+{ operation, agentType, stage, exact_refs, envelope, receipt_schema,
+  completion_contract }
 ```
-{ agent, stage, envelope_refs, payload_schema, disk_postcondition }
-```
 
-- Receipts share one shape: `quasi.stage.receipt/0.2`, four terminals
-  (`complete | needs_input | blocked | failed`), one typed issue.
-- Uniform rules, written once in the interpreter:
-  - writers are never retried or replayed; an unknown writer outcome stops
-    the run (resume/reconcile only);
-  - readonly calls may retry once;
-  - `needs_input` bubbles to the user unchanged (all gates are stage gates);
-  - `blocked` stops the run;
-  - every call enters its stage's FIFO lane.
+- Receipts share `quasi.stage.receipt/0.2` and exactly four terminals:
+  `complete | needs_input | blocked | failed`.
+- `workflows/run-stage.mjs` accepts `kind`, `slug`, `stage`, and caller context,
+  resolves one row, makes one Agent call, and returns the result.
+- StructuredOutput repair of a still-running invocation is provider-level schema
+  correction, not a new stage dispatch.
+- A skill may dispatch independent work concurrently, but it must resolve and
+  coalesce identity before any duplicate writer.
+- A missing or ambiguous writer receipt stops the current driver. Resume starts
+  with `quasi-status`; the writer is never blindly replayed.
+- `needs_input` is presented to the user unchanged. `blocked` and `failed` stop
+  that item with their typed issue.
 
-## What the graph must NOT contain
+## What must not return
 
-- per-operation status invariants, echo functions, or branch unions;
-- policy or method knobs inside envelopes (a budget belongs in an envelope
-  only when it protects a genuinely shared resource);
-- a second, stricter interpretation of any schema-valid receipt;
-- receipt re-validation at joins where a disk probe proves the same thing;
-- special-cased user gates;
-- backwards-compatibility shims (explicit project decision: no legacy
-  compatibility; delete, do not alias).
+- a self-running graph, per-kind loop, batch driver, router, join runtime, FIFO
+  lane scheduler, receipt classifier, or automatic replay mechanism;
+- a compatibility alias for a deleted entry or module — project policy is
+  delete, do not alias;
+- per-operation method trees in skills or rows;
+- inferred state inside `quasi-status`; it reports observations only;
+- duplicate artifact ownership or path discovery outside the current envelope.
 
-## Target shape
+## Project roots and observability
 
-- One interpreter plus declarative operation rows for material, collection,
-  and research graphs — same internals, different owners and entries.
-- One shared receipt shape with small per-row payloads (diary fields, not
-  contract fields).
-- One source of truth for stage order and artifact layout, read by the
-  loops, `quasi-status`, join admission, and tests alike.
-- Budget: the graph should converge toward roughly 4-6k lines total.
-  Anything above that needs a named reason in this document.
+- cwd is the project/vault root. A non-empty `CLAUDE_PROJECT_DIR` takes
+  precedence, but Workflow specialists may receive it as an empty string and
+  must then use cwd for exact relative refs.
+- `claude -p --output-format json` stdout contains only the final session
+  envelope, not a complete stage/tool trace. Headless E2E harnesses must inspect
+  the session JSONL and per-Workflow JSON sidecars when proving which stage
+  driver ran.
 
 ## Tests
 
-Tests defend the constitution and the capability layer, never the graph's
-internals.
+Tests defend the capability layer and the surviving stage protocol:
 
-- **Keep**: capability-layer CLI tests (extract/download/translate/
-  transcribe/audit/vault/status — they test deterministic bedrock and are
-  the safety net while the graph shrinks); protocol tests (the shared
-  receipt shape, four-terminal routing, writer no-replay, gate passthrough
-  — written once against the interpreter); join-admission and ingress
-  normalization tests; cheap guards (dead names, doc sync).
-- **Forbidden as durable tests**: assertions that pin per-operation receipt
-  fields, per-loop edge order, exact failure-code strings, or any shape
-  this document schedules for deletion. Characterization tests are
-  scaffolding with an expiry date: they exist only inside a
-  behavior-preserving migration and are torn down when it lands.
-- A failing test is not authority. When a test conflicts with this
-  document, the test is wrong: delete or rewrite it against the rule it
-  should defend, and say so in the report. Minimal code edits whose only
-  purpose is appeasing a pinned implementation detail are the failure mode
-  this section exists to prevent.
-- Budget: graph-internal test mass should track the graph budget (roughly
-  one line of protocol/table test per two lines of graph); capability
-  tests are exempt.
+- keep capability CLI tests (extract, download, translate, transcribe, audit,
+  vault, status), skill/dead-name guards, schema registry tests, and run-stage
+  protocol tests;
+- run-stage protocol coverage resolves every registered kind/stage row, checks
+  schema generation, and pins the four closed terminal branches from
+  `stage.mjs`;
+- do not recreate per-loop edge-order, ingress, join, scheduler, retry, or batch
+  harnesses for deleted machinery;
+- a failing characterization test is not authority when it contradicts this
+  constitution: delete or rewrite it against the surviving boundary.
 
 ## Migration state
 
-- **0.52.27**: Paper/Book Acquire on the shared stage receipt; book year
-  gate is a standard `needs_input`; acquisition method moved to
-  `agents/download-agent.md`; shared edge router `materials/route.mjs`;
-  `quasi-status` disk oracle added.
-- **0.52.28**: Analyse / Audit / Synthesise unified onto stage
-  terminals; strict Topic-recall vertical unified; member/receipt admission
-  slimmed onto shared validators; legacy operation IDs removed.
-- **0.53.0 (constitution round)**: the Pi/Codex host adapters and modern
-  runtime schema backstop are gone; stage receipts pass one contract-relative
-  terminal readability gate, while pre-stage author discovery and rolling
-  Topic remain a named legacy island. Graph-internal characterization tests
-  were pruned from about 23.5k to 14.8k lines so they defend doctrine instead
-  of implementations. One `defineOperation` factory now interprets descriptor
-  rows for Paper, Book, Talk, and Translation, and the 182-line material
-  interpreter executes their per-kind declarative tables. Collection joins
-  admit children from `member.admission-probe` disk testimony via
-  `quasi-status --identity`; because audit has no durable disk signal yet,
-  clean-audit proof deliberately remains receipt-based.
-- **0.54.0 (Topic-merge round)**: the Author discovery family moved onto
-  descriptor rows, followed by Topic steer and webcard. The rolling Topic loop
-  was retired in favour of one bounded modern graph owned solely by
-  `research/topic-recall.mjs`: its `maxRounds` loop fans out web cards, reuses
-  shared material dispatch and disk-backed child admission, and closes through
-  canonical `topic.audit`. The compatibility island and the old
-  `guard`/`retryNull` helpers were deleted, so every Operation now crosses the
-  same terminal gate. Topic dossier pages were retired as a product decision;
-  the public `precise-topic` skill became `research-topic`.
+- **0.52.27**: Paper/Book Acquire moved to the shared Stage receipt; Book year
+  gates became `needs_input`; `quasi-status` was added as the disk oracle.
+- **0.53.0**: one `defineOperation` factory began interpreting descriptor rows;
+  host-specific adapters and duplicate schema backstops were removed.
+- **0.54.0**: Author and Topic operations moved onto descriptor rows, and the
+  public topic skill became `research-topic`.
+- **0.55.0 (skill-driven cutover)**: the self-running driver layer and its graph
+  tests were deleted. The runtime is now exactly the four layers above: skill,
+  rows + run-stage, Agents, and CLIs. A real clean-project E2E at
+  `/tmp/quasi-e2e-r4/REPORT.md` was the deletion gate: `collect-material`
+  alternated five run-stage calls with `quasi-status` observations through
+  Search → Acquire → Prepare → Analyse → Audit, created and independently
+  verified all artifacts, and never invoked the retired driver. The run also
+  established two expected observations: Analyse may complete before Audit
+  performs mechanical normalization, which is designed Analyse-then-Audit
+  behavior; and headless stdout alone does not expose the full stage/tool trace,
+  so JSONL plus Workflow sidecars are the definitive execution evidence.
 
 ## Next focus
 
-Reduce graph and graph-internal test mass toward the 4–6k-line budget by
-factoring shared payload vocabularies out of descriptor rows, establishing one
-source of truth for artifact layout, and adding a durable audit disk record so
-collection/research admission can finish moving from receipt proof to disk
-testimony.
+Keep skills readable as explicit drivers, and reduce duplicated vocabulary
+across descriptor rows without moving judgment into them. Audit is
+deliberately not a status concern: a full-vault audit re-runs in under a
+minute (measured: 19,648 files in 42s), so cleanliness is recomputed on
+demand and covered by the maintainer's periodic sweep, never cached.

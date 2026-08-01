@@ -55,6 +55,41 @@ DEAD_NAMES = [
     "quasi-codex-runner",
     "quasi-codex-driver",
     "quasi-codex-agents",
+    "process-material.mjs",
+    "materials/interpreter.mjs",
+    "materials/paper.mjs",
+    "materials/book.mjs",
+    "materials/talk.mjs",
+    "materials/route.mjs",
+    "materials/ingress.mjs",
+    "materials/batch.mjs",
+    "materials/dispatch.mjs",
+    "materials/member.mjs",
+    "materials/receipt.mjs",
+    "derivatives/translation.mjs",
+    "collections/author.mjs",
+    "research/topic-recall.mjs",
+]
+
+DEAD_GRAPH_PATHS = [
+    "workflows/process-material.mjs",
+    "scripts/workflows/process-material.entry.mjs",
+    "scripts/workflows/materials/interpreter.mjs",
+    "scripts/workflows/materials/paper.mjs",
+    "scripts/workflows/materials/book.mjs",
+    "scripts/workflows/materials/talk.mjs",
+    "scripts/workflows/materials/route.mjs",
+    "scripts/workflows/materials/ingress.mjs",
+    "scripts/workflows/materials/batch.mjs",
+    "scripts/workflows/materials/dispatch.mjs",
+    "scripts/workflows/materials/member.mjs",
+    "scripts/workflows/materials/receipt.mjs",
+    "scripts/workflows/derivatives/translation.mjs",
+    "scripts/workflows/collections/author.mjs",
+    "scripts/workflows/research/topic-recall.mjs",
+    "scripts/workflows/operations/acquire.mjs",
+    "scripts/workflows/operations/audit.mjs",
+    "scripts/workflows/operations/synthesise.mjs",
 ]
 
 
@@ -110,3 +145,8 @@ def test_removed_public_skill_directories_are_not_present():
         "precise-topic",
     ):
         assert not (PLUGIN_ROOT / "skills" / name).exists()
+
+
+def test_removed_graph_driver_paths_are_not_present():
+    for relative in DEAD_GRAPH_PATHS:
+        assert not (PLUGIN_ROOT / relative).exists()
