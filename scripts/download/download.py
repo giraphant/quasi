@@ -1277,12 +1277,12 @@ def _dois_in_text(text: str) -> set:
 
 
 def _verify_text_content(text, expected_author=None, expected_title=None,
-                         expected_doi=None, expected_year=None):
+                         expected_doi=None):
     """Accept extracted source text only on one strong identity proof.
 
     Either the requested DOI is embedded in the text, or the full normalised
-    title appears as a contiguous phrase with the author present and no year
-    conflict. Keyword overlap alone is not identity: a same-subfield paper
+    title appears as a contiguous phrase with the author present. Keyword
+    overlap alone is not identity: a same-subfield paper
     contains every title word and cites the expected author, which is exactly
     how a wrong PDF once cleared this check with `status: ok`.
     """
@@ -1315,13 +1315,6 @@ def _verify_text_content(text, expected_author=None, expected_title=None,
         if not author_found:
             print(f"  Verify: author '{expected_author}' NOT found", file=sys.stderr)
 
-    if expected_year:
-        years = {int(y) for y in re.findall(_YEAR_RE, text)}
-        if years and not any(abs(y - int(expected_year)) <= 1 for y in years):
-            print(f"  Verify: year conflict (expected {expected_year}, "
-                  f"saw {sorted(years)[:6]})", file=sys.stderr)
-            return False
-
     if expected_title:
         normalised_title = " ".join(re.findall(r"[a-z0-9]+", expected_title.lower()))
         if not (normalised_title and normalised_title in normalised_text):
@@ -1342,7 +1335,7 @@ def _verify_text_content(text, expected_author=None, expected_title=None,
 
 
 def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
-                       expected_doi=None, expected_year=None):
+                       expected_doi=None):
     """Verify downloaded PDF matches the expected paper identity.
 
     Extracts text from the first pages and applies the strong-identity
@@ -1354,12 +1347,11 @@ def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
         expected_author,
         expected_title,
         expected_doi=expected_doi,
-        expected_year=expected_year,
     )
 
 
 def verify_source_content(source_path, expected_author=None, expected_title=None,
-                          expected_doi=None, expected_year=None):
+                          expected_doi=None):
     """Verify downloaded source content, supporting text and PDF sources."""
     path = Path(source_path)
     if path.suffix.lower() == ".txt":
@@ -1372,11 +1364,9 @@ def verify_source_content(source_path, expected_author=None, expected_title=None
             expected_author,
             expected_title,
             expected_doi=expected_doi,
-            expected_year=expected_year,
         )
     return verify_pdf_content(str(path), expected_author, expected_title,
-                              expected_doi=expected_doi,
-                              expected_year=expected_year)
+                              expected_doi=expected_doi)
 
 
 def _build_ezproxy_session(config):
@@ -2325,7 +2315,7 @@ def _kagi_discover_paper(title, author=None):
 
 def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                    filename=None, retry_wayback=True,
-                   verify_author=None, verify_title=None, verify_year=None):
+                   verify_author=None, verify_title=None):
     """Download a paper PDF by DOI or URL. Returns file path or None.
 
     Cascade:
@@ -2337,7 +2327,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
     If verify_author/verify_title are provided, every candidate — including a
     pre-existing temp file — must prove the requested identity (embedded DOI,
-    or contiguous title phrase plus author with no verify_year conflict).
+    or contiguous title phrase plus author).
     Mismatches are deleted and the cascade continues.
     """
     requested_doi = doi
@@ -2358,8 +2348,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
         if not verify_author and not verify_title:
             return True
         if verify_source_content(path, verify_author, verify_title,
-                                 expected_doi=requested_doi,
-                                 expected_year=verify_year):
+                                 expected_doi=requested_doi):
             return True
         print(f"  {source_name}: content mismatch, deleting and trying next source",
               file=sys.stderr)
@@ -2846,7 +2835,6 @@ def _cmd_paper_fetch(args) -> int:
         output_dir=str(temp_dir), filename=args.slug,
         retry_wayback=True,
         verify_title=args.title, verify_author=args.author,
-        verify_year=args.year,
     )
     if result:
         path_obj = Path(result).resolve()
@@ -3117,8 +3105,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p_pf.add_argument("--url", action="append", help="Direct PDF URL (repeatable)")
     p_pf.add_argument("--title", help="Paper title (enables Kagi recovery)")
     p_pf.add_argument("--author", help="Paper author (improves Kagi recovery)")
-    p_pf.add_argument("--year", type=int,
-                      help="Expected publication year (identity conflict check)")
     p_pf.add_argument("--slug", required=True, help="Target work slug for temp filename")
     p_pf.add_argument("--retry-wayback", action="store_true",
                       help=argparse.SUPPRESS)  # no-op since cascade always tries Wayback

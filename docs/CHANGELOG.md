@@ -15,6 +15,10 @@ Newest first. Entries record what changed and why at the time each release shipp
   - JSTOR stable URL 的 native 请求曾只留下 `FAIL HTTP Error 403`，无法区分 access denial、登录页和 Cloudflare challenge；新命令只观察一条 direct 或显式 EZProxy 路径，返回脱敏的状态、响应类别与路由事实。
   - Diagnose 不写临时或 canonical 文件、不派生 PDF URL、不运行 OA/Kagi/代理下载 cascade，也不输出 cookie、Authorization、原始响应体或 URL query；它是 failed receipt 的证据工具，不是付费墙规避能力。
 
+- **0.56.2** (2026-08-01): **瘦身 0.56.1 的身份门：移除 `--year` 全链路贯穿。**
+  - 年份不冲突检查对实际事故零贡献（错误论文的正文里通常也印着目标年份，真正拒绝它的是题名整句匹配），却在 CLI 参数、acquire envelope、验证器三层各加了一块合同面——它源自照单实现一份外部诊断的建议契约，而非从事故推出的最小修复。身份门保持两条强证据：嵌入 DOI 精确等于请求 DOI，或整句归一化题名 + 首作者在场。EXISTS 复验、`10.2307/` JSTOR 推导与 disposition/source 的 complete-terminal 收紧不变。
+  - 本次修改由 Codex worker 按配方执行，主进程只做侦察、验收（diff 逐项核对 + 内容扫描 + 全套 396 测试复跑）与发布，是"主进程不自己动手改"工作模式的第一次完整走通。
+
 - **0.56.1** (2026-08-01): **`paper fetch` 的成功条件改为强身份证明，词汇重叠不再等于身份。**
   - 实测事故：对精确 DOI `10.5840/philtopics19962427`（Clarke 1996）请求，cascade 把 Wong 2021（`10.2478/disp-2021-0008`）当 `status: ok` 返回——同子领域论文含有全部题名关键词并引用了目标作者，旧的关键词计数验证正好被这种形状骗过。新契约：嵌入文本的规范化 DOI 精确等于请求 DOI 即通过；否则要求整句归一化题名连续命中 + 首作者在场 + 年份不冲突（新增 `--year`，envelope 带 `expected_year`）。DOI-only 请求（无题名/作者）保持旧信任，避免误拒没有印 DOI 的老扫描件。
   - 遗留临时文件不再免检：`EXISTS` 短路分支现在先过同一身份门，不符即删并继续 cascade——此前一次错误下载会永久卡住该 slug 的重试。JSTOR 自有前缀 `10.2307/` 的 DOI 直接推导 stable URL hint，DOI-only 请求也能进 0.56.0 的 EZProxy 主机改写通路（实测经代理拿到正确的 Clarke 1996 全文）。

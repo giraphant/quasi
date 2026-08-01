@@ -1617,7 +1617,6 @@ _CLARKE_IDENTITY = {
         "Agent Causation and Event Causation in the Production of Free Action"
     ),
     "expected_doi": "10.5840/philtopics19962427",
-    "expected_year": 1996,
 }
 
 
@@ -1635,16 +1634,6 @@ def test_verify_accepts_embedded_requested_doi_without_title_phrase():
     mod = _load_module(DOWNLOAD, "verify_gate_doi_under_test")
     text = "untitled scan cover\nhttps://doi.org/10.5840/philtopics19962427\n"
     assert mod._verify_text_content(text, **_CLARKE_IDENTITY) is True
-
-
-def test_verify_rejects_year_conflict_even_with_title_and_author():
-    mod = _load_module(DOWNLOAD, "verify_gate_year_under_test")
-    text = (
-        "agent causation and event causation in the production of free action\n"
-        "randolph clarke\n"
-        "© 2021 some other journal\n"
-    )
-    assert mod._verify_text_content(text, **_CLARKE_IDENTITY) is False
 
 
 def test_verify_unextractable_text_still_passes():
@@ -1690,7 +1679,6 @@ def test_download_paper_reverifies_and_deletes_wrong_existing_temp(
         verify_title=(
             "Agent Causation and Event Causation in the Production of Free Action"
         ),
-        verify_year=1996,
     )
 
     assert result is None
@@ -1726,7 +1714,6 @@ def test_download_paper_serves_existing_temp_that_proves_identity(
         verify_title=(
             "Agent Causation and Event Causation in the Production of Free Action"
         ),
-        verify_year=1996,
     )
 
     assert result == str(existing)
