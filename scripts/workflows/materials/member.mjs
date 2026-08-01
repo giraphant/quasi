@@ -1,8 +1,8 @@
 // Shared strict admission for one child MaterialReceipt at a collection or
-// research join. The dispatch seam is host-pluggable (native subagents in the
-// Codex driver, scripted children in tests), so a join must re-prove the exact
-// identity binding, canonical artifact, and clean final audit before admitting
-// a member — a child result is not trusted merely for arriving in-process.
+// research join. The dispatch seam is host-pluggable, so a join admits a
+// complete child only when the disk oracle re-proves its identity and canonical
+// artifacts. The receipt remains authoritative only for its terminal and,
+// until audit gains a durable disk record, its clean final-audit result.
 
 import {
   exactKeys,
@@ -17,8 +17,8 @@ import {
 import {
   bookAcquire,
   bookAudit,
-  validChapterSlot,
 } from "../operations/rows/book.mjs";
+import { memberAdmissionProbe } from "../operations/rows/member.mjs";
 import { paperAudit } from "../operations/rows/paper.mjs";
 import {
   applyBookYearDecision,
@@ -43,12 +43,6 @@ const record = (value) =>
     typeof value === "object" &&
     !Array.isArray(value)
   );
-
-const sameStrings = (left, right) =>
-  Array.isArray(left) &&
-  Array.isArray(right) &&
-  left.length === right.length &&
-  left.every((value, index) => value === right[index]);
 
 export function canonicalMemberPath(kind, id) {
   return kind === "book"
@@ -158,53 +152,142 @@ function cleanMaterialAudit(receipt, demand) {
   );
 }
 
-function validBookCanonicalSet(receipt, demand) {
+const exactStage = (value, name, complete) =>
+  record(value) &&
+  exactKeys(value, ["stage", "complete", "evidence"]) &&
+  value.stage === name &&
+  value.complete === complete &&
+  Array.isArray(value.evidence) &&
+  new Set(value.evidence).size === value.evidence.length &&
+  value.evidence.every((path) => validText(path, 1, 1000));
+
+const exactEvidence = (stage, expected) =>
+  stage.evidence.length === expected.length &&
+  stage.evidence.every((path, index) => path === expected[index]);
+
+function expectedDiskIdentity(demand) {
+  const meta = demand.meta;
   if (
-    !Array.isArray(receipt.expected_slots) ||
-    !Array.isArray(receipt.present_slots) ||
-    !Array.isArray(receipt.missing_slots) ||
-    !sameStrings(receipt.expected_slots, receipt.present_slots) ||
-    receipt.expected_slots.length < 1 ||
-    new Set(receipt.expected_slots).size !==
-      receipt.expected_slots.length ||
-    receipt.expected_slots.some(
-      (slot) => !validChapterSlot(slot),
-    ) ||
-    receipt.missing_slots.length !== 0
+    !record(meta) ||
+    !validText(meta.title, 1, 500) ||
+    !Array.isArray(meta.authors) ||
+    meta.authors.length < 1 ||
+    meta.authors.some((author) => !validText(author, 1, 200)) ||
+    !Number.isInteger(meta.year)
   )
-    return false;
-  const chapterCanonicals = receipt.artifacts.filter(
-    (artifact) => artifact.role === "chapter_canonical",
-  );
-  if (chapterCanonicals.length !== receipt.expected_slots.length)
-    return false;
-  const root = `vault/books/${demand.id}/`;
-  const paths = new Set();
-  const chapterSlugs = new Set();
-  const slots = [];
-  for (const artifact of chapterCanonicals) {
+    return null;
+  return {
+    title: meta.title,
+    authors: meta.authors,
+    year: meta.year,
+  };
+}
+
+function diskCanonicalArtifacts(oracle, demand) {
+  const stages = oracle.stages;
+  const expectedIdentity = expectedDiskIdentity(demand);
+  if (
+    oracle.schema_version !== "quasi.status/0.1" ||
+    oracle.kind !== demand.kind ||
+    oracle.slug !== demand.id ||
+    oracle.next_stage !== null ||
+    !record(oracle.refs) ||
+    Object.keys(oracle.refs).length !== 0 ||
+    !Array.isArray(stages) ||
+    !sameClosedValue(oracle.identity, expectedIdentity)
+  )
+    return null;
+
+  const canonical = canonicalMemberPath(demand.kind, demand.id);
+  if (demand.kind === "paper") {
     if (
-      artifact.producer !== "chapter.analyse" ||
-      artifact.usable === false ||
-      !artifact.path.startsWith(root)
+      stages.length !== 4 ||
+      !exactStage(stages[0], "acquire", true) ||
+      !exactStage(stages[1], "prepare", true) ||
+      !exactStage(stages[2], "analyse", true) ||
+      !exactStage(stages[3], "audit", null) ||
+      !exactEvidence(stages[0], [`sources/${demand.id}.pdf`]) ||
+      stages[1].evidence.length < 1 ||
+      stages[1].evidence.some(
+        (path) =>
+          ![
+            `processing/papers/${demand.id}/source.txt`,
+            `processing/papers/${demand.id}/ocr.txt`,
+          ].includes(path),
+      ) ||
+      !exactEvidence(stages[2], [canonical]) ||
+      stages[3].evidence.length !== 0
     )
-      return false;
-    const relative = artifact.path.slice(root.length);
-    const match = relative.match(
-      /^ch([^-]+)-([a-z0-9][a-z0-9-]{0,79})\.md$/,
-    );
-    if (
-      !match ||
-      !validChapterSlot(match[1]) ||
-      paths.has(artifact.path) ||
-      chapterSlugs.has(match[2])
-    )
-      return false;
-    paths.add(artifact.path);
-    chapterSlugs.add(match[2]);
-    slots.push(match[1]);
+      return null;
+    return [
+      {
+        role: "canonical",
+        path: canonical,
+        exists: true,
+        usable: true,
+        producer: "member.admission-probe",
+      },
+    ];
   }
-  return sameStrings(slots, receipt.expected_slots);
+
+  const root = `vault/books/${demand.id}`;
+  const chapterPattern = new RegExp(
+    `^${root}/ch(\\d{2,3}[a-z]{0,2})-([a-z0-9][a-z0-9-]{0,79})\\.md$`,
+  );
+  if (
+    stages.length !== 5 ||
+    !exactStage(stages[0], "acquire", true) ||
+    !exactStage(stages[1], "prepare", true) ||
+    !exactStage(stages[2], "analyse", true) ||
+    !exactStage(stages[3], "synthesise", true) ||
+    !exactStage(stages[4], "audit", null) ||
+    stages[0].evidence.length < 1 ||
+    stages[0].evidence.some(
+      (path) =>
+        ![
+          `sources/${demand.id}.epub`,
+          `sources/${demand.id}.pdf`,
+        ].includes(path),
+    ) ||
+    stages[1].evidence.length < 2 ||
+    stages[1].evidence[0] !==
+      `processing/chapters/${demand.id}/manifest.json` ||
+    stages[1].evidence
+      .slice(1)
+      .some(
+        (path) =>
+          !path.startsWith(`processing/chapters/${demand.id}/`),
+      ) ||
+    stages[2].evidence.length < 1 ||
+    !exactEvidence(stages[3], [canonical]) ||
+    stages[4].evidence.length !== 0
+  )
+    return null;
+  const matches = stages[2].evidence.map((path) =>
+    path.match(chapterPattern),
+  );
+  if (
+    matches.some((match) => match === null) ||
+    new Set(matches.map((match) => match[1])).size !== matches.length ||
+    new Set(matches.map((match) => match[2])).size !== matches.length
+  )
+    return null;
+  return [
+    {
+      role: "canonical",
+      path: canonical,
+      exists: true,
+      usable: true,
+      producer: "member.admission-probe",
+    },
+    ...stages[2].evidence.map((path) => ({
+      role: "chapter_canonical",
+      path,
+      exists: true,
+      usable: true,
+      producer: "member.admission-probe",
+    })),
+  ];
 }
 
 function validBookAcquireStage(operation, demand, expectedYear) {
@@ -252,7 +335,12 @@ function bookYearWarning(receipt, demand) {
     : null;
 }
 
-export function strictChildResult(result, demand) {
+export function strictChildResult(
+  result,
+  demand,
+  oracle = null,
+  { includeCanonicalArtifacts = false } = {},
+) {
   if (
     !record(result) ||
     result.slug !== demand.id ||
@@ -275,26 +363,11 @@ export function strictChildResult(result, demand) {
     return null;
 
   const expected = canonicalMemberPath(demand.kind, demand.id);
-  const canonicalProducers =
-    demand.kind === "book"
-      ? new Set([
-          "book.synthesise",
-          "book.synthesise:reconciled",
-        ])
-      : new Set([
-          "paper.analyse",
-          "paper.analyse:reconciled",
-        ]);
-  const allCanonicals = receipt.artifacts.filter(
-    (artifact) => artifact.role === "canonical",
-  );
-  const canonicals = allCanonicals.filter(
-    (artifact) =>
-      artifact.path === expected &&
-      artifact.usable !== false &&
-      canonicalProducers.has(artifact.producer),
-  );
+  let canonicalArtifacts = [];
   if (receipt.status === "complete") {
+    canonicalArtifacts = record(oracle)
+      ? diskCanonicalArtifacts(oracle, demand)
+      : null;
     if (
       !["created", "reused", "repaired"].includes(
         receipt.disposition,
@@ -304,18 +377,8 @@ export function strictChildResult(result, demand) {
       receipt.user_gate !== null ||
       receipt.resume !== null ||
       receipt.operations.length < 1 ||
-      allCanonicals.length !== 1 ||
-      canonicals.length !== 1 ||
+      canonicalArtifacts === null ||
       !cleanMaterialAudit(receipt, demand)
-    )
-      return null;
-    if (
-      (demand.kind === "book" &&
-        !validBookCanonicalSet(receipt, demand)) ||
-      (demand.kind === "paper" &&
-        receipt.artifacts.some(
-          (artifact) => artifact.role === "chapter_canonical",
-        ))
     )
       return null;
   } else if (
@@ -335,10 +398,69 @@ export function strictChildResult(result, demand) {
     status: receipt.status,
     canonical_path:
       receipt.status === "complete" ? expected : null,
+    ...(includeCanonicalArtifacts
+      ? { canonical_artifacts: canonicalArtifacts }
+      : {}),
     receipt,
     year_warning: bookYearWarning(receipt, demand),
     title: demand.title,
   };
+}
+
+export async function admitChildResult(
+  runtime,
+  result,
+  demand,
+  options = {},
+) {
+  if (
+    !record(result) ||
+    result.slug !== demand.id ||
+    !validateSchema(
+      materialReceiptSchema({
+        materialKey: demand.material_key,
+        kind: demand.kind,
+        id: demand.id,
+      }),
+      result.material_receipt,
+    )
+  )
+    return null;
+  const receipt = result.material_receipt;
+  if (
+    !validUserGate(receipt.user_gate, receipt, {
+      expectedYear: demand.meta && demand.meta.year,
+    })
+  )
+    return null;
+  if (receipt.status !== "complete")
+    return strictChildResult(result, demand, null, options);
+  const context = {
+    materialKey: demand.material_key,
+    kind: demand.kind,
+    slug: demand.id,
+    replay: "safe",
+    artifactRoles: [],
+    unknownFailureCode: "material.readonly_outcome_unknown",
+  };
+  const spec = memberAdmissionProbe.spec(context);
+  const run = await runtime.operate(
+    memberAdmissionProbe.prompt(context),
+    {
+      phase: spec.stage,
+      agentType: spec.agentType,
+      label: `${demand.id}:admission-probe`,
+      schema: memberAdmissionProbe.schema(context),
+    },
+    spec,
+  );
+  if (run.edge !== "ok") return null;
+  return strictChildResult(
+    result,
+    demand,
+    run.receipt.oracle,
+    options,
+  );
 }
 
 function validIngressReceipt(receipt, expected) {
@@ -614,13 +736,7 @@ function projectAdmittedMaterial(admitted, ingress) {
     id: receipt.id,
     status,
     canonical_artifacts:
-      status === "complete"
-        ? receipt.artifacts.filter(
-            (artifact) =>
-              artifact.role === "canonical" ||
-              artifact.role === "chapter_canonical",
-          )
-        : [],
+      status === "complete" ? admitted.canonical_artifacts : [],
     user_gate: receipt.user_gate,
     issue,
     resume: projectResume(receipt.resume),
@@ -631,7 +747,7 @@ function projectAdmittedMaterial(admitted, ingress) {
 // exact child MaterialReceipt or an ingress terminal that stopped before a
 // material identity existed. Public/legacy status fields are deliberately not
 // consulted, and the projection never carries the child's full raw result.
-export function projectChildMaterialResult(result, expected) {
+export function projectChildMaterialResult(result, expected, oracle = null) {
   if (
     !record(result) ||
     !record(expected) ||
@@ -662,7 +778,9 @@ export function projectChildMaterialResult(result, expected) {
       title: null,
       meta: ingress.identity.meta,
     };
-    const admitted = strictChildResult(result, demand);
+    const admitted = strictChildResult(result, demand, oracle, {
+      includeCanonicalArtifacts: true,
+    });
     if (
       !admitted ||
       ingress.status !== "resolved" ||
@@ -690,4 +808,43 @@ export function projectChildMaterialResult(result, expected) {
     issue,
     resume: projectResume(ingress.resume),
   };
+}
+
+export async function admitChildMaterialResult(
+  runtime,
+  result,
+  expected,
+) {
+  if (
+    !record(result) ||
+    !record(expected) ||
+    !["book", "paper"].includes(expected.kind)
+  )
+    return null;
+  const receipt = result.material_receipt;
+  const ingress = result.ingress_receipt;
+  if (!record(receipt))
+    return projectChildMaterialResult(result, expected);
+  if (receipt.status !== "complete")
+    return projectChildMaterialResult(result, expected);
+  if (
+    !record(ingress) ||
+    !validIngressReceipt(ingress, expected) ||
+    ingress.status !== "resolved" ||
+    !record(ingress.identity) ||
+    ingress.identity.slug !== receipt.id
+  )
+    return null;
+  const demand = {
+    material_key: `${receipt.kind}:${receipt.id}`,
+    kind: receipt.kind,
+    id: receipt.id,
+    title: null,
+    meta: ingress.identity.meta,
+  };
+  const admitted = await admitChildResult(runtime, result, demand, {
+    includeCanonicalArtifacts: true,
+  });
+  if (!admitted) return null;
+  return projectAdmittedMaterial(admitted, ingress);
 }

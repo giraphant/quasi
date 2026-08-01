@@ -43,6 +43,7 @@ const logs = []
 const missing = []
 const indexes = new Map()
 const barriers = new Map()
+const routerMeta = new Map()
 let clock = 0
 
 function clone(value) {
@@ -103,6 +104,49 @@ function operationOf(_prompt, request) {
   return typeof request?.operation === "string" ? request.operation : null
 }
 
+function admissionProbe(request, meta) {
+  const { kind, slug } = request
+  const canonical = kind === "paper"
+    ? `vault/papers/${slug}.md`
+    : `vault/books/${slug}/00-overview.md`
+  const stages = kind === "paper"
+    ? [
+        { stage: "acquire", complete: true, evidence: [`sources/${slug}.pdf`] },
+        { stage: "prepare", complete: true, evidence: [`processing/papers/${slug}/source.txt`] },
+        { stage: "analyse", complete: true, evidence: [canonical] },
+        { stage: "audit", complete: null, evidence: [] },
+      ]
+    : [
+        { stage: "acquire", complete: true, evidence: [`sources/${slug}.epub`] },
+        { stage: "prepare", complete: true, evidence: [`processing/chapters/${slug}/manifest.json`, `processing/chapters/${slug}/01.txt`] },
+        { stage: "analyse", complete: true, evidence: [`vault/books/${slug}/ch01-example.md`] },
+        { stage: "synthesise", complete: true, evidence: [canonical] },
+        { stage: "audit", complete: null, evidence: [] },
+      ]
+  return {
+    schema_version: "quasi.stage.receipt/0.2",
+    operation: "member.admission-probe",
+    stage: "Audit",
+    material_key: `${kind}:${slug}`,
+    effect: "readonly",
+    attempt: 1,
+    oracle: {
+      schema_version: "quasi.status/0.1",
+      kind,
+      slug,
+      stages,
+      next_stage: null,
+      refs: {},
+      identity: {
+        title: meta.title,
+        authors: meta.authors,
+        year: meta.year,
+      },
+    },
+    terminal: { status: "complete", issue: null },
+  }
+}
+
 async function waitAtBarrier(step) {
   if (!step.barrier) return
   const name = String(step.barrier.name)
@@ -160,6 +204,13 @@ async function agent(prompt, options = {}) {
   }
   trace.push(call)
   const steps = config.responses[route]
+  if (route === "member.admission-probe" && !steps) {
+    call.end = ++clock
+    return admissionProbe(
+      request,
+      routerMeta.get(`${request.kind}:${request.slug}`),
+    )
+  }
   return scriptedStep(route, steps && steps[occurrence], call)
 }
 
@@ -179,6 +230,7 @@ async function router(kind, args, options = {}) {
     end: null,
   }
   trace.push(call)
+  routerMeta.set(`${kind}:${args.slug}`, clone(args.meta || args))
   const steps = config.router[route]
   return scriptedStep(route, steps && steps[occurrence], call)
 }

@@ -1,4 +1,4 @@
-import { projectChildMaterialResult } from "./member.mjs";
+import { admitChildMaterialResult } from "./member.mjs";
 import { normaliseMaterialRequest } from "./ingress.mjs";
 
 const BATCH_RECEIPT_VERSION =
@@ -80,7 +80,7 @@ function batchTerminal(kind, status, issue) {
   };
 }
 
-function classifyResult(item, result, error = null) {
+async function classifyResult(runtime, item, result, error = null) {
   if (error)
     return batchTerminal(
       item.kind,
@@ -94,7 +94,8 @@ function classifyResult(item, result, error = null) {
       ),
     );
 
-  const projected = projectChildMaterialResult(
+  const projected = await admitChildMaterialResult(
+    runtime,
     result,
     item.request,
   );
@@ -209,14 +210,19 @@ export async function processMaterialBatch(
         const result = await runItem(item.raw);
         return {
           ...item,
-          summary: classifyResult(item, result),
+          summary: await classifyResult(runtime, item, result),
         };
       } catch (error) {
         const message =
           (error && error.message) || String(error);
         return {
           ...item,
-          summary: classifyResult(item, null, message),
+          summary: await classifyResult(
+            runtime,
+            item,
+            null,
+            message,
+          ),
         };
       }
     }),

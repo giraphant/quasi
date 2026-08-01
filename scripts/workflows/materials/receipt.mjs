@@ -71,19 +71,6 @@ const textSchema = (min, max) => ({
   pattern: "^(?!\\s)[^\\u0000-\\u001f\\u007f-\\u009f]+(?<!\\s)$",
 });
 
-const MATERIAL_ARTIFACT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["role", "path", "exists", "usable", "producer"],
-  properties: {
-    role: textSchema(1, 100),
-    path: textSchema(1, 1000),
-    exists: { const: true },
-    usable: { enum: [null, true, false] },
-    producer: textSchema(1, 200),
-  },
-};
-
 export const MATERIAL_FAILURE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -156,7 +143,9 @@ export function materialReceiptSchema({ materialKey, kind, id }) {
       stage: { type: "string" },
       artifacts: {
         type: "array",
-        items: MATERIAL_ARTIFACT_SCHEMA,
+        // Artifact truth belongs to the disk admission probe. Keep only the
+        // container shape here so legacy loop diagnostics remain serializable.
+        items: {},
       },
       operations: {
         type: "array",
@@ -180,26 +169,15 @@ export function materialReceiptSchema({ materialKey, kind, id }) {
   };
   if (kind !== "book") return base;
   return {
-    anyOf: [
-      base,
-      {
-        ...base,
-        required: [
-          ...base.required,
-          "expected_slots",
-          "present_slots",
-          "missing_slots",
-        ],
-        properties: {
-          ...base.properties,
-          // Inventory semantics are a complete-Book cross-artifact join.
-          // Earlier terminals may carry it only as diagnostic state.
-          expected_slots: {},
-          present_slots: {},
-          missing_slots: {},
-        },
-      },
-    ],
+    ...base,
+    properties: {
+      ...base.properties,
+      // Inventory remains loop-local diagnostic state. Collection joins
+      // re-prove the committed chapter set through the disk status oracle.
+      expected_slots: {},
+      present_slots: {},
+      missing_slots: {},
+    },
   };
 }
 

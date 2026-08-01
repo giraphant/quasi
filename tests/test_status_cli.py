@@ -195,3 +195,70 @@ def test_status_invalid_invocation_returns_json_error(tmp_path: Path):
 
     assert result.returncode == 2
     assert json.loads(result.stdout)["error"]["code"] == "invalid_invocation"
+
+
+def test_status_identity_reads_only_canonical_frontmatter(tmp_path: Path):
+    project = tmp_path / "project"
+    paper = "identity-paper"
+    write(project / "sources" / f"{paper}.pdf", b"%PDF")
+    write(project / "processing" / "papers" / paper / "source.txt", "text")
+    write(
+        project / "vault" / "papers" / f"{paper}.md",
+        "---\n"
+        "type: paper\n"
+        "title: Disk Identity\n"
+        "authors:\n"
+        "  - Ada Example\n"
+        "year: 2024\n"
+        "journal: Exact Joins\n"
+        "themes:\n"
+        "  - admission\n"
+        "---\n\n# Disk Identity\n",
+    )
+
+    result = run_status(
+        project,
+        "--kind",
+        "paper",
+        "--slug",
+        paper,
+        "--json",
+        "--identity",
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["identity"] == {
+        "title": "Disk Identity",
+        "authors": ["Ada Example"],
+        "year": 2024,
+    }
+    without_identity = run_status(
+        project, "--kind", "paper", "--slug", paper, "--json"
+    )
+    assert "identity" not in json.loads(without_identity.stdout)
+
+
+def test_status_identity_is_null_until_canonical_frontmatter_is_parseable(
+    tmp_path: Path,
+):
+    project = tmp_path / "project"
+    paper = "broken-identity"
+    write(project / "sources" / f"{paper}.pdf", b"%PDF")
+    write(project / "processing" / "papers" / paper / "source.txt", "text")
+    write(project / "vault" / "papers" / f"{paper}.md", "not frontmatter")
+
+    result = run_status(
+        project,
+        "--kind",
+        "paper",
+        "--slug",
+        paper,
+        "--json",
+        "--identity",
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["identity"] is None
+    assert complete_map(payload)["analyse"] is False

@@ -110,10 +110,6 @@ def test_batch_complete_summary_preserves_input_order() -> None:
         pytest.skip("node not on PATH")
     script = f"""
 import {{ processMaterialBatch }} from {json.dumps(BATCH.as_uri())}
-const runtime = {{
-  parallel: tasks => Promise.all(tasks.map(task => task())),
-  log: () => {{}},
-}}
 const items = [
   {{ kind: "paper", request: {{
     slug: "paper-one",
@@ -133,6 +129,53 @@ const items = [
     category: "monograph",
   }} }},
 ]
+const metaByKey = new Map(items.map(item => [
+  `${{item.kind}}:${{item.request.slug}}`,
+  item.request,
+]))
+const runtime = {{
+  parallel: tasks => Promise.all(tasks.map(task => task())),
+  log: () => {{}},
+  operate: async (_prompt, _options, spec) => {{
+    const {{ kind, slug }} = spec.context
+    const meta = metaByKey.get(`${{kind}}:${{slug}}`)
+    const canonical = kind === "paper"
+      ? `vault/papers/${{slug}}.md`
+      : `vault/books/${{slug}}/00-overview.md`
+    const stages = kind === "paper"
+      ? [
+          {{ stage: "acquire", complete: true, evidence: [`sources/${{slug}}.pdf`] }},
+          {{ stage: "prepare", complete: true, evidence: [`processing/papers/${{slug}}/source.txt`] }},
+          {{ stage: "analyse", complete: true, evidence: [canonical] }},
+          {{ stage: "audit", complete: null, evidence: [] }},
+        ]
+      : [
+          {{ stage: "acquire", complete: true, evidence: [`sources/${{slug}}.epub`] }},
+          {{ stage: "prepare", complete: true, evidence: [`processing/chapters/${{slug}}/manifest.json`, `processing/chapters/${{slug}}/01.txt`] }},
+          {{ stage: "analyse", complete: true, evidence: [`vault/books/${{slug}}/ch01-example.md`] }},
+          {{ stage: "synthesise", complete: true, evidence: [canonical] }},
+          {{ stage: "audit", complete: null, evidence: [] }},
+        ]
+    return {{
+      edge: "ok",
+      receipt: {{
+        oracle: {{
+          schema_version: "quasi.status/0.1",
+          kind,
+          slug,
+          stages,
+          next_stage: null,
+          refs: {{}},
+          identity: {{
+            title: meta.title,
+            authors: meta.authors,
+            year: meta.year,
+          }},
+        }},
+      }},
+    }}
+  }},
+}}
 const strictResult = item => {{
   const slug = item.request.slug
   const identity = item.kind === "paper" ? {{

@@ -12,7 +12,7 @@ import {
   topicResolveMembershipOperationPrompt as topicResolveMembershipPrompt,
   topicResolveMembershipStageSchema,
 } from "../operations/acquire.mjs";
-import { strictChildResult } from "../materials/member.mjs";
+import { admitChildResult } from "../materials/member.mjs";
 import { routeStageEdge } from "../materials/route.mjs";
 import {
   TOPIC_AUDIT_CONTRACT,
@@ -309,8 +309,8 @@ function rejectedResult(slug, validation, conflict = false) {
   );
 }
 
-function strictMaterialResult(result, demand) {
-  const admitted = strictChildResult(result, demand);
+async function strictMaterialResult(runtime, result, demand) {
+  const admitted = await admitChildResult(runtime, result, demand);
   if (
     !admitted ||
     !["complete", "needs_input", "blocked", "failed"].includes(
@@ -948,7 +948,7 @@ async function runMaterialRound(
           demand.kind === "book" ? { batchYear: true } : {},
         );
         return (
-          strictMaterialResult(result, demand) ||
+          (await strictMaterialResult(runtime, result, demand)) ||
           invalidMaterialResult(
             demand,
             "child result did not carry its exact MaterialReceipt",

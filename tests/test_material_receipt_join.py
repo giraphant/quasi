@@ -30,8 +30,9 @@ const value = mode === "project"
   ? projectChildMaterialResult(
       payload.result,
       normaliseMaterialRequest(payload.kind, payload.request),
+      payload.oracle ?? null,
     )
-  : strictChildResult(payload.result, payload.demand)
+  : strictChildResult(payload.result, payload.demand, payload.oracle ?? null)
 process.stdout.write(JSON.stringify(value))
 """
     proc = subprocess.run(
@@ -179,12 +180,50 @@ def paper_result(slug: str, title: str) -> dict[str, Any]:
     }
 
 
+def paper_oracle(slug: str, title: str) -> dict[str, Any]:
+    return {
+        "schema_version": "quasi.status/0.1",
+        "kind": "paper",
+        "slug": slug,
+        "stages": [
+            {
+                "stage": "acquire",
+                "complete": True,
+                "evidence": [f"sources/{slug}.pdf"],
+            },
+            {
+                "stage": "prepare",
+                "complete": True,
+                "evidence": [f"processing/papers/{slug}/source.txt"],
+            },
+            {
+                "stage": "analyse",
+                "complete": True,
+                "evidence": [f"vault/papers/{slug}.md"],
+            },
+            {"stage": "audit", "complete": None, "evidence": []},
+        ],
+        "next_stage": None,
+        "refs": {},
+        "identity": {
+            "title": title,
+            "authors": ["Ada Example"],
+            "year": 2024,
+        },
+    }
+
+
 def complete_book_result(slug: str) -> tuple[dict[str, Any], dict[str, Any]]:
     demand = {
         "material_key": f"book:{slug}",
         "kind": "book",
         "id": slug,
         "title": "Exact Book",
+        "meta": {
+            "title": "Exact Book",
+            "authors": ["Ada Example"],
+            "year": 2024,
+        },
     }
     root = f"vault/books/{slug}"
     result = {
@@ -245,6 +284,47 @@ def complete_book_result(slug: str) -> tuple[dict[str, Any], dict[str, Any]]:
         },
     }
     return result, demand
+
+
+def book_oracle(slug: str) -> dict[str, Any]:
+    return {
+        "schema_version": "quasi.status/0.1",
+        "kind": "book",
+        "slug": slug,
+        "stages": [
+            {
+                "stage": "acquire",
+                "complete": True,
+                "evidence": [f"sources/{slug}.epub"],
+            },
+            {
+                "stage": "prepare",
+                "complete": True,
+                "evidence": [
+                    f"processing/chapters/{slug}/manifest.json",
+                    f"processing/chapters/{slug}/01_Opening.txt",
+                ],
+            },
+            {
+                "stage": "analyse",
+                "complete": True,
+                "evidence": [f"vault/books/{slug}/ch01-opening.md"],
+            },
+            {
+                "stage": "synthesise",
+                "complete": True,
+                "evidence": [f"vault/books/{slug}/00-overview.md"],
+            },
+            {"stage": "audit", "complete": None, "evidence": []},
+        ],
+        "next_stage": None,
+        "refs": {},
+        "identity": {
+            "title": "Exact Book",
+            "authors": ["Ada Example"],
+            "year": 2024,
+        },
+    }
 
 
 def paper_gate_result(slug: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -438,6 +518,7 @@ def test_batch_projection_binds_the_exact_request_and_search_proof() -> None:
         "kind": "paper",
         "request": paper_request("paper-one", "Paper One"),
         "result": exact,
+        "oracle": paper_oracle("paper-one", "Paper One"),
     }
     assert run_join("project", payload)["id"] == "paper-one"
 
@@ -582,52 +663,73 @@ def test_book_acquire_stage_year_gate_is_admitted() -> None:
     assert run_join("strict", {"result": mutated, "demand": demand}) is None
 
 
-def test_book_join_rejects_foreign_or_unusable_canonical_artifacts() -> None:
+def test_book_join_admits_disk_testimony_not_receipt_artifact_claims() -> None:
     result, demand = complete_book_result("exact-book")
-    assert run_join("strict", {"result": result, "demand": demand})
+    oracle = book_oracle("exact-book")
+    payload = {"result": result, "demand": demand, "oracle": oracle}
+    assert run_join("strict", payload)
 
     foreign = copy.deepcopy(result)
     foreign["material_receipt"]["artifacts"][1]["path"] = (
         "vault/books/other-book/ch01-opening.md"
     )
-    assert run_join("strict", {"result": foreign, "demand": demand}) is None
+    assert run_join(
+        "strict", {"result": foreign, "demand": demand, "oracle": oracle}
+    )
 
     unusable = copy.deepcopy(result)
     unusable["material_receipt"]["artifacts"][1]["usable"] = False
-    assert run_join("strict", {"result": unusable, "demand": demand}) is None
+    assert run_join(
+        "strict", {"result": unusable, "demand": demand, "oracle": oracle}
+    )
 
     unusable_overview = copy.deepcopy(result)
     unusable_overview["material_receipt"]["artifacts"][0]["usable"] = False
+    assert run_join(
+        "strict",
+        {"result": unusable_overview, "demand": demand, "oracle": oracle},
+    )
+
+    opaque_claims = copy.deepcopy(result)
+    opaque_claims["material_receipt"]["artifacts"] = [
+        "receipt artifact claims are not admission evidence"
+    ]
+    assert run_join(
+        "strict",
+        {"result": opaque_claims, "demand": demand, "oracle": oracle},
+    )
+
+    foreign_disk = copy.deepcopy(oracle)
+    foreign_disk["stages"][2]["evidence"] = [
+        "vault/books/other-book/ch01-opening.md"
+    ]
     assert (
-        run_join("strict", {"result": unusable_overview, "demand": demand})
+        run_join(
+            "strict",
+            {"result": result, "demand": demand, "oracle": foreign_disk},
+        )
         is None
     )
 
-    suffixed_slot = copy.deepcopy(result)
-    suffixed_slot["material_receipt"]["expected_slots"] = ["01a"]
-    suffixed_slot["material_receipt"]["present_slots"] = ["01a"]
-    suffixed_slot["material_receipt"]["artifacts"][1]["path"] = (
-        "vault/books/exact-book/ch01a-opening.md"
-    )
-    assert run_join(
-        "strict", {"result": suffixed_slot, "demand": demand}
+    wrong_identity = copy.deepcopy(oracle)
+    wrong_identity["identity"]["year"] = 2023
+    assert (
+        run_join(
+            "strict",
+            {"result": result, "demand": demand, "oracle": wrong_identity},
+        )
+        is None
     )
 
-    duplicate_slug = copy.deepcopy(result)
-    duplicate_slug["material_receipt"]["expected_slots"] = ["01", "02"]
-    duplicate_slug["material_receipt"]["present_slots"] = ["01", "02"]
-    duplicate_slug["material_receipt"]["artifacts"].append(
-        {
-            "role": "chapter_canonical",
-            "path": "vault/books/exact-book/ch02-opening.md",
-            "exists": True,
-            "usable": None,
-            "producer": "chapter.analyse",
-        }
+    dirty_audit = copy.deepcopy(result)
+    dirty_audit["material_receipt"]["audit"][-1]["remaining_violations"] = 1
+    assert (
+        run_join(
+            "strict",
+            {"result": dirty_audit, "demand": demand, "oracle": oracle},
+        )
+        is None
     )
-    assert run_join(
-        "strict", {"result": duplicate_slug, "demand": demand}
-    ) is None
 
 
 def test_stage_user_gate_must_echo_the_correlated_operation() -> None:

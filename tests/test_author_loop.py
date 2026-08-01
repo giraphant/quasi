@@ -42,6 +42,7 @@ const logs = []
 const missing = []
 const indexes = new Map()
 const barriers = new Map()
+const childMeta = new Map()
 let clock = 0
 
 function clone(value) {
@@ -108,6 +109,49 @@ function operationOf(prompt, request) {
   return match ? match[1] : null
 }
 
+function admissionProbe(request, meta) {
+  const { kind, slug } = request
+  const canonical = kind === "paper"
+    ? `vault/papers/${slug}.md`
+    : `vault/books/${slug}/00-overview.md`
+  const stages = kind === "paper"
+    ? [
+        { stage: "acquire", complete: true, evidence: [`sources/${slug}.pdf`] },
+        { stage: "prepare", complete: true, evidence: [`processing/papers/${slug}/source.txt`] },
+        { stage: "analyse", complete: true, evidence: [canonical] },
+        { stage: "audit", complete: null, evidence: [] },
+      ]
+    : [
+        { stage: "acquire", complete: true, evidence: [`sources/${slug}.epub`] },
+        { stage: "prepare", complete: true, evidence: [`processing/chapters/${slug}/manifest.json`, `processing/chapters/${slug}/01.txt`] },
+        { stage: "analyse", complete: true, evidence: [`vault/books/${slug}/ch01-example.md`] },
+        { stage: "synthesise", complete: true, evidence: [canonical] },
+        { stage: "audit", complete: null, evidence: [] },
+      ]
+  return {
+    schema_version: "quasi.stage.receipt/0.2",
+    operation: "member.admission-probe",
+    stage: "Audit",
+    material_key: `${kind}:${slug}`,
+    effect: "readonly",
+    attempt: 1,
+    oracle: {
+      schema_version: "quasi.status/0.1",
+      kind,
+      slug,
+      stages,
+      next_stage: null,
+      refs: {},
+      identity: {
+        title: meta.title,
+        authors: meta.authors,
+        year: meta.year,
+      },
+    },
+    terminal: { status: "complete", issue: null },
+  }
+}
+
 async function waitAtBarrier(step) {
   if (!step.barrier) return
   const name = String(step.barrier.name)
@@ -169,6 +213,13 @@ async function agent(prompt, options = {}) {
   }
   trace.push(call)
   const steps = config.responses[route]
+  if (route === "member.admission-probe" && !steps) {
+    call.end = ++clock
+    return admissionProbe(
+      request,
+      childMeta.get(`${request.kind}:${request.slug}`),
+    )
+  }
   return scriptedStep(route, steps && steps[occurrence], call)
 }
 
@@ -189,6 +240,7 @@ async function child(kind, slug, meta, opts) {
     end: null,
   }
   trace.push(call)
+  childMeta.set(route, clone(meta))
   const steps = config.children[route]
   return scriptedStep(route, steps && steps[occurrence], call)
 }
@@ -895,25 +947,15 @@ def test_malformed_or_uncorrelated_resolver_rows_fail_closed(
 
 
 
-@pytest.mark.parametrize(
-    ("material_key", "artifact_path"),
-    [
-        ("paper:foreign", None),
-        (None, "vault/papers/foreign.md"),
-    ],
-)
-def test_author_rejects_child_receipts_with_foreign_identity_or_artifact(
+def test_author_rejects_child_receipt_with_foreign_identity(
     tmp_path: Path,
-    material_key: str | None,
-    artifact_path: str | None,
 ) -> None:
     name = "ada-example"
     paper = paper_candidate()
     child = child_result(
         "paper",
         paper["slug"],
-        material_key=material_key,
-        artifact_path=artifact_path,
+        material_key="paper:foreign",
     )
     responses = {
         "author.discover-papers": [reply(discovery_receipt(name, "paper", [paper]))],
@@ -930,6 +972,51 @@ def test_author_rejects_child_receipts_with_foreign_identity_or_artifact(
     assert report["result"]["status"] == "all_failed"
     assert collection(report["result"])["status"] == "failed"
     assert calls(report, "author.synthesise") == []
+
+
+def test_author_uses_disk_probe_instead_of_receipt_artifact_claim(
+    tmp_path: Path,
+) -> None:
+    name = "ada-example"
+    paper = paper_candidate()
+    responses = {
+        "author.discover-papers": [
+            reply(discovery_receipt(name, "paper", [paper]))
+        ],
+        "author.resolve-membership": [
+            reply(resolver_receipt(name, [paper]))
+        ],
+        "author.synthesise": [
+            reply(synthesis_receipt(name, [("paper", paper["slug"])]))
+        ],
+        "author.audit": [reply(audit_receipt(name))],
+    }
+    child = child_result(
+        "paper",
+        paper["slug"],
+        artifact_path="vault/papers/foreign.md",
+    )
+
+    report = run_author(
+        tmp_path,
+        name=name,
+        meta=author_meta(maxBooks=0, maxPapers=1),
+        responses=responses,
+        children={f"paper:{paper['slug']}": [reply(child)]},
+    )
+
+    assert report["result"]["status"] == "ok"
+    probes = calls(report, "member.admission-probe")
+    assert len(probes) == 1
+    assert probes[0]["phase"] == "Audit"
+    assert probes[0]["request"]["command"] == (
+        "quasi-status --kind paper "
+        f"--slug {paper['slug']} --json --identity"
+    )
+    synthesis = calls(report, "author.synthesise")[0]
+    assert synthesis["request"]["input_paths"] == [
+        canonical_path("paper", paper["slug"])
+    ]
 
 
 def test_mixed_child_outcomes_synthesise_only_complete_members_and_are_partial(

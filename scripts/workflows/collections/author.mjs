@@ -19,7 +19,7 @@ import {
   authorSynthesiseStageSchema,
 } from "../operations/synthesise.mjs";
 import { AUTHOR_ARTIFACT_CONTRACT } from "../artifact-contracts/generated.mjs";
-import { strictChildResult } from "../materials/member.mjs";
+import { admitChildResult } from "../materials/member.mjs";
 import { validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
 
@@ -893,14 +893,16 @@ async function processAuthorStrict(
       }
     }),
   );
-  state.members = childResults.map(({ demand, result, error }) =>
-    error
-      ? malformedChild(demand, error)
-      : strictChildResult(result, demand) ||
-        malformedChild(
-          demand,
-          "child result did not carry its exact MaterialReceipt",
-        ),
+  state.members = await runtime.parallel(
+    childResults.map(({ demand, result, error }) => async () =>
+      error
+        ? malformedChild(demand, error)
+        : (await admitChildResult(runtime, result, demand)) ||
+          malformedChild(
+            demand,
+            "child result did not carry an admissible disk testimony",
+          ),
+    ),
   );
   state.budgets.books.used = state.members.filter(
     (member) => member.kind === "book",

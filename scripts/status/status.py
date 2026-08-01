@@ -111,16 +111,16 @@ def stage(name: str, complete: bool | None, found: Iterable[str]) -> dict[str, A
     return {"stage": name, "complete": complete, "evidence": list(found)}
 
 
-def parse_frontmatter(path: Path) -> bool:
-    """Require a readable YAML mapping enclosed by Markdown frontmatter fences."""
+def parse_frontmatter(path: Path) -> dict[str, Any] | None:
+    """Read a YAML mapping enclosed by Markdown frontmatter fences."""
 
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
-        return False
+        return None
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
-        return False
+        return None
     closing = next(
         (
             index
@@ -130,18 +130,44 @@ def parse_frontmatter(path: Path) -> bool:
         None,
     )
     if closing is None:
-        return False
+        return None
     try:
         value = yaml.safe_load("\n".join(lines[1:closing]))
     except yaml.YAMLError:
-        return False
-    return isinstance(value, dict)
+        return None
+    return value if isinstance(value, dict) else None
 
 
-def observed_frontmatter(root: Path, path: Path) -> tuple[bool, list[str]]:
+def observed_frontmatter(
+    root: Path, path: Path
+) -> tuple[bool, list[str], dict[str, Any] | None]:
     observation = observe_file(path, nonempty=True)
     found = evidence(root, [path])
-    return observation.usable and parse_frontmatter(path), found
+    parsed = parse_frontmatter(path) if observation.usable else None
+    return parsed is not None, found, parsed
+
+
+def frontmatter_identity(frontmatter: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Project only canonical identity fields, preserving parsed disk values."""
+
+    if frontmatter is None:
+        return None
+    fields = ("title", "authors", "name", "year")
+    projected: dict[str, Any] = {}
+    for field in fields:
+        if field not in frontmatter:
+            continue
+        value = frontmatter[field]
+        try:
+            json.dumps(value, allow_nan=False)
+        except (TypeError, ValueError):
+            projected[field] = {
+                "invalid_yaml_type": type(value).__name__,
+                "value": str(value),
+            }
+        else:
+            projected[field] = value
+    return projected
 
 
 def safe_chapter_filename(value: object) -> str | None:
@@ -206,7 +232,7 @@ def chapter_refs(
     return True, result, manifest_found
 
 
-def paper_status(root: Path, slug: str) -> dict[str, Any]:
+def paper_status(root: Path, slug: str, *, include_identity: bool = False) -> dict[str, Any]:
     source = root / "sources" / f"{slug}.pdf"
     source_text = root / "processing" / "papers" / slug / "source.txt"
     ocr_source = root / "processing" / "papers" / slug / "ocr.pdf"
@@ -216,7 +242,9 @@ def paper_status(root: Path, slug: str) -> dict[str, Any]:
     acquire = observe_file(source, nonempty=True)
     prepared = [source_text, ocr_text]
     prepared_observations = [observe_file(path, nonempty=True) for path in prepared]
-    analyse_complete, analyse_evidence = observed_frontmatter(root, canonical)
+    analyse_complete, analyse_evidence, canonical_frontmatter = observed_frontmatter(
+        root, canonical
+    )
     stages = [
         stage("acquire", acquire.usable, evidence(root, [source])),
         stage(
@@ -250,10 +278,22 @@ def paper_status(root: Path, slug: str) -> dict[str, Any]:
         }
     else:
         refs = {}
-    return status_payload("paper", slug, stages, next_stage, refs)
+    return status_payload(
+        "paper",
+        slug,
+        stages,
+        next_stage,
+        refs,
+        identity=(
+            frontmatter_identity(canonical_frontmatter)
+            if include_identity and analyse_complete
+            else None
+        ),
+        include_identity=include_identity,
+    )
 
 
-def book_status(root: Path, slug: str) -> dict[str, Any]:
+def book_status(root: Path, slug: str, *, include_identity: bool = False) -> dict[str, Any]:
     source_epub = root / "sources" / f"{slug}.epub"
     source_pdf = root / "sources" / f"{slug}.pdf"
     sources = [source_epub, source_pdf]
@@ -272,12 +312,14 @@ def book_status(root: Path, slug: str) -> dict[str, Any]:
     chapter_outputs = [
         book_dir / f"ch{item['slot']}-{item['slug']}.md" for item in chapters
     ]
-    output_observations = [observe_file(path, nonempty=False) for path in chapter_outputs]
+    chapter_frontmatter = [observed_frontmatter(root, path) for path in chapter_outputs]
     analyse_complete = inventory_valid and all(
-        item.usable for item in output_observations
+        complete for complete, _found, _frontmatter in chapter_frontmatter
     )
     overview = book_dir / "00-overview.md"
-    synthesise = observe_file(overview, nonempty=False)
+    synthesise_complete, synthesise_evidence, overview_frontmatter = (
+        observed_frontmatter(root, overview)
+    )
 
     stages = [
         stage(
@@ -287,7 +329,7 @@ def book_status(root: Path, slug: str) -> dict[str, Any]:
         ),
         stage("prepare", prepare_complete, prepare_evidence),
         stage("analyse", analyse_complete, evidence(root, chapter_outputs)),
-        stage("synthesise", synthesise.usable, evidence(root, [overview])),
+        stage("synthesise", synthesise_complete, synthesise_evidence),
         stage("audit", None, []),
     ]
     next_stage = first_incomplete(stages)
@@ -315,7 +357,19 @@ def book_status(root: Path, slug: str) -> dict[str, Any]:
         }
     else:
         refs = {}
-    return status_payload("book", slug, stages, next_stage, refs)
+    return status_payload(
+        "book",
+        slug,
+        stages,
+        next_stage,
+        refs,
+        identity=(
+            frontmatter_identity(overview_frontmatter)
+            if include_identity and synthesise_complete
+            else None
+        ),
+        include_identity=include_identity,
+    )
 
 
 def talk_transcripts(root: Path, slug: str) -> list[Path]:
@@ -331,7 +385,7 @@ def talk_transcripts(root: Path, slug: str) -> list[Path]:
     ]
 
 
-def talk_status(root: Path, slug: str) -> dict[str, Any]:
+def talk_status(root: Path, slug: str, *, include_identity: bool = False) -> dict[str, Any]:
     sources = [root / "sources" / f"{slug}.{extension}" for extension in MEDIA_EXTENSIONS]
     source_observations = [observe_file(path, nonempty=True) for path in sources]
     transcripts = talk_transcripts(root, slug)
@@ -339,7 +393,9 @@ def talk_status(root: Path, slug: str) -> dict[str, Any]:
         observe_file(path, nonempty=True) for path in transcripts
     ]
     canonical = root / "vault" / "talks" / slug / "talk.md"
-    canonical_observation = observe_file(canonical, nonempty=False)
+    canonical_complete, canonical_evidence, canonical_frontmatter = (
+        observed_frontmatter(root, canonical)
+    )
 
     stages = [
         stage(
@@ -352,11 +408,11 @@ def talk_status(root: Path, slug: str) -> dict[str, Any]:
             any(item.usable for item in transcript_observations),
             evidence(root, transcripts),
         ),
-        stage("analyse", canonical_observation.usable, evidence(root, [canonical])),
+        stage("analyse", canonical_complete, canonical_evidence),
         stage(
             "synthesise",
-            canonical_observation.usable,
-            evidence(root, [canonical]),
+            canonical_complete,
+            canonical_evidence,
         ),
         stage("audit", None, []),
     ]
@@ -383,7 +439,19 @@ def talk_status(root: Path, slug: str) -> dict[str, Any]:
         }
     else:
         refs = {}
-    return status_payload("talk", slug, stages, next_stage, refs)
+    return status_payload(
+        "talk",
+        slug,
+        stages,
+        next_stage,
+        refs,
+        identity=(
+            frontmatter_identity(canonical_frontmatter)
+            if include_identity and canonical_complete
+            else None
+        ),
+        include_identity=include_identity,
+    )
 
 
 def first_incomplete(stages: Iterable[dict[str, Any]]) -> str | None:
@@ -399,8 +467,11 @@ def status_payload(
     stages: list[dict[str, Any]],
     next_stage: str | None,
     refs: dict[str, Any],
+    *,
+    identity: dict[str, Any] | None = None,
+    include_identity: bool = False,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": STATUS_VERSION,
         "kind": kind,
         "slug": slug,
@@ -408,6 +479,9 @@ def status_payload(
         "next_stage": next_stage,
         "refs": refs,
     }
+    if include_identity:
+        payload["identity"] = identity
+    return payload
 
 
 def children(directory: Path) -> list[Path]:
@@ -474,13 +548,15 @@ def scan_status(root: Path) -> dict[str, Any]:
     return {"schema_version": SCAN_VERSION, "items": items}
 
 
-def material_status(root: Path, kind: str, slug: str) -> dict[str, Any]:
+def material_status(
+    root: Path, kind: str, slug: str, *, include_identity: bool = False
+) -> dict[str, Any]:
     if kind == "paper":
-        return paper_status(root, slug)
+        return paper_status(root, slug, include_identity=include_identity)
     if kind == "book":
-        return book_status(root, slug)
+        return book_status(root, slug, include_identity=include_identity)
     if kind == "talk":
-        return talk_status(root, slug)
+        return talk_status(root, slug, include_identity=include_identity)
     raise AssertionError(f"unsupported kind: {kind}")
 
 
@@ -489,13 +565,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--kind", choices=("paper", "book", "talk"))
     parser.add_argument("--slug")
     parser.add_argument("--scan", action="store_true")
+    parser.add_argument("--identity", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     if not args.json:
         raise InvocationError("--json is required")
     if args.scan:
-        if args.kind is not None or args.slug is not None:
-            raise InvocationError("--scan cannot be combined with --kind or --slug")
+        if args.kind is not None or args.slug is not None or args.identity:
+            raise InvocationError(
+                "--scan cannot be combined with --kind, --slug, or --identity"
+            )
         return args
     if args.kind is None or args.slug is None:
         raise InvocationError("--kind and --slug are required unless --scan is used")
@@ -523,7 +602,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.scan:
         emit(scan_status(root))
     else:
-        emit(material_status(root, args.kind, args.slug))
+        emit(
+            material_status(
+                root,
+                args.kind,
+                args.slug,
+                include_identity=args.identity,
+            )
+        )
     return 0
 
 
