@@ -137,6 +137,69 @@ EXPECTED_REGISTRY = {
 }
 
 
+def stage_context(kind: str, stage: str) -> dict[str, Any]:
+    context: dict[str, Any] = {}
+    if kind in {"paper", "book"} and stage == "acquire":
+        context["meta"] = {
+            "title": "Example Title",
+            "authors": ["Example Author"],
+            "year": 1991,
+            "doi": None,
+        }
+    if kind == "book" and stage == "analyse":
+        context["chapter"] = {
+            "slot": "01",
+            "slug": "introduction",
+            "title": "Introduction",
+            "filename": "ch01-introduction.md",
+        }
+    if kind == "topic" and stage == "webcard":
+        context.update(
+            {
+                "query": "A bilingual topic query",
+                "web_task": {
+                    "subq": "sq-example",
+                    "query": "example web query",
+                    "card_slug": "example-card",
+                },
+            }
+        )
+    if kind == "topic" and stage == "recall":
+        context.update(
+            {
+                "query": "A bilingual topic query",
+                "subquestions": [
+                    {
+                        "id": "sq-example",
+                        "question": "Which mechanisms matter?",
+                        "coverage": "thin",
+                    }
+                ],
+                "max_items": 8,
+            }
+        )
+    if kind == "topic" and stage == "audit":
+        context["target"] = "vault/topics/example/00-overview.md"
+    if kind == "member":
+        context["member_kind"] = "paper"
+    if kind == "author" and stage == "synthesise":
+        context.update(
+            {
+                "full_name": "Example Author",
+                "inputs": [
+                    {
+                        "material_key": "paper:example-paper",
+                        "kind": "paper",
+                        "id": "example-paper",
+                        "path": "vault/papers/example-paper.md",
+                        "title": "Example Paper",
+                    }
+                ],
+            }
+        )
+    return context
+
+
 def protocol_report() -> dict[str, Any]:
     return run_stage({"inspectProtocol": True})
 
@@ -182,42 +245,13 @@ def test_every_registered_stage_resolves_to_its_descriptor_row() -> None:
 def test_registry_resolves_one_stage_per_kind(
     kind: str, stage: str, operation: str
 ) -> None:
-    context: dict[str, Any] = {}
-    if kind == "topic" and stage == "recall":
-        context.update(
-            {
-                "query": "A bilingual topic query",
-                "subquestions": [
-                    {
-                        "id": "sq-example",
-                        "question": "Which mechanisms matter?",
-                        "coverage": "thin",
-                    }
-                ],
-                "max_items": 8,
-            }
-        )
-    if kind == "topic" and stage == "audit":
-        context["target"] = "vault/topics/example/00-overview.md"
-    if kind == "member":
-        context["member_kind"] = "paper"
-    if kind == "author" and stage == "synthesise":
-        context.update(
-            {
-                "full_name": "Example Author",
-                "inputs": [
-                    {
-                        "material_key": "paper:example-paper",
-                        "kind": "paper",
-                        "id": "example-paper",
-                        "path": "vault/papers/example-paper.md",
-                        "title": "Example Paper",
-                    }
-                ],
-            }
-        )
     report = run_stage(
-        {"kind": kind, "slug": "example", "stage": stage, "context": context}
+        {
+            "kind": kind,
+            "slug": "example",
+            "stage": stage,
+            "context": stage_context(kind, stage),
+        }
     )
     assert report["direct"]["operation"] == operation
     assert report["result"] == {"sentinel": "returned-verbatim"}
@@ -277,6 +311,56 @@ def test_stage_protocol_has_exactly_four_closed_terminal_branches() -> None:
         ["user_question"]["type"]
         == "string"
     )
+
+
+def _bare_consts(node: Any, path: str = "$") -> list[str]:
+    """Paths of schema nodes carrying `const` without an explicit `type`."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        if "const" in node and "type" not in node:
+            found.append(path)
+        for key, value in node.items():
+            if key in {"const", "enum", "default", "examples"}:
+                continue
+            found.extend(_bare_consts(value, f"{path}/{key}"))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found.extend(_bare_consts(value, f"{path}/{index}"))
+    return found
+
+
+@pytest.mark.parametrize(
+    ("kind", "stage"),
+    [
+        (kind, stage)
+        for kind, stages in EXPECTED_REGISTRY.items()
+        for stage in stages
+    ],
+)
+def test_every_row_schema_types_its_consts(kind: str, stage: str) -> None:
+    # A bare const invites weak StructuredOutput models to stringify the
+    # echo (1 -> "1"), making exact-echo validation impossible to satisfy.
+    report = run_stage(
+        {
+            "kind": kind,
+            "slug": "example",
+            "stage": stage,
+            "context": stage_context(kind, stage),
+        }
+    )
+    schema = report["direct"]["schema"]
+    assert _bare_consts(schema) == []
+
+
+def test_audit_echo_consts_carry_value_types() -> None:
+    report = run_stage(
+        {"kind": "paper", "slug": "example", "stage": "audit", "context": {}}
+    )
+    properties = report["direct"]["schema"]["properties"]
+    assert properties["pass"] == {"const": 1, "type": "integer"}
+    assert properties["artifact_roles"]["type"] == "array"
+    assert properties["artifact_roles"]["const"] == ["canonical"]
+    assert properties["target_path"]["type"] == "string"
 
 
 @pytest.mark.parametrize(

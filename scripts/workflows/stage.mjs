@@ -38,6 +38,33 @@ const stageIssueObjectSchema = (
   },
 });
 
+// JSON-data keywords whose values are payload literals, not subschemas.
+const SCHEMA_DATA_KEYWORDS = new Set(["const", "enum", "default", "examples"]);
+
+const constType = (value) => {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (typeof value === "number")
+    return Number.isInteger(value) ? "integer" : "number";
+  return typeof value;
+};
+
+// StructuredOutput providers backed by weaker models guess "string" for a bare
+// `const` and stringify non-string echoes (1 -> "1", ["canonical"] ->
+// "[\"canonical\"]"), which makes exact-echo validation deterministically
+// impossible. Every const therefore carries an explicit `type` hint.
+export const annotateConstTypes = (node) => {
+  if (Array.isArray(node)) return node.map(annotateConstTypes);
+  if (!node || typeof node !== "object") return node;
+  const out = {};
+  for (const [key, value] of Object.entries(node))
+    out[key] = SCHEMA_DATA_KEYWORDS.has(key)
+      ? value
+      : annotateConstTypes(value);
+  if ("const" in out && !("type" in out)) out.type = constType(out.const);
+  return out;
+};
+
 const terminalPayload = (payloads, status) => {
   const payload = payloads && payloads[status];
   return payload && typeof payload === "object" ? payload : {};
@@ -84,7 +111,7 @@ export function stageReceiptSchema({
   properties = {},
   terminalPayloads = {},
 }) {
-  return {
+  return annotateConstTypes({
     type: "object",
     additionalProperties: false,
     required: [
@@ -107,7 +134,7 @@ export function stageReceiptSchema({
       ...properties,
       terminal: stageTerminalSchema(operation, terminalPayloads),
     },
-  };
+  });
 }
 
 // The common matrix is intentionally small. It checks the meaning of the four

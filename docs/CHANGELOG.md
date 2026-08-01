@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.55.1** (2026-08-01): **给 receipt schema 里所有 exact-echo `const` 补显式 `type` 注解，弱模型宿主不再把非字符串 echo 串化到撞死重试上限。**
+  - 实测故障：一次 paper Audit 连续 5 次 StructuredOutput 校验失败（重试上限），worker 模型是 glm-5.2，它把 `pass: 1` 发成 `"1"`、`artifact_roles: ["canonical"]` 发成字符串化数组——schema 里裸 `const`（无 `type`）会让弱模型默认按字符串输出，而同一收据里带 `type: "integer"` 的顶层 `attempt: 1` 是对的。Claude worker 在相同 row 上从未失败，说明这是 type 提示缺失、不是合同错误。
+  - 修复只落在唯一咽喉 `stage.mjs::stageReceiptSchema`：`annotateConstTypes` 递归给每个缺 `type` 的 `const` 节点按值推断补注解，不改 `const`/`enum`/`default`/`examples` 的字面值。exact-echo 纪律原样保留——echo 仍是把 receipt 绑到 exact refs 的身份证明，只是现在弱模型也能满足它。
+  - 新增全 registry 扫描测试：所有注册 kind/stage row 生成的 schema 里不允许出现裸 `const`，并单独钉住 `paper.audit` 的 `pass`/`artifact_roles` 注解形状。
+
 - **0.55.0** (2026-08-01): **运行架构倒置为 Skill 驱动，删除已经没有职责的自运行 Graph driver。**
   - 真实 clean-project E2E 已证明 `collect-material` 能以 `quasi-status` 磁盘观察和五次单阶段 `run-stage` 调用完成 Search → Acquire → Prepare → Analyse → Audit，全程没有触发旧 driver；这项 gate 通过后才删除大图 bundle、material/collection/research loops、router/join/scheduler/classifier machinery 及其 characterization tests，不留 alias。
   - 运行时四层现在固定为 Skill driver → descriptor rows + `run-stage` → specialist Agents → transactional `quasi-*` CLIs。Skill 负责 identity coalescing、阶段选择、并发、gate 与 resume；每个 Workflow 只解析一行、调用一个 Agent、原样返回 `quasi.stage.receipt/0.2`。协议测试收敛到全 registry row resolution、schema generation 与四 terminal shape，capability/status/skill guards 保持原样。
