@@ -35,7 +35,8 @@ description: Use when the user wants to define and research a precise topic thro
   同时只能有一个 owner。receipt 落地后逐个判断，不等待一个合并结果替代 terminal 处理。
 - `quasi-status --scan --json` 与
   `quasi-status --kind K --slug S --json --identity` 是只读 disk oracle。它们只陈述现有材料事实；
-  主线程判断哪些 canonical 与主题相关，以及下一步如何推进。
+  `--scan` 只用于观察布局与断点恢复，content relevance 由一次 `topic.recall` specialist 判断，
+  主线程只受理其候选并决定下一步如何推进。
 - `vault/topics/{slug}/02-outline.md` 是 user-editable steering artifact。每次 create、refresh、repair
   都让 `topic.steer` 读取当前文件；任何用户手改都作为本轮指令，不用旧 receipt 覆盖。
 - Book/Paper/Talk canonical 是 academic corpus；`cards/` 是独立 evidence-card channel。卡片绝不
@@ -79,6 +80,7 @@ Workflow(
 
 Topic 只使用这些 stage key：
 
+- `recall` → `topic.recall`
 - `steer` → `topic.steer`
 - `webcard` → `topic.webcard`
 - `synthesise-overview` → `topic.synthesise.overview`
@@ -97,10 +99,14 @@ canonical path 一致的成员接入 Topic。Talk 只能从用户 seed 或磁盘
 `web_task` 及当前 `subquestions`。两个 synthesis stage 都带相同的 admitted `memberRefs`，卡片只走
 独立的 `cardRefs`。
 
+`topic.recall` 只运行一次，context 带主题 `query`、当前 outline 的 `subquestions`（若有）和
+`max_items`（默认 8，范围 1–16）。它返回的每个 `{kind,slug,path}` 仍须逐项通过
+`quasi-status --kind K --slug S --json --identity` admission；receipt 中的 path 不能替代 disk oracle。
+
 ## 工作流
 
 ```text
-Intake → status scan + current outline + seed admission
+Intake → status scan + current outline → content recall + seed admission
        → Steer(create|refresh)
        → bounded rounds
           ├─ unseen web tasks → one webcard stage each
@@ -117,8 +123,10 @@ Intake → status scan + current outline + seed admission
 
 1. 校验 `slug`、`description` 和 bounds。读取现有
    `vault/topics/{slug}/02-outline.md`；若存在，说明本次是增量研究。运行
-   `quasi-status --scan --json` 取得候选布局，根据主题、当前 outline 与用户 seed 选择相关候选，
-   再逐项 `--identity` admission。不要用 Glob、rg 或猜测路径建立另一份 recall。
+   `quasi-status --scan --json` 只观察布局与断点状态。随后恰好一次运行 `stage:"recall"`，context
+   包含主题 query、当前 outline 的 subquestions（若有）与 `max_items`；对 complete receipt 返回的
+   items 再逐项 `--identity` admission。主线程不要用 Glob、rg、slug 猜测或 `--scan` 候选判断建立
+   另一份 content recall。
 
 2. 先观察 `seed_materials`。已在磁盘完成的 seed 或 recalled member 可直接由本次
    `quasi-status --identity` admission。其它 seed 服从 `collect-material` 单材料合同；Search 后
@@ -194,8 +202,9 @@ Intake → status scan + current outline + seed admission
 
 - 读取 `vault/topics/{slug}/02-outline.md`，把现有 subquestions、items、cards 和用户手改作为本轮
   steer 指令。
-- 运行 `quasi-status --scan --json`，再对拟接入的每个 Book/Paper/Talk 运行
-  `quasi-status --kind K --slug S --json --identity`；只使用它证明的 canonical identity 与 path。
+- 运行 `quasi-status --scan --json` 观察布局与断点状态，再恰好一次运行 `stage:"recall"`；对其
+  items 中拟接入的每个 Book/Paper/Talk 运行 `quasi-status --kind K --slug S --json --identity`，
+  只使用它证明的 canonical identity 与 path。
 - 已存在 card 只在 outline 命名且 exact card path 可读时进入 `card_refs`；没有可读 card 的 slug
   仍是未完成 observation。
 - 从 outline 与 status 重建 seen identities；旧 demand fingerprint 不在磁盘持久化，下一次 steer

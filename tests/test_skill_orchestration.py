@@ -141,6 +141,7 @@ def test_research_topic_pins_round_convergence_channels_and_repair() -> None:
         encoding="utf-8"
     )
     for stage in (
+        'stage:"recall"',
         'stage:"steer"',
         'stage:"webcard"',
         'stage:"synthesise-overview"',

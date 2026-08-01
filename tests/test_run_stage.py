@@ -71,6 +71,7 @@ def run_stage(args: dict[str, Any]) -> dict[str, Any]:
         ("book", "audit", "book.audit"),
         ("talk", "audit", "talk.audit"),
         ("translation", "prepare", "translation.prepare"),
+        ("topic", "recall", "topic.recall"),
         ("topic", "audit", "topic.audit"),
         ("author", "resolve-membership", "author.resolve-membership"),
         ("author", "synthesise", "author.synthesise"),
@@ -82,7 +83,21 @@ def test_registry_resolves_one_stage_per_kind(
     kind: str, stage: str, operation: str
 ) -> None:
     context: dict[str, Any] = {}
-    if kind == "topic":
+    if kind == "topic" and stage == "recall":
+        context.update(
+            {
+                "query": "A bilingual topic query",
+                "subquestions": [
+                    {
+                        "id": "sq-example",
+                        "question": "Which mechanisms matter?",
+                        "coverage": "thin",
+                    }
+                ],
+                "max_items": 8,
+            }
+        )
+    if kind == "topic" and stage == "audit":
         context["target"] = "vault/topics/example/00-overview.md"
     if kind == "member":
         context["member_kind"] = "paper"

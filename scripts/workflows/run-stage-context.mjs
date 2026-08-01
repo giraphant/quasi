@@ -141,6 +141,15 @@ export function makeOperationContext(kind, slug, operation, rawContext) {
         tocPageSide: value(context, "tocPageSide", "toc_page_side") || "original",
       };
     }
+    case "topic.recall":
+      return {
+        ...base,
+        researchKey:
+          value(context, "researchKey", "research_key") || `topic:${slug}`,
+        query: context.query || context.topic || meta.description,
+        maxItems: value(context, "maxItems", "max_items") ?? 8,
+        subquestions: context.subquestions || [],
+      };
     case "topic.steer":
     case "topic.webcard":
     case "topic.synthesise.overview":

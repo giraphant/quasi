@@ -34,7 +34,7 @@ export const RUN_STAGE_REGISTRY = {
   talk: { prepare: "talk.prepare", analyse: "talk.analyse", audit: "talk.audit" },
   translation: { prepare: "translation.prepare" },
   topic: {
-    steer: "topic.steer", webcard: "topic.webcard",
+    recall: "topic.recall", steer: "topic.steer", webcard: "topic.webcard",
     "synthesise-overview": "topic.synthesise.overview",
     "synthesise-resources": "topic.synthesise.resources", audit: "topic.audit",
   },
