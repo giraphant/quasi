@@ -117,10 +117,19 @@ internals.
   gate is a standard `needs_input`; acquisition method moved to
   `agents/download-agent.md`; shared edge router `materials/route.mjs`;
   `quasi-status` disk oracle added.
-- **0.52.28 (in flight)**: Analyse / Audit / Synthesise unified onto stage
+- **0.52.28**: Analyse / Audit / Synthesise unified onto stage
   terminals; strict Topic-recall vertical unified; member/receipt admission
   slimmed onto shared validators; legacy operation IDs removed.
-- **Next round (constitution round)**: operations-as-data call tables and
-  the single interpreter; disk-postcondition verification replacing receipt
-  contracts; disk-based join admission; topic merged into the material tree;
-  `precise-topic` renamed.
+- **0.53.0 (constitution round)**: the Pi/Codex host adapters and modern
+  runtime schema backstop are gone; stage receipts pass one contract-relative
+  terminal readability gate, while pre-stage author discovery and rolling
+  Topic remain a named legacy island. Graph-internal characterization tests
+  were pruned from about 23.5k to 14.8k lines so they defend doctrine instead
+  of implementations. One `defineOperation` factory now interprets descriptor
+  rows for Paper, Book, Talk, and Translation, and the 182-line material
+  interpreter executes their per-kind declarative tables. Collection joins
+  admit children from `member.admission-probe` disk testimony via
+  `quasi-status --identity`; because audit has no durable disk signal yet,
+  clean-audit proof deliberately remains receipt-based.
+- **Next round (topic merge)**: merge Topic into the material tree, rename
+  `precise-topic`, and retire the remaining legacy island.

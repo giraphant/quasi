@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.53.0** (2026-08-01): **Constitution round：Graph 不再为每个 operation 和 material kind 各自成为一份代码实体。**
+  - 一个 `defineOperation` factory 解释 Paper、Book、Talk、Translation 的 descriptor rows；一个 182 行 material interpreter 执行各 kind 的 declarative table。共享调用、terminal routing、fan-out、repair 与 coalescing 语义只写一次，新增阶段改数据而不是复制控制流。
+  - Claude 成为唯一运行宿主，Pi/Codex adapters 与 modern runtime schema backstop 已删除；Stage receipt 只经过 contract-relative terminal gate，未迁移的 author discovery 与 rolling Topic 明确留在 legacy island。Graph doctrine tests 从约 23.5k 行裁到 14.8k 行，守协议与边界而不固化内部实现。
+  - Collection join 改由 `member.admission-probe` 调用 `quasi-status --identity`，以磁盘 testimony 重证 child identity 和 canonical artifacts，不再相信 receipt artifact claims。Audit 尚无 durable disk signal，因此 clean-audit proof 暂时保留 receipt-based；下一轮才合并 Topic、重命名 `precise-topic` 并退役 legacy island。
+
 - **0.52.28** (2026-08-01): **统一 material/document 的 Stage terminal，收紧 admission 而不把判断塞回 Graph。**
   - Analyse、Synthesise 与 Audit producer 现在和 Acquire/Prepare 一样交付 `quasi.stage.receipt/0.2`；Graph 只按四个 terminal 路由，消除每个 producer 自己的 status/branch union。Talk Transcribe 与 Translation Prepare 已对齐该形状，继续分别保留 media reconciliation 与 fenced-generation、manifest-last publication 的确定性语义。
   - Child MaterialReceipt admission 删去重复的专用 receipt 解释，改经共享 schema/Stage validators 重证 identity、canonical artifacts 与 clean final audit；strict Topic recall vertical 同步进入 shared terminal path。为保留未迁移 rolling Topic synthesis 的闭合 schema，恢复了它仍引用的 `knownOutcome`/`unknownOutcome` 常量。
