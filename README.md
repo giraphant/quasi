@@ -36,24 +36,11 @@ specialist，并原样返回 typed terminal。仓库没有自运行材料图。
 根目录 `settings.json` 还为 quasi 子代理提供紧凑状态行，其他子代理保持 Claude Code
 默认显示。
 
-### Artifact Schema 的维护边界
-
-产物结构只有一个来源：
-
-1. `scripts/schemas/{type}.py` 定义 frontmatter 字段、类型和字段语义；
-2. `scripts/schemas/body.py` 定义路径、identity fields、H1、metadata 行、H2 顺序、
-   block kind、表格列和 section 语义；
-3. `agents/*.md` 只保存 worker 的稳定认识论、读写流程和通用 receipt 协议；
-4. `scripts/workflows/operations/*.mjs` 只装配 exact refs、动态 frontmatter seed、
-   operation request/receipt 和 schema projection，不再拥有产物模板。
-
-修改 Paper、Chapter、Book overview 或 Talk 的结构时编辑 `scripts/schemas/`，然后运行
-`npm run build:workflows`。构建器会更新
-`scripts/workflows/artifact-contracts/generated.mjs` 和
-`workflows/run-stage.mjs`；两者都是生成物，禁止手改。
-acquisition 等非产物结构的行为，由所属 `scripts/workflows/operations/*.mjs`
-以结构化 policy 注入，不另建 prose prompt pack。`npm run check:workflows`
-检查 Schema、projection、operation 与最终 bundle 的一致性。
+产物结构的唯一事实源在 `scripts/schemas/`（frontmatter、body、路径、身份）。
+修改结构后运行 `npm run build:workflows` 重新生成
+`scripts/workflows/artifact-contracts/generated.mjs` 与
+`workflows/run-stage.mjs`（生成物，禁止手改），`npm run check:workflows`
+校验一致性。维护细则见 `CLAUDE.md`。
 
 ## 当前入口
 
@@ -64,8 +51,6 @@ acquisition 等非产物结构的行为，由所属 `scripts/workflows/operation
 | `collect-material` | skill-driven 采集→分析:book / paper / author / talk / PDF translation |
 | `research-topic` | topic 界定与研究循环:vault 召回、滚雪球、证据卡、研究大纲与主题综合 |
 | `finalise-draft` | draft 校对 + 引文审查 + references.bib |
-
-`process-journal` 当前已归档到 `deprecated/skills/`,等待 journal acquisition 重新设计。
 
 ### Agents
 
@@ -106,7 +91,6 @@ quasi-doctor [--json] [--sync] [--profile ...]
 quasi-translate SLUG [--backend immersive|pdf2zh] ...
 ```
 
-quasi targets Claude Code only; retired Pi and Codex host adapters are recoverable from git history.
 只给题名的单本/论文请求会先由可见 `metadata-agent` 核定 DOI/ISBN、作者顺序、年份和
 canonical slug;主线程不会自行 WebSearch 猜 metadata。
 
@@ -148,9 +132,15 @@ vault/
   books/{slug}/
   papers/{slug}.md
   authors/{slug}.md
+  talks/{slug}/
+  topics/{slug}/
   drafts/
 sources/
   {slug}.{epub,pdf}
+processing/
+  chapters/{slug}/
+  translations/
+  talks/{slug}/
 .quasi/
   audit/
   citation/
@@ -171,4 +161,4 @@ sources/
 | Immersive Translate | `immersive_auth_key` |
 | pdf2zh OpenAI-compatible endpoint | `translate_base_url`, `translate_api_key`, `translate_model` |
 | Kagi | `kagi_session_token` |
-| Google Scholar proxy | `google_scholar_proxy_url` |
+| Soniox 转写 | `soniox_api_key` |

@@ -18,9 +18,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 - `workflows/run-stage.mjs` is the only Workflow entry. It resolves one `kind + stage` pair to one descriptor row, composes that row's prompt and schema, invokes exactly one specialist, and returns the receipt verbatim. It does not route later stages, maintain material state, retry, join, or run a graph.
 - `agents/` are goal-owning specialist workers. A Stage Unit Agent may investigate, choose among its declared `quasi-*` capabilities, and perform local recovery until it can make an honest terminal judgement. It reads or writes only the exact artifacts in its request. The sole remote-tool exception is `webcard-agent`, which may `WebFetch` the exact URLs returned by `quasi-search kagi` for its one assigned evidence card.
 - `bin/quasi-*` is the stable shell surface exposed to agents and skills.
-- `scripts/` contains deterministic capability entrypoints and build-only sources;
-  `scripts/workflows/` contains the editable run-stage source, descriptor rows,
-  shared Stage schema, and generated artifact-contract projections.
+- `scripts/` contains deterministic capability entrypoints and build-only sources; `scripts/workflows/` is the editable run-stage source.
 - `scripts/schemas/` is the single source of truth for artifact frontmatter and body structure.
   Agents do not import it directly: the workflow build injects canonical producer/search
   projections, while audit/typecheck/migration consume the registry in Python.
@@ -31,7 +29,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 - Stage phases describe processing progress, never material kinds. The shared vocabulary is `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`; the skill decides which applicable stage follows from current disk observations.
 - Every `agent()` call must carry its exact stage through `opts.phase`; do not use `Paper`, `Book`, `Author`, `Talk`, `Topic`, or `Translation` as a phase.
 - Agent labels begin with the stable material slug or collection key, followed by the stage, so independent skill-managed work remains identifiable when the UI truncates long labels.
-- The skill normalises requests and prevents duplicate writers before dispatch. A `Search` specialist investigates external records and resolves its selected identity against the vault. Every material/document operation — Acquire, Prepare, Analyse, Synthesise, and Audit, including Talk and Translation stages — returns `quasi.stage.receipt/0.2`; the Book year gate is an ordinary `terminal.needs_input`.
+- The skill normalises requests and prevents duplicate writers before dispatch. A `Search` specialist investigates external records and resolves its selected identity against the vault; the Book year gate is an ordinary `terminal.needs_input`.
 
 ### Stage Unit model
 
@@ -39,7 +37,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 - The shared Stage receipt is `quasi.stage.receipt/0.2`. Its required `terminal` is a closed `complete|needs_input|blocked|failed` union: `complete` proves only the exact artifacts required by the next stage and requires `issue:null`; the other terminals carry one typed issue, while `needs_input` also carries concrete candidates, conflict fields, and a user question.
 - The Agent owns professional method and stopping judgement. Do not encode query counts, provider cascades, text-readability heuristics, OCR decisions, chapter replanning, or translation recovery in a skill's stage routing. Acquisition method and policy discipline live in `agents/download-agent.md`; an Acquire envelope keeps its goal, exact refs, result schema, and only real shared-resource or writer bounds.
 - The host validates the schema sent to StructuredOutput. `run-stage` returns that host-validated receipt unchanged; the skill interprets its typed terminal and uses `quasi-status` observations, not a second receipt validator, to decide what can safely happen next.
-- All material/document Operations, including single-action Analyse, Synthesise, and Audit producers, use the shared Stage receipt. Stage Units are for work that naturally requires specialist investigation or local recovery, not a requirement to make every Agent invocation large.
+- Stage Units are for work that naturally requires specialist investigation or local recovery, not a requirement to make every Agent invocation large.
 - Unknown writer outcomes stop the skill driver. Agent autonomy does not permit duplicate writers, path discovery outside the envelope, or replay after an ambiguous write; resume begins with a fresh disk observation.
 
 ### Path roots
@@ -118,11 +116,6 @@ quasi-helpers vault resolve --items-json|--items-file ...
 quasi-doctor [--json] [--sync] [--profile ...]
 quasi-translate SLUG [--backend immersive|pdf2zh] ...
 ```
-
-`scripts/workflows/` contains the run-stage source, descriptor rows, shared Stage
-schema, and generated artifact-schema projections. `npm run build:workflows`
-deterministically produces the committed `workflows/run-stage.mjs` entry; never
-hand-edit the generated bundle. There is no self-running material graph.
 
 Artifact writing has three ownership layers:
 
@@ -218,7 +211,7 @@ Removed legacy bins must not reappear in active docs or prompts: `quasi-citation
 
 ## Skill writing schema
 
-`docs/SKILL_ORCHESTRATION.md` and `docs/GRAPH_COLLABORATION.md` are maintainer guidance. Active `SKILL.md` files should not cite either directly; runtime skill text should contain only information the executing model needs.
+`docs/SKILL_ORCHESTRATION.md` and `docs/GRAPH_COLLABORATION.md` are maintainer guidance. Active `SKILL.md` files should not cite either directly.
 
 Use this shape for active skills when applicable:
 
@@ -234,9 +227,7 @@ Agent / Helper 合同
 输出
 ```
 
-`任务` should be one short positive sentence naming the work. Use `输入` instead of `调用方式` unless the skill has a real machine-facing invocation API. In normal plugin use, the frontmatter description and natural language trigger the skill; the body should define variable extraction and workflow contracts.
-
-Frontmatter `description` is only a routing hint. Skill descriptions should describe user intent; agent descriptions should describe one worker action and its main output. Do not put trigger-word lists, history notes, or phase walkthroughs in descriptions.
+`任务` is one short positive sentence naming the work; use `输入` unless the skill has a real machine-facing invocation API. Frontmatter `description` is only a routing hint describing user intent — no trigger-word lists, history notes, or phase walkthroughs.
 
 ## Runtime state and dependencies
 
@@ -254,17 +245,11 @@ When changing config, runtime state, or handoff contracts:
 
 1. Keep `.claude-plugin/plugin.json` and `scripts/hooks/inject-userconfig.py::_KEYS` in sync.
 2. Keep `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` versions in sync for releases.
-3. Keep `CLAUDE.md` and `AGENTS.md` byte-for-byte identical.
+3. Keep `CLAUDE.md` and `AGENTS.md` byte-for-byte identical (verify with `cmp -s CLAUDE.md AGENTS.md`).
 4. Update active skills only when the executing model needs the information at runtime.
 5. Update agent files when an agent input/output contract changes.
-6. Update tests that guard dead names, frontmatter routing hints, CLI surface, or manifest schema.
+6. Update tests that guard dead names, frontmatter routing hints, CLI surface, or manifest schema and run `pytest tests/test_dead_names.py tests/test_skill_orchestration.py -q`.
 7. Run `claude plugin validate .` after manifest changes.
-
-## Verification
-
-- For instruction-only changes, run `cmp -s CLAUDE.md AGENTS.md` and confirm exit code 0.
-- Run `pytest tests/test_dead_names.py tests/test_skill_orchestration.py -q` if those tests exist in the current checkout.
-- For manifest changes, run `claude plugin validate .`.
 
 ## Debugging gotchas
 
@@ -274,4 +259,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.57.5.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.57.6.
