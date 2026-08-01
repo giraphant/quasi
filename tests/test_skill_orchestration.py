@@ -118,14 +118,48 @@ def test_collect_material_pins_main_thread_gates_repair_and_author_rows() -> Non
         assert name not in skill
 
 
-def test_research_topic_starts_the_shared_topic_graph() -> None:
+def test_research_topic_main_thread_drives_bounded_run_stage_rounds() -> None:
     skill = (ROOT / "skills" / "research-topic" / "SKILL.md").read_text(
         encoding="utf-8"
     )
     assert "name: research-topic" in skill
-    assert "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" in skill
-    assert '{"kind":"topic","slug":slug,"meta":meta}' in skill
-    assert "needs_seeds" in skill
+    assert "$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs" in skill
+    assert "process-material.mjs" not in skill
+    assert 'scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs"' in skill
+    assert "主线程" in skill
+    assert "driver" not in skill.lower()
+    assert "Agent(" not in skill
+    assert "至多保持五个" in skill
+    assert "逐个受理" in skill
+    assert "maxRounds" in skill and "recall-only" in skill
+    assert "maxCardsPerRound" in skill and "共享资源" in skill
+    assert "process-now" in skill and "proceed-without" in skill
+
+
+def test_research_topic_pins_round_convergence_channels_and_repair() -> None:
+    skill = (ROOT / "skills" / "research-topic" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    for stage in (
+        'stage:"steer"',
+        'stage:"webcard"',
+        'stage:"synthesise-overview"',
+        'stage:"synthesise-resources"',
+        'stage:"audit"',
+    ):
+        assert stage in skill
+    assert "seen_demand_fingerprints" in skill
+    assert "[kind,query,subq,role,reason]" in skill
+    assert "seen_identities" in skill
+    assert 'signal:"saturated"' in skill
+    assert "没有 unseen demand/card" in skill
+    assert "hard bound" in skill
+    assert 'card_status:"empty"' in skill
+    assert "独立 evidence-card channel" in skill
+    assert "quasi-status --kind K --slug S --json --identity" in skill
+    assert "WRITER-AMBIGUITY RULE" in skill
+    assert 'mode:"repair"' in skill
+    assert "pass:2" in skill
 
 
 
