@@ -413,17 +413,20 @@ def steer_receipt(
     failure: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     values = members or []
+    terminal = stage_terminal("topic.steer", status=status, failure=failure)
+    if terminal["status"] == "complete":
+        terminal["action"] = action
     return {
-        "schema_version": "quasi.operation.topic.steer.receipt/0.1",
-        "key": "topic.steer",
+        "schema_version": "quasi.stage.receipt/0.2",
+        "operation": "topic.steer",
+        "stage": "Search",
+        "material_key": f"topic:{topic_slug}",
         "effect": "writer",
-        "status": status,
         "attempt": 1,
         "research_key": f"topic:{topic_slug}",
         "member_refs": values,
         "input_paths": [item["path"] for item in values],
         "output_path": output_path or f"vault/topics/{topic_slug}/02-outline.md",
-        "action": action,
         "signal": signal,
         "subquestions": [
             {
@@ -442,7 +445,7 @@ def steer_receipt(
         "web_tasks": [],
         "dirty": [],
         "suggested_queries": [],
-        "failure": failure,
+        "terminal": terminal,
     }
 
 

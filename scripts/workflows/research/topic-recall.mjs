@@ -27,11 +27,7 @@ import {
   topicResourcesSynthesiseOperationPrompt as topicResourcesSynthesisePrompt,
   topicResourcesSynthesiseSchema,
 } from "../operations/synthesise.mjs";
-import {
-  TOPIC_STEER_CONTRACT,
-  TOPIC_STEER_SCHEMA as TOPIC_STEER_OPERATION_SCHEMA,
-  topicSteerOperationPrompt,
-} from "../operations/steer.mjs";
+import { topicSteer } from "../operations/rows/topic.mjs";
 import { exactKeys, validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
 
@@ -466,11 +462,12 @@ function applySteer(state, receipt) {
   state.signal = receipt.signal;
   state.subquestions = receipt.subquestions;
   state.suggestedQueries = receipt.suggested_queries;
-  if (receipt.action === "repair") state.repaired = true;
-  if (receipt.action === "create")
+  const action = receipt.terminal.action;
+  if (action === "repair") state.repaired = true;
+  if (action === "create")
     state.disposition = "created";
   if (
-    receipt.action === "reconciled" &&
+    action === "reconciled" &&
     state.disposition === null
   )
     state.disposition = "reused";
@@ -581,48 +578,50 @@ async function runSteer(
   diagnostics,
   label,
 ) {
-  const inputPaths = members.map((member) => member.path);
+  const context = {
+    materialKey: state.researchKey,
+    researchKey: state.researchKey,
+    topicSlug: state.slug,
+    query:
+      round === 0 && state.seeds.length
+        ? `${state.desc}\nUser seeds: ${state.seeds.join("; ")}`
+        : state.desc,
+    memberRefs: members,
+    mode,
+    diagnostics,
+    artifactRoles: ["outline"],
+    replay: "blocked",
+    unknownFailureCode: "topic.writer_outcome_unknown",
+  };
+  const spec = topicSteer.spec(context);
   const steered = await runtime.operate(
-    topicSteerOperationPrompt({
-      researchKey: state.researchKey,
-      topicSlug: state.slug,
-      query:
-        round === 0 && state.seeds.length
-          ? `${state.desc}\nUser seeds: ${state.seeds.join("; ")}`
-          : state.desc,
-      memberRefs: members,
-      mode,
-      diagnostics,
-    }),
+    topicSteer.prompt(context),
     {
-      phase: "Search",
-      agentType: "quasi:steer-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label,
-      schema: TOPIC_STEER_OPERATION_SCHEMA,
+      schema: topicSteer.schema(context),
     },
-    operationOptions(
-      "topic.steer",
-      "writer",
-      ["outline"],
-      TOPIC_STEER_CONTRACT,
-      { state, memberRefs: members, inputPaths, mode },
-    ),
+    spec,
   );
-  const receipt = steered.receipt;
-  state.operations.push(receipt);
   state.budgets.steer.used += 1;
-  if (
-    steered.edge === "unknown" ||
-    steered.edge === "mismatch"
-  )
-    return { terminal: writerMismatch(state, "topic.steer", "steer") };
-  const stopped = writerTerminal(
+  const routed = routeTopicStage(
+    steered,
     state,
-    receipt,
-    "topic.steer",
     "steer",
+    "topic.steer",
+    {
+      mismatchCode: "topic.writer_receipt_mismatch",
+      mismatchMessage:
+        "writer receipt did not prove the exact contract",
+      failedStatus: "synth_failed",
+      needsInputExtra: (receipt) => ({
+        suggested_queries: receipt.suggested_queries,
+      }),
+    },
   );
-  if (stopped) return { terminal: stopped };
+  if (routed.terminal) return { terminal: routed.terminal };
+  const receipt = routed.value.receipt;
   applySteer(state, receipt);
   return { receipt };
 }

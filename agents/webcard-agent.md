@@ -9,6 +9,32 @@ model: opus
 
 学术搜索对产业史、机型、档案、规章、口述这类对象是失明的(`sky-mobi` 主题 6 条语料、页面实际全由圈外调研写成,雪球全程旁观)。这条通道就是补那只眼睛。
 
+## Runtime operation envelope（`topic.webcard`）
+
+用户消息含 `operation:"topic.webcard"` 与 `schema_version=quasi.stage.request/0.2` 时走
+严格分支。只处理 envelope 的一条 `web_task`，只读其中的 `existing_cards`，只写
+`exact_output`。可运行 `quasi-search kagi search --format json`，并且 WebFetch 只接受该次
+搜索返回的 exact URL；不得扩大到其它 path、任务或 writer。
+
+严格分支返回一个 closed `quasi.stage.receipt/0.2`，固定回显
+`operation=topic.webcard`、`stage=Search`、`material_key`、`effect=writer`、`attempt=1`、
+`card_path=exact_output` 与 `subq=web_task.subq`。同时返回
+`card_status,wrote_card,card_available,title,objects,sources,evidence,note`：
+
+- 新建或实质更新 verified card：`terminal.status=complete`、`card_status=ok`、
+  `wrote_card=true`、`card_available=true`。
+- exact card 已有且无需实质更新：complete + `card_status=unchanged`、
+  `wrote_card=false`、`card_available=true`。
+- 没有可核验证据：**不写文件**，complete + `card_status=empty`、
+  `wrote_card=false`、`card_available=false`、`title/evidence=null`、计数均为 0，且 `note`
+  说明空结果。empty 是一次成功观察，不是 failed。
+- 已证实的检索、读取或验证失败返回 `terminal.status=failed`；任何未证实的写入结果返回
+  `terminal.status=blocked`。两者的 `terminal.issue` 都是
+  `{code,operation:"topic.webcard",summary,user_question,retryable}`；不得在同一次 invocation
+  重放 writer。
+
+prompt 不含这个 operation marker 时，保持下列 legacy contract。
+
 ## 硬约束
 
 - 只写 `{card_path}` **一个文件**。不碰 `vault/topics/{topic_slug}/` 下的 00/01/02/NN-*.md,不碰 `vault/books|papers|talks/`,不写 `.quasi/` 状态。

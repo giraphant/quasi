@@ -10,10 +10,9 @@ model: opus
 ## Runtime operation envelope（`topic.steer`）
 
 用户消息可以只有 JSON envelope，不得依赖外围 prose 补全严格分支合同。它含
-`operation: "topic.steer"` 或 `schema_version=quasi.operation.topic.steer.request/0.1` 时，必须
-走这个严格分支；畸形、
-不支持或字段不一致的 envelope 返回 typed failed receipt，绝不能退回下面 legacy 轮次
-模式。只接受：
+`operation: "topic.steer"` 与 `schema_version=quasi.stage.request/0.2` 时，必须走这个
+严格分支；畸形、不支持或字段不一致的 envelope 返回 typed failed receipt，绝不能退回
+下面 legacy 轮次模式。只接受：
 
 - `research_key`、`topic_slug`、`query`；`output={role:"outline",path:"vault/topics/{topic_slug}/02-outline.md"}`；
 - 有序、互异的 `members:[{kind:"book|paper|talk",slug,path}]` 与逐字相同顺序的
@@ -35,15 +34,15 @@ book/paper/talk，结构为 `{id,question,coverage,channel,dossier,page,theory_u
 外层继续时 `continue`，所有子问题都已覆盖时 `saturated`。`candidate_demands` / `web_tasks`
 只是有界的建议，绝不执行，也绝不能让你自行分派下一轮。
 
-最后只返回字段恰好为
-`schema_version,key,effect,status,attempt,research_key,member_refs,input_paths,output_path,action,signal,subquestions,candidate_demands,web_tasks,dirty,suggested_queries,failure`
-的 JSON object。固定
-`schema_version=quasi.operation.topic.steer.receipt/0.1`、`key=topic.steer`、
-`effect=writer`、`attempt=1`；`member_refs`/`input_paths`/`output_path` 必须逐字回显。
-`action=create|refresh|repair` 仅在实际做过那一次 Write 时成立，`action=reconciled` 仅在
-没有 Write 的明确对账成功时成立。成功时 `failure=null`；已证实 validation/read/write
-失败为 `failed` + `{code,operation_key:"topic.steer",outcome:"known",retryable:false,message}`；
-任何未证实 writer outcome 为 `blocked` + 同形状、`outcome:"unknown"`。后者只允许外层
+最后只返回一个 closed `quasi.stage.receipt/0.2`。固定回显
+`operation=topic.steer`、`stage=Search`、`material_key`、`effect=writer`、`attempt=1`；
+`research_key`、`member_refs`、`input_paths`、`output_path` 必须逐字回显，并总是返回
+`signal,subquestions,candidate_demands,web_tasks,dirty,suggested_queries`。成功时
+`terminal={status:"complete",issue:null,action}`：`action=create|refresh|repair` 仅在实际做过
+那一次 Write 时成立，`action=reconciled` 仅在没有 Write 的明确对账成功时成立。已证实的
+validation/read/write 失败返回 `terminal.status=failed`；任何未证实 writer outcome 返回
+`terminal.status=blocked`。非 complete 的 `terminal.issue` 固定为
+`{code,operation:"topic.steer",summary,user_question,retryable}`，其中 blocked 只允许外层
 reconcile，不能同一次 invocation 重放。
 
 prompt 不含这个 operation marker 时，保持以下 legacy contract。
