@@ -2,6 +2,9 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.57.2** (2026-08-01): **润色 `quasi-academic` 输出风格的中文表达约束与 Markdown 结构。**
+  - 明确主会话使用自然流畅的中文和中文引号，保留结论先行、证据纪律、语言跟随与交付物例外；同时补齐标题与列表之间的空行，避免不同 Markdown 渲染器把段落结构粘连。
+
 - **0.57.1** (2026-08-01): **extract-agent 合同补 Book Prepare 的 reuse 资格判据，坏的旧章节代不能再靠"文件都在"过关。**
   - 实测事故：Sen 的旧章节 generation 是 0.56.4 之前的字母序垃圾（标题全是内部资源标识符、版权页/目录/宣传页被当章节、Preface 排在正文后），重派 book.prepare 时 specialist 看到"文件存在、可读、fingerprint 匹配"就返回 `complete/reused`，新的 spine 提取器从未被触发。授权其实早已齐备——envelope 的 objective 写着 semantically verify，读 manifest/章节文本、fingerprint 门控换代都在能力表——缺的是判据词汇：合同点名的缺陷全是正文内容向（串章、截断、乱码、页眉页脚），清单语义向的缺陷没有名字，钉在 sonnet 上的 specialist 便放行了。与 0.55.1 同一课：对弱模型要把判据写实，不能指望它从一个动词短语里推出全部标准。
   - 修复只在 `agents/extract-agent.md`：复用与新建同一个证明标准（必须实际读 manifest 和代表性章节文本），并列出三类取消复用资格的观察——标题是内部资源名/文件名 stem、章节集合混入非阅读材料（封面/书名页/版权/目录/宣传/作者介绍/他作列表/插图清单）、阅读顺序破损。修改由 Codex worker 按配方执行。
