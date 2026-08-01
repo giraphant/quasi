@@ -1,12 +1,10 @@
 import {
-  TRANSLATION_PREPARE_STAGE_CONTRACT,
   normalizeLanguage,
-  translationPrepareStagePrompt,
-  translationPrepareStageSchema,
+  translationPrepare,
   validRequestedSource,
   validSelectableSource,
   validTranslationHash,
-} from "../operations/translate.mjs";
+} from "../operations/rows/translation.mjs";
 import { exactKeys, validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
 import { routeStageEdge } from "../materials/route.mjs";
@@ -407,43 +405,35 @@ function routeTranslationStage(run, state, options) {
 
 async function processStrict(runtime, state) {
   runtime.phase("Prepare");
-  const schema = translationPrepareStageSchema({
-    derivativeKey: state.translationKey,
+  const context = {
+    materialKey: state.translationKey,
     slug: state.slug,
     targetLanguage: state.targetLanguage,
+    requestedSource: state.requestedSource,
+    sourceDecision: state.sourceDecision,
     output: state.output,
     manifest: state.manifest,
-  });
+    recoverySource: state.recoverySource,
+    tocJson: state.tocJson,
+    tocPageSide: state.tocPageSide,
+    artifactRoles: [
+      "source",
+      "recovery_source",
+      "translated_pdf",
+      "translation_manifest",
+    ],
+    unknownFailureCode: "translation.writer_outcome_unknown",
+  };
+  const spec = translationPrepare.spec(context);
   const run = await runtime.operate(
-    translationPrepareStagePrompt(state),
+    translationPrepare.prompt(context),
     {
-      phase: "Prepare",
-      agentType: "quasi:translate-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label: `${state.slug}:prepare`,
-      schema,
+      schema: translationPrepare.schema(context),
     },
-    {
-      key: "translation.prepare",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "blocked",
-      artifactRoles: [
-        "source",
-        "recovery_source",
-        "translated_pdf",
-        "translation_manifest",
-      ],
-      unknownFailureCode: "translation.writer_outcome_unknown",
-      contract: TRANSLATION_PREPARE_STAGE_CONTRACT,
-      context: {
-        slug: state.slug,
-        targetLanguage: state.targetLanguage,
-        requestedSource: state.requestedSource,
-        output: state.output,
-        manifest: state.manifest,
-        recoverySource: state.recoverySource,
-      },
-    },
+    spec,
   );
   const routed = routeTranslationStage(run, state, {
     failure: prepareFailure,

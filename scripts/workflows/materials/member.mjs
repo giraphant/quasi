@@ -11,15 +11,14 @@ import {
   validText,
 } from "../runtime.mjs";
 import {
-  BOOK_ACQUIRE_STAGE_CONTRACT,
   MATERIAL_SEARCH_STAGE_CONTRACT,
-  bookAcquireStageSchema,
   materialSearchStageSchema,
 } from "../operations/acquire.mjs";
 import {
-  BOOK_AUDIT_STAGE_CONTRACT,
-  bookAuditStageSchema,
-} from "../operations/audit.mjs";
+  bookAcquire,
+  bookAudit,
+  validChapterSlot,
+} from "../operations/rows/book.mjs";
 import { paperAudit } from "../operations/rows/paper.mjs";
 import {
   applyBookYearDecision,
@@ -27,9 +26,6 @@ import {
   validResolvedIngressEvidence,
   validYearDecisionEnvelope,
 } from "./ingress.mjs";
-import {
-  validChapterSlot,
-} from "../operations/extract.mjs";
 import {
   MATERIAL_FAILURE_SCHEMA,
   MATERIAL_RESUME_SCHEMA,
@@ -127,7 +123,7 @@ function validBookAuditItem(audit, materialKey, expectedPath) {
   return !!(
     audit &&
     validateSchema(
-      bookAuditStageSchema({
+      bookAudit.schema({
         materialKey,
         target: expectedPath,
         pass: audit.pass,
@@ -156,7 +152,7 @@ function cleanMaterialAudit(receipt, demand) {
   const last = receipt.audit[receipt.audit.length - 1];
   return (
     last.terminal.status === "complete" &&
-    BOOK_AUDIT_STAGE_CONTRACT.statuses.complete(last) === true &&
+    bookAudit.contract.statuses.complete(last) === true &&
     last.remaining_violations === 0 &&
     last.escalated.length === 0
   );
@@ -219,16 +215,15 @@ function validBookAcquireStage(operation, demand, expectedYear) {
   return !!(
     allowedSources &&
     validateSchema(
-      bookAcquireStageSchema({
+      bookAcquire.schema({
         materialKey: demand.material_key,
-        slug: demand.id,
         allowedSources,
         yearDecision: null,
       }),
       operation,
     ) &&
     operation.terminal.status === "complete" &&
-    BOOK_ACQUIRE_STAGE_CONTRACT.statuses.complete(operation, {
+    bookAcquire.contract.statuses.complete(operation, {
       allowedSources,
       expectedYear,
       batchAcceptYear: true,

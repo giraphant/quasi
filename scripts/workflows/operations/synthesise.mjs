@@ -1,10 +1,7 @@
 import { cardPath, itemPath } from "./steer.mjs";
 import { composedSchema } from "./shared.mjs";
 import { stageContract, stageReceiptSchema } from "../stage.mjs";
-import {
-  AUTHOR_ARTIFACT_CONTRACT,
-  BOOK_ARTIFACT_CONTRACT,
-} from "../artifact-contracts/generated.mjs";
+import { AUTHOR_ARTIFACT_CONTRACT } from "../artifact-contracts/generated.mjs";
 
 export const SY_SCHEMA = {
   type: "object",
@@ -43,46 +40,6 @@ const synthesisTerminalPayloads = (mode) => ({
     required: ["action"],
     properties: { action: { const: mode } },
   },
-});
-
-export const bookSynthesiseStageSchema = ({
-  materialKey,
-  inputPaths,
-  mode,
-  output,
-}) =>
-  stageReceiptSchema({
-    operation: "book.synthesise",
-    stage: "Synthesise",
-    materialKey,
-    effect: "writer",
-    required: [
-      "input_paths",
-      "output_path",
-      "artifact_roles",
-      "chapters_analyzed",
-    ],
-    properties: {
-      input_paths: { const: inputPaths },
-      output_path: { const: output },
-      artifact_roles: synthesisArtifactRoles("canonical"),
-      chapters_analyzed: { const: inputPaths.length },
-    },
-    terminalPayloads: synthesisTerminalPayloads(mode),
-  });
-
-export const BOOK_SYNTHESISE_STAGE_CONTRACT = stageContract({
-  schema: bookSynthesiseStageSchema({
-    materialKey: "book:placeholder",
-    inputPaths: ["vault/books/placeholder/ch01-chapter.md"],
-    mode: "create",
-    output: "vault/books/placeholder/00-overview.md",
-  }),
-  complete: (receipt, context) =>
-    [
-      ...(context.mode === "create" ? ["create"] : ["repair"]),
-      "reconciled",
-    ].includes(receipt.terminal.action),
 });
 
 export const authorSynthesiseStageSchema = ({
@@ -135,53 +92,6 @@ export const AUTHOR_SYNTHESISE_STAGE_CONTRACT = stageContract({
       "reconciled",
     ].includes(receipt.terminal.action),
 });
-
-export function bookSynthesiseOperationPrompt(
-  slug,
-  meta,
-  inputPaths,
-  mode = "create",
-  diagnostics = [],
-) {
-  const output = `vault/books/${slug}/00-overview.md`;
-  const repair = mode === "repair";
-  const request = {
-    schema_version:
-      "quasi.operation.book.synthesise.request/0.1",
-    operation: "book.synthesise",
-    stage: "Synthesise",
-    material_key: `book:${slug}`,
-    inputs: inputPaths.map((path) => ({
-      role: "chapter_canonical",
-      path,
-    })),
-    output: { role: "canonical", path: output },
-    identity: {
-      title: meta.title,
-      authors: meta.authors,
-      year: meta.year,
-      publisher: meta.publisher,
-      isbn: meta.isbn || null,
-      category: meta.category,
-      confidence:
-        meta.confidence === "verified" ? "verified" : "provided",
-    },
-    artifact_contract: BOOK_ARTIFACT_CONTRACT,
-    frontmatter_seed: {
-      type: "book",
-      title: meta.title,
-      authors: meta.authors,
-      year: meta.year,
-      publisher: meta.publisher,
-      isbn: meta.isbn || null,
-      category: meta.category,
-    },
-    mode,
-    overwrite: repair,
-    repair_diagnostics: repair ? diagnostics : [],
-  };
-  return JSON.stringify(request, null, 2);
-}
 
 export function authorSynthesiseOperationPrompt(
   name,

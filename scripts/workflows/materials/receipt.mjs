@@ -8,11 +8,9 @@ import {
   validYearEvidence,
 } from "../operations/book-year-evidence.mjs";
 import {
-  bookAcquireStageSchema,
-} from "../operations/acquire.mjs";
-import {
-  bookPrepareStageSchema,
-} from "../operations/extract.mjs";
+  bookAcquire,
+  bookPrepare,
+} from "../operations/rows/book.mjs";
 import {
   paperAcquire,
   paperPrepare,
@@ -231,13 +229,13 @@ export function bookAcquireAllowedSources(operation, slug) {
 }
 
 function stageGateBinding(receipt) {
-  const paperAcquire =
+  const isPaperAcquire =
     receipt.kind === "paper" && receipt.stage === "download";
-  const bookAcquire =
+  const isBookAcquire =
     receipt.kind === "book" && receipt.stage === "download";
-  const operationKey = paperAcquire
+  const operationKey = isPaperAcquire
     ? "paper.acquire"
-    : bookAcquire
+    : isBookAcquire
       ? "book.acquire"
       : `${receipt.kind}.prepare`;
   const operation = Array.isArray(receipt.operations)
@@ -252,19 +250,18 @@ function stageGateBinding(receipt) {
   if (!record(operation)) return null;
 
   const root = `processing/chapters/${receipt.id}`;
-  const allowedSources = bookAcquire
+  const allowedSources = isBookAcquire
     ? bookAcquireAllowedSources(operation, receipt.id)
     : null;
-  const schema = paperAcquire
+  const schema = isPaperAcquire
     ? paperAcquire.schema({
         materialKey: receipt.material_key,
         output: `sources/${receipt.id}.pdf`,
         doi: operation.doi,
       })
-    : bookAcquire && allowedSources
-      ? bookAcquireStageSchema({
+    : isBookAcquire && allowedSources
+      ? bookAcquire.schema({
           materialKey: receipt.material_key,
-          slug: receipt.id,
           allowedSources,
           yearDecision: null,
         })
@@ -278,7 +275,7 @@ function stageGateBinding(receipt) {
           })
         : receipt.kind === "book" &&
             ["epub", "pdf"].includes(operation.format)
-          ? bookPrepareStageSchema({
+          ? bookPrepare.schema({
               materialKey: receipt.material_key,
               source: `sources/${receipt.id}.${operation.format}`,
               format: operation.format,
@@ -296,7 +293,7 @@ function stageGateBinding(receipt) {
         operation_key: "paper.user-gate",
         stage: receipt.stage,
       }
-    : bookAcquire
+    : isBookAcquire
       ? {
           operation_key: "book.user-gate",
           stage: "download",
@@ -307,7 +304,7 @@ function stageGateBinding(receipt) {
           stage: "prepare",
           policy: "answer-the-stage-question",
         };
-  const payload = bookAcquire
+  const payload = isBookAcquire
     ? {
         year_evidence: operation.terminal.year_evidence,
         tmp_path: operation.terminal.tmp_path,
@@ -317,10 +314,10 @@ function stageGateBinding(receipt) {
   return {
     operation,
     schema,
-    stage: paperAcquire || bookAcquire ? "download" : "prepare",
+    stage: isPaperAcquire || isBookAcquire ? "download" : "prepare",
     resume,
     payload,
-    bookAcquire,
+    bookAcquire: isBookAcquire,
   };
 }
 

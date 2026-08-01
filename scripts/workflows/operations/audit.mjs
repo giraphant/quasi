@@ -88,40 +88,6 @@ const auditStageContract = ({ schema, complete, failed = () => true }) => {
   };
 };
 
-const bookAuditReported = (receipt) =>
-  receipt.mutated_paths.every((path) =>
-    validText(path, 1, 2048),
-  ) &&
-  receipt.escalated.every(
-    (diagnostic) =>
-      validText(diagnostic.path, 1, 2048) &&
-      validText(diagnostic.kind, 1, 200) &&
-      validText(diagnostic.reason, 1, 4000),
-  );
-
-export const bookAuditStageSchema = ({
-  materialKey,
-  target,
-  pass,
-}) =>
-  auditStageSchema({
-    operation: "book.audit",
-    materialKey,
-    target,
-    pass,
-  });
-
-export const BOOK_AUDIT_STAGE_CONTRACT = auditStageContract({
-  schema: bookAuditStageSchema({
-    materialKey: "book:placeholder",
-    target: "vault/books/placeholder",
-    pass: 1,
-  }),
-  complete: (receipt) =>
-    bookAuditReported(receipt) && completeAudit(receipt),
-  failed: bookAuditReported,
-});
-
 const legacyAuditReported = (receipt) =>
   receipt.escalated.every(
     (item) =>
@@ -162,45 +128,6 @@ export const AUTHOR_AUDIT_STAGE_CONTRACT = auditStageContract({
   failed: closedAuditFailure,
 });
 
-export const talkAuditStageSchema = ({
-  materialKey,
-  target,
-  pass,
-}) =>
-  auditStageSchema({
-    operation: "talk.audit",
-    materialKey,
-    target,
-    pass,
-    artifactRoles: ["canonical"],
-  });
-
-export const TALK_AUDIT_STAGE_CONTRACT = auditStageContract({
-  schema: talkAuditStageSchema({
-    materialKey: "talk:placeholder",
-    target: "vault/talks/placeholder/talk.md",
-    pass: 1,
-  }),
-  complete: (receipt) =>
-    legacyAuditReported(receipt) && completeAudit(receipt),
-  failed: closedAuditFailure,
-});
-
-export function bookAuditPrompt(slug, pass) {
-  const scope = `vault/books/${slug}`;
-  const request = {
-    schema_version: "quasi.operation.book.audit.request/0.1",
-    operation: "book.audit",
-    stage: "Audit",
-    material_key: `book:${slug}`,
-    effect: "writer",
-    pass,
-    mode: pass === 1 ? "audit" : "re-audit",
-    target: { role: "canonical_scope", path: scope },
-  };
-  return JSON.stringify(request, null, 2);
-}
-
 export function authorAuditPrompt(name, pass) {
   const output = `vault/authors/${name}.md`;
   const request = {
@@ -210,24 +137,6 @@ export function authorAuditPrompt(name, pass) {
     stage: "Audit",
     material_key: `author:${name}`,
     collection_key: `author:${name}`,
-    effect: "writer",
-    pass,
-    mode: pass === 1 ? "audit" : "re-audit",
-    target: { role: "canonical", path: output },
-    exact_output: output,
-    composite_debt: true,
-  };
-  return JSON.stringify(request, null, 2);
-}
-
-export function talkAuditPrompt(slug, pass) {
-  const output = `vault/talks/${slug}/talk.md`;
-  const request = {
-    schema_version:
-      "quasi.operation.talk.audit.request/0.1",
-    operation: "talk.audit",
-    stage: "Audit",
-    material_key: `talk:${slug}`,
     effect: "writer",
     pass,
     mode: pass === 1 ? "audit" : "re-audit",

@@ -1,18 +1,8 @@
 import {
-  TALK_ANALYSE_STAGE_CONTRACT,
-  talkAnalyseOperationPrompt,
-  talkAnalyseStageSchema,
-} from "../operations/analyse.mjs";
-import {
-  TALK_AUDIT_STAGE_CONTRACT,
-  talkAuditPrompt,
-  talkAuditStageSchema,
-} from "../operations/audit.mjs";
-import {
-  TALK_PREPARE_STAGE_CONTRACT,
-  talkPrepareStagePrompt,
-  talkPrepareStageSchema,
-} from "../operations/transcribe.mjs";
+  talkAnalyse,
+  talkAudit,
+  talkPrepare,
+} from "../operations/rows/talk.mjs";
 import { validText } from "../runtime.mjs";
 import { stageIssue } from "../stage.mjs";
 import { MATERIAL_RECEIPT_VERSION } from "./receipt.mjs";
@@ -444,6 +434,11 @@ function analyseFailure(receipt, outcome = "known") {
 
 async function prepareTalk(runtime, state, repairDiagnostics = []) {
   const context = {
+    materialKey: state.materialKey,
+    slug: state.slug,
+    title: state.title,
+    date: state.date,
+    language: state.lang,
     media: state.media,
     manifest: state.manifest,
     prepared: state.prepared,
@@ -452,47 +447,30 @@ async function prepareTalk(runtime, state, repairDiagnostics = []) {
     canonical: state.canonical,
     processingDir: state.processingDir,
     engines: state.engines,
+    prepareMedia: state.prepareMedia,
+    repairDiagnostics,
+    repair: repairDiagnostics.length > 0,
+    artifactRoles: [
+      "prepared_media",
+      "transcript",
+      "subtitle",
+      "engine_transcript",
+      "canonical",
+    ],
+    unknownFailureCode: "talk.writer_outcome_unknown",
   };
-  const schema = talkPrepareStageSchema({
-    materialKey: state.materialKey,
-    slug: state.slug,
-    media: state.media,
-    processingDir: state.processingDir,
-    manifest: state.manifest,
-    prepared: state.prepared,
-    transcript: state.transcript,
-    subtitle: state.subtitle,
-    canonical: state.canonical,
-  });
+  const spec = talkPrepare.spec(context);
   const run = await runtime.operate(
-    talkPrepareStagePrompt(state, repairDiagnostics),
+    talkPrepare.prompt(context),
     {
-      phase: "Prepare",
-      agentType: "quasi:transcribe-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label: repairDiagnostics.length
         ? `${state.slug}:prepare-repair`
         : `${state.slug}:prepare`,
-      schema,
+      schema: talkPrepare.schema(context),
     },
-    {
-      key: "talk.prepare",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "blocked",
-      artifactRoles: [
-        "prepared_media",
-        "transcript",
-        "subtitle",
-        "engine_transcript",
-        "canonical",
-      ],
-      unknownFailureCode: "talk.writer_outcome_unknown",
-      contract: TALK_PREPARE_STAGE_CONTRACT,
-      context: {
-        ...context,
-        repair: repairDiagnostics.length > 0,
-      },
-    },
+    spec,
   );
   const routed = routeTalkStage(
     run,
@@ -592,37 +570,32 @@ async function runProducer(
         ),
       ),
     };
+  const context = {
+    materialKey: state.materialKey,
+    title: state.title,
+    date: state.date,
+    media: state.media,
+    inputs,
+    output: state.canonical,
+    mode,
+    diagnostics,
+    replay: mode === "repair" ? "reconciled" : "blocked",
+    artifactRoles: ["canonical"],
+    unknownFailureCode: "talk.writer_outcome_unknown",
+  };
+  const spec = talkAnalyse.spec(context);
   const analysis = await runtime.operate(
-    talkAnalyseOperationPrompt(
-      state,
-      inputs,
-      mode,
-      diagnostics,
-    ),
+    talkAnalyse.prompt(context),
     {
-      phase: "Analyse",
-      agentType: "quasi:analyse-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label:
         mode === "repair"
           ? `${state.slug}:analyse-repair`
           : `${state.slug}:analyse`,
-      schema: talkAnalyseStageSchema({
-        materialKey: state.materialKey,
-        inputs,
-        mode,
-        output: state.canonical,
-      }),
+      schema: talkAnalyse.schema(context),
     },
-    {
-      key: "talk.analyse",
-      effect: "writer",
-      retry: "forbidden",
-      replay: mode === "repair" ? "reconciled" : "blocked",
-      artifactRoles: ["canonical"],
-      unknownFailureCode: "talk.writer_outcome_unknown",
-      contract: TALK_ANALYSE_STAGE_CONTRACT,
-      context: { inputs, mode, output: state.canonical },
-    },
+    spec,
   );
   const routed = routeTalkStage(
     analysis,
@@ -662,31 +635,26 @@ async function runProducer(
 }
 
 async function runAudit(runtime, state, pass) {
+  const context = {
+    materialKey: state.materialKey,
+    target: state.canonical,
+    pass,
+    artifactRoles: ["canonical"],
+    unknownFailureCode: "talk.writer_outcome_unknown",
+  };
+  const spec = talkAudit.spec(context);
   const auditRun = await runtime.operate(
-    talkAuditPrompt(state.slug, pass),
+    talkAudit.prompt(context),
     {
-      phase: "Audit",
-      agentType: "quasi:audit-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label:
         pass === 1
           ? `${state.slug}:audit`
           : `${state.slug}:audit-${pass}`,
-      schema: talkAuditStageSchema({
-        materialKey: state.materialKey,
-        target: state.canonical,
-        pass,
-      }),
+      schema: talkAudit.schema(context),
     },
-    {
-      key: "talk.audit",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "blocked",
-      artifactRoles: ["canonical"],
-      unknownFailureCode: "talk.writer_outcome_unknown",
-      contract: TALK_AUDIT_STAGE_CONTRACT,
-      context: { target: state.canonical, pass },
-    },
+    spec,
   );
   const ownerFailure = (receipt) =>
     operationFailure(

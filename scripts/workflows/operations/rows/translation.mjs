@@ -1,7 +1,4 @@
-import {
-  stageContract,
-  stageReceiptSchema,
-} from "../stage.mjs";
+import { defineOperation } from "../define.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 
@@ -29,18 +26,15 @@ export function sourceRoles(slug, targetLanguage) {
   return {
     canonical: `sources/${slug}.pdf`,
     paperOcr: `processing/papers/${slug}/ocr.pdf`,
-    derivativeRecovery:
-      `processing/translations/${slug}-${langTag}-reocr.pdf`,
+    derivativeRecovery: `processing/translations/${slug}-${langTag}-reocr.pdf`,
   };
 }
 
 export function validRequestedSource(path, slug, targetLanguage) {
   const roles = sourceRoles(slug, targetLanguage);
-  return [
-    roles.canonical,
-    roles.paperOcr,
-    roles.derivativeRecovery,
-  ].includes(path);
+  return [roles.canonical, roles.paperOcr, roles.derivativeRecovery].includes(
+    path,
+  );
 }
 
 export function validSelectableSource(path, slug, targetLanguage) {
@@ -49,17 +43,11 @@ export function validSelectableSource(path, slug, targetLanguage) {
 }
 
 const nullableStringSchema = (properties = {}) => ({
-  anyOf: [
-    { type: "null" },
-    { type: "string", ...properties },
-  ],
+  anyOf: [{ type: "null" }, { type: "string", ...properties }],
 });
 
 const nullableNumberSchema = (properties = {}) => ({
-  anyOf: [
-    { type: "null" },
-    { type: "number", ...properties },
-  ],
+  anyOf: [{ type: "null" }, { type: "number", ...properties }],
 });
 
 const coverageSchema = {
@@ -119,12 +107,7 @@ const candidateSchema = {
 const gateSchema = {
   type: ["object", "null"],
   additionalProperties: false,
-  required: [
-    "kind",
-    "missing_fields",
-    "candidates",
-    "candidates_fingerprint",
-  ],
+  required: ["kind", "missing_fields", "candidates", "candidates_fingerprint"],
   properties: {
     kind: {
       type: "string",
@@ -135,18 +118,14 @@ const gateSchema = {
       maxItems: 8,
       items: { type: "string" },
     },
-    candidates: {
-      type: "array",
-      maxItems: 32,
-      items: candidateSchema,
-    },
+    candidates: { type: "array", maxItems: 32, items: candidateSchema },
     candidates_fingerprint: nullableStringSchema({
       pattern: "^[0-9a-f]{64}$",
     }),
   },
 };
 
-function validCoverage(value) {
+const validCoverage = (value) => {
   if (!value || typeof value !== "object") return false;
   if (value.signal === "pass")
     return (
@@ -159,9 +138,9 @@ function validCoverage(value) {
   if (value.signal === "insufficient_evidence")
     return value.measured_pages >= 0;
   return false;
-}
+};
 
-const TRANSLATION_STAGE_STEP_SCHEMA = {
+const STEP_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["capability", "outcome", "summary"],
@@ -175,7 +154,7 @@ const TRANSLATION_STAGE_STEP_SCHEMA = {
   },
 };
 
-const TRANSLATION_STAGE_SOURCE_SCHEMA = {
+const SOURCE_SCHEMA = {
   type: ["object", "null"],
   additionalProperties: false,
   required: ["path", "sha256", "size", "pages"],
@@ -187,7 +166,7 @@ const TRANSLATION_STAGE_SOURCE_SCHEMA = {
   },
 };
 
-const TRANSLATION_STAGE_VALIDATION_SCHEMA = {
+const VALIDATION_SCHEMA = {
   type: ["object", "null"],
   additionalProperties: false,
   required: [
@@ -210,120 +189,116 @@ const TRANSLATION_STAGE_VALIDATION_SCHEMA = {
   },
 };
 
-export const translationPrepareStageSchema = ({
-  derivativeKey,
-  slug,
-  targetLanguage,
-  output,
-  manifest,
-}) =>
-  stageReceiptSchema({
+export const translationOperationRows = [
+  {
     operation: "translation.prepare",
     stage: "Prepare",
-    materialKey: derivativeKey,
     effect: "writer",
-    required: [
-      "slug",
-      "target_language",
-      "backend",
-      "source",
-      "output_path",
-      "manifest_path",
-      "disposition",
-      "recovered",
-      "validation",
-      "gate",
-      "steps",
-      "diagnostics",
-    ],
-    properties: {
-      slug: { const: slug },
-      target_language: { const: targetLanguage },
-      backend: {
-        type: ["string", "null"],
-        enum: ["immersive", "pdf2zh", null],
+    agentType: "quasi:translate-agent",
+    refs: (
+      {
+        slug,
+        targetLanguage,
+        output,
+        manifest,
+        recoverySource,
+        tocJson,
+        tocPageSide,
       },
-      source: TRANSLATION_STAGE_SOURCE_SCHEMA,
-      output_path: { const: output },
-      manifest_path: { const: manifest },
-      disposition: {
-        type: ["string", "null"],
-        enum: ["created", "reused", "recovered", null],
+    ) => ({
+      slug,
+      targetLanguage,
+      output,
+      manifest,
+      recoverySource,
+      tocJson,
+      tocPageSide,
+    }),
+    payloadProperties: ({ slug, targetLanguage, output, manifest }) => ({
+      required: [
+        "slug",
+        "target_language",
+        "backend",
+        "source",
+        "output_path",
+        "manifest_path",
+        "disposition",
+        "recovered",
+        "validation",
+        "gate",
+        "steps",
+        "diagnostics",
+      ],
+      properties: {
+        slug: { const: slug },
+        target_language: { const: targetLanguage },
+        backend: {
+          type: ["string", "null"],
+          enum: ["immersive", "pdf2zh", null],
+        },
+        source: SOURCE_SCHEMA,
+        output_path: { const: output },
+        manifest_path: { const: manifest },
+        disposition: {
+          type: ["string", "null"],
+          enum: ["created", "reused", "recovered", null],
+        },
+        recovered: { type: "boolean" },
+        validation: VALIDATION_SCHEMA,
+        gate: gateSchema,
+        steps: { type: "array", maxItems: 48, items: STEP_SCHEMA },
+        diagnostics: {
+          type: "array",
+          maxItems: 48,
+          items: { type: "string", maxLength: 4000 },
+        },
       },
-      recovered: { type: "boolean" },
-      validation: TRANSLATION_STAGE_VALIDATION_SCHEMA,
-      gate: gateSchema,
-      steps: {
-        type: "array",
-        maxItems: 48,
-        items: TRANSLATION_STAGE_STEP_SCHEMA,
-      },
-      diagnostics: {
-        type: "array",
-        maxItems: 48,
-        items: { type: "string", maxLength: 4000 },
-      },
-    },
-  });
-
-export const TRANSLATION_PREPARE_STAGE_CONTRACT = stageContract({
-  schema: translationPrepareStageSchema({
-    derivativeKey: "translation:paper:placeholder:zh-CN",
-    slug: "placeholder",
-    targetLanguage: "zh-CN",
-    output: "processing/translations/placeholder-zh-cn.pdf",
-    manifest: "processing/translations/placeholder-zh-cn.manifest.json",
-  }),
-  complete: (receipt, context) =>
-    !!receipt.source &&
-    !!receipt.validation &&
-    receipt.backend !== null &&
-    ["created", "reused", "recovered"].includes(receipt.disposition) &&
-    receipt.gate === null &&
-    receipt.output_path === context.output &&
-    receipt.manifest_path === context.manifest &&
-    validRequestedSource(
-      receipt.source.path,
-      context.slug,
-      context.targetLanguage,
-    ) &&
-    (context.requestedSource === null ||
-      receipt.source.path === context.requestedSource ||
-      receipt.source.path === context.recoverySource) &&
-    receipt.recovered ===
-      (receipt.source.path === context.recoverySource) &&
-    receipt.validation.source_pages === receipt.source.pages &&
-    receipt.validation.output_pages === receipt.source.pages * 2 &&
-    validCoverage(receipt.validation.coverage) &&
-    ["pass", "not_applicable", "insufficient_evidence"].includes(
-      receipt.validation.coverage.signal,
-    ),
-});
-
-export function translationPrepareStagePrompt(state) {
-  return JSON.stringify(
-    {
+    }),
+    complete: (receipt, context) =>
+      !!receipt.source &&
+      !!receipt.validation &&
+      receipt.backend !== null &&
+      ["created", "reused", "recovered"].includes(receipt.disposition) &&
+      receipt.gate === null &&
+      receipt.output_path === context.output &&
+      receipt.manifest_path === context.manifest &&
+      validRequestedSource(
+        receipt.source.path,
+        context.slug,
+        context.targetLanguage,
+      ) &&
+      (context.requestedSource === null ||
+        receipt.source.path === context.requestedSource ||
+        receipt.source.path === context.recoverySource) &&
+      receipt.recovered === (receipt.source.path === context.recoverySource) &&
+      receipt.validation.source_pages === receipt.source.pages &&
+      receipt.validation.output_pages === receipt.source.pages * 2 &&
+      validCoverage(receipt.validation.coverage) &&
+      ["pass", "not_applicable", "insufficient_evidence"].includes(
+        receipt.validation.coverage.signal,
+      ),
+    envelope: (
+      { materialKey, requestedSource, sourceDecision },
+      refs,
+    ) => ({
       schema_version: "quasi.stage.translation-prepare.request/0.1",
       operation: "translation.prepare",
       stage: "Prepare",
-      material_key: state.translationKey,
+      material_key: materialKey,
       effect: "writer",
       objective:
         "Select or reconcile the exact source and produce one validated translated PDF generation.",
       identity: {
-        slug: state.slug,
-        target_language: state.targetLanguage,
+        slug: refs.slug,
+        target_language: refs.targetLanguage,
       },
-      source_request: {
-        path: state.requestedSource,
-        decision: state.sourceDecision,
-      },
+      source_request: { path: requestedSource, decision: sourceDecision },
       refs: {
-        output: state.output,
-        manifest: state.manifest,
-        recovery_source: state.recoverySource,
-        toc_json: state.tocJson,
-        toc_page_side: state.tocPageSide,
+        output: refs.output,
+        manifest: refs.manifest,
+        recovery_source: refs.recoverySource,
+        toc_json: refs.tocJson,
+        toc_page_side: refs.tocPageSide,
       },
       capabilities: [
         "quasi-translate observe ... --json",
@@ -333,8 +308,12 @@ export function translationPrepareStagePrompt(state) {
       ],
       backend_policy:
         "The configured backend reported by quasi-translate is authoritative.",
-    },
-    null,
-    2,
-  );
-}
+    }),
+  },
+];
+
+export const translationOperations = Object.fromEntries(
+  translationOperationRows.map((row) => [row.operation, defineOperation(row)]),
+);
+
+export const translationPrepare = translationOperations["translation.prepare"];

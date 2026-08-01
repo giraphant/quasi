@@ -1,32 +1,14 @@
 import {
-  BOOK_ACQUIRE_STAGE_CONTRACT,
-  bookAcquirePrompt,
-  bookAcquireStageSchema,
-} from "../operations/acquire.mjs";
-import {
   BOOK_TEMP_PATH,
   validYearEvidence,
 } from "../operations/book-year-evidence.mjs";
 import {
-  CHAPTER_ANALYSE_STAGE_CONTRACT,
-  chapterAnalyseOperationPrompt,
-  chapterAnalyseStageSchema,
-} from "../operations/analyse.mjs";
-import {
-  BOOK_AUDIT_STAGE_CONTRACT,
-  bookAuditPrompt,
-  bookAuditStageSchema,
-} from "../operations/audit.mjs";
-import {
-  BOOK_PREPARE_STAGE_CONTRACT,
-  bookPrepareStagePrompt,
-  bookPrepareStageSchema,
-} from "../operations/extract.mjs";
-import {
-  BOOK_SYNTHESISE_STAGE_CONTRACT,
-  bookSynthesiseOperationPrompt,
-  bookSynthesiseStageSchema,
-} from "../operations/synthesise.mjs";
+  bookAcquire,
+  bookAudit,
+  bookPrepare,
+  bookSynthesise,
+  chapterAnalyse,
+} from "../operations/rows/book.mjs";
 import {
   exactKeys,
   optionalText,
@@ -465,55 +447,32 @@ function auditFailure(receipt, outcome = "known") {
 
 async function prepareBook(runtime, state) {
   const context = {
-    outputDir: state.chaptersDir,
-    manifest: state.manifest,
-    normalized: state.sourceText,
-    recoverySource: state.ocrSource,
-    recoveryText: state.ocrText,
-  };
-  const schema = bookPrepareStageSchema({
     materialKey: state.materialKey,
+    identity: state.meta,
     source: state.source,
     format: state.meta.format,
+    outputDir: state.chaptersDir,
+    manifest: state.manifest,
     normalized: state.sourceText,
     recoverySource: state.ocrSource,
     recoveryText: state.ocrText,
-    outputDir: state.chaptersDir,
-    manifest: state.manifest,
-  });
+    artifactRoles: [
+      "normalized_document",
+      "recovery_source",
+      "chapter_manifest",
+      "normalized_chapter",
+    ],
+  };
+  const spec = bookPrepare.spec(context);
   const run = await runtime.operate(
-    bookPrepareStagePrompt({
-      materialKey: state.materialKey,
-      identity: state.meta,
-      source: state.source,
-      format: state.meta.format,
-      normalized: state.sourceText,
-      recoverySource: state.ocrSource,
-      recoveryText: state.ocrText,
-      outputDir: state.chaptersDir,
-      manifest: state.manifest,
-    }),
+    bookPrepare.prompt(context),
     {
-      phase: "Prepare",
-      agentType: "quasi:extract-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label: `${state.slug}:prepare`,
-      schema,
+      schema: bookPrepare.schema(context),
     },
-    {
-      key: "book.prepare",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "blocked",
-      artifactRoles: [
-        "normalized_document",
-        "recovery_source",
-        "chapter_manifest",
-        "normalized_chapter",
-      ],
-      unknownFailureCode: "material.writer_outcome_unknown",
-      contract: BOOK_PREPARE_STAGE_CONTRACT,
-      context,
-    },
+    spec,
   );
   const routed = routeBookStage(
     run,
@@ -565,40 +524,31 @@ async function analyseChapter(
 ) {
   const input = chapterInputPath(state, chapter);
   const output = chapterOutputPath(state, chapter);
+  const context = {
+    materialKey: state.materialKey,
+    bookSlug: state.slug,
+    meta: state.meta,
+    chapter,
+    input,
+    output,
+    mode,
+    diagnostics,
+    replay: mode === "repair" ? "reconciled" : "blocked",
+    artifactRoles: ["chapter_canonical"],
+  };
+  const spec = chapterAnalyse.spec(context);
   const analysis = await runtime.operate(
-    chapterAnalyseOperationPrompt(
-      state.slug,
-      state.meta,
-      chapter,
-      input,
-      output,
-      mode,
-      diagnostics,
-    ),
+    chapterAnalyse.prompt(context),
     {
-      phase: "Analyse",
-      agentType: "quasi:analyse-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label: `${state.slug}:${
         label ||
         `ch${chapter.slot}:${mode === "repair" ? "repair" : "analyse"}`
       }`,
-      schema: chapterAnalyseStageSchema({
-        materialKey: state.materialKey,
-        mode,
-        input,
-        output,
-      }),
+      schema: chapterAnalyse.schema(context),
     },
-    {
-      key: "chapter.analyse",
-      effect: "writer",
-      retry: "forbidden",
-      replay: mode === "repair" ? "reconciled" : "blocked",
-      artifactRoles: ["chapter_canonical"],
-      unknownFailureCode: "material.writer_outcome_unknown",
-      contract: CHAPTER_ANALYSE_STAGE_CONTRACT,
-      context: { mode, input, output },
-    },
+    spec,
   );
   const routed = routeBookStage(
     analysis,
@@ -624,37 +574,29 @@ async function synthesise(
   mode = "create",
   diagnostics = [],
 ) {
+  const context = {
+    materialKey: state.materialKey,
+    slug: state.slug,
+    meta: state.meta,
+    inputPaths,
+    output: state.canonical,
+    mode,
+    diagnostics,
+    replay: mode === "repair" ? "reconciled" : "blocked",
+    artifactRoles: ["canonical"],
+  };
+  const spec = bookSynthesise.spec(context);
   const synthesis = await runtime.operate(
-    bookSynthesiseOperationPrompt(
-      state.slug,
-      state.meta,
-      inputPaths,
-      mode,
-      diagnostics,
-    ),
+    bookSynthesise.prompt(context),
     {
-      phase: "Synthesise",
-      agentType: "quasi:synthesis-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label: `${state.slug}:${
         mode === "repair" ? "synthesise-repair" : "synthesise"
       }`,
-      schema: bookSynthesiseStageSchema({
-        materialKey: state.materialKey,
-        inputPaths,
-        mode,
-        output: state.canonical,
-      }),
+      schema: bookSynthesise.schema(context),
     },
-    {
-      key: "book.synthesise",
-      effect: "writer",
-      retry: "forbidden",
-      replay: mode === "repair" ? "reconciled" : "blocked",
-      artifactRoles: ["canonical"],
-      unknownFailureCode: "material.writer_outcome_unknown",
-      contract: BOOK_SYNTHESISE_STAGE_CONTRACT,
-      context: { mode, inputPaths, output: state.canonical },
-    },
+    spec,
   );
   const complete = (receipt) => {
     const { action } = receipt.terminal;
@@ -699,28 +641,23 @@ async function synthesise(
 
 async function audit(runtime, state, pass, owners) {
   state.budgets.auditPasses.used += 1;
+  const context = {
+    materialKey: state.materialKey,
+    target: `vault/books/${state.slug}`,
+    pass,
+    replay: "reconciled",
+    artifactRoles: ["canonical"],
+  };
+  const spec = bookAudit.spec(context);
   const auditRun = await runtime.operate(
-    bookAuditPrompt(state.slug, pass),
+    bookAudit.prompt(context),
     {
-      phase: "Audit",
-      agentType: "quasi:audit-agent",
+      phase: spec.stage,
+      agentType: spec.agentType,
       label: `${state.slug}:audit${pass === 1 ? "" : `-${pass}`}`,
-      schema: bookAuditStageSchema({
-        materialKey: state.materialKey,
-        target: `vault/books/${state.slug}`,
-        pass,
-      }),
+      schema: bookAudit.schema(context),
     },
-    {
-      key: "book.audit",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "reconciled",
-      artifactRoles: ["canonical"],
-      unknownFailureCode: "material.writer_outcome_unknown",
-      contract: BOOK_AUDIT_STAGE_CONTRACT,
-      context: { target: `vault/books/${state.slug}`, pass },
-    },
+    spec,
   );
   const unknownPath = (receipt) =>
     [
@@ -812,40 +749,26 @@ async function processValidatedBook(runtime, slug, meta, opts) {
   phase("Acquire");
   const state = createBookState(slug, meta);
 
-  const acquireSchema = bookAcquireStageSchema({
+  const acquireContext = {
     materialKey: state.materialKey,
     slug,
+    meta,
     allowedSources: state.allowedSources,
+    expectedYear: meta.year,
+    batchAcceptYear: opts.batchYear === true,
     yearDecision: opts.yearDecision,
-  });
+    artifactRoles: ["source"],
+  };
+  const acquireSpec = bookAcquire.spec(acquireContext);
   const download = await runtime.operate(
-    bookAcquirePrompt(
-      slug,
-      meta,
-      opts.batchYear,
-      opts.yearDecision,
-    ),
+    bookAcquire.prompt(acquireContext),
     {
-      phase: "Acquire",
-      agentType: "quasi:download-agent",
+      phase: acquireSpec.stage,
+      agentType: acquireSpec.agentType,
       label: `${slug}:acquire`,
-      schema: acquireSchema,
+      schema: bookAcquire.schema(acquireContext),
     },
-    {
-      key: "book.acquire",
-      effect: "writer",
-      retry: "forbidden",
-      replay: "blocked",
-      artifactRoles: ["source"],
-      unknownFailureCode: "material.writer_outcome_unknown",
-      contract: BOOK_ACQUIRE_STAGE_CONTRACT,
-      context: {
-        allowedSources: state.allowedSources,
-        expectedYear: meta.year,
-        batchAcceptYear: opts.batchYear === true,
-        yearDecision: opts.yearDecision,
-      },
-    },
+    acquireSpec,
   );
   const routed = routeBookStage(
     download,
