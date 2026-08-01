@@ -4,7 +4,7 @@ quasi is a Claude Code plugin for academic reading workflows: discovery, downloa
 
 ## Important plugin-system facts
 
-- Installed plugins load components from root-level `skills/`, `workflows/`, `agents/`, `bin/`, `hooks/`, `monitors/`, `.mcp.json`, and `.lsp.json`.
+- Installed plugins load components from root-level `skills/`, `workflows/`, `agents/`, `output-styles/`, `bin/`, `hooks/`, `monitors/`, `.mcp.json`, and `.lsp.json`.
 - `.claude-plugin/plugin.json` is metadata only. Do not place components inside `.claude-plugin/`.
 - `.codex-plugin/plugin.json` is the Codex-native package manifest for its own skill and hook discovery; leave it alone when changing Claude Code runtime components.
 - `CLAUDE.md` and `AGENTS.md` must stay byte-for-byte identical. They are mirrored instruction files for different agent frameworks, not separate reader-specific guides.
@@ -274,4 +274,4 @@ When changing config, runtime state, or handoff contracts:
 
 ## Changelog
 
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.56.3.
+Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what). Current version: 0.57.0.

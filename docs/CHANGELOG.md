@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.57.0** (2026-08-01): **新增 `output-styles/quasi-academic.md` 学术对话输出风格组件。**
+  - 插件根级 `output-styles/` 是 Claude Code 会加载的组件目录，CLAUDE.md/AGENTS.md 的组件清单同步补上这一项。
+  - 该风格只约束主会话的对话表达（结论先行、证据可定位、砍冗余不砍内容、证据与推断分开），不影响 skills/agents/schemas 规定的产物合同；交付物的长度与结构仍跟随任务要求。组件由并行会话调研并写成，本次随版本收编发布。
+
 - **0.56.4** (2026-08-01): **`quasi-extract epub` 以 OPF spine 为章节清单权威，Random House 形状的 EPUB 不再产出乱序垃圾 manifest。**
   - 实测事故（Sen《Development as Freedom》2000 电子版）：NCX 探测只认字面量 `toc.ncx` 四个候选路径，而该书的 NCX 叫 `Sen_..._epub_ncx_r1.ncx` 且放在 zip 根目录——探测落空后掉进"HTML 文件名字母序 + stem 当标题"的兜底，Preface 排到 slot 22、两份 Notes 倒置、宣传页混入，标题全是内部文件标识符；继续 Analyse 会把错误结构固化进 vault。
   - 修复按 EPUB 标准走发现链：`META-INF/container.xml` → OPF → spine itemref 顺序为权威（`linear="no"` 跳过），NCX 只供标签（经 media-type 或 `.ncx` 后缀定位；属性逐个抓取、不依赖顺序——该书 OPF 的 href 写在 id 前，组合正则在这里已实际踩过坑）。无 NCX 标签的 spine 条目取首个 h1–h4 当标题；标签、标题两者皆无的按 furniture 跳过（挡住该书无题宣传页 col1）。选 spine 而非纯 NCX 是因为实测 `nts1`（第 11–12 章注释，约 3400 词）在 spine 里却不在 navMap——纯 NCX 修复会静默丢内容。
