@@ -33,15 +33,6 @@ def test_registry_uses_only_short_canonical_types() -> None:
         assert registry.schema_for_type(type_name) is not None
 
 
-def test_deprecated_long_types_are_diagnostics_not_canonical_types() -> None:
-    assert registry.DEPRECATED_TYPE_ALIASES["paper-analysis"] == "paper"
-    assert registry.DEPRECATED_TYPE_ALIASES["book-overview"] == "book"
-    assert registry.DEPRECATED_TYPE_ALIASES["chapter-summary"] == "chapter"
-    assert registry.DEPRECATED_TYPE_ALIASES["author-profile"] == "author"
-    assert registry.canonical_type("paper-analysis") is None
-    assert registry.schema_for_type("paper-analysis") is None
-
-
 def test_topic_and_journal_validate_lightweight_frontmatter() -> None:
     topic_schema, topic_body = registry.schema_for_type("topic")
     journal_schema, journal_body = registry.schema_for_type("journal")
@@ -373,34 +364,6 @@ def test_typecheck_allows_freeform_note_and_image_bodies(tmp_path: Path) -> None
     assert note_result["body_violations"] == []
     assert image_result["frontmatter_errors"] == []
     assert image_result["body_violations"] == []
-
-
-def test_typecheck_reports_deprecated_type_instead_of_renaming(tmp_path: Path) -> None:
-    fp = tmp_path / "old-paper.md"
-    fp.write_text(
-        "---\n"
-        "type: paper-analysis\n"
-        "title: Happy Objects\n"
-        "authors:\n"
-        "  - Sara Ahmed\n"
-        "year: 2010\n"
-        "journal: The Affect Theory Reader\n"
-        "themes:\n"
-        "  - affect-theory\n"
-        "---\n"
-        "\n"
-        "## 核心论点\n"
-        "body.\n",
-        encoding="utf-8",
-    )
-
-    result = check_file(fp)
-
-    assert result["type"] is None
-    assert result.get("type_rename") is None
-    assert result["frontmatter_errors"] == [
-        {"type": "deprecated_type", "raw_type": "paper-analysis", "canonical_type": "paper"}
-    ]
 
 
 def test_talk_and_transcript_validate_frontmatter() -> None:

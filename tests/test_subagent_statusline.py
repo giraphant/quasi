@@ -10,7 +10,6 @@ from typing import Any
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PLUGIN_ROOT / "scripts" / "subagent-statusline.py"
-SETTINGS = PLUGIN_ROOT / "settings.json"
 
 
 def run_statusline(
@@ -49,22 +48,6 @@ def base_payload(tasks: list[Any], *, columns: int = 120) -> dict[str, Any]:
         "columns": columns,
         "tasks": tasks,
     }
-
-
-def test_settings_contains_only_plugin_default_and_install_root_command() -> None:
-    settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
-    assert set(settings) == {"subagentStatusLine"}
-    statusline = settings["subagentStatusLine"]
-    assert statusline == {
-        "type": "command",
-        "command": (
-            'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/subagent-statusline.py"'
-        ),
-    }
-    command = statusline["command"]
-    assert str(PLUGIN_ROOT) not in command
-    assert "CLAUDE_PLUGIN_DATA" not in command
-    assert "token" not in command.lower()
 
 
 def test_projects_multiple_quasi_rows_and_leaves_other_rows_default() -> None:

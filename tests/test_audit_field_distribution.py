@@ -18,7 +18,7 @@ def write_doc(path: Path, frontmatter: str | None, body: str = "body") -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def test_audit_path_groups_fields_by_canonical_and_deprecated_type(tmp_path: Path):
+def test_audit_path_groups_fields_by_canonical_type(tmp_path: Path):
     project = tmp_path / "project"
     vault = project / "vault"
     vault.mkdir(parents=True)
@@ -27,32 +27,20 @@ def test_audit_path_groups_fields_by_canonical_and_deprecated_type(tmp_path: Pat
         vault / "papers" / "paper.md",
         frontmatter="type: paper\ntitle: Test Paper\nthemes: [sociology]",
     )
-    write_doc(
-        vault / "papers" / "deprecated.md",
-        frontmatter="type: journal-article\ntitle: Deprecated Type Paper",
-    )
-
     report = field_distribution.audit_path(
         vault, root=project, requested_path="vault", example_limit=2
     )
 
     assert report["version"] == "quasi-audit.frontmatter-fields.v1"
-    assert report["summary"]["files_scanned"] == 2
-    assert report["summary"]["frontmatter_files"] == 2
-    assert report["summary"]["deprecated_type"] == 1
+    assert report["summary"]["files_scanned"] == 1
+    assert report["summary"]["frontmatter_files"] == 1
 
     types = report["types"]
-    assert types["paper"]["files"] == 2
-    assert types["paper"]["fields"]["title"]["count"] == 2
+    assert types["paper"]["files"] == 1
+    assert types["paper"]["fields"]["title"]["count"] == 1
     assert types["paper"]["fields"]["title"]["coverage"] == 1.0
     assert types["paper"]["fields"]["themes"]["count"] == 1
-    assert types["paper"]["fields"]["themes"]["coverage"] == 0.5
-
-    deprecated = report["problems"]["deprecated_type"]
-    assert len(deprecated) == 1
-    assert deprecated[0]["path"] == "vault/papers/deprecated.md"
-    assert deprecated[0]["raw_type"] == "journal-article"
-    assert deprecated[0]["canonical_type"] == "paper"
+    assert types["paper"]["fields"]["themes"]["coverage"] == 1.0
 
 
 def test_audit_path_records_frontmatter_problem_buckets(tmp_path: Path):

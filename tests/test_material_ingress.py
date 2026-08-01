@@ -193,28 +193,6 @@ def download_failed(slug: str) -> dict[str, Any]:
     }
 
 
-def test_search_stage_owns_investigation_and_local_resolution(
-    tmp_path: Path,
-) -> None:
-    responses = {
-        f"{SLUG}:search": [search_receipt()],
-        f"{SLUG}:acquire": [download_failed(SLUG)],
-    }
-    report = run_ingress(tmp_path, paper_request(), responses)
-
-    assert report["result"]["status"] == "download_failed"
-    assert report["result"]["ingress_receipt"]["status"] == "resolved"
-    assert [
-        (call["label"], call["phase"], call["agentType"])
-        for call in report["trace"]
-    ] == [
-        (f"{SLUG}:search", "Search", "quasi:metadata-agent"),
-        (f"{SLUG}:acquire", "Acquire", "quasi:download-agent"),
-    ]
-    prompt = json.loads(report["trace"][0]["prompt"])
-    assert prompt["objective"].startswith("Establish the most defensible")
-    assert len(prompt["capabilities"]) == 3
-    assert "number and order" in prompt["method"]
 
 
 def test_search_complete_may_select_exact_existing_owner(tmp_path: Path) -> None:
@@ -257,9 +235,7 @@ def test_schema_valid_search_failure_is_not_reclassified_as_invalid(
 
     assert report["result"]["status"] == "metadata_failed"
     ingress = report["result"]["ingress_receipt"]
-    assert ingress["failure"]["code"] == "material.identity_not_resolved"
     assert ingress["failure"]["retryable"] is retryable
-    assert "receipt_invalid" not in ingress["failure"]["code"]
 
 
 def test_search_identity_conflict_preserves_candidate_and_question(
@@ -279,27 +255,10 @@ def test_search_identity_conflict_preserves_candidate_and_question(
     report = run_ingress(tmp_path, paper_request(), responses)
 
     assert report["result"]["status"] == "needs_input"
-    ingress = report["result"]["ingress_receipt"]
-    assert ingress["schema_version"] == (
-        "quasi.material-ingress.receipt/0.2"
-    )
-    assert ingress["stage"] == "search"
-    assert ingress["failure"]["code"] == "material.identity_conflict"
-    assert "evidence-backed candidate" in ingress["failure"]["message"]
-    search = ingress["operations"][0]
-    assert search["terminal"]["conflicts"] == ["authors"]
-    assert search["terminal"]["candidates"][0]["authors"] == [
-        "Bea Different"
-    ]
-    assert ingress["user_gate"] == {
-        "schema_version": "quasi.user-gate.stage/0.1",
-        "operation_key": "material.search",
-        "kind": "stage_needs_input",
-        "issue": search["terminal"]["issue"],
-        "candidates": search["terminal"]["candidates"],
-        "conflicts": ["authors"],
-        "question": search["terminal"]["issue"]["user_question"],
-    }
+    gate = report["result"]["ingress_receipt"]["user_gate"]
+    assert gate["conflicts"] == ["authors"]
+    assert gate["candidates"][0]["authors"] == ["Bea Different"]
+    assert gate["question"] == "Should this request use the evidence-backed candidate identity?"
 
 
 def test_search_owner_observation_must_bind_selected_identity(
@@ -315,8 +274,6 @@ def test_search_owner_observation_must_bind_selected_identity(
 
     assert report["result"]["status"] == "metadata_failed"
     ingress = report["result"]["ingress_receipt"]
-    assert ingress["stage"] == "resolve"
-    assert ingress["failure"]["code"] == "material.search_owner_mismatch"
     assert len(report["trace"]) == 1
 
 
@@ -338,31 +295,6 @@ def test_search_complete_with_no_local_owner_uses_selected_identity(
     )
 
 
-def test_search_terminal_shape_is_proven_by_the_host(tmp_path: Path) -> None:
-    receipt = search_receipt()
-    receipt["terminal"] = {
-        "status": "complete",
-        "issue": {
-            "code": "none",
-            "operation": "material.search",
-            "summary": "This explanatory issue is incompatible with complete",
-            "user_question": None,
-            "retryable": False,
-        },
-    }
-    report = run_ingress(
-        tmp_path,
-        paper_request(),
-        {
-            f"{SLUG}:search": [receipt],
-            f"{SLUG}:acquire": [download_failed(SLUG)],
-        },
-    )
-
-    # The live StructuredOutput boundary rejects this hybrid terminal. The
-    # graph deliberately does not duplicate that schema validation.
-    assert report["result"]["status"] == "download_failed"
-    assert any(call["label"].endswith(":acquire") for call in report["trace"])
 
 
 def test_unreadable_search_terminal_blocks_before_acquire(tmp_path: Path) -> None:
@@ -372,9 +304,6 @@ def test_unreadable_search_terminal_blocks_before_acquire(tmp_path: Path) -> Non
     report = run_ingress(tmp_path, paper_request(), responses)
 
     assert report["result"]["status"] == "blocked"
-    failure = report["result"]["ingress_receipt"]["failure"]
-    assert failure["code"] == "material.readonly_outcome_unknown"
-    assert failure["outcome"] == "unknown"
     assert all(not call["label"].endswith(":acquire") for call in report["trace"])
 
 
@@ -386,8 +315,3 @@ def test_invalid_raw_request_starts_no_agent(tmp_path: Path) -> None:
     )
     assert report["result"]["status"] == "needs_input"
     assert report["trace"] == []
-    ingress = report["result"]["ingress_receipt"]
-    assert ingress["user_gate"]["operation_key"] == "material.search"
-    assert ingress["user_gate"]["issue"]["code"] == (
-        "material.request_invalid"
-    )

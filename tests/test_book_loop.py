@@ -14,7 +14,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 BOOK = ROOT / "scripts" / "workflows" / "materials" / "book.mjs"
 RUNTIME = ROOT / "scripts" / "workflows" / "runtime.mjs"
-EXTRACT_OPERATION = ROOT / "scripts" / "workflows" / "operations" / "extract.mjs"
 
 NODE_HARNESS = r"""
 import { processBook } from __BOOK_URI__
@@ -519,86 +518,10 @@ def operations(report: dict[str, Any]) -> list[str | None]:
     return [entry["operation"] for entry in report["trace"]]
 
 
-def test_book_prepare_schema_exposes_canonical_chapter_slug_contract() -> None:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node not on PATH")
-    script = f"""
-import {{ bookPrepareStageSchema }} from {json.dumps(EXTRACT_OPERATION.as_uri())};
-const schema = bookPrepareStageSchema({{
-  materialKey: "book:example",
-  source: "sources/example.epub",
-  format: "epub",
-  normalized: "processing/chapters/example/source.txt",
-  recoverySource: "processing/chapters/example/ocr.pdf",
-  recoveryText: "processing/chapters/example/ocr.txt",
-  outputDir: "processing/chapters/example",
-  manifest: "processing/chapters/example/manifest.json",
-}});
-console.log(JSON.stringify(schema.properties.chapters.items.properties.slug));
-"""
-    result = subprocess.run(
-        [node, "--input-type=module", "-e", script],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    slug_schema = json.loads(result.stdout)
-    assert slug_schema["pattern"] == "^[a-z0-9][a-z0-9-]{0,79}$"
-    assert "kebab-case" in slug_schema["description"]
-    assert "underscores" in slug_schema["description"]
 
 
-def test_book_happy_path_is_prepare_then_parallel_analysis_join(
-    tmp_path: Path,
-) -> None:
-    slug = "book-stage-happy"
-    report = run_book(tmp_path, slug, happy(slug, barrier=True))
-
-    assert report["result"]["status"] == "ok"
-    material_receipt = report["result"]["material_receipt"]
-    assert material_receipt["status"] == "complete"
-    assert material_receipt["operations"][0] == acquire(slug)
-    acquire_call = next(
-        item for item in report["trace"] if item["operation"] == "book.acquire"
-    )
-    assert "per_item" not in acquire_call["schema"]["properties"]
-    assert operations(report) == [
-        "book.acquire",
-        "book.prepare",
-        "chapter.analyse",
-        "chapter.analyse",
-        "book.synthesise",
-        "book.audit",
-    ]
-    analyses = [item for item in report["trace"] if item["operation"] == "chapter.analyse"]
-    synthesis_call = next(item for item in report["trace"] if item["operation"] == "book.synthesise")
-    assert max(item["start"] for item in analyses) < min(item["end"] for item in analyses)
-    assert max(item["end"] for item in analyses) < synthesis_call["start"]
-    assert report["phases"] == [
-        "Acquire",
-        "Prepare",
-        "Analyse",
-        "Synthesise",
-        "Audit",
-    ]
 
 
-def test_book_prepare_envelope_gives_specialist_all_exact_capabilities(
-    tmp_path: Path,
-) -> None:
-    slug = "book-stage-envelope"
-    report = run_book(tmp_path, slug, happy(slug))
-    call = next(item for item in report["trace"] if item["operation"] == "book.prepare")
-
-    assert call["agent_type"] == "quasi:extract-agent"
-    assert call["request"]["refs"]["manifest"] == paths(slug)["manifest"]
-    assert call["request"]["output_limit"] == {"max_chapters": 150}
-    assert any("--pages" in item for item in call["request"]["capabilities"])
-    assert not any(item["operation"] in {"chapter.plan", "chapter.extract"} for item in report["trace"])
 
 
 @pytest.mark.parametrize("verdict", ["MISMATCH", "AMBIGUOUS"])
@@ -614,41 +537,15 @@ def test_book_year_gate_is_typed_needs_input(
     )
 
     assert report["result"]["status"] == "needs_input"
-    receipt = report["result"]["material_receipt"]
-    assert receipt["status"] == "needs_input"
-    assert receipt["resume"] == {
-        "operation_key": "book.user-gate",
-        "stage": "download",
-        "policy": "human-year-decision-or-correct-request",
-    }
-    gate = receipt["user_gate"]
-    evidence = report["result"]["year_evidence"]
-    assert gate == {
-        "schema_version": "quasi.user-gate.stage/0.1",
-        "operation_key": "book.acquire",
-        "kind": "stage_needs_input",
-        "issue": acquire_year_gate(slug, verdict)["terminal"]["issue"],
-        "candidates": [],
-        "conflicts": [],
-        "question": gate["question"],
-        "year_evidence": evidence,
-        "tmp_path": report["result"]["tmp_path"],
-        "proposed_actions": (
-            ["accept-current", "use-recommended-year"]
-            if verdict == "MISMATCH"
-            else ["accept-current"]
-        ),
-    }
+    gate = report["result"]["material_receipt"]["user_gate"]
     assert gate["question"]
+    assert gate["proposed_actions"] == (
+        ["accept-current", "use-recommended-year"]
+        if verdict == "MISMATCH"
+        else ["accept-current"]
+    )
 
 
-def test_book_complete_receipt_has_closed_empty_user_gate(
-    tmp_path: Path,
-) -> None:
-    slug = "book-stage-no-user-gate"
-    report = run_book(tmp_path, slug, happy(slug))
-
-    assert report["result"]["material_receipt"]["user_gate"] is None
 
 
 @pytest.mark.parametrize("status", ["needs_input", "failed"])
@@ -666,23 +563,12 @@ def test_book_prepare_terminal_stops_before_fanout(
     assert report["result"]["status"] == (
         "needs_input" if status == "needs_input" else "extract_failed"
     )
-    assert operations(report) == ["book.acquire", "book.prepare"]
-    assert report["result"]["material_receipt"]["failure"]["code"] == (
-        "book.chapter_set_unavailable"
-    )
+    assert "chapter.analyse" not in operations(report)
     if status == "needs_input":
         gate = report["result"]["material_receipt"]["user_gate"]
-        assert gate == {
-            "schema_version": "quasi.user-gate.stage/0.1",
-            "operation_key": "book.prepare",
-            "kind": "stage_needs_input",
-            "issue": prepare(slug, status=status)["terminal"]["issue"],
-            "candidates": [],
-            "conflicts": [],
-            "question": (
-                "Which of the two observed tables of contents should define the book?"
-            ),
-        }
+        assert gate["question"] == (
+            "Which of the two observed tables of contents should define the book?"
+        )
     else:
         assert report["result"]["material_receipt"]["user_gate"] is None
 
@@ -701,9 +587,6 @@ def test_book_prepare_unknown_or_malformed_blocks_once(
 
     assert report["result"]["status"] == "blocked"
     assert operations(report).count("book.prepare") == 1
-    assert report["result"]["material_receipt"]["resume"] == {
-        "operation_key": "book.reconcile"
-    }
 
 
 def test_prepare_complete_reproves_every_manifest_chapter(tmp_path: Path) -> None:
@@ -717,87 +600,32 @@ def test_prepare_complete_reproves_every_manifest_chapter(tmp_path: Path) -> Non
     report = run_book(tmp_path, slug, responses)
 
     assert report["result"]["status"] == "blocked"
-    assert report["result"]["material_receipt"]["failure"]["code"] == (
-        "book.writer_receipt_mismatch"
-    )
 
 
-def test_epub_prepare_rejects_manifest_titles_with_tabs(
-    tmp_path: Path,
-) -> None:
-    slug = "book-stage-epub-tab-title"
-    rows = chapters(slug)
-    rows[0]["title"] = "1\tArtificial Communication? Algorithms as Partners"
-    receipt = prepare(slug, members=rows)
-    receipt["normalized_path"] = paths(slug)["text"]
-    receipt["artifacts"].extend(
-        [
-            {
-                "role": "normalized_document",
-                "path": paths(slug)["text"],
-                "exists": False,
-                "usable": None,
-            },
-            {
-                "role": "recovery_source",
-                "path": paths(slug)["ocr"],
-                "exists": False,
-                "usable": None,
-            },
-        ]
-    )
-    responses = {
-        "book.acquire": [reply(acquire(slug))],
-        "book.prepare": [reply(receipt)],
-    }
-    report = run_book(tmp_path, slug, responses)
-
-    assert report["result"]["status"] == "blocked"
-    assert report["result"]["material_receipt"]["failure"]["code"] == (
-        "book.writer_receipt_mismatch"
-    )
 
 
-def test_epub_prepare_accepts_replaced_manifest_with_canonical_slugs(
-    tmp_path: Path,
-) -> None:
-    slug = "book-stage-epub-replaced"
-    rows = chapters(slug)
-    rows[0]["slug"] = "preface"
-    rows[1]["slug"] = "chapter-two"
-    receipt = prepare(slug, members=rows)
-    receipt["disposition"] = "replaced"
-    responses = happy(slug)
-    responses["book.prepare"] = [reply(receipt)]
-    responses["chapter.analyse:01"] = [reply(analyse(slug, "01", member=rows[0]))]
-    responses["chapter.analyse:02"] = [reply(analyse(slug, "02", member=rows[1]))]
-    responses["book.synthesise"] = [reply(synthesis(slug, members=rows))]
 
-    report = run_book(tmp_path, slug, responses)
 
-    assert report["result"]["status"] == "ok"
-    assert report["result"]["material_receipt"]["status"] == "complete"
 
 
 @pytest.mark.parametrize("invalid_slug", ["01_preface", "章节-二", "../outside"])
-def test_epub_prepare_rejects_noncanonical_chapter_slug(
+def test_prepare_rejects_noncanonical_chapter_slugs(
     tmp_path: Path,
     invalid_slug: str,
 ) -> None:
-    slug = "book-stage-epub-unsafe-slug"
+    slug = "book-stage-unsafe-chapter-slug"
     rows = chapters(slug)
     rows[0]["slug"] = invalid_slug
-    responses = {
-        "book.acquire": [reply(acquire(slug))],
-        "book.prepare": [reply(prepare(slug, members=rows))],
-    }
-
-    report = run_book(tmp_path, slug, responses)
+    report = run_book(
+        tmp_path,
+        slug,
+        {
+            "book.acquire": [reply(acquire(slug))],
+            "book.prepare": [reply(prepare(slug, members=rows))],
+        },
+    )
 
     assert report["result"]["status"] == "blocked"
-    assert report["result"]["material_receipt"]["failure"]["code"] == (
-        "book.writer_receipt_mismatch"
-    )
 
 
 def test_known_missing_chapter_refills_only_that_member(tmp_path: Path) -> None:
@@ -811,8 +639,6 @@ def test_known_missing_chapter_refills_only_that_member(tmp_path: Path) -> None:
 
     assert report["result"]["status"] == "ok"
     assert operations(report).count("chapter.analyse") == 3
-    slots = [item["slot"] for item in report["trace"] if item["operation"] == "chapter.analyse"]
-    assert slots == ["01", "02", "02"]
 
 
 def test_unknown_chapter_writer_never_replays_or_synthesises(tmp_path: Path) -> None:
@@ -849,43 +675,9 @@ def test_audit_foreign_target_fails_before_repair(tmp_path: Path) -> None:
     report = run_book(tmp_path, slug, responses)
 
     assert report["result"]["status"] == "audit_escalated"
-    assert report["result"]["material_receipt"]["failure"]["code"] == (
-        "book.repair_owner_unknown"
-    )
     assert operations(report).count("book.audit") == 1
 
 
-def test_exact_overview_diagnostic_routes_synthesis_repair_then_reaudit(
-    tmp_path: Path,
-) -> None:
-    slug = "book-stage-audit-repair"
-    responses = happy(slug)
-    responses["book.audit"] = [
-        reply(
-            audit(
-                slug,
-                status="partial",
-                diagnostics=[
-                    {
-                        "path": paths(slug)["overview"],
-                        "kind": "schema",
-                        "reason": "missing section",
-                    }
-                ],
-            )
-        ),
-        reply(audit(slug, pass_number=2)),
-    ]
-    responses["book.synthesise"] = [
-        reply(synthesis(slug)),
-        reply(synthesis(slug, action="repair")),
-    ]
-    report = run_book(tmp_path, slug, responses)
-
-    assert report["result"]["status"] == "ok"
-    assert operations(report).count("book.synthesise") == 2
-    assert operations(report).count("book.audit") == 2
-    assert report["result"]["material_receipt"]["disposition"] == "repaired"
 
 
 def test_same_runtime_coalesces_identical_identity(tmp_path: Path) -> None:

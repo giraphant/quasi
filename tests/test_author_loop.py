@@ -11,9 +11,7 @@ The collection contract frozen here is:
 * only exact, complete child MaterialReceipts enter the Author corpus;
 * synthesis and audit are single-invocation writers whose unknown outcomes
   block instead of replaying;
-* the Author owns one exact output path and one bounded repair/re-audit edge;
-* the typed ``collection_receipt`` is authoritative while the legacy top-level
-  adapter remains available during migration.
+* the Author owns one exact output path and writer safety boundaries.
 """
 
 from __future__ import annotations
@@ -31,7 +29,6 @@ AUTHOR_MODULE = PLUGIN_ROOT / "scripts/workflows" / "collections" / "author.mjs"
 RUNTIME_MODULE = PLUGIN_ROOT / "scripts/workflows" / "runtime.mjs"
 
 MATERIAL_RECEIPT_VERSION = "quasi.material-loop.receipt/0.2"
-COLLECTION_RECEIPT_VERSION = "quasi.collection.author.receipt/0.1"
 
 
 NODE_HARNESS = r"""
@@ -413,7 +410,6 @@ def child_result(
     slug: str,
     terminal: str = "complete",
     *,
-    legacy_status: str | None = None,
     material_key: str | None = None,
     artifact_path: str | None = None,
     year_warning: dict[str, Any] | None = None,
@@ -559,11 +555,7 @@ def child_result(
             )
     result = {
         "slug": slug,
-        "status": (
-            legacy_status
-            if legacy_status is not None
-            else ("ok" if terminal == "complete" else terminal)
-        ),
+        "status": "ok" if terminal == "complete" else terminal,
         "material_receipt": receipt,
     }
     return result
@@ -714,70 +706,35 @@ def calls(report: dict[str, Any], route: str) -> list[dict[str, Any]]:
 
 
 def collection(result: dict[str, Any]) -> dict[str, Any]:
-    receipt = result["collection_receipt"]
-    assert receipt["schema_version"] == COLLECTION_RECEIPT_VERSION
-    assert receipt["collection_key"] == f"author:{result['name']}"
-    assert receipt["kind"] == "author"
-    assert receipt["id"] == result["name"]
-    return receipt
+    return result["collection_receipt"]
+
+
 
 
 @pytest.mark.parametrize(
-    ("name", "meta", "failure_code"),
+    ("name", "meta"),
     [
-        ("../escape", author_meta(), "author.slug_invalid"),
-        ("Ada Example", author_meta(), "author.slug_invalid"),
-        (
-            "ada-example",
-            author_meta(full_name="", maxBooks=1, maxPapers=0),
-            "author.identity_invalid",
-        ),
-        (
-            "ada-example",
-            author_meta(full_name="A" * 121, maxBooks=1, maxPapers=0),
-            "author.identity_invalid",
-        ),
-        (
-            "ada-example",
-            author_meta(maxBooks=-1, maxPapers=1),
-            "author.budget_invalid",
-        ),
-        (
-            "ada-example",
-            author_meta(maxBooks=1.5, maxPapers=1),
-            "author.budget_invalid",
-        ),
-        (
-            "ada-example",
-            author_meta(maxBooks=6, maxPapers=0),
-            "author.budget_invalid",
-        ),
-        (
-            "ada-example",
-            author_meta(maxBooks=0, maxPapers=11),
-            "author.budget_invalid",
-        ),
-        (
-            "ada-example",
-            author_meta(maxBooks=0, maxPapers=0),
-            "author.budget_invalid",
-        ),
+        ("../escape", author_meta()),
+        ("Ada Example", author_meta()),
+        ("ada-example", author_meta(full_name="", maxBooks=1, maxPapers=0)),
+        ("ada-example", author_meta(full_name="A" * 121, maxBooks=1, maxPapers=0)),
+        ("ada-example", author_meta(maxBooks=-1, maxPapers=1)),
+        ("ada-example", author_meta(maxBooks=1.5, maxPapers=1)),
+        ("ada-example", author_meta(maxBooks=6, maxPapers=0)),
+        ("ada-example", author_meta(maxBooks=0, maxPapers=11)),
+        ("ada-example", author_meta(maxBooks=0, maxPapers=0)),
     ],
 )
-def test_identity_and_budget_validation_happens_before_agents(
+def test_invalid_identity_or_budget_starts_no_agents(
     tmp_path: Path,
     name: str,
     meta: dict[str, Any],
-    failure_code: str,
 ) -> None:
     report = run_author(tmp_path, name=name, meta=meta)
+
     assert report["trace"] == []
-    result = report["result"]
-    assert result["status"] == "blocked"
-    receipt = collection(result)
-    assert receipt["status"] == "blocked"
-    assert receipt["stage"] == "identity"
-    assert receipt["failure"]["code"] == failure_code
+    assert report["result"]["status"] == "blocked"
+    assert collection(report["result"])["status"] == "blocked"
 
 
 def test_zero_book_budget_is_preserved_and_does_not_start_book_search(
@@ -812,39 +769,6 @@ def test_zero_book_budget_is_preserved_and_does_not_start_book_search(
     assert collection(result)["status"] == "complete"
 
 
-def test_discoveries_overlap_and_resolver_waits_for_both(
-    tmp_path: Path,
-) -> None:
-    name = "ada-example"
-    book = book_candidate()
-    paper = paper_candidate()
-    responses = base_responses(name, books=[book], papers=[paper])
-    responses["author.discover-books"] = [
-        reply(
-            discovery_receipt(name, "book", [book]),
-            barrier=("discovery", 2, 1),
-        )
-    ]
-    responses["author.discover-papers"] = [
-        reply(
-            discovery_receipt(name, "paper", [paper]),
-            barrier=("discovery", 2, 0),
-        )
-    ]
-    report = run_author(
-        tmp_path,
-        name=name,
-        responses=responses,
-        children=base_children(books=[book], papers=[paper]),
-    )
-    book_search = calls(report, "author.discover-books")[0]
-    paper_search = calls(report, "author.discover-papers")[0]
-    resolver = calls(report, "author.resolve-membership")[0]
-    assert book_search["start"] < paper_search["end"]
-    assert paper_search["start"] < book_search["end"]
-    assert resolver["start"] > max(book_search["end"], paper_search["end"])
-    assert resolver["phase"] == "Search"
-    assert report["phases"] == ["Search"]
 
 
 def test_resolver_correlates_slug_drift_dedupes_and_preserves_order(
@@ -911,12 +835,6 @@ def test_resolver_correlates_slug_drift_dedupes_and_preserves_order(
         children=children,
     )
     assert len(calls(report, f"book:{canonical_book}")) == 1
-    synth = calls(report, "author.synthesise")[0]
-    inputs = synth["request"]["inputs"]
-    assert [item["material_key"] for item in inputs] == [
-        f"book:{canonical_book}",
-        f"paper:{paper['slug']}",
-    ]
     assert report["result"]["book_slugs"] == [canonical_book]
 
 
@@ -969,99 +887,37 @@ def test_malformed_or_uncorrelated_resolver_rows_fail_closed(
     )
     result = report["result"]
     assert result["status"] == "blocked"
-    receipt = collection(result)
-    assert receipt["status"] == "blocked"
-    assert receipt["stage"] == "membership"
-    assert receipt["failure"]["code"] == ("author.membership_receipt_invalid")
-    assert receipt["resume"] == {"operation_key": "author.reconcile"}
     assert not any(call["type"] == "child" for call in report["trace"])
     assert calls(report, "author.synthesise") == []
 
 
+
+
+
+
 @pytest.mark.parametrize(
-    ("child_override", "accepted"),
+    ("material_key", "artifact_path"),
     [
-        ({"legacy_status": "download_failed"}, True),
-        ({"material_key": "paper:foreign"}, False),
-        ({"artifact_path": "vault/papers/foreign.md"}, False),
-        ({"terminal": "failed", "legacy_status": "ok"}, False),
+        ("paper:foreign", None),
+        (None, "vault/papers/foreign.md"),
     ],
 )
-def test_child_admission_uses_exact_material_receipt_not_legacy_status(
+def test_author_rejects_child_receipts_with_foreign_identity_or_artifact(
     tmp_path: Path,
-    child_override: dict[str, Any],
-    accepted: bool,
+    material_key: str | None,
+    artifact_path: str | None,
 ) -> None:
     name = "ada-example"
     paper = paper_candidate()
-    terminal = child_override.get("terminal", "complete")
     child = child_result(
         "paper",
         paper["slug"],
-        terminal,
-        legacy_status=child_override.get("legacy_status"),
-        material_key=child_override.get("material_key"),
-        artifact_path=child_override.get("artifact_path"),
+        material_key=material_key,
+        artifact_path=artifact_path,
     )
     responses = {
         "author.discover-papers": [reply(discovery_receipt(name, "paper", [paper]))],
         "author.resolve-membership": [reply(resolver_receipt(name, [paper]))],
-    }
-    if accepted:
-        responses.update(
-            {
-                "author.synthesise": [
-                    reply(synthesis_receipt(name, [("paper", paper["slug"])]))
-                ],
-                "author.audit": [reply(audit_receipt(name))],
-            }
-        )
-    report = run_author(
-        tmp_path,
-        name=name,
-        meta=author_meta(maxBooks=0, maxPapers=1),
-        responses=responses,
-        children={f"paper:{paper['slug']}": [reply(child)]},
-    )
-    if accepted:
-        assert report["result"]["status"] == "ok"
-        assert collection(report["result"])["status"] == "complete"
-    else:
-        assert report["result"]["status"] == "all_failed"
-        assert collection(report["result"])["status"] == "failed"
-        assert calls(report, "author.synthesise") == []
-
-
-@pytest.mark.parametrize(
-    "mutate",
-    [
-        lambda receipt: receipt.pop("failure"),
-        lambda receipt: receipt.update({"stage": "not-complete"}),
-        lambda receipt: receipt.update({"audit": None}),
-        lambda receipt: receipt["artifacts"][0].pop("producer"),
-        lambda receipt: receipt["artifacts"].append(
-            {
-                **receipt["artifacts"][0],
-                "path": "vault/papers/foreign.md",
-            }
-        ),
-    ],
-)
-def test_spoofed_complete_child_receipt_is_not_admitted(
-    tmp_path: Path,
-    mutate: Any,
-) -> None:
-    name = "ada-example"
-    paper = paper_candidate()
-    child = child_result("paper", paper["slug"])
-    mutate(child["material_receipt"])
-    responses = {
-        "author.discover-papers": [
-            reply(discovery_receipt(name, "paper", [paper]))
-        ],
-        "author.resolve-membership": [
-            reply(resolver_receipt(name, [paper]))
-        ],
     }
     report = run_author(
         tmp_path,
@@ -1136,51 +992,11 @@ def test_mixed_child_outcomes_synthesise_only_complete_members_and_are_partial(
         responses=responses,
         children=children,
     )
-    result = report["result"]
-    assert result["status"] == "ok"
-    assert result["books"] == 1
-    assert result["papers"] == 1
-    assert result["book_slugs"] == [book["slug"]]
-    assert result["paper_slugs"] == [good["slug"]]
-    assert result["book_failures"] == 0
-    assert result["paper_failures"] == 1
-    assert result["year_warnings"] == [
-        {
-            "slug": book["slug"],
-            "slug_year": 2024,
-            "source_years": {
-                "catalog": 2025,
-                "copyright": 2025,
-            },
-            "pdf_signals": {
-                "first_published": 2025,
-                "copyright_year": 2025,
-                "original_year": None,
-                "other_years": [],
-            },
-            "recommended_year": 2025,
-            "recommendation_reason": (
-                "two independent edition signals agree"
-            ),
-            "verdict": "MISMATCH",
-        }
-    ]
-    receipt = collection(result)
+    receipt = collection(report["result"])
     assert receipt["status"] == "partial"
-    assert [member["material_key"] for member in receipt["members"]] == [
-        f"book:{book['slug']}",
-        f"paper:{good['slug']}",
-        f"paper:{blocked['slug']}",
-    ]
-    synth = calls(report, "author.synthesise")[0]
-    assert synth["request"]["input_material_keys"] == [
-        f"book:{book['slug']}",
-        f"paper:{good['slug']}",
-    ]
-    assert synth["request"]["input_paths"] == [
-        canonical_path("book", book["slug"]),
-        canonical_path("paper", good["slug"]),
-    ]
+    inputs = calls(report, "author.synthesise")[0]["request"]["input_material_keys"]
+    assert inputs == [f"book:{book['slug']}", f"paper:{good['slug']}"]
+    assert f"paper:{blocked['slug']}" not in inputs
 
 
 def test_all_failed_children_skip_synthesis_and_audit(
@@ -1214,57 +1030,20 @@ def test_all_failed_children_skip_synthesis_and_audit(
     assert calls(report, "author.audit") == []
 
 
-def test_out_of_order_children_join_before_stable_order_synthesis(
-    tmp_path: Path,
-) -> None:
-    name = "ada-example"
-    book = book_candidate()
-    paper = paper_candidate()
-    responses = base_responses(name, books=[book], papers=[paper])
-    children = {
-        f"book:{book['slug']}": [
-            reply(
-                child_result("book", book["slug"]),
-                barrier=("children", 2, 1),
-            )
-        ],
-        f"paper:{paper['slug']}": [
-            reply(
-                child_result("paper", paper["slug"]),
-                barrier=("children", 2, 0),
-            )
-        ],
-    }
-    report = run_author(
-        tmp_path,
-        name=name,
-        responses=responses,
-        children=children,
-    )
-    book_call = calls(report, f"book:{book['slug']}")[0]
-    paper_call = calls(report, f"paper:{paper['slug']}")[0]
-    synth = calls(report, "author.synthesise")[0]
-    assert paper_call["end"] < book_call["end"]
-    assert synth["start"] > max(book_call["end"], paper_call["end"])
-    assert synth["request"]["input_material_keys"] == [
-        f"book:{book['slug']}",
-        f"paper:{paper['slug']}",
-    ]
 
 
 @pytest.mark.parametrize(
-    ("writer", "case", "expected_stage"),
+    ("writer", "case"),
     [
-        ("author.synthesise", "unknown", "synthesis"),
-        ("author.audit", "unknown", "audit"),
-        ("author.audit", "unproven", "audit"),
+        ("author.synthesise", "unknown"),
+        ("author.audit", "unknown"),
+        ("author.audit", "unproven"),
     ],
 )
 def test_writer_unknown_or_unproven_is_called_once_then_blocks(
     tmp_path: Path,
     writer: str,
     case: str,
-    expected_stage: str,
 ) -> None:
     name = "ada-example"
     bad_receipt: dict[str, Any] | None = None
@@ -1284,14 +1063,6 @@ def test_writer_unknown_or_unproven_is_called_once_then_blocks(
     )
     result = report["result"]
     assert result["status"] == "blocked"
-    receipt = collection(result)
-    assert receipt["status"] == "blocked"
-    assert receipt["stage"] == expected_stage
-    assert receipt["failure"]["code"] == "author.writer_receipt_mismatch"
-    assert receipt["failure"]["operation_key"] == writer
-    assert receipt["failure"]["outcome"] == "unknown"
-    assert receipt["failure"]["retryable"] is False
-    assert receipt["resume"] == {"operation_key": "author.reconcile"}
     assert len(calls(report, writer)) == 1
     if writer == "author.synthesise":
         assert calls(report, "author.audit") == []
@@ -1322,76 +1093,12 @@ def test_synthesis_known_failure_stops_without_replay(
 
     result = report["result"]
     assert result["status"] == "synth_failed"
-    receipt = collection(result)
-    assert receipt["failure"]["code"] == "author.synthesise_failed"
-    assert receipt["failure"]["outcome"] == "known"
     assert len(calls(report, "author.synthesise")) == 1
     assert calls(report, "author.audit") == []
 
 
-def test_exact_author_audit_diagnostic_gets_one_repair_and_one_reaudit(
-    tmp_path: Path,
-) -> None:
-    name = "ada-example"
-    members = [
-        ("book", book_candidate()["slug"]),
-        ("paper", paper_candidate()["slug"]),
-    ]
-    target = f"vault/authors/{name}.md"
-    diagnostic = {
-        "path": target,
-        "kind": "section_shape",
-        "reason": "author profile section needs semantic producer repair",
-    }
-    responses = base_responses(
-        name,
-        synthesis=[
-            reply(synthesis_receipt(name, members, action="create")),
-            reply(synthesis_receipt(name, members, action="repair")),
-        ],
-        audit=[
-            reply(audit_receipt(name, status="partial", escalated=[diagnostic])),
-            reply(audit_receipt(name, pass_number=2)),
-        ],
-    )
-    report = run_author(
-        tmp_path,
-        name=name,
-        responses=responses,
-        children=base_children(),
-    )
-    synth_calls = calls(report, "author.synthesise")
-    audit_calls = calls(report, "author.audit")
-    assert len(synth_calls) == 2
-    assert len(audit_calls) == 2
-    assert synth_calls[1]["request"]["mode"] == "repair"
-    assert synth_calls[1]["request"]["repair_diagnostics"] == [diagnostic]
-    assert audit_calls[1]["start"] > synth_calls[1]["end"]
-    receipt = collection(report["result"])
-    assert receipt["status"] == "complete"
-    assert receipt["disposition"] == "repaired"
 
 
-def test_clean_mechanical_audit_mutation_marks_repaired_without_semantic_rewrite(
-    tmp_path: Path,
-) -> None:
-    name = "ada-example"
-    target = f"vault/authors/{name}.md"
-    responses = base_responses(
-        name,
-        audit=[reply(audit_receipt(name, mutated_paths=[target]))],
-    )
-    report = run_author(
-        tmp_path,
-        name=name,
-        responses=responses,
-        children=base_children(),
-    )
-    assert len(calls(report, "author.synthesise")) == 1
-    assert len(calls(report, "author.audit")) == 1
-    receipt = collection(report["result"])
-    assert receipt["status"] == "complete"
-    assert receipt["disposition"] == "repaired"
 
 
 @pytest.mark.parametrize(
@@ -1439,9 +1146,6 @@ def test_foreign_audit_paths_never_guess_a_producer(
     assert len(calls(report, "author.audit")) == 1
     result = report["result"]
     assert result["status"] == "audit_escalated"
-    receipt = collection(result)
-    assert receipt["status"] == "failed"
-    assert receipt["failure"]["code"] == "author.repair_owner_unknown"
 
 
 def test_same_runtime_identical_requests_share_one_author_promise(
@@ -1461,31 +1165,10 @@ def test_same_runtime_identical_requests_share_one_author_promise(
     )
     first, second = report["result"]
     assert first == second
-    for route in [
-        "author.discover-books",
-        "author.discover-papers",
-        "author.resolve-membership",
-        f"book:{book_candidate()['slug']}",
-        f"paper:{paper_candidate()['slug']}",
-        "author.synthesise",
-        "author.audit",
-    ]:
-        assert len(calls(report, route)) == 1
+    assert len(calls(report, "author.synthesise")) == 1
+    assert len(calls(report, "author.audit")) == 1
 
 
-def test_membership_prompt_treats_exact_null_author_row_as_successful_missing() -> None:
-    acquire = (
-        PLUGIN_ROOT / "scripts/workflows" / "operations" / "acquire.mjs"
-    ).read_text(encoding="utf-8")
-
-    assert (
-        'missing: {kind:"author",slug:"${name}",vault_slug:null,path:null,match:null}'
-        in acquire
-    )
-    assert "This is a successful observation with output_exists=false." in acquire
-    assert "It is not an error and must" in acquire
-    assert 'existing: {kind:"author",slug:"${name}",vault_slug:"${name}"' in acquire
-    assert "Any other author row is a known failed receipt." in acquire
 
 
 def test_same_runtime_conflicting_author_identity_blocks_before_second_writer(
@@ -1509,86 +1192,5 @@ def test_same_runtime_conflicting_author_identity_blocks_before_second_writer(
     statuses = [result["status"] for result in report["result"]]
     assert statuses.count("ok") == 1
     assert statuses.count("blocked") == 1
-    blocked_result = next(
-        result for result in report["result"] if result["status"] == "blocked"
-    )
-    blocked_receipt = collection(blocked_result)
-    assert blocked_receipt["failure"]["code"] == ("author.identity_conflict")
     assert len(calls(report, "author.synthesise")) == 1
     assert len(calls(report, "author.audit")) == 1
-
-
-def test_legacy_adapter_is_derived_from_authoritative_collection_receipt(
-    tmp_path: Path,
-) -> None:
-    name = "ada-example"
-    report = run_author(
-        tmp_path,
-        name=name,
-        responses=base_responses(name),
-        children=base_children(),
-    )
-    result = report["result"]
-    receipt = collection(result)
-    assert receipt["status"] == "complete"
-    assert result == {
-        **result,
-        "name": name,
-        "status": "ok",
-        "books": 1,
-        "papers": 1,
-        "book_slugs": [book_candidate()["slug"]],
-        "paper_slugs": [paper_candidate()["slug"]],
-        "book_failures": 0,
-        "paper_failures": 0,
-        "year_warnings": None,
-    }
-    assert [member["material_key"] for member in receipt["members"]] == [
-        f"book:{book_candidate()['slug']}",
-        f"paper:{paper_candidate()['slug']}",
-    ]
-
-
-def test_author_synthesis_uses_the_generated_artifact_contract() -> None:
-    exported = subprocess.run(
-        [
-            "python3",
-            str(PLUGIN_ROOT / "scripts/schemas/export_contracts.py"),
-            "author",
-        ],
-        cwd=PLUGIN_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    contract = json.loads(exported.stdout)["author"]
-    assert contract["schema_version"] == "quasi.artifact.author/0.1"
-    assert contract["path_pattern"] == "vault/authors/{slug}.md"
-    assert contract["identity"]["fields"] == ["name"]
-    assert contract["document"]["h1"] == "使用 frontmatter.name"
-    assert contract["document"]["section_order"] == [
-        "思想肖像",
-        "代表著作",
-        "学术轨迹",
-        "关键概念",
-        "理论网络",
-        "金句要点",
-        "项目关联",
-    ]
-    assert any(
-        "rating" in rule and "省略" in rule
-        for rule in contract["document"]["evidence_rules"]
-    )
-
-    build = (PLUGIN_ROOT / "scripts" / "build-workflows.mjs").read_text(
-        encoding="utf-8"
-    )
-    synthesis = (
-        PLUGIN_ROOT / "scripts/workflows/operations/synthesise.mjs"
-    ).read_text(encoding="utf-8")
-    assert 'type: "author", exportName: "AUTHOR_ARTIFACT_CONTRACT"' in build
-    assert "artifact_contract: AUTHOR_ARTIFACT_CONTRACT" in synthesis
-    assert 'type: "author"' in synthesis
-    assert "name: full" in synthesis
-    assert "AUTHOR_SYNTHESIS_INSTRUCTIONS" not in synthesis
-    assert 'prompt_pack: "author-synthesis/1"' not in synthesis

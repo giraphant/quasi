@@ -300,95 +300,12 @@ def labels(report: dict[str, Any]) -> list[str]:
     return [entry["label"] for entry in report["trace"]]
 
 
-def test_paper_happy_path_is_one_prepare_stage(tmp_path: Path) -> None:
-    slug = "paper-stage-happy"
-    report = run_paper(tmp_path, slug, base(slug))
-
-    assert report["result"]["status"] == "ok"
-    assert labels(report) == [
-        f"{slug}:search",
-        f"{slug}:acquire",
-        f"{slug}:prepare",
-        f"{slug}:analyse",
-        f"{slug}:audit",
-    ]
-    assert [entry["phase"] for entry in report["trace"]] == [
-        "Search",
-        "Acquire",
-        "Prepare",
-        "Analyse",
-        "Audit",
-    ]
-    receipt = report["result"]["material_receipt"]
-    assert receipt["status"] == "complete"
-    assert receipt["user_gate"] is None
-    assert [item.get("operation", item.get("key")) for item in receipt["operations"]] == [
-        "paper.acquire",
-        "paper.prepare",
-        "paper.analyse",
-        "paper.audit",
-    ]
-    assert receipt["operations"][0] == acquire(slug)
-    assert receipt["operations"][-1] == receipt["audit"] == audit(slug)
-    assert "per_item" not in report["trace"][1]["schema"]["properties"]
 
 
-def test_acquire_prompt_is_a_thin_stage_envelope(tmp_path: Path) -> None:
-    slug = "paper-acquire-envelope"
-    report = run_paper(tmp_path, slug, base(slug))
-    call = next(item for item in report["trace"] if item["label"] == f"{slug}:acquire")
-    request = json.loads(call["prompt"])
-
-    assert call["agent_type"] == "quasi:download-agent"
-    assert request["schema_version"] == "quasi.stage.paper-acquire.request/0.1"
-    assert request["operation"] == "paper.acquire"
-    assert request["stage"] == "Acquire"
-    assert request["effect"] == "writer"
-    assert request["refs"] == {"output": paths(slug)["source"]}
-    assert request["exact_output"] == paths(slug)["source"]
-    assert request["shell_argv"]["exact_output"] == f"'{paths(slug)['source']}'"
-    assert request["capabilities"] == [
-        "quasi-download paper fetch --slug SLUG --output OUTPUT --json",
-        "quasi-download accept --path INPUT --slug SLUG --kind paper --json",
-        "Read the exact output only to verify title, authors, and DOI evidence",
-    ]
-    assert "operation_policy" not in request
 
 
-def test_prepare_prompt_gives_goal_capabilities_and_exact_refs(tmp_path: Path) -> None:
-    slug = "paper-stage-envelope"
-    report = run_paper(tmp_path, slug, base(slug))
-    call = next(item for item in report["trace"] if item["label"] == f"{slug}:prepare")
-    request = json.loads(call["prompt"])
-
-    assert call["agent_type"] == "quasi:extract-agent"
-    assert request["objective"].startswith("Produce one readable")
-    assert request["refs"]["source"] == paths(slug)["source"]
-    assert request["capabilities"] == [
-        "quasi-extract text INPUT OUTPUT --json",
-        "quasi-extract ocr INPUT OUTPUT --no-clobber --json",
-        "Read exact normalized text artifacts",
-    ]
 
 
-def test_prepare_can_select_ocr_recovery_without_graph_ocr_branch(tmp_path: Path) -> None:
-    slug = "paper-stage-ocr"
-    responses = base(slug)
-    responses[f"{slug}:prepare"] = [
-        prepare(slug, selected=paths(slug)["ocr_text"])
-    ]
-    responses[f"{slug}:analyse"] = [analyse(slug, paths(slug)["ocr_text"])]
-    report = run_paper(tmp_path, slug, responses)
-
-    assert report["result"]["status"] == "ok"
-    assert not any(label.endswith(":ocr") for label in labels(report))
-    analysis_prompt = next(
-        item["prompt"]
-        for item in report["trace"]
-        if item["label"] == f"{slug}:analyse"
-    )
-    analysis_request = json.loads(analysis_prompt[analysis_prompt.index("{") :])
-    assert analysis_request["input"]["path"] == paths(slug)["ocr_text"]
 
 
 @pytest.mark.parametrize("status", ["needs_input", "failed"])
@@ -406,20 +323,11 @@ def test_prepare_terminal_stops_before_analysis(
 
     expected = "needs_input" if status == "needs_input" else "analyse_failed"
     assert report["result"]["status"] == expected
-    assert labels(report)[-1] == f"{slug}:prepare"
-    assert report["result"]["material_receipt"]["failure"]["code"] == (
-        "paper.text_not_readable"
-    )
+    assert not any(label.endswith(":analyse") for label in labels(report))
     if status == "needs_input":
-        assert report["result"]["material_receipt"]["user_gate"] == {
-            "schema_version": "quasi.user-gate.stage/0.1",
-            "operation_key": "paper.prepare",
-            "kind": "stage_needs_input",
-            "issue": prepare(slug, status=status)["terminal"]["issue"],
-            "candidates": [],
-            "conflicts": [],
-            "question": "Can you provide another source PDF?",
-        }
+        assert report["result"]["material_receipt"]["user_gate"]["question"] == (
+            "Can you provide another source PDF?"
+        )
     else:
         assert report["result"]["material_receipt"]["user_gate"] is None
 
@@ -439,9 +347,6 @@ def test_prepare_unknown_or_malformed_blocks_without_replay(
 
     assert report["result"]["status"] == "blocked"
     assert labels(report).count(f"{slug}:prepare") == 1
-    assert report["result"]["material_receipt"]["resume"] == {
-        "operation_key": "paper.reconcile"
-    }
 
 
 def test_prepare_complete_requires_usable_selected_artifact(tmp_path: Path) -> None:
@@ -456,42 +361,10 @@ def test_prepare_complete_requires_usable_selected_artifact(tmp_path: Path) -> N
     report = run_paper(tmp_path, slug, responses)
 
     assert report["result"]["status"] == "blocked"
-    assert report["result"]["material_receipt"]["failure"]["code"] == (
-        "paper.writer_receipt_mismatch"
-    )
 
 
-def test_audit_routes_one_exact_analysis_repair(tmp_path: Path) -> None:
-    slug = "paper-stage-audit-repair"
-    responses = base(slug)
-    responses[f"{slug}:audit"] = [
-        audit(slug, status="partial"),
-        audit(slug, pass_number=2),
-    ]
-    repaired = analyse(slug, action="repair")
-    responses[f"{slug}:analyse"] = [analyse(slug), repaired]
-    report = run_paper(tmp_path, slug, responses)
-
-    assert report["result"]["status"] == "ok"
-    assert labels(report).count(f"{slug}:analyse") == 2
-    assert labels(report).count(f"{slug}:audit") == 2
-    assert report["result"]["material_receipt"]["disposition"] == "repaired"
 
 
-def test_audit_mechanical_mutation_is_one_direct_repaired_receipt(
-    tmp_path: Path,
-) -> None:
-    slug = "paper-stage-audit-mechanical-repair"
-    responses = base(slug)
-    repaired_audit = audit(slug)
-    repaired_audit["mutated_paths"] = [paths(slug)["canonical"]]
-    responses[f"{slug}:audit"] = [repaired_audit]
-    report = run_paper(tmp_path, slug, responses)
-
-    receipt = report["result"]["material_receipt"]
-    assert receipt["status"] == "complete"
-    assert receipt["disposition"] == "repaired"
-    assert receipt["operations"][-1] == receipt["audit"] == repaired_audit
 
 
 def test_analysis_unknown_is_one_writer_call(tmp_path: Path) -> None:

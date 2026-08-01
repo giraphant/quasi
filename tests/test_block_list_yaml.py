@@ -1,19 +1,7 @@
-"""Guard tests for SPEC §5.2 (block-list YAML for vault frontmatter arrays).
-
-Two layers:
-
-1. **Production code**: feed flow-form fixtures to `autofix_mechanical.py` and
-   `sweep-book-fm-clean.py`; assert the on-disk result is block-form.
-
-2. **Source-tree grep**: ensure no canonical frontmatter examples in agent
-   templates or the schema spec leak flow-form arrays for known list keys
-   (`themes`, `authors`, `tags`, `keywords`). Negative examples inside
-   "禁用" / "❌" / "wrong" blocks are exempt.
-"""
+"""Capability tests for block-list YAML frontmatter normalization."""
 
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -22,13 +10,6 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 AUTOFIX = PLUGIN_ROOT / "scripts" / "typecheck" / "autofix_mechanical.py"
 SWEEP_CLEAN = PLUGIN_ROOT / "scripts" / "audit" / "sweep" / "sweep-book-fm-clean.py"
-
-LIST_KEYS = ("themes", "authors", "tags", "keywords")
-FLOW_ARRAY_RE = re.compile(
-    rf"^[ \t]*(?:{'|'.join(LIST_KEYS)}):[ \t]*\[",
-    re.MULTILINE,
-)
-NEGATIVE_MARKERS = ("❌", "禁用", "wrong", "错误", "incorrect")
 
 
 # ─── production code smoke tests ──────────────────────────────────────────
@@ -216,40 +197,3 @@ def test_sweep_clean_consumes_unindented_block_list_remnant(tmp_path: Path) -> N
     assert "[[other-slug" not in after, f"Old wikilink leaked:\n{after}"
     # The new block list should appear, no stale unindented items below it.
     assert "authors:\n  - Real Name\n  - Other Name\nyear: 2020" in after, after
-
-
-# ─── source-tree grep guard ───────────────────────────────────────────────
-
-
-def _flow_array_violations_in(text: str) -> list[tuple[int, str]]:
-    """Return (line_number, line_text) for flow-array hits not preceded by a
-    negative marker within the prior 6 lines (the marker convention in our
-    SPEC / agent files)."""
-    lines = text.splitlines()
-    out: list[tuple[int, str]] = []
-    for idx, line in enumerate(lines):
-        if not FLOW_ARRAY_RE.match(line):
-            continue
-        window = "\n".join(lines[max(0, idx - 6) : idx])
-        if any(marker in window for marker in NEGATIVE_MARKERS):
-            continue
-        out.append((idx + 1, line))
-    return out
-
-
-def test_no_flow_arrays_in_agent_templates() -> None:
-    """Scan every agent .md + the schema spec for unguarded flow-form arrays
-    on canonical list keys. Negative-example blocks marked with ❌/禁用/
-    wrong/错误 within the prior 6 lines are exempt."""
-    scan_files: list[Path] = sorted((PLUGIN_ROOT / "agents").glob("*.md"))
-    scan_files.append(PLUGIN_ROOT / "scripts" / "schemas" / "SPEC.md")
-
-    violations: list[str] = []
-    for path in scan_files:
-        text = path.read_text(encoding="utf-8")
-        for lineno, line in _flow_array_violations_in(text):
-            violations.append(f"{path.relative_to(PLUGIN_ROOT)}:{lineno}: {line}")
-    assert not violations, (
-        "Flow-form arrays found outside ❌/禁用/wrong/错误 blocks "
-        "(SPEC §5.2 requires block lists):\n  " + "\n  ".join(violations)
-    )

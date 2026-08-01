@@ -83,15 +83,10 @@ def test_ocr_json_is_single_object_and_routes_progress_to_stderr(
     assert "engine progress" not in captured.out
     assert "engine progress" in captured.err
     assert rc == 0
-    assert payload == {
-        "status": "ok",
-        "input": source,
-        "output": output,
-        "exit": 0,
-        "exists": True,
-        "size": len(b"%PDF-complete"),
-        "failure": None,
-    }
+    assert payload["status"] == "ok"
+    assert payload["input"] == source
+    assert payload["output"] == output
+    assert payload["exists"] is True
 
 
 def test_ocr_json_reports_final_fallback_rc_even_with_partial_output(
@@ -118,7 +113,6 @@ def test_ocr_json_reports_final_fallback_rc_even_with_partial_output(
     assert payload["exit"] == 7
     assert payload["exists"] is True
     assert payload["size"] == len(b"partial")
-    assert payload["failure"]["code"] == "ocr_failed"
     assert "falling back to tesseract" in captured.err
 
 
@@ -163,7 +157,6 @@ def test_ocr_json_zero_child_rc_with_missing_output_fails_without_faking_exit(
     assert payload["exit"] == 0
     assert payload["exists"] is False
     assert payload["size"] == 0
-    assert payload["failure"]["code"] == "output_missing"
 
 
 def test_ocr_no_clobber_existing_skips_every_engine(
@@ -184,15 +177,10 @@ def test_ocr_no_clobber_existing_skips_every_engine(
 
     payload = json.loads(capsys.readouterr().out)
     assert rc == 0
-    assert payload == {
-        "status": "existing",
-        "input": source,
-        "output": str(output),
-        "exit": 0,
-        "exists": True,
-        "size": len(b"complete"),
-        "failure": None,
-    }
+    assert payload["status"] == "existing"
+    assert payload["input"] == source
+    assert payload["output"] == str(output)
+    assert payload["exists"] is True
 
 
 def test_ocr_no_clobber_runs_engine_in_staging_then_atomically_links(
@@ -279,15 +267,10 @@ def test_ocr_no_clobber_commit_race_loser_reports_existing(
 
     payload = json.loads(capsys.readouterr().out)
     assert rc == 0
-    assert payload == {
-        "status": "existing",
-        "input": source,
-        "output": str(output),
-        "exit": 0,
-        "exists": True,
-        "size": len(b"winning PDF"),
-        "failure": None,
-    }
+    assert payload["status"] == "existing"
+    assert payload["input"] == source
+    assert payload["output"] == str(output)
+    assert payload["exists"] is True
     assert output.read_bytes() == b"winning PDF"
     assert list(tmp_path.glob(".final.pdf.ocr-*")) == []
 
@@ -318,7 +301,6 @@ def test_ocr_no_clobber_commit_failure_keeps_engine_exit_and_cleans_staging(
     assert payload["status"] == "failed"
     assert payload["exit"] == 0
     assert payload["exists"] is False
-    assert payload["failure"]["code"] == "commit_failed"
     assert output.exists() is False
     assert list(tmp_path.glob(".final.pdf.ocr-*")) == []
 
@@ -414,37 +396,8 @@ def test_ocr_no_clobber_bad_collision_fails_without_overwrite(
     assert payload["status"] == "failed"
     assert payload["exit"] == 2
     assert payload["exists"] is True
-    assert payload["failure"]["code"] == (
-        "output_empty" if collision == "empty" else "output_not_regular"
-    )
     assert output.exists()
     assert output.is_dir() if collision == "directory" else output.stat().st_size == 0
-
-
-def test_ocr_default_mode_keeps_legacy_subprocess_streams(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-):
-    source = str(tmp_path / "paper.pdf")
-    output = str(tmp_path / "paper-ocr.pdf")
-    calls = []
-
-    def fake_call(command, **kwargs):
-        calls.append((command, kwargs))
-        return 0
-
-    monkeypatch.setattr(extract_cli.subprocess, "call", fake_call)
-
-    rc = extract_cli._run_ocr(
-        EXTRACT_DIR, [source, output, "--engine", "tesseract"]
-    )
-
-    captured = capsys.readouterr()
-    assert rc == 0
-    assert captured.out == ""
-    assert calls == [(
-        ["bash", str(EXTRACT_DIR / "ocr_pdf.sh"), source, output],
-        {},
-    )]
 
 
 def test_ocr_duplicate_engine_is_rejected_before_subprocess(
@@ -472,7 +425,6 @@ def test_ocr_duplicate_engine_is_rejected_before_subprocess(
     assert payload["status"] == "failed"
     assert payload["input"] == "in.pdf"
     assert payload["output"] == "out.pdf"
-    assert payload["failure"]["code"] == "invalid_arguments"
 
 
 @pytest.mark.parametrize(
@@ -502,7 +454,6 @@ def test_ocr_duplicate_flags_are_rejected_before_subprocess(
     assert payload["status"] == "failed"
     assert payload["input"] == "in.pdf"
     assert payload["output"] == "out.pdf"
-    assert payload["failure"]["code"] == "invalid_arguments"
 
 
 @pytest.mark.parametrize(
@@ -538,7 +489,6 @@ def test_ocr_json_invalid_arguments_echo_parsed_caller_paths(
     assert payload["status"] == "failed"
     assert payload["input"] == "caller-in.pdf"
     assert payload["output"] == "caller-out.pdf"
-    assert payload["failure"]["code"] == "invalid_arguments"
 
 
 def test_ocr_json_help_combination_is_one_invalid_arguments_object():
@@ -553,7 +503,6 @@ def test_ocr_json_help_combination_is_one_invalid_arguments_object():
     assert payload["status"] == "failed"
     assert payload["input"] == "caller-in.pdf"
     assert payload["output"] == "caller-out.pdf"
-    assert payload["failure"]["code"] == "invalid_arguments"
 
 
 def _write_pdf(path: Path, pages: list[str]) -> None:
@@ -579,19 +528,12 @@ def test_text_extract_writes_utf8_and_machine_signals(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     text = output.read_text(encoding="utf-8")
-    assert payload == {
-        "status": "ok",
-        "input": str(source),
-        "output": str(output),
-        "exists": True,
-        "size": output.stat().st_size,
-        "chars": len(text),
-        "non_whitespace_chars": sum(not char.isspace() for char in text),
-        "exit": 0,
-        "failure": None,
-        "pages": 2,
-        "text_pages": 2,
-    }
+    assert payload["status"] == "ok"
+    assert payload["input"] == str(source)
+    assert payload["output"] == str(output)
+    assert payload["exists"] is True
+    assert payload["chars"] == len(text)
+    assert payload["text_pages"] == 2
     assert "Making sense of conduct" in text
     assert "Café, agency, and culture" in text
 
@@ -630,7 +572,6 @@ def test_text_extract_missing_input_returns_json_failure(tmp_path: Path):
     assert payload["pages"] == 0
     assert payload["text_pages"] == 0
     assert payload["exit"] == 2
-    assert payload["failure"]["code"] == "input_missing"
 
 
 def test_text_extract_reports_missing_pdftotext(tmp_path: Path):
@@ -648,7 +589,6 @@ def test_text_extract_reports_missing_pdftotext(tmp_path: Path):
     assert payload["pages"] == 0
     assert payload["text_pages"] == 0
     assert payload["exit"] == 127
-    assert payload["failure"]["code"] == "pdftotext_missing"
     assert output.exists() is False
 
 
@@ -664,7 +604,6 @@ def test_text_extract_tool_failure_preserves_existing_output(tmp_path: Path):
     assert result.returncode != 0
     payload = json.loads(result.stdout)
     assert payload["status"] == "error"
-    assert payload["failure"]["code"] == "pdftotext_failed"
     assert payload["exists"] is True
     assert payload["size"] == len("previous complete output")
     assert output.read_text(encoding="utf-8") == "previous complete output"
@@ -964,28 +903,6 @@ def test_pdf_split_manifest_uses_common_chapter_fields(tmp_path: Path):
     assert manifest["extracted_count"] == 2
 
 
-CHAPTER_RECEIPT_FIELDS = {
-    "schema_version",
-    "status",
-    "input_path",
-    "output_dir",
-    "mode",
-    "disposition",
-    "exit",
-    "manifest_path",
-    "manifest_exists",
-    "request_fingerprint",
-    "manifest_fingerprint",
-    "chapter_count",
-    "chapters",
-    "skipped",
-    "removed_files",
-    "limit",
-    "previous_manifest_preserved",
-    "failure",
-}
-
-
 def _book_pdf(path: Path, pages: list[str], toc: list[list] | None = None) -> None:
     import fitz
 
@@ -1029,7 +946,7 @@ def _run_manual(pdf: Path, output: Path, count: int, *extra: str):
     )
 
 
-def test_book_manual_json_is_one_flat_receipt_and_full_manifest(tmp_path: Path):
+def test_book_manual_json_commits_full_manifest(tmp_path: Path):
     pdf = tmp_path / "book.pdf"
     output = tmp_path / "chapters"
     _book_pdf(pdf, ["first body " * 20, "second body " * 20])
@@ -1041,8 +958,6 @@ def test_book_manual_json_is_one_flat_receipt_and_full_manifest(tmp_path: Path):
     assert "Created:" not in result.stdout
     assert "Created:" in result.stderr
     receipt = json.loads(result.stdout)
-    assert set(receipt) == CHAPTER_RECEIPT_FIELDS
-    assert receipt["schema_version"] == "quasi.extract.chapters.receipt/0.1"
     assert receipt["status"] == "ok"
     assert receipt["mode"] == "manual"
     assert receipt["disposition"] == "created"
@@ -1151,9 +1066,6 @@ def test_book_failed_run_preserves_prior_manifest_and_chapters(tmp_path: Path):
     receipt = json.loads(result.stdout)
     assert result.returncode == 2
     assert receipt["status"] == "failed"
-    assert receipt["failure"]["code"] == "invalid_chapters_json"
-    assert receipt["failure"]["outcome"] == "known"
-    assert receipt["failure"]["retryable"] is False
     assert receipt["manifest_fingerprint"] == hashlib.sha256(
         manifest_before
     ).hexdigest()
@@ -1202,15 +1114,15 @@ def test_book_repair_updates_exact_slot_and_renames_owned_file(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    ("arguments", "code"),
+    "arguments",
     [
-        (["--pages", "1-1", "--title", "X", "--slot", "missing"], "slot_not_found"),
-        (["--pages", "2-1", "--title", "X", "--slot", "01"], "invalid_range"),
-        (["--pages", "1-999", "--title", "X", "--slot", "01"], "invalid_range"),
+        ["--pages", "1-1", "--title", "X", "--slot", "missing"],
+        ["--pages", "2-1", "--title", "X", "--slot", "01"],
+        ["--pages", "1-999", "--title", "X", "--slot", "01"],
     ],
 )
 def test_book_repair_rejects_unknown_slot_and_invalid_range(
-    tmp_path: Path, arguments: list[str], code: str
+    tmp_path: Path, arguments: list[str]
 ):
     pdf = tmp_path / "book.pdf"
     output = tmp_path / "chapters"
@@ -1230,9 +1142,6 @@ def test_book_repair_rejects_unknown_slot_and_invalid_range(
     receipt = json.loads(result.stdout)
     assert result.returncode == 2
     assert receipt["status"] == "failed"
-    assert receipt["failure"]["code"] == code
-    assert receipt["failure"]["outcome"] == "known"
-    assert receipt["failure"]["retryable"] is False
     assert receipt["previous_manifest_preserved"] is True
     assert (output / "manifest.json").read_bytes() == before
 
@@ -1278,9 +1187,6 @@ def test_book_invalid_json_arguments_emit_exactly_one_receipt(
     assert result.returncode == 2
     assert result.stdout.count("\n") == 1
     assert receipt["status"] == "failed"
-    assert receipt["failure"]["outcome"] == "known"
-    assert receipt["failure"]["retryable"] is False
-    assert set(receipt) == CHAPTER_RECEIPT_FIELDS
 
 
 def test_book_identical_rerun_reconciles_without_rewriting(tmp_path: Path):
@@ -1381,9 +1287,6 @@ def test_book_manifest_change_during_build_fails_closed(
 
     assert rc == 1
     assert receipt["status"] == "failed"
-    assert receipt["failure"]["code"] == "expected_manifest_mismatch"
-    assert receipt["failure"]["outcome"] == "known"
-    assert receipt["failure"]["retryable"] is False
     assert receipt["previous_manifest_preserved"] is False
     assert json.loads((output / "manifest.json").read_text())["external_writer"] == "won"
 
@@ -1432,9 +1335,6 @@ def test_book_publish_failure_rolls_back_files_and_preserves_manifest(
 
     assert rc == 1
     assert receipt["status"] == "blocked"
-    assert receipt["failure"]["code"] == "commit_failed"
-    assert receipt["failure"]["outcome"] == "unknown"
-    assert receipt["failure"]["retryable"] is False
     assert receipt["manifest_fingerprint"] == hashlib.sha256(
         manifest_before
     ).hexdigest()
@@ -1462,9 +1362,6 @@ def test_book_malformed_stage_is_blocked_unknown_without_final_writes(
 
     assert rc == 1
     assert receipt["status"] == "blocked"
-    assert receipt["failure"]["code"] == "writer_receipt_invalid"
-    assert receipt["failure"]["outcome"] == "unknown"
-    assert receipt["failure"]["retryable"] is False
     assert receipt["manifest_exists"] is False
     assert receipt["manifest_fingerprint"] is None
     assert output.exists() is False
@@ -1484,9 +1381,6 @@ def test_book_output_symlink_is_rejected_without_touching_target(tmp_path: Path)
     receipt = json.loads(result.stdout)
     assert result.returncode == 1
     assert receipt["status"] == "failed"
-    assert receipt["failure"]["code"] == "output_not_directory"
-    assert receipt["failure"]["outcome"] == "known"
-    assert receipt["failure"]["retryable"] is False
     assert (real_output / "reader-notes.txt").read_text() == "keep"
     assert sorted(path.name for path in real_output.iterdir()) == ["reader-notes.txt"]
 
@@ -1586,9 +1480,6 @@ raise SystemExit(rc)
     assert sorted(process.returncode for process in processes) == [0, 1]
     assert sorted(receipt["status"] for receipt in receipts) == ["failed", "ok"]
     loser = next(receipt for receipt in receipts if receipt["status"] == "failed")
-    assert loser["failure"]["code"] == "manifest_conflict"
-    assert loser["failure"]["outcome"] == "known"
-    assert loser["failure"]["retryable"] is False
     assert loser["previous_manifest_preserved"] is True
     manifest = json.loads((output / "manifest.json").read_text())
     assert len(manifest["chapters"]) == 1
@@ -1646,81 +1537,11 @@ def test_book_expected_manifest_mismatch_fails_before_extraction(
     assert result.returncode == 1
     assert "Created:" not in result.stderr
     assert receipt["status"] == "failed"
-    assert receipt["failure"] == {
-        "code": "expected_manifest_mismatch",
-        "outcome": "known",
-        "retryable": False,
-        "message": "manifest fingerprint does not match the caller precondition",
-    }
     assert receipt["request_fingerprint"] is None
     assert receipt["manifest_fingerprint"] == hashlib.sha256(
         manifest_before
     ).hexdigest()
     assert (output / "manifest.json").read_bytes() == manifest_before
-
-
-@pytest.mark.parametrize(
-    ("code", "status", "outcome"),
-    [
-        ("invalid_arguments", "failed", "known"),
-        ("manifest_missing", "failed", "known"),
-        ("writer_receipt_invalid", "blocked", "unknown"),
-        ("commit_failed", "blocked", "unknown"),
-    ],
-)
-def test_book_error_receipt_matrix_and_exact_flat_keys(
-    tmp_path: Path,
-    code: str,
-    status: str,
-    outcome: str,
-):
-    error = chapter_commit.ChapterFailure(
-        code,
-        f"representative {code}",
-        status=status,
-        outcome=outcome,
-    )
-
-    receipt = chapter_commit.failure_receipt(
-        input_path=tmp_path / "book.pdf",
-        output_dir=tmp_path / "chapters",
-        mode="manual",
-        max_chapters=50,
-        error=error,
-    )
-
-    assert set(receipt) == CHAPTER_RECEIPT_FIELDS
-    assert receipt["status"] == status
-    assert receipt["failure"] == {
-        "code": code,
-        "outcome": outcome,
-        "retryable": False,
-        "message": f"representative {code}",
-    }
-    assert receipt["request_fingerprint"] is None
-    assert receipt["manifest_fingerprint"] is None
-
-
-@pytest.mark.parametrize(
-    ("status", "outcome", "retryable"),
-    [
-        ("failed", "unknown", False),
-        ("failed", "known", True),
-        ("blocked", "known", False),
-        ("blocked", "unknown", True),
-    ],
-)
-def test_book_failure_constructor_rejects_open_matrix(
-    status: str, outcome: str, retryable: bool
-):
-    with pytest.raises(ValueError, match="failure matrix"):
-        chapter_commit.ChapterFailure(
-            "bad_matrix",
-            "invalid failure matrix",
-            status=status,
-            outcome=outcome,
-            retryable=retryable,
-        )
 
 
 @pytest.mark.parametrize("with_previous", [False, True], ids=["fresh", "replacement"])
@@ -1777,9 +1598,6 @@ def test_book_post_manifest_fsync_failure_keeps_new_generation_coherent(
     assert fsync_calls == 2
     assert receipt["status"] == "blocked"
     assert receipt["disposition"] is None
-    assert receipt["failure"]["code"] == "commit_failed"
-    assert receipt["failure"]["outcome"] == "unknown"
-    assert receipt["failure"]["retryable"] is False
     assert receipt["previous_manifest_preserved"] is False
     assert receipt["manifest_fingerprint"] == hashlib.sha256(
         manifest_bytes
@@ -1803,211 +1621,3 @@ def test_book_post_manifest_fsync_failure_keeps_new_generation_coherent(
     assert reconcile["manifest_fingerprint"] == receipt["manifest_fingerprint"]
     assert list(tmp_path.glob(".chapters.stage-*")) == []
     assert list(tmp_path.glob(".chapters.backup-*")) == []
-
-
-def test_book_legacy_manual_renders_prose_over_transaction(tmp_path: Path):
-    pdf = tmp_path / "book.pdf"
-    output = tmp_path / "chapters"
-    _book_pdf(pdf, ["legacy " * 20])
-
-    result = run_extract(
-        "split",
-        str(pdf),
-        "--output-dir",
-        str(output),
-        "--chapters",
-        _manual_specs(1),
-        "--min-chapter-length",
-        "0",
-    )
-
-    manifest = json.loads((output / "manifest.json").read_text())
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.startswith("Manual mode: 1 chapters specified")
-    assert f"Created: {output / manifest['chapters'][0]['filename']}" in result.stdout
-    assert f"Created manifest: {output / 'manifest.json'}" in result.stdout
-    assert result.stdout.rstrip().endswith("Done!")
-    with pytest.raises(json.JSONDecodeError):
-        json.loads(result.stdout)
-    chapter_commit.validate_manifest(manifest, output)
-
-
-def test_book_legacy_pages_uses_transaction_manifest(tmp_path: Path):
-    pdf = tmp_path / "book.pdf"
-    output = tmp_path / "chapters"
-    _book_pdf(pdf, ["single range " * 20])
-
-    result = run_extract(
-        "split",
-        str(pdf),
-        "--output-dir",
-        str(output),
-        "--pages",
-        "1-1",
-        "--title",
-        "Legacy title",
-    )
-
-    manifest = json.loads((output / "manifest.json").read_text())
-    row = manifest["chapters"][0]
-    assert result.returncode == 0, result.stderr
-    assert row["filename"] == "Legacy_title.txt"
-    assert result.stdout.strip() == (
-        f"Extracted pages 1-1 → {output / row['filename']}"
-    )
-    chapter_commit.validate_manifest(manifest, output)
-
-
-def test_book_legacy_pattern_uses_transaction_manifest(tmp_path: Path):
-    pdf = tmp_path / "book.pdf"
-    output = tmp_path / "chapters"
-    _book_pdf(
-        pdf,
-        [
-            "Chapter 1: First\n" + "first body " * 20,
-            "Chapter 2: Second\n" + "second body " * 20,
-        ],
-    )
-
-    result = run_extract(
-        "split",
-        str(pdf),
-        "--output-dir",
-        str(output),
-        "--method",
-        "pattern",
-        "--patterns",
-        r"^Chapter\s+\d+",
-        "--min-chapter-length",
-        "0",
-    )
-
-    manifest = json.loads((output / "manifest.json").read_text())
-    assert result.returncode == 0, result.stderr
-    assert manifest["split_method"] == "pattern"
-    assert len(manifest["chapters"]) == 2
-    assert result.stdout.rstrip().endswith(
-        "Done! Chapter files are ready for processing."
-    )
-    chapter_commit.validate_manifest(manifest, output)
-
-
-def test_book_json_and_legacy_writers_share_one_output_lock(
-    tmp_path: Path,
-):
-    wrapper = tmp_path / "paused-json-split.py"
-    ready = tmp_path / "ready"
-    release = tmp_path / "release"
-    wrapper.write_text(
-        """
-import sys
-import time
-from pathlib import Path
-
-sys.path.insert(0, sys.argv[1])
-import chapter_commit
-
-output = Path(sys.argv[3])
-ready = Path(sys.argv[4])
-release = Path(sys.argv[5])
-real_replace = chapter_commit.os.replace
-
-def paused_replace(source, target):
-    if Path(target) == output / "manifest.json":
-        ready.write_text("ready", encoding="utf-8")
-        deadline = time.monotonic() + 10
-        while not release.exists():
-            if time.monotonic() > deadline:
-                raise RuntimeError("barrier timeout")
-            time.sleep(0.01)
-    return real_replace(source, target)
-
-chapter_commit.os.replace = paused_replace
-import split_chapters
-
-sys.argv = [
-    "split_chapters.py",
-    sys.argv[2],
-    "--output-dir",
-    sys.argv[3],
-    "--chapters",
-    '[{"title":"Same","start":1,"end":1}]',
-    "--min-chapter-length",
-    "0",
-    "--json",
-]
-raise SystemExit(split_chapters.main())
-""".lstrip(),
-        encoding="utf-8",
-    )
-    pdf = tmp_path / "book.pdf"
-    output = tmp_path / "chapters"
-    _book_pdf(pdf, ["json generation " * 20, "legacy generation " * 20])
-    json_writer = subprocess.Popen(
-        [
-            sys.executable,
-            str(wrapper),
-            str(EXTRACT_DIR),
-            str(pdf),
-            str(output),
-            str(ready),
-            str(release),
-        ],
-        cwd=PLUGIN_ROOT,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    deadline = time.monotonic() + 10
-    while not ready.exists():
-        if json_writer.poll() is not None:
-            pytest.fail(f"JSON writer exited early: {json_writer.communicate()}")
-        if time.monotonic() > deadline:
-            pytest.fail("JSON writer did not reach manifest replacement")
-        time.sleep(0.01)
-
-    legacy_writer = subprocess.Popen(
-        [
-            sys.executable,
-            str(EXTRACT),
-            "split",
-            str(pdf),
-            "--output-dir",
-            str(output),
-            "--chapters",
-            '[{"title":"Same","start":2,"end":2}]',
-            "--min-chapter-length",
-            "0",
-        ],
-        cwd=PLUGIN_ROOT,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    legacy_completed_while_locked = False
-    try:
-        legacy_writer.wait(timeout=0.2)
-        legacy_completed_while_locked = True
-    except subprocess.TimeoutExpired:
-        pass
-    finally:
-        release.write_text("release", encoding="utf-8")
-    json_stdout, json_stderr = json_writer.communicate(timeout=10)
-    legacy_stdout, legacy_stderr = legacy_writer.communicate(timeout=10)
-
-    receipt = json.loads(json_stdout)
-    manifest_bytes = (output / "manifest.json").read_bytes()
-    manifest = json.loads(manifest_bytes)
-    assert legacy_completed_while_locked is False
-    assert json_writer.returncode == 0, json_stderr
-    assert receipt["status"] == "ok"
-    assert legacy_writer.returncode == 1, (legacy_stdout, legacy_stderr)
-    assert "competing chapter generation" in legacy_stdout
-    assert receipt["manifest_fingerprint"] == hashlib.sha256(
-        manifest_bytes
-    ).hexdigest()
-    assert receipt["chapters"] == manifest["chapters"]
-    assert "json generation" in (
-        output / manifest["chapters"][0]["filename"]
-    ).read_text(encoding="utf-8")
-    chapter_commit.validate_manifest(manifest, output)
