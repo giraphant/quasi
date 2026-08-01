@@ -146,6 +146,13 @@ def stage_context(kind: str, stage: str) -> dict[str, Any]:
             "year": 1991,
             "doi": None,
         }
+        if kind == "paper":
+            context["meta"].update(
+                {
+                    "oa_url": "https://example.org/example.pdf",
+                    "url": "https://www.jstor.org/stable/43154235",
+                }
+            )
     if kind == "book" and stage == "analyse":
         context["chapter"] = {
             "slot": "01",
@@ -256,6 +263,28 @@ def test_registry_resolves_one_stage_per_kind(
     assert report["direct"]["operation"] == operation
     assert report["result"] == {"sentinel": "returned-verbatim"}
     assert len(report["trace"]) == 1
+
+
+def test_paper_acquire_prompt_preserves_urls_and_real_diagnostic_capabilities() -> None:
+    report = run_stage(
+        {
+            "kind": "paper",
+            "slug": "example-paper",
+            "stage": "acquire",
+            "context": stage_context("paper", "acquire"),
+        }
+    )
+
+    request = json.loads(report["direct"]["prompt"])
+
+    assert request["identity"]["oa_url"] == "https://example.org/example.pdf"
+    assert request["identity"]["url"] == "https://www.jstor.org/stable/43154235"
+    assert "--output" not in request["capabilities"][0]
+    assert request["capabilities"][0].startswith("quasi-download paper fetch --slug")
+    assert request["capabilities"][1] == (
+        "quasi-download paper diagnose --url URL [--via-ezproxy] "
+        "[--timeout SECONDS] --json"
+    )
 
 
 def test_prompt_and_schema_are_exactly_the_selected_row_pair() -> None:

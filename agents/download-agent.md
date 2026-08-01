@@ -32,10 +32,12 @@ prior evidence。`accept-current` 只可保留 evidence 的 slug year；`use-rec
 接受 `MISMATCH`，并要求 caller 已把 identity year 与 canonical slug 更新为推荐年。
 
 Paper 流程只有 caller 给出的一个 `exact_output`：目标不存在时执行一次
-`quasi-download paper fetch`；目标存在时只核验其题名、作者和 DOI 身份证据。不要在
-fetch 之外追加搜索或另起候选 cascade；`quasi-download` 拥有该 cascade。每一次实际来源
-尝试都必须保留原样的 `{source,status,error}` 行；耗尽时如实报告完整 attempts。核验后
-才 accept，且 Paper receipt 的 `output_path` 在所有 terminal 都逐字 echo
+`quasi-download paper fetch`；目标存在时只核验其题名、作者和 DOI 身份证据。已观察到
+hard 4xx、登录页或 challenge 时，可仅对 caller 给出的同一 URL 执行一次只读
+`quasi-download paper diagnose`，把脱敏结果作为已有失败的证据；它不是来源、重试指令或
+规避访问控制的方法，不能派生 URL、写文件或另起 cascade。不要在 fetch 之外追加搜索或另起
+候选 cascade；`quasi-download` 拥有该 cascade。每一次实际来源尝试都必须保留原样的
+`{source,status,error}` 行；耗尽时如实报告完整 attempts。核验后才 accept，且 Paper receipt 的 `output_path` 在所有 terminal 都逐字 echo
 `request.exact_output`；CLI 输出的 absolute/resolved path 仅是观察证据。
 
 阅读每个候选的 inspect/front-page/file metadata，排除题名相似但版本、作者或作品不同的

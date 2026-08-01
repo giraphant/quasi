@@ -2,6 +2,19 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.56.0** (2026-08-01): **EZProxy 先走改写主机名、URL-only 请求也能进代理，JSTOR stable URL 不再必然 403。**
+  - 真实故障是两处叠加，而不是权限问题：其一，`download_paper` 的 EZProxy 那一步写在 `if doi:` 里，所以只给 URL 的请求从来没有进过代理，机构会话再有效也只发出裸的公网请求；其二，代理入口只构造 `login?url=` 形式，而 CookieCloud 拉到的 25 条 cookie 里没有一条落在 `login.` 主机上——会话是发在被改写的主机上的（`www-jstor-org.eux.idm.oclc.org` 上 7 条），于是 login 形式必然被判成 `EZProxyCookieExpired`。
+  - `_ezproxy_request_urls` 因此把改写主机名的形式排在 `login?url=` 之前；后缀优先从用户自己 cookie 记录里带短横线首标签的域名推断（观察到的事实），推不出才退回 login 主机去掉 `login`/`ezproxy`/`proxy` 服务标签。已经在代理域上的 URL 原样请求，不二次包裹。改写形式对 Cell、ScienceDirect 等既有 publisher 同样生效。
+  - JSTOR 适配本身只是派生 PDF URL：`/stable/{id}` → `/stable/pdf/{id}.pdf?acceptTC=1`，序号与 DOI 两种 stable id 都认，并保留调用方的 netloc 好让已代理的 hint 保持代理。`acceptTC=1` 是必需的——缺了它 JSTOR 在 PDF 路径上回的是条款页 HTML，读起来和付费墙一模一样。
+  - 同时把 URL→PDF 派生收成一个入口 `_pdf_urls_from_article_url`，hint 收集、EZProxy landing、Kagi 恢复三处共用。此前每处各自手抄一份 publisher 名单，所以 Cell 三处齐全、ScienceDirect 只有两处、新加的平台默认只落一处——JSTOR 若照旧例加也会是同一个坑。
+  - 主机匹配同样只留一个：`_unproxy_host` 先把 EZProxy 的单标签短横线编码解回真实主机（`pubsonline-informs-org.eux.idm.oclc.org` → `pubsonline.informs.org`），`_is_publisher_host` 再按域名（含子域）匹配。`PUBLISHER_PDF_PATTERNS` 因此改成域名键。原表里并存的 `pubsonline.informs` 与 `pubsonline-informs` 两行正是手工补代理拼写的痕迹，而同表的 `nature.com`、`academic.oup`、`mit.edu` 没补——它们在代理路径上从来没有匹配上过，这次一并修好。
+  - 新增 `_publisher_pdf_urls_from_article_url`：URL 自己路径里就带 DOI 的 publisher（`tandfonline.com/doi/abs/10.1080/x` 之类）复用同一张表派生 PDF，不必先做一次 DOI 解析。
+  - 实测：`paper fetch --url https://www.jstor.org/stable/43154235` 此前落到 Kagi 恢复阶段并"成功"下载了一份无关的 JSTOR 使用指南（4.1MB），现在经改写主机取回正确的 Clarke 1996《Agent Causation and Event Causation》3.1MB 原文。tandfonline 的 URL-only 请求确认能派生出两条 PDF hint 并经改写主机进入代理，只是该站另外回 Cloudflare challenge（已被正确识别，属既有问题）。
+
+- **0.56.0** (2026-08-01): **新增只读 `quasi-download paper diagnose`，把拒绝访问的 HTTP 证据与下载 cascade 分离。**
+  - JSTOR stable URL 的 native 请求曾只留下 `FAIL HTTP Error 403`，无法区分 access denial、登录页和 Cloudflare challenge；新命令只观察一条 direct 或显式 EZProxy 路径，返回脱敏的状态、响应类别与路由事实。
+  - Diagnose 不写临时或 canonical 文件、不派生 PDF URL、不运行 OA/Kagi/代理下载 cascade，也不输出 cookie、Authorization、原始响应体或 URL query；它是 failed receipt 的证据工具，不是付费墙规避能力。
+
 - **0.55.1** (2026-08-01): **给 receipt schema 里所有 exact-echo `const` 补显式 `type` 注解，弱模型宿主不再把非字符串 echo 串化到撞死重试上限。**
   - 实测故障：一次 paper Audit 连续 5 次 StructuredOutput 校验失败（重试上限），worker 模型是 glm-5.2，它把 `pass: 1` 发成 `"1"`、`artifact_roles: ["canonical"]` 发成字符串化数组——schema 里裸 `const`（无 `type`）会让弱模型默认按字符串输出，而同一收据里带 `type: "integer"` 的顶层 `attempt: 1` 是对的。Claude worker 在相同 row 上从未失败，说明这是 type 提示缺失、不是合同错误。
   - 修复只落在唯一咽喉 `stage.mjs::stageReceiptSchema`：`annotateConstTypes` 递归给每个缺 `type` 的 `const` 节点按值推断补注解，不改 `const`/`enum`/`default`/`examples` 的字面值。exact-echo 纪律原样保留——echo 仍是把 receipt 绑到 exact refs 的身份证明，只是现在弱模型也能满足它。

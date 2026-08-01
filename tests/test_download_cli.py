@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
 import importlib.util
+import urllib.error
 import hashlib
 import os
 import subprocess
@@ -91,6 +93,7 @@ def test_download_help_exposes_agent_contract():
         ("book", "candidates", "--help"),
         ("book", "fetch", "--help"),
         ("paper", "fetch", "--help"),
+        ("paper", "diagnose", "--help"),
         ("accept", "--help"),
     ]:
         result = run_download(*args)
@@ -320,6 +323,26 @@ def _load_module(path: Path, name: str):
     return mod
 
 
+class _FakeUrlResponse:
+    def __init__(self, url, content, *, status=200, headers=None):
+        self._url = url
+        self._content = content
+        self.status = status
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self, size=-1):
+        return self._content if size < 0 else self._content[:size]
+
+    def geturl(self):
+        return self._url
+
+
 def test_ezproxy_base_url_normalises_to_login_prefix():
     mod = _load_module(COOKIECLOUD, "cookiecloud_under_test")
 
@@ -436,15 +459,8 @@ def test_find_oa_url_accepts_cambridge_crossref_content_view_link(monkeypatch):
 def test_informs_proxied_host_matches_ezproxy_pdf_pattern():
     mod = _load_module(DOWNLOAD, "download_informs_pattern_under_test")
     final_url = "https://pubsonline-informs-org.eux.idm.oclc.org/doi/10.1287/ijoc.2024.0736"
-    doi = "10.1287/ijoc.2024.0736"
 
-    urls = [
-        f"https://pubsonline-informs-org.eux.idm.oclc.org{pattern.format(doi=doi)}"
-        for hint, pattern in mod.PUBLISHER_PDF_PATTERNS
-        if hint in final_url
-    ]
-
-    assert urls == [
+    assert mod._publisher_pdf_urls_from_article_url(final_url) == [
         "https://pubsonline-informs-org.eux.idm.oclc.org/doi/pdf/10.1287/ijoc.2024.0736"
     ]
 
@@ -468,11 +484,7 @@ def test_annualreviews_doi_has_ezproxy_and_direct_pdf_routes():
     doi = "10.1146/annurev-soc-031021-041439"
     final_url = "https://www-annualreviews-org.eux.idm.oclc.org/content/journals/10.1146/annurev-soc-031021-041439"
 
-    proxied = [
-        f"https://www-annualreviews-org.eux.idm.oclc.org{pattern.format(doi=doi)}"
-        for hint, pattern in mod.PUBLISHER_PDF_PATTERNS
-        if hint in final_url
-    ]
+    proxied = mod._publisher_pdf_urls_from_article_url(final_url)
     direct = [
         pattern.format(doi=doi, suffix=doi.split("/", 1)[-1])
         for prefix, pattern in mod._PUBLISHER_DIRECT_URLS
@@ -575,6 +587,285 @@ def test_cell_pii_resolves_to_doi_via_crossref(monkeypatch):
     assert mod._doi_from_cell_pii("S1364-6613(26)00108-7") == "10.1016/j.tics.2026.05.002"
 
 
+def test_paper_diagnose_retains_redacted_native_jstor_403(monkeypatch, tmp_path):
+    mod = _load_module(DOWNLOAD, "download_jstor_403_diagnose_under_test")
+    requested = "https://www.jstor.org/stable/43154235?token=never-print-me"
+    seen_headers = []
+
+    def fake_urlopen(request, timeout):
+        seen_headers.append(dict(request.header_items()))
+        raise urllib.error.HTTPError(
+            requested,
+            403,
+            "Forbidden",
+            {"content-type": "text/html"},
+            io.BytesIO(b"<html>access denied</html>"),
+        )
+
+    monkeypatch.setenv("QUASI_COOKIECLOUD_EZPROXY_DOMAIN", "eux.idm.oclc.org")
+    monkeypatch.setattr(
+        mod,
+        "load_ezproxy_config",
+        lambda: (_ for _ in ()).throw(AssertionError("direct probe must not fetch CookieCloud")),
+    )
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: (_ for _ in ()).throw(AssertionError("diagnose must not retry")))
+
+    report = mod.diagnose_paper_url(requested)
+
+    assert report == {
+        "schema_version": "quasi.download.diagnose/0.1",
+        "requested_url": "https://www.jstor.org/stable/43154235",
+        "final_url": "https://www.jstor.org/stable/43154235",
+        "mode": "direct",
+        "http_status": 403,
+        "content_type": "text/html",
+        "classification": "access_denied",
+        "retryable": False,
+        "ezproxy": {
+            "configured": True,
+            "target_matches_proxy": False,
+            "attempted": False,
+        },
+        "wrote_file": False,
+    }
+    assert "Cookie" not in seen_headers[0]
+    assert "never-print-me" not in json.dumps(report)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_paper_diagnose_classifies_landing_cloudflare_pdf_and_connection_error(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_diagnose_classification_under_test")
+    url = "https://www.jstor.org/stable/43154235"
+
+    responses = [
+        _FakeUrlResponse(url, b"<html>institution login</html>", headers={"content-type": "text/html"}),
+        urllib.error.HTTPError(
+            url,
+            403,
+            "Forbidden",
+            {"content-type": "text/html", "cf-ray": "abc", "server": "cloudflare"},
+            io.BytesIO(b"<title>Just a moment...</title>"),
+        ),
+        _FakeUrlResponse(url, b"%PDF-1.7", headers={"content-type": "application/pdf"}),
+        urllib.error.URLError("offline"),
+    ]
+
+    def fake_urlopen(_request, timeout):
+        response = responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+
+    reports = [mod.diagnose_paper_url(url) for _ in range(4)]
+
+    assert [(report["http_status"], report["classification"]) for report in reports] == [
+        (200, "html_landing"),
+        (403, "cloudflare_challenge"),
+        (200, "pdf"),
+        (None, "connection_error"),
+    ]
+    assert reports[-1]["retryable"] is True
+    assert all(report["wrote_file"] is False for report in reports)
+
+
+def test_paper_diagnose_parser_and_handler_never_start_acquisition(monkeypatch, capsys):
+    mod = _load_module(DOWNLOAD, "download_diagnose_command_under_test")
+    url = "https://www.jstor.org/stable/43154235?signature=do-not-print"
+    args = mod._build_parser().parse_args([
+        "paper", "diagnose", "--url", url, "--timeout", "12", "--json",
+    ])
+
+    def acquisition_called(*_args, **_kwargs):
+        raise AssertionError("diagnostic must not start acquisition")
+
+    monkeypatch.setattr(mod, "download_paper", acquisition_called)
+    monkeypatch.setattr(mod, "download_pdf_from_url", acquisition_called)
+    monkeypatch.setattr(mod, "load_ezproxy_config", lambda: None)
+    monkeypatch.setattr(
+        mod.urllib.request,
+        "urlopen",
+        lambda _request, timeout: _FakeUrlResponse(url, b"<html>landing</html>", headers={"content-type": "text/html"}),
+    )
+
+    assert args.func(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["requested_url"] == "https://www.jstor.org/stable/43154235"
+    assert payload["classification"] == "html_landing"
+    assert payload["wrote_file"] is False
+    assert "do-not-print" not in json.dumps(payload)
+
+
+def test_paper_diagnose_via_ezproxy_redacts_session_data(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_diagnose_ezproxy_under_test")
+    url = "https://www.jstor.org/stable/43154235?signature=do-not-print"
+    config = {
+        "domain": "eux.idm.oclc.org",
+        "login_url": "https://login.eux.idm.oclc.org/login?url=",
+        "cookie": "never-print-cookie",
+    }
+    calls = []
+
+    class FakeResponse:
+        url = "https://www-jstor-org.eux.idm.oclc.org/stable/43154235?session=do-not-print"
+        status_code = 200
+        headers = {"content-type": "application/pdf"}
+        closed = False
+
+        @property
+        def content(self):
+            raise AssertionError("diagnostic must stream a bounded response prefix")
+
+        def iter_content(self, *, chunk_size):
+            assert chunk_size <= mod._DIAGNOSE_BODY_LIMIT
+            yield b"%PDF-1.7"
+
+        def close(self):
+            self.closed = True
+
+    response = FakeResponse()
+
+    class FakeSession:
+        def get(self, request_url, **kwargs):
+            calls.append((request_url, kwargs))
+            return response
+
+    monkeypatch.setattr(mod, "load_ezproxy_config", lambda: config)
+    monkeypatch.setattr(mod, "_build_ezproxy_session", lambda _config: FakeSession())
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: (_ for _ in ()).throw(AssertionError("diagnose must not retry")))
+
+    report = mod.diagnose_paper_url(url, via_ezproxy=True)
+
+    assert calls == [(
+        f"{config['login_url']}{url}",
+        {"allow_redirects": True, "timeout": 30, "stream": True},
+    )]
+    assert response.closed is True
+    assert report["mode"] == "ezproxy"
+    assert report["classification"] == "pdf"
+    assert report["ezproxy"] == {
+        "configured": True,
+        "target_matches_proxy": False,
+        "attempted": True,
+    }
+    rendered = json.dumps(report)
+    assert "never-print-cookie" not in rendered
+    assert "do-not-print" not in rendered
+
+
+def test_paper_diagnose_stream_reader_stays_bounded_for_oversized_chunks():
+    mod = _load_module(DOWNLOAD, "download_diagnose_bounded_stream_under_test")
+
+    class OversizedChunkResponse:
+        @property
+        def content(self):
+            raise AssertionError("stream reader must not materialise response.content")
+
+        def iter_content(self, *, chunk_size):
+            assert chunk_size <= mod._DIAGNOSE_BODY_LIMIT
+            yield b"x" * (mod._DIAGNOSE_BODY_LIMIT + 1)
+            raise AssertionError("reader must stop after its bounded prefix")
+
+    content = mod._read_diagnostic_response_body(OversizedChunkResponse())
+
+    assert content == b"x" * mod._DIAGNOSE_BODY_LIMIT
+
+
+def test_paper_diagnose_observes_retryable_status_once(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_diagnose_no_retry_under_test")
+    url = "https://www.jstor.org/stable/43154235"
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append((request.full_url, timeout))
+        raise urllib.error.HTTPError(
+            url,
+            503,
+            "Service Unavailable",
+            {"content-type": "text/html"},
+            io.BytesIO(b"<html>try later</html>"),
+        )
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        mod,
+        "load_ezproxy_config",
+        lambda: (_ for _ in ()).throw(AssertionError("direct probe must not fetch CookieCloud")),
+    )
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: (_ for _ in ()).throw(AssertionError("diagnose must not retry")))
+
+    report = mod.diagnose_paper_url(url)
+
+    assert calls == [(url, 30)]
+    assert report["http_status"] == 503
+    assert report["classification"] == "html_landing"
+    assert report["retryable"] is True
+
+
+def test_paper_diagnose_direct_never_injects_proxy_cookies(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_diagnose_cookie_boundary_under_test")
+    url = "https://www.jstor.org/stable/43154235"
+    sent_headers = []
+
+    def fake_urlopen(request, timeout):
+        sent_headers.append(dict(request.header_items()))
+        return _FakeUrlResponse(url, b"<html>landing</html>", headers={"content-type": "text/html"})
+
+    monkeypatch.setenv("QUASI_COOKIECLOUD_EZPROXY_DOMAIN", "jstor.org")
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+
+    report = mod.diagnose_paper_url(url)
+
+    assert report["ezproxy"] == {
+        "configured": True,
+        "target_matches_proxy": True,
+        "attempted": False,
+    }
+    assert all(name.lower() != "cookie" for name in sent_headers[0])
+
+
+def test_paper_diagnose_reports_unavailable_ezproxy_without_target_request(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_diagnose_ezproxy_unavailable_under_test")
+    url = "https://www.jstor.org/stable/43154235"
+
+    monkeypatch.delenv("QUASI_COOKIECLOUD_EZPROXY_DOMAIN", raising=False)
+    monkeypatch.setattr(mod, "load_ezproxy_config", lambda: None)
+    monkeypatch.setattr(
+        mod,
+        "_build_ezproxy_session",
+        lambda _config: (_ for _ in ()).throw(AssertionError("no session without config")),
+    )
+
+    report = mod.diagnose_paper_url(url, via_ezproxy=True)
+
+    assert report["mode"] == "ezproxy"
+    assert report["http_status"] is None
+    assert report["classification"] == "ezproxy_unavailable"
+    assert report["retryable"] is False
+    assert report["ezproxy"] == {
+        "configured": False,
+        "target_matches_proxy": False,
+        "attempted": False,
+    }
+
+
+def test_paper_diagnose_rejects_invalid_or_userinfo_urls(monkeypatch, capsys):
+    mod = _load_module(DOWNLOAD, "download_diagnose_invalid_url_under_test")
+    monkeypatch.setattr(
+        mod,
+        "diagnose_paper_url",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("invalid URLs must not be observed")),
+    )
+
+    for url in ("ftp://www.jstor.org/stable/43154235", "https://token@www.jstor.org/stable/43154235"):
+        args = mod._build_parser().parse_args(["paper", "diagnose", "--url", url])
+        assert args.func(args) == 2
+        assert "HTTP(S) URL without userinfo" in capsys.readouterr().err
+
+
 def test_ezproxy_login_detection_does_not_treat_cloudflare_as_cookie_expired():
     mod = _load_module(DOWNLOAD, "download_cloudflare_detection_under_test")
     cloudflare_html = b"""
@@ -614,7 +905,7 @@ def test_ezproxy_login_detection_raises_for_shibboleth_login():
         raise AssertionError("Shibboleth login page should raise EZProxyCookieExpired")
 
 
-def test_ezproxy_wraps_cell_showpdf_candidate_first(monkeypatch, tmp_path):
+def test_ezproxy_tries_cell_showpdf_candidate_first(monkeypatch, tmp_path):
     mod = _load_module(DOWNLOAD, "download_cell_ezproxy_candidate_under_test")
     calls: list[str] = []
 
@@ -654,9 +945,11 @@ def test_ezproxy_wraps_cell_showpdf_candidate_first(monkeypatch, tmp_path):
     )
 
     assert result is True
+    # The rewritten proxy host is tried before the login redirect: the
+    # institutional session cookies live on the rewritten host, not on login.
     assert calls[1] == (
-        "https://login.eux.idm.oclc.org/login?url="
-        "https://www.cell.com/action/showPdf?pii=S1364-6613%2826%2900108-7"
+        "https://www-cell-com.eux.idm.oclc.org/action/showPdf"
+        "?pii=S1364-6613%2826%2900108-7"
     )
     assert (tmp_path / "paper.pdf").read_bytes().startswith(b"%PDF-")
 
@@ -1050,3 +1343,250 @@ def test_try_ezproxy_download_calls_throttle_when_configured(tmp_path, monkeypat
 
     assert result is False
     assert calls == [1]  # gate reached exactly once when configured
+
+
+def test_jstor_pdf_url_derived_from_stable_url_forms():
+    mod = _load_module(DOWNLOAD, "download_jstor_urls_under_test")
+
+    # Bare sequence id, DOI id, and an already-proxied host all resolve, and
+    # acceptTC=1 is what separates the PDF from the terms-of-use interstitial.
+    assert mod._jstor_pdf_urls_from_article_url(
+        "https://www.jstor.org/stable/43154235"
+    ) == ["https://www.jstor.org/stable/pdf/43154235.pdf?acceptTC=1"]
+    assert mod._jstor_pdf_urls_from_article_url(
+        "https://www.jstor.org/stable/10.1086/691062"
+    ) == ["https://www.jstor.org/stable/pdf/10.1086/691062.pdf?acceptTC=1"]
+    assert mod._jstor_pdf_urls_from_article_url(
+        "https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf"
+        "?refreqid=fastly-default%3Aabc&acceptTC=1"
+    ) == [
+        "https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf?acceptTC=1"
+    ]
+    assert mod._jstor_pdf_urls_from_article_url("https://www.jstor.org/") == []
+    assert mod._jstor_pdf_urls_from_article_url(
+        "https://www.sciencedirect.com/stable/43154235"
+    ) == []
+
+
+def test_publisher_host_match_decodes_ezproxy_rewriting():
+    mod = _load_module(DOWNLOAD, "download_publisher_host_under_test")
+
+    # EZProxy packs the whole publisher host into one dash-joined label, so the
+    # domain tables need no separate entry per proxied spelling.
+    assert mod._unproxy_host("pubsonline-informs-org.eux.idm.oclc.org") == (
+        "pubsonline.informs.org"
+    )
+    assert mod._unproxy_host("www.jstor.org") == "www.jstor.org"
+    # A dash in a real publisher host is not proxy encoding.
+    assert mod._unproxy_host("link-springer.com") == "link-springer.com"
+
+    assert mod._is_publisher_host("www-jstor-org.eux.idm.oclc.org", "jstor.org")
+    assert mod._is_publisher_host("academic.oup.com", "oup.com")
+    assert mod._is_publisher_host("direct.mit.edu", "mit.edu")
+    assert not mod._is_publisher_host("notjstor.org", "jstor.org")
+
+
+def test_publisher_pdf_urls_derive_from_doi_carried_in_url_path():
+    mod = _load_module(DOWNLOAD, "download_publisher_pdf_urls_under_test")
+
+    assert mod._doi_from_url_path(
+        "https://www.tandfonline.com/doi/abs/10.1080/00048402.2019.1618352"
+    ) == "10.1080/00048402.2019.1618352"
+    assert mod._doi_from_url_path("https://www.jstor.org/stable/43154235") is None
+
+    assert mod._publisher_pdf_urls_from_article_url(
+        "https://www.tandfonline.com/doi/abs/10.1080/00048402.2019.1618352"
+    ) == [
+        "https://www.tandfonline.com/doi/pdf/10.1080/00048402.2019.1618352",
+        "https://www.tandfonline.com/doi/pdf/10.1080/00048402.2019.1618352"
+        "?download=true",
+    ]
+    # A host with no pattern entry derives nothing, DOI in the path or not.
+    assert mod._publisher_pdf_urls_from_article_url(
+        "https://example.org/doi/abs/10.1080/00048402.2019.1618352"
+    ) == []
+
+
+def test_pdf_url_dispatcher_covers_every_derivation_family():
+    mod = _load_module(DOWNLOAD, "download_pdf_url_dispatcher_under_test")
+
+    # One entry point, so a platform added to any table reaches all three call
+    # sites (hint collection, EZProxy landing, Kagi recovery) at once.
+    assert mod._pdf_urls_from_article_url(
+        "https://www.jstor.org/stable/43154235"
+    ) == ["https://www.jstor.org/stable/pdf/43154235.pdf?acceptTC=1"]
+    assert (
+        "https://journals.sagepub.com/doi/pdf/10.1177/0959354319898450"
+        in mod._pdf_urls_from_article_url(
+            "https://journals.sagepub.com/doi/abs/10.1177/0959354319898450"
+        )
+    )
+    assert mod._pdf_urls_from_article_url("") == []
+
+
+def test_ezproxy_request_urls_prefer_rewritten_host_over_login():
+    mod = _load_module(DOWNLOAD, "download_ezproxy_request_forms_under_test")
+    config = {
+        "login_url": "https://login.eux.idm.oclc.org/login?url=",
+        "domain": "idm.oclc.org",
+        "cookie_records": [
+            # The suffix the user's own browsing actually issued cookies on.
+            {"name": "UUID", "value": "x",
+             "domain": "www-jstor-org.eux.idm.oclc.org", "path": "/"},
+            {"name": "_clsk", "value": "y", "domain": "idm.oclc.org", "path": "/"},
+        ],
+    }
+
+    assert mod._ezproxy_host_suffix(config) == "eux.idm.oclc.org"
+    assert mod._ezproxy_request_urls(
+        "https://www.jstor.org/stable/pdf/43154235.pdf?acceptTC=1", config
+    ) == [
+        "https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf?acceptTC=1",
+        "https://login.eux.idm.oclc.org/login?url="
+        "https://www.jstor.org/stable/pdf/43154235.pdf?acceptTC=1",
+    ]
+    # An already-proxied URL is requested as-is, never double-wrapped.
+    assert mod._ezproxy_request_urls(
+        "https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf", config
+    ) == ["https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf"]
+
+
+def test_ezproxy_host_suffix_falls_back_to_login_host_label():
+    mod = _load_module(DOWNLOAD, "download_ezproxy_suffix_fallback_under_test")
+
+    # No proxied cookies yet: drop the login service label, OCLC convention.
+    assert mod._ezproxy_host_suffix(
+        {"login_url": "https://login.eux.idm.oclc.org/login?url="}
+    ) == "eux.idm.oclc.org"
+    assert mod._ezproxy_host_suffix(
+        {"login_url": "https://ezproxy.lib.example.edu/login?url="}
+    ) == "lib.example.edu"
+    # Nothing to drop: the whole host is the suffix.
+    assert mod._ezproxy_host_suffix(
+        {"login_url": "https://eux.idm.oclc.org/login?url="}
+    ) == "eux.idm.oclc.org"
+
+
+def test_download_paper_adds_jstor_pdf_hint_before_fetch(monkeypatch, tmp_path):
+    mod = _load_module(DOWNLOAD, "download_jstor_hints_under_test")
+    tried: list[str] = []
+
+    def fake_download_pdf_from_url(url, output_path, timeout=60, **kwargs):
+        tried.append(url)
+        if "/stable/pdf/" in url:
+            Path(output_path).write_bytes(b"%PDF- jstor")
+            return True
+        return False
+
+    monkeypatch.setattr(mod, "download_pdf_from_url", fake_download_pdf_from_url)
+
+    result = mod.download_paper(
+        url="https://www.jstor.org/stable/43154235",
+        output_dir=str(tmp_path),
+        filename="jstor-paper",
+    )
+
+    assert result == str(tmp_path / "jstor-paper.pdf")
+    assert tried == [
+        "https://www.jstor.org/stable/43154235",
+        "https://www.jstor.org/stable/pdf/43154235.pdf?acceptTC=1",
+    ]
+
+
+def test_download_paper_routes_url_only_request_through_ezproxy(monkeypatch, tmp_path):
+    """A URL-only request must reach the proxy; before this it never did."""
+    mod = _load_module(DOWNLOAD, "download_url_only_ezproxy_under_test")
+    requested: list[str] = []
+
+    class FakeSession:
+        headers: dict = {}
+
+        def get(self, url, **kwargs):
+            requested.append(url)
+            if "/stable/pdf/" in url:
+                return SimpleNamespace(
+                    url="https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf",
+                    content=b"%PDF- jstor via ezproxy",
+                    status_code=200,
+                    history=[object()],
+                    headers={"content-type": "application/pdf"},
+                )
+            return SimpleNamespace(
+                url="https://www-jstor-org.eux.idm.oclc.org/stable/43154235",
+                content=b"<html>paywall</html>",
+                status_code=200,
+                history=[object()],
+                headers={"content-type": "text/html"},
+            )
+
+    monkeypatch.setattr(mod, "download_pdf_from_url", lambda *a, **k: False)
+    monkeypatch.setattr(
+        mod,
+        "load_ezproxy_config",
+        lambda: {"login_url": "https://login.eux.idm.oclc.org/login?url=", "cookie": "x"},
+    )
+    monkeypatch.setattr(mod, "_build_ezproxy_session", lambda config: FakeSession())
+    monkeypatch.setattr(mod, "_ezproxy_throttle", lambda *a, **k: None)
+
+    result = mod.download_paper(
+        url="https://www.jstor.org/stable/43154235",
+        output_dir=str(tmp_path),
+        filename="jstor-paper",
+    )
+
+    assert result == str(tmp_path / "jstor-paper.pdf")
+    assert requested == [
+        "https://www-jstor-org.eux.idm.oclc.org/stable/43154235",
+        "https://login.eux.idm.oclc.org/login?url=https://www.jstor.org/stable/43154235",
+        "https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf?acceptTC=1",
+    ]
+    assert (tmp_path / "jstor-paper.pdf").read_bytes().startswith(b"%PDF-")
+
+
+def test_ezproxy_url_download_keeps_already_proxied_url_unwrapped(monkeypatch, tmp_path):
+    mod = _load_module(DOWNLOAD, "download_proxied_url_passthrough_under_test")
+    proxied = (
+        "https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf?acceptTC=1"
+    )
+    requested: list[str] = []
+
+    class FakeSession:
+        def get(self, url, **kwargs):
+            requested.append(url)
+            return SimpleNamespace(
+                url=url,
+                content=b"%PDF- already proxied",
+                status_code=200,
+                history=[object()],
+                headers={"content-type": "application/pdf"},
+            )
+
+    monkeypatch.setattr(
+        mod,
+        "load_ezproxy_config",
+        lambda: {
+            "login_url": "https://login.eux.idm.oclc.org/login?url=",
+            "domain": "eux.idm.oclc.org",
+            "cookie": "x",
+        },
+    )
+    monkeypatch.setattr(mod, "_build_ezproxy_session", lambda config: FakeSession())
+    monkeypatch.setattr(mod, "_ezproxy_throttle", lambda *a, **k: None)
+
+    assert mod.try_ezproxy_url_download([proxied], str(tmp_path / "paper.pdf")) is True
+    assert requested == [proxied]
+
+
+def test_try_ezproxy_url_download_skips_throttle_when_unconfigured(tmp_path, monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_url_ezproxy_unconfigured_under_test")
+
+    calls: list[int] = []
+    monkeypatch.setattr(mod, "load_ezproxy_config", lambda: None)
+    monkeypatch.setattr(mod, "_ezproxy_throttle", lambda *a, **k: calls.append(1))
+
+    result = mod.try_ezproxy_url_download(
+        ["https://www.jstor.org/stable/43154235"], str(tmp_path / "out.pdf")
+    )
+
+    assert result is False
+    assert calls == []

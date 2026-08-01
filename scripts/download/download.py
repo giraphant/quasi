@@ -5,12 +5,14 @@ Agent-facing public flow:
     book candidates  -> candidate metadata from Anna's Archive file search
     book fetch       -> download by MD5 to temp + automatic diagnostics
     paper fetch      -> DOI/URL cascade to temp + automatic diagnostics
+    paper diagnose   -> one read-only direct or EZProxy access observation
     accept           -> move accepted temp file into sources/{slug}.{ext}
 
 Usage:
     python3 download.py book candidates --title "..." --author "..." --json
     python3 download.py book fetch --md5 abc123 --slug poggi-durkheim --json
     python3 download.py paper fetch --doi "10.x/y" --slug author-title-2024 --json
+    python3 download.py paper diagnose --url "https://example.org/article" --json
     python3 download.py accept --path .quasi/temp/downloads/x.pdf --slug final-slug --json
 
 Batch mode remains for existing manifest-driven maintenance workflows.
@@ -204,25 +206,15 @@ def load_ezproxy_config():
     return get_ezproxy_config(verbose=True)
 
 
-def _try_ezproxy_with_refresh(doi, output_path, sciencedirect_urls=None,
-                              cell_pdf_urls=None, text_fallback_path=None,
-                              expected_author=None, expected_title=None):
-    """Try EZProxy download; on expiry, invalidate cache + retry once.
+def _with_ezproxy_refresh(attempt):
+    """Run one EZProxy attempt; on expiry, invalidate cache + retry once.
 
     Clears the in-memory CookieCloud cache so the next call re-pulls fresh
     cookies from the server. Re-raises EZProxyCookieExpired if the refreshed
     cookies are also rejected (Chrome side likely hasn't re-logged in yet).
     """
     try:
-        return try_ezproxy_download(
-            doi,
-            output_path,
-            sciencedirect_urls=sciencedirect_urls,
-            cell_pdf_urls=cell_pdf_urls,
-            text_fallback_path=text_fallback_path,
-            expected_author=expected_author,
-            expected_title=expected_title,
-        )
+        return attempt()
     except EZProxyCookieExpired:
         try:
             from cookiecloud import invalidate_cache, get_ezproxy_config
@@ -231,16 +223,35 @@ def _try_ezproxy_with_refresh(doi, output_path, sciencedirect_urls=None,
         invalidate_cache()
         if get_ezproxy_config():
             print(f"  EZProxy: refreshed via CookieCloud, retrying...", file=sys.stderr)
-            return try_ezproxy_download(
-                doi,
-                output_path,
-                sciencedirect_urls=sciencedirect_urls,
-                cell_pdf_urls=cell_pdf_urls,
-                text_fallback_path=text_fallback_path,
-                expected_author=expected_author,
-                expected_title=expected_title,
-            )
+            return attempt()
         raise
+
+
+def _try_ezproxy_with_refresh(doi, output_path, sciencedirect_urls=None,
+                              cell_pdf_urls=None, text_fallback_path=None,
+                              expected_author=None, expected_title=None):
+    """Try the DOI EZProxy download, refreshing expired cookies once."""
+    return _with_ezproxy_refresh(lambda: try_ezproxy_download(
+        doi,
+        output_path,
+        sciencedirect_urls=sciencedirect_urls,
+        cell_pdf_urls=cell_pdf_urls,
+        text_fallback_path=text_fallback_path,
+        expected_author=expected_author,
+        expected_title=expected_title,
+    ))
+
+
+def _try_ezproxy_urls_with_refresh(urls, output_path, text_fallback_path=None,
+                                   expected_author=None, expected_title=None):
+    """Try the URL EZProxy download, refreshing expired cookies once."""
+    return _with_ezproxy_refresh(lambda: try_ezproxy_url_download(
+        urls,
+        output_path,
+        text_fallback_path=text_fallback_path,
+        expected_author=expected_author,
+        expected_title=expected_title,
+    ))
 
 
 def _host_matches_domain(host: str, domain: str) -> bool:
@@ -261,6 +272,64 @@ def _url_matches_ezproxy(url, ezproxy_config):
         if _host_matches_domain(host, rec.get("domain", "")):
             return True
     return False
+
+
+_EZPROXY_SERVICE_LABELS = ("login", "ezproxy", "proxy")
+
+
+def _ezproxy_host_suffix(ezproxy_config) -> str:
+    """Return the EZProxy hostname-rewriting suffix, e.g. `eux.idm.oclc.org`.
+
+    Prefers the suffix the user's own proxied cookies were issued on, since
+    that is observed fact, and falls back to the login host minus its service
+    label, which is the OCLC-hosted convention.
+    """
+    counts: dict[str, int] = {}
+    for rec in ezproxy_config.get("cookie_records", []):
+        domain = (rec.get("domain") or "").lstrip(".").lower()
+        first_label, _, suffix = domain.partition(".")
+        if "-" in first_label and "." in suffix:
+            counts[suffix] = counts.get(suffix, 0) + 1
+    if counts:
+        return max(counts, key=lambda suffix: (counts[suffix], -len(suffix)))
+
+    login_host = (
+        urllib.parse.urlparse(ezproxy_config.get("login_url", "")).hostname or ""
+    ).lower()
+    first_label, _, suffix = login_host.partition(".")
+    if first_label in _EZPROXY_SERVICE_LABELS and "." in suffix:
+        return suffix
+    return login_host
+
+
+def _ezproxy_request_urls(candidate_url, ezproxy_config) -> list[str]:
+    """Return the proxy request forms for one candidate URL, best first.
+
+    EZProxy rewrites hostnames (`www.jstor.org` -> `www-jstor-org.<suffix>`)
+    and the institutional session cookies ride on those rewritten hosts. The
+    `login?url=` form instead needs a live session on the login host itself,
+    which a CookieCloud pull does not always carry — a browser that is happily
+    reading JSTOR through the proxy can have no login-host cookie at all. So
+    the rewritten host is tried first and the login redirect is the fallback.
+    """
+    if _url_matches_ezproxy(candidate_url, ezproxy_config):
+        return [candidate_url]
+
+    parsed = urllib.parse.urlparse(candidate_url)
+    host = (parsed.hostname or "").lower()
+    suffix = _ezproxy_host_suffix(ezproxy_config)
+    forms = []
+    if host and suffix and not _host_matches_domain(host, suffix):
+        forms.append(urllib.parse.urlunparse((
+            parsed.scheme or "https",
+            f"{host.replace('.', '-')}.{suffix}",
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment,
+        )))
+    forms.append(f"{ezproxy_config['login_url']}{candidate_url}")
+    return forms
 
 
 def _ezproxy_cookie_header(ezproxy_config, url):
@@ -316,6 +385,287 @@ def _looks_like_shibboleth_login(content) -> bool:
     )
 
 
+_DIAGNOSE_BODY_LIMIT = 20_000
+
+
+def _sanitise_diagnostic_url(url: str | None) -> str | None:
+    """Keep only scheme, host, port, and path for diagnostic output."""
+    if not url:
+        return None
+    parsed = urllib.parse.urlparse(str(url))
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    netloc = parsed.hostname.lower()
+    if port is not None:
+        netloc = f"{netloc}:{port}"
+    return urllib.parse.urlunparse((
+        parsed.scheme.lower(),
+        netloc,
+        parsed.path or "/",
+        "",
+        "",
+        "",
+    ))
+
+
+def _diagnostic_content_type(headers) -> str | None:
+    content_type = _header_value(headers, "content-type").split(";", 1)[0].strip().lower()
+    if not content_type or not re.fullmatch(r"[a-z0-9.+-]+/[a-z0-9.+-]+", content_type):
+        return None
+    return content_type
+
+
+def _classify_diagnostic_response(content, headers, status, final_url, login_url=None) -> str:
+    if _is_cloudflare_challenge(content, headers):
+        return "cloudflare_challenge"
+    if _looks_like_shibboleth_login(content):
+        return "shibboleth_login"
+    if login_url:
+        login_host = urllib.parse.urlparse(login_url).hostname or ""
+        final_host = urllib.parse.urlparse(final_url or "").hostname or ""
+        if login_host and final_host.lower() == login_host.lower():
+            return "ezproxy_login"
+    if _is_pdf_response(content, headers):
+        return "pdf"
+    if status in {401, 403, 451}:
+        return "access_denied"
+    content_type = _diagnostic_content_type(headers)
+    if content_type == "text/html" or content.lstrip().lower().startswith((b"<!doctype html", b"<html")):
+        return "html_landing"
+    return "other"
+
+
+def _diagnostic_ezproxy_scope() -> dict | None:
+    """Read only the configured proxy domain; never fetch CookieCloud for direct probes."""
+    domain = os.environ.get("QUASI_COOKIECLOUD_EZPROXY_DOMAIN", "").strip()
+    return {"domain": domain} if domain else None
+
+
+def _valid_diagnostic_url(url: str) -> bool:
+    """Accept only ordinary HTTP(S) URLs and never send userinfo to a server."""
+    if not isinstance(url, str) or not url or any(char.isspace() for char in url):
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        _ = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.lower() in {"http", "https"}
+        and bool(parsed.hostname)
+        and parsed.username is None
+        and parsed.password is None
+    )
+
+
+def _diagnostic_report(*, requested_url, final_url, mode, status, headers, content,
+                       config, ezproxy_scope, proxy_attempted, transport_error=False,
+                       unavailable=False) -> dict:
+    target_matches_proxy = bool(
+        ezproxy_scope and _url_matches_ezproxy(requested_url, ezproxy_scope)
+    )
+    if unavailable:
+        classification = "ezproxy_unavailable"
+    elif transport_error:
+        classification = "connection_error"
+    else:
+        classification = _classify_diagnostic_response(
+            content,
+            headers,
+            status,
+            final_url,
+            config.get("login_url") if config else None,
+        )
+    return {
+        "schema_version": "quasi.download.diagnose/0.1",
+        "requested_url": _sanitise_diagnostic_url(requested_url),
+        "final_url": _sanitise_diagnostic_url(final_url),
+        "mode": mode,
+        "http_status": status,
+        "content_type": _diagnostic_content_type(headers),
+        "classification": classification,
+        "retryable": bool(
+            transport_error or status in _RETRYABLE_HTTP_CODES
+        ) and not unavailable,
+        "ezproxy": {
+            "configured": bool(ezproxy_scope),
+            "target_matches_proxy": target_matches_proxy,
+            "attempted": proxy_attempted,
+        },
+        "wrote_file": False,
+    }
+
+
+def _read_diagnostic_error_body(exc) -> bytes:
+    try:
+        return exc.read(_DIAGNOSE_BODY_LIMIT)
+    except (AttributeError, OSError, ValueError):
+        return b""
+
+
+def _read_diagnostic_response_body(response) -> bytes:
+    """Read only a bounded, decoded response prefix from a streamed response."""
+    iterator = getattr(response, "iter_content", None)
+    if callable(iterator):
+        chunks = []
+        remaining = _DIAGNOSE_BODY_LIMIT
+        try:
+            for chunk in iterator(chunk_size=min(8192, remaining)):
+                if not chunk:
+                    continue
+                chunk = bytes(chunk)
+                limited = chunk[:remaining]
+                chunks.append(limited)
+                remaining -= len(limited)
+                if remaining <= 0:
+                    break
+        except (OSError, requests.RequestException, ValueError):
+            return b"".join(chunks)
+        return b"".join(chunks)
+
+    # Real requests responses provide iter_content(); this fallback keeps the
+    # helper compatible with small response doubles used by callers/tests.
+    content = getattr(response, "content", b"")
+    return bytes(content[:_DIAGNOSE_BODY_LIMIT])
+
+
+def _close_diagnostic_response(response) -> None:
+    close = getattr(response, "close", None)
+    if callable(close):
+        close()
+
+
+def _diagnose_direct_url(url, ezproxy_scope, timeout):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+        "Accept": "application/pdf,*/*",
+    }
+    request = urllib.request.Request(url, headers=headers)
+
+    try:
+        # Deliberately bypass _retry: one diagnostic invocation means one
+        # target observation, including for transient response statuses.
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            content = response.read(_DIAGNOSE_BODY_LIMIT)
+            status = getattr(response, "status", None)
+            if status is None:
+                getcode = getattr(response, "getcode", None)
+                status = getcode() if callable(getcode) else None
+            return _diagnostic_report(
+                requested_url=url,
+                final_url=response.geturl(),
+                mode="direct",
+                status=status,
+                headers=response.headers,
+                content=content,
+                config=None,
+                ezproxy_scope=ezproxy_scope,
+                proxy_attempted=False,
+            )
+    except urllib.error.HTTPError as exc:
+        return _diagnostic_report(
+            requested_url=url,
+            final_url=exc.geturl(),
+            mode="direct",
+            status=exc.code,
+            headers=exc.headers,
+            content=_read_diagnostic_error_body(exc),
+            config=None,
+            ezproxy_scope=ezproxy_scope,
+            proxy_attempted=False,
+        )
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return _diagnostic_report(
+            requested_url=url,
+            final_url=None,
+            mode="direct",
+            status=None,
+            headers=None,
+            content=b"",
+            config=None,
+            ezproxy_scope=ezproxy_scope,
+            proxy_attempted=False,
+            transport_error=True,
+        )
+
+
+def _diagnose_ezproxy_url(url, config, ezproxy_scope, timeout):
+    if not config or not config.get("login_url"):
+        return _diagnostic_report(
+            requested_url=url,
+            final_url=None,
+            mode="ezproxy",
+            status=None,
+            headers=None,
+            content=b"",
+            config=None,
+            ezproxy_scope=ezproxy_scope,
+            proxy_attempted=False,
+            unavailable=True,
+        )
+
+    request_url = url if _url_matches_ezproxy(url, config) else f"{config['login_url']}{url}"
+    session = _build_ezproxy_session(config)
+
+    # A diagnostic is deliberately state-free: it does not create the shared
+    # throttle-state file used to schedule writer-oriented acquisition.
+    try:
+        # As above, this is a single observation rather than a download retry.
+        response = session.get(
+            request_url,
+            allow_redirects=True,
+            timeout=timeout,
+            stream=True,
+        )
+        try:
+            return _diagnostic_report(
+                requested_url=url,
+                final_url=str(response.url),
+                mode="ezproxy",
+                status=response.status_code,
+                headers=getattr(response, "headers", {}),
+                content=_read_diagnostic_response_body(response),
+                config=config,
+                ezproxy_scope=ezproxy_scope,
+                proxy_attempted=True,
+            )
+        finally:
+            _close_diagnostic_response(response)
+    except (requests.RequestException, TimeoutError, OSError):
+        return _diagnostic_report(
+            requested_url=url,
+            final_url=None,
+            mode="ezproxy",
+            status=None,
+            headers=None,
+            content=b"",
+            config=config,
+            ezproxy_scope=ezproxy_scope,
+            proxy_attempted=True,
+            transport_error=True,
+        )
+
+
+def diagnose_paper_url(url, *, via_ezproxy=False, timeout=30) -> dict:
+    """Observe one URL without writing a source or starting acquisition recovery."""
+    if not _valid_diagnostic_url(url):
+        raise ValueError("diagnostic URL must be an HTTP(S) URL without userinfo")
+    ezproxy_scope = _diagnostic_ezproxy_scope()
+    if via_ezproxy:
+        config = load_ezproxy_config()
+        return _diagnose_ezproxy_url(
+            url,
+            config,
+            ezproxy_scope or config,
+            timeout,
+        )
+    return _diagnose_direct_url(url, ezproxy_scope, timeout)
+
+
 def _raise_if_ezproxy_login_page(final_url, login_url, content, history_len=0, headers=None):
     if _is_cloudflare_challenge(content, headers):
         return
@@ -330,31 +680,32 @@ def _raise_if_ezproxy_login_page(final_url, login_url, content, history_len=0, h
 # Publisher PDF URL patterns: given a proxied landing page URL,
 # match publisher domain hint → construct direct PDF URL.
 # Ported from /home/ramu/reeder/src/reeder/fulltext/ezproxy.py
+# Keyed by publisher domain, matched through _is_publisher_host, so a proxied
+# host needs no separate entry: `pubsonline-informs-org.<proxy>` decodes back
+# to `pubsonline.informs.org` before matching. Subdomains match their parent,
+# so `academic.oup.com` and `direct.mit.edu` need no entry of their own.
 PUBLISHER_PDF_PATTERNS = [
-    ("sagepub",      "/doi/pdf/{doi}"),
-    ("oup.com",      "/doi/pdf/{doi}"),
-    ("academic.oup", "/doi/pdf/{doi}"),
-    ("wiley",        "/doi/pdfdirect/{doi}"),
-    ("wiley",        "/doi/pdfdirect/{doi}?download=true"),
-    ("tandfonline",  "/doi/pdf/{doi}"),
-    ("tandfonline",  "/doi/pdf/{doi}?download=true"),
-    ("springer",     "/content/pdf/{doi}.pdf"),  # reeder uses /article/{doi}/fulltext.pdf
-    ("nature.com",   "/content/pdf/{doi}.pdf"),
-    ("uchicago",     "/doi/pdf/{doi}"),
-    ("uchicago",     "/doi/pdf/{doi}?download=true"),
-    ("uchicago",     "/doi/pdfplus/{doi}"),
-    ("uchicago",     "/doi/pdfplus/{doi}?download=true"),
-    ("mit.edu",      "/doi/pdf/{doi}"),
-    ("mitpress",     "/doi/pdf/{doi}"),
-    ("pubsonline.informs", "/doi/pdf/{doi}"),
-    ("pubsonline-informs", "/doi/pdf/{doi}"),
-    ("annualreviews", "/doi/pdf/{doi}"),
+    ("sagepub.com",          "/doi/pdf/{doi}"),
+    ("oup.com",              "/doi/pdf/{doi}"),
+    ("wiley.com",            "/doi/pdfdirect/{doi}"),
+    ("wiley.com",            "/doi/pdfdirect/{doi}?download=true"),
+    ("tandfonline.com",      "/doi/pdf/{doi}"),
+    ("tandfonline.com",      "/doi/pdf/{doi}?download=true"),
+    ("springer.com",         "/content/pdf/{doi}.pdf"),  # reeder uses /article/{doi}/fulltext.pdf
+    ("nature.com",           "/content/pdf/{doi}.pdf"),
+    ("uchicago.edu",         "/doi/pdf/{doi}"),
+    ("uchicago.edu",         "/doi/pdf/{doi}?download=true"),
+    ("uchicago.edu",         "/doi/pdfplus/{doi}"),
+    ("uchicago.edu",         "/doi/pdfplus/{doi}?download=true"),
+    ("mit.edu",              "/doi/pdf/{doi}"),
+    ("pubsonline.informs.org", "/doi/pdf/{doi}"),
+    ("annualreviews.org",    "/doi/pdf/{doi}"),
 ]
 
 _EPDF_PUBLISHER_PATTERNS = [
-    ("uchicago", "/doi/epdf/{doi}"),
-    ("tandfonline", "/doi/epdf/{doi}?needAccess=true"),
-    ("wiley", "/doi/epdf/{doi}"),
+    ("uchicago.edu", "/doi/epdf/{doi}"),
+    ("tandfonline.com", "/doi/epdf/{doi}?needAccess=true"),
+    ("wiley.com", "/doi/epdf/{doi}"),
 ]
 
 _RE_META_TAG = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
@@ -375,16 +726,30 @@ def _extract_citation_pdf_url(html_bytes):
     return None
 
 
-def _is_sciencedirect_host(host: str) -> bool:
-    host = host.lower().strip(".")
-    if host == "www.sciencedirect.com" or host.endswith(".sciencedirect.com"):
-        return True
+def _unproxy_host(host: str) -> str:
+    """Return the publisher host an EZProxy-rewritten host stands for.
 
-    for encoded_host in ("www-sciencedirect-com.", "sciencedirect-com."):
-        if host.startswith(encoded_host):
-            proxy_suffix = host[len(encoded_host):]
-            return _host_matches_domain(proxy_suffix, "oclc.org")
-    return False
+    EZProxy encodes the whole publisher host in one label, dots as dashes:
+    `journals.sagepub.com` -> `journals-sagepub-com.<proxy suffix>`. Decoding
+    once here means every publisher test below is written against the real
+    host, instead of each one hand-listing its own rewritten spellings.
+    """
+    host = host.lower().strip(".")
+    first_label, _, proxy_suffix = host.partition(".")
+    if "-" in first_label and _host_matches_domain(proxy_suffix, "oclc.org"):
+        return first_label.replace("-", ".")
+    return host
+
+
+def _is_publisher_host(host: str, domain: str) -> bool:
+    """Match a publisher domain directly or through EZProxy host rewriting."""
+    host = _unproxy_host(host)
+    domain = domain.lower().strip(".")
+    return host == domain or host.endswith(f".{domain}")
+
+
+def _is_sciencedirect_host(host: str) -> bool:
+    return _is_publisher_host(host, "sciencedirect.com")
 
 
 def _is_sciencedirect_article_url(url: str) -> bool:
@@ -437,15 +802,7 @@ def _sciencedirect_pdf_urls_from_article_url(url: str) -> list[str]:
 
 
 def _is_cell_host(host: str) -> bool:
-    host = host.lower().strip(".")
-    if host == "www.cell.com" or host.endswith(".cell.com"):
-        return True
-
-    for encoded_host in ("www-cell-com.", "cell-com."):
-        if host.startswith(encoded_host):
-            proxy_suffix = host[len(encoded_host):]
-            return _host_matches_domain(proxy_suffix, "oclc.org")
-    return False
+    return _is_publisher_host(host, "cell.com")
 
 
 def _is_cell_url(url: str) -> bool:
@@ -547,6 +904,116 @@ def _cell_pdf_urls_from_doi(doi: str) -> list[str]:
 
 def _is_cell_article_url(url: str) -> bool:
     return bool(_cell_pdf_urls_from_article_url(url))
+
+
+def _is_jstor_host(host: str) -> bool:
+    return _is_publisher_host(host, "jstor.org")
+
+
+_JSTOR_STABLE_PATH_RE = re.compile(
+    r"^/stable/(?:pdf/|info/)?(.+?)(?:\.pdf)?/?$", re.IGNORECASE
+)
+
+
+def _jstor_stable_id_from_url(url: str) -> str | None:
+    """Return the JSTOR stable id for a stable/info/pdf URL, else None.
+
+    Accepts both id forms JSTOR mints — a bare sequence number and a DOI —
+    on the public host or on an EZProxy-rewritten one.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if not _is_jstor_host(parsed.hostname or ""):
+        return None
+
+    match = _JSTOR_STABLE_PATH_RE.match(parsed.path)
+    if not match:
+        return None
+
+    stable_id = urllib.parse.unquote(match.group(1)).strip()
+    if not stable_id:
+        return None
+    if "/" in stable_id and not re.match(r"^10\.\d{4,9}/", stable_id):
+        return None
+    return stable_id
+
+
+def _jstor_pdf_urls_from_article_url(url: str) -> list[str]:
+    """Return the JSTOR PDF URL for a stable article URL, on the same host.
+
+    `acceptTC=1` is load-bearing: without it JSTOR answers the PDF path with
+    its terms-of-use interstitial HTML, which reads exactly like a paywall.
+    Keeping the caller's netloc means an already-proxied hint stays proxied.
+    """
+    stable_id = _jstor_stable_id_from_url(url)
+    if not stable_id:
+        return []
+
+    parsed = urllib.parse.urlparse(url)
+    return [
+        urllib.parse.urlunparse((
+            parsed.scheme or "https",
+            parsed.netloc,
+            f"/stable/pdf/{urllib.parse.quote(stable_id, safe='./')}.pdf",
+            "",
+            "acceptTC=1",
+            "",
+        ))
+    ]
+
+
+def _doi_from_url_path(url: str) -> str | None:
+    """Return the DOI a publisher URL carries in its own path, else None."""
+    parsed = urllib.parse.urlparse(url)
+    match = _DOI_IN_URL_RE.search(urllib.parse.unquote(parsed.path))
+    if not match:
+        return None
+    return match.group(0).rstrip("/").removesuffix(".pdf")
+
+
+def _publisher_pdf_urls_from_article_url(url: str) -> list[str]:
+    """Derive PDF URLs for publishers whose landing URL carries its own DOI.
+
+    Same host-preserving construction the EZProxy landing step performs with
+    PUBLISHER_PDF_PATTERNS, reused here so a URL-only request reaches those
+    publishers too — `tandfonline.com/doi/abs/10.1080/x` already states the
+    DOI that the PDF path needs, with no separate resolution step.
+    """
+    doi = _doi_from_url_path(url)
+    if not doi:
+        return []
+
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or ""
+    base = f"{parsed.scheme or 'https'}://{parsed.netloc}"
+    urls = []
+    for publisher_hint, pattern in PUBLISHER_PDF_PATTERNS:
+        if not _is_publisher_host(host, publisher_hint):
+            continue
+        candidate = base + pattern.format(doi=doi)
+        if candidate != url and candidate not in urls:
+            urls.append(candidate)
+    return urls
+
+
+def _pdf_urls_from_article_url(url: str) -> list[str]:
+    """Every host-preserving URL -> PDF derivation, in one place.
+
+    The cascade needs this answer at three points — caller hints, the EZProxy
+    landing page, and Kagi recovery — and each used to carry its own partial
+    list of publishers, so a platform added in one place stayed missing in the
+    others. Adding a platform is now one entry in one table.
+    """
+    urls: list[str] = []
+    for derive in (
+        _cell_pdf_urls_from_article_url,
+        _sciencedirect_pdf_urls_from_article_url,
+        _jstor_pdf_urls_from_article_url,
+        _publisher_pdf_urls_from_article_url,
+    ):
+        for candidate in derive(url or ""):
+            if candidate not in urls:
+                urls.append(candidate)
+    return urls
 
 
 def _is_article_html_url(url: str) -> bool:
@@ -945,6 +1412,99 @@ def _build_ezproxy_session(config):
     return session
 
 
+def _ezproxy_fetch_candidate(session, config, candidate_url, output_path, label,
+                             *, text_fallback_path=None, expected_author=None,
+                             expected_title=None):
+    """Fetch one candidate URL through the proxy; write output_path on a PDF.
+
+    Returns True on a written PDF, the text path on an accepted text fallback,
+    False otherwise. A URL already on the proxy host is requested as-is;
+    anything else is wrapped in the EZProxy login redirect.
+    """
+    login_url = config["login_url"]
+    for request_url in _ezproxy_request_urls(candidate_url, config):
+        print(f"  EZProxy {label}: {request_url[:80]}", file=sys.stderr)
+        try:
+            pdf_resp = _retry(
+                lambda: session.get(request_url, allow_redirects=True, timeout=60),
+                label=f"EZProxy {label}",
+            )
+            data = pdf_resp.content
+            response_headers = getattr(pdf_resp, "headers", {})
+            _raise_if_ezproxy_login_page(str(pdf_resp.url), login_url, data, len(pdf_resp.history), response_headers)
+            if _is_cloudflare_challenge(data, response_headers):
+                print(f"  EZProxy {label}: PUBLISHER_CLOUDFLARE_CHALLENGE", file=sys.stderr)
+                return False
+            if _is_pdf_response(data, response_headers):
+                with open(output_path, "wb") as f:
+                    f.write(data)
+                print(f"  OK {len(data) / 1024:.0f}KB -> {os.path.basename(output_path)}",
+                      file=sys.stderr)
+                return True
+
+            meta_pdf = _extract_citation_pdf_url(data)
+            if meta_pdf:
+                if meta_pdf.startswith("/"):
+                    parsed = urllib.parse.urlparse(str(pdf_resp.url))
+                    meta_pdf = f"{parsed.scheme}://{parsed.netloc}{meta_pdf}"
+                if meta_pdf != candidate_url:
+                    return _ezproxy_fetch_candidate(
+                        session, config, meta_pdf, output_path,
+                        f"{label} citation_pdf_url",
+                    )
+            if text_fallback_path and _write_text_fallback_from_html(
+                data,
+                text_fallback_path,
+                headers=response_headers,
+                expected_author=expected_author,
+                expected_title=expected_title,
+                source_label=f"EZProxy {label}",
+            ):
+                return text_fallback_path
+        except (requests.RequestException, TimeoutError, OSError):
+            pass
+    return False
+
+
+def try_ezproxy_url_download(urls, output_path, text_fallback_path=None,
+                             expected_author=None, expected_title=None):
+    """Fetch caller-provided publisher URLs through EZProxy.
+
+    The DOI cascade enters the proxy through `login?url=https://doi.org/{doi}`.
+    A URL-only request has no such entry, so a gated landing page was only ever
+    fetched unauthenticated no matter how good the institutional session was.
+    One session and one throttle slot cover every candidate.
+
+    Returns True / the text path on success, False otherwise.
+    Raises EZProxyCookieExpired if the session is expired.
+    """
+    candidates = [u for u in (urls or []) if u]
+    if not candidates:
+        return False
+
+    config = load_ezproxy_config()
+    if not config:
+        print("  EZProxy: not configured (CookieCloud env vars missing), skipping",
+              file=sys.stderr)
+        return False
+
+    _ezproxy_throttle()  # global cross-process rate gate (QUA-50)
+    session = _build_ezproxy_session(config)
+
+    for candidate_url in candidates:
+        result = _ezproxy_fetch_candidate(
+            session, config, candidate_url, output_path, "URL hint",
+            text_fallback_path=text_fallback_path if _is_article_html_url(candidate_url) else None,
+            expected_author=expected_author,
+            expected_title=expected_title,
+        )
+        if result:
+            return result
+
+    print(f"  EZProxy: no PDF found for {len(candidates)} URL hint(s)", file=sys.stderr)
+    return False
+
+
 def try_ezproxy_download(doi, output_path, sciencedirect_urls=None, cell_pdf_urls=None,
                          text_fallback_path=None, expected_author=None,
                          expected_title=None):
@@ -996,53 +1556,20 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None, cell_pdf_url
         sciencedirect_urls.append(final_url)
 
     def _try_ezproxy_candidate_url(candidate_url, label, allow_text_fallback=False):
-        request_url = candidate_url if _url_matches_ezproxy(candidate_url, config) else f"{login_url}{candidate_url}"
-        print(f"  EZProxy {label}: {request_url[:80]}", file=sys.stderr)
-        try:
-            pdf_resp = _retry(
-                lambda: session.get(request_url, allow_redirects=True, timeout=60),
-                label=f"EZProxy {label}",
-            )
-            data = pdf_resp.content
-            response_headers = getattr(pdf_resp, "headers", {})
-            _raise_if_ezproxy_login_page(str(pdf_resp.url), login_url, data, len(pdf_resp.history), response_headers)
-            if _is_cloudflare_challenge(data, response_headers):
-                print(f"  EZProxy {label}: PUBLISHER_CLOUDFLARE_CHALLENGE", file=sys.stderr)
-                return False
-            if _is_pdf_response(data, response_headers):
-                with open(output_path, "wb") as f:
-                    f.write(data)
-                print(f"  OK {len(data) / 1024:.0f}KB -> {os.path.basename(output_path)}",
-                      file=sys.stderr)
-                return True
-
-            meta_pdf = _extract_citation_pdf_url(data)
-            if meta_pdf:
-                if meta_pdf.startswith("/"):
-                    parsed = urllib.parse.urlparse(str(pdf_resp.url))
-                    meta_pdf = f"{parsed.scheme}://{parsed.netloc}{meta_pdf}"
-                if meta_pdf != candidate_url:
-                    return _try_ezproxy_candidate_url(meta_pdf, f"{label} citation_pdf_url")
-            if allow_text_fallback and text_fallback_path and _write_text_fallback_from_html(
-                data,
-                text_fallback_path,
-                headers=response_headers,
-                expected_author=expected_author,
-                expected_title=expected_title,
-                source_label=f"EZProxy {label}",
-            ):
-                return text_fallback_path
-        except (requests.RequestException, TimeoutError, OSError):
-            pass
-        return False
+        return _ezproxy_fetch_candidate(
+            session, config, candidate_url, output_path, label,
+            text_fallback_path=text_fallback_path if allow_text_fallback else None,
+            expected_author=expected_author,
+            expected_title=expected_title,
+        )
 
     for cell_pdf_url in cell_pdf_urls or []:
         result = _try_ezproxy_candidate_url(cell_pdf_url, "Cell PDF")
         if result:
             return result
 
-    for cell_pdf_url in _cell_pdf_urls_from_article_url(final_url):
-        result = _try_ezproxy_candidate_url(cell_pdf_url, "Cell PDF")
+    for landing_pdf_url in _pdf_urls_from_article_url(final_url):
+        result = _try_ezproxy_candidate_url(landing_pdf_url, "landing PDF")
         if result:
             return result
 
@@ -1050,14 +1577,15 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None, cell_pdf_url
         result = _try_ezproxy_candidate_url(sd_url, "ScienceDirect hint", allow_text_fallback=True)
         if result:
             return result
-        for sd_pdf_url in _sciencedirect_pdf_urls_from_article_url(sd_url):
-            result = _try_ezproxy_candidate_url(sd_pdf_url, "ScienceDirect PDF")
+        for sd_pdf_url in _pdf_urls_from_article_url(sd_url):
+            result = _try_ezproxy_candidate_url(sd_pdf_url, "hint PDF")
             if result:
                 return result
 
     # Step 2: Try known publisher PDF URL patterns
+    final_host = urllib.parse.urlparse(final_url).hostname or ""
     for publisher_hint, pattern in PUBLISHER_PDF_PATTERNS:
-        if publisher_hint in final_url:
+        if _is_publisher_host(final_host, publisher_hint):
             parsed = urllib.parse.urlparse(final_url)
             base = f"{parsed.scheme}://{parsed.netloc}"
             pdf_url = base + pattern.format(doi=doi)
@@ -1102,7 +1630,7 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None, cell_pdf_url
 
     # Step 2.6: Fetch epdf page (embedded PDF viewer) and extract PDF URL
     for publisher_hint, epdf_pattern in _EPDF_PUBLISHER_PATTERNS:
-        if publisher_hint in final_url:
+        if _is_publisher_host(final_host, publisher_hint):
             parsed = urllib.parse.urlparse(final_url)
             base = f"{parsed.scheme}://{parsed.netloc}"
             epdf_url = base + epdf_pattern.format(doi=doi)
@@ -1866,11 +2394,9 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
     for u in ([url] if url else []) + (urls or []):
         _remember_article_html_url(u)
         _add_hint_url(u)
-        for cell_pdf_url in _cell_pdf_urls_from_article_url(u or ""):
-            _remember_cell_pdf_url(cell_pdf_url)
-            _add_hint_url(cell_pdf_url)
-        for sd_pdf_url in _sciencedirect_pdf_urls_from_article_url(u or ""):
-            _add_hint_url(sd_pdf_url)
+        for pdf_url in _pdf_urls_from_article_url(u or ""):
+            _remember_cell_pdf_url(pdf_url)
+            _add_hint_url(pdf_url)
         cell_pii = _cell_pii_from_article_url(u or "")
         if cell_pii:
             for sd_url in _cell_sciencedirect_urls_from_pii(cell_pii):
@@ -1959,6 +2485,35 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
             print(f"  EZProxy cookie expired, continuing...", file=sys.stderr)
         time.sleep(0.5)
 
+    # 5b. EZProxy for the caller's own URLs — the only proxy entry a URL-only
+    # request has, and the one that reaches hosts the DOI redirect never lands
+    # on. Skip whatever step 5 already wrapped.
+    already_proxied = (
+        set(cell_pdf_urls) | set(article_html_urls) | set(sciencedirect_urls)
+        if doi else set()
+    )
+    pending_proxy_urls = [u for u in hint_urls if u not in already_proxied]
+    if pending_proxy_urls:
+        print(f"  Trying EZProxy for {len(pending_proxy_urls)} URL hint(s)...",
+              file=sys.stderr)
+        try:
+            url_proxy_result = _try_ezproxy_urls_with_refresh(
+                pending_proxy_urls,
+                dest,
+                text_fallback_path=text_dest,
+                expected_author=verify_author,
+                expected_title=verify_title,
+            )
+            if url_proxy_result:
+                url_proxy_path = (
+                    url_proxy_result if isinstance(url_proxy_result, str) else dest
+                )
+                if _verify_and_accept(url_proxy_path, "EZProxy URL"):
+                    return url_proxy_path
+        except EZProxyCookieExpired:
+            print(f"  EZProxy cookie expired on URL hints, continuing...", file=sys.stderr)
+        time.sleep(0.5)
+
     # 6. Wayback
     if doi and retry_wayback:
         print(f"  Searching Wayback for {doi}...", file=sys.stderr)
@@ -1990,13 +2545,13 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                 pass
             time.sleep(0.5)
 
-            for cell_pdf_url in _cell_pdf_urls_from_article_url(kagi_url):
-                if cell_pdf_url in _seen_urls:
+            for kagi_pdf_url in _pdf_urls_from_article_url(kagi_url):
+                if kagi_pdf_url in _seen_urls:
                     continue
-                _seen_urls.add(cell_pdf_url)
-                print(f"  Kagi Cell PDF URL: {cell_pdf_url[:80]}", file=sys.stderr)
+                _seen_urls.add(kagi_pdf_url)
+                print(f"  Kagi PDF URL: {kagi_pdf_url[:80]}", file=sys.stderr)
                 try:
-                    if download_pdf_from_url(cell_pdf_url, dest) and _verify_and_accept(dest, "Kagi Cell URL"):
+                    if download_pdf_from_url(kagi_pdf_url, dest) and _verify_and_accept(dest, "Kagi PDF URL"):
                         return dest
                 except EZProxyCookieExpired:
                     pass
@@ -2236,6 +2791,24 @@ def _cmd_book_fetch(args) -> int:
         "source": "anna_archive",
         "inspect": _inspect_downloaded_file(path_obj),
     })
+    return 0
+
+
+def _cmd_paper_diagnose(args) -> int:
+    if args.timeout <= 0:
+        print("paper diagnose: --timeout must be positive", file=sys.stderr)
+        return 2
+    if not _valid_diagnostic_url(args.url):
+        print(
+            "paper diagnose: --url must be an HTTP(S) URL without userinfo",
+            file=sys.stderr,
+        )
+        return 2
+    print_json(diagnose_paper_url(
+        args.url,
+        via_ezproxy=args.via_ezproxy,
+        timeout=args.timeout,
+    ))
     return 0
 
 
@@ -2532,6 +3105,17 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Temp output directory (default: .quasi/temp/downloads)")
     p_pf.add_argument("--json", action="store_true", help="Accepted for contract clarity; output is always JSON")
     p_pf.set_defaults(func=_cmd_paper_fetch)
+
+    p_pd = paper_sub.add_parser("diagnose", help="Observe one paper URL without downloading")
+    p_pd.add_argument("--url", required=True, help="Paper URL to observe")
+    p_pd.add_argument(
+        "--via-ezproxy",
+        action="store_true",
+        help="Use the configured EZProxy session for this one observation",
+    )
+    p_pd.add_argument("--timeout", type=int, default=30, help="Request timeout in seconds")
+    p_pd.add_argument("--json", action="store_true", help="Accepted for contract clarity; output is always JSON")
+    p_pd.set_defaults(func=_cmd_paper_diagnose)
 
     # accept: move judged temp file into stable sources/{slug}.{ext}.
     p_accept = sub.add_parser("accept", help="Move accepted temp file into sources/{slug}.{ext}")

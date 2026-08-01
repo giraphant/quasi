@@ -191,7 +191,8 @@ export const paperOperationRows = [
         url: quoteOrNull(meta.url),
       },
       capabilities: [
-        "quasi-download paper fetch --slug SLUG --output OUTPUT --json",
+        "quasi-download paper fetch --slug SLUG (--doi DOI | --url URL ...) [--title TITLE] [--author AUTHOR] [--temp-dir DIR] --json",
+        "quasi-download paper diagnose --url URL [--via-ezproxy] [--timeout SECONDS] --json",
         "quasi-download accept --path INPUT --slug SLUG --kind paper --json",
         "Read the exact output only to verify title, authors, and DOI evidence",
       ],

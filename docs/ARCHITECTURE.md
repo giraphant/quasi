@@ -35,7 +35,7 @@ separate:
 | bin | contract |
 |---|---|
 | `quasi-search` | `book|paper` metadata discovery |
-| `quasi-download` | `book candidates|fetch`; `paper fetch`; `accept` |
+| `quasi-download` | `book candidates|fetch`; `paper fetch|diagnose`; `accept` |
 | `quasi-extract` | `epub|text|ocr|split` text extraction and normalisation (`ocr` default engine DS OCR2, `--engine dsocr2\|tesseract`, `--layout` replacement text layer) |
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
 | `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write`; `talk compress-media` |
