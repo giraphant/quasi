@@ -253,7 +253,6 @@ def paper_status(root: Path, slug: str, *, include_identity: bool = False) -> di
             evidence(root, prepared),
         ),
         stage("analyse", analyse_complete, analyse_evidence),
-        stage("audit", None, []),
     ]
     next_stage = first_incomplete(stages)
     if next_stage == "acquire":
@@ -330,7 +329,6 @@ def book_status(root: Path, slug: str, *, include_identity: bool = False) -> dic
         stage("prepare", prepare_complete, prepare_evidence),
         stage("analyse", analyse_complete, evidence(root, chapter_outputs)),
         stage("synthesise", synthesise_complete, synthesise_evidence),
-        stage("audit", None, []),
     ]
     next_stage = first_incomplete(stages)
     if next_stage == "acquire":
@@ -406,7 +404,6 @@ def talk_status(root: Path, slug: str, *, include_identity: bool = False) -> dic
             prepare_evidence,
         ),
         stage("analyse", canonical_complete, canonical_evidence),
-        stage("audit", None, []),
     ]
     next_stage = first_incomplete(stages)
     if next_stage == "prepare":

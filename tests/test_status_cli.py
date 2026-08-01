@@ -97,19 +97,16 @@ def test_status_reports_material_layouts(tmp_path: Path):
         "acquire": True,
         "prepare": True,
         "analyse": True,
-        "audit": None,
     }
     assert complete_map(book_payload) == {
         "acquire": True,
         "prepare": True,
         "analyse": True,
         "synthesise": True,
-        "audit": None,
     }
     assert complete_map(talk_payload) == {
         "prepare": True,
         "analyse": True,
-        "audit": None,
     }
     assert paper_payload["next_stage"] is None
     assert book_payload["next_stage"] is None
@@ -224,7 +221,6 @@ def test_status_empty_project_reports_first_missing_stage_and_exact_refs(tmp_pat
             {"stage": "acquire", "complete": False, "evidence": []},
             {"stage": "prepare", "complete": False, "evidence": []},
             {"stage": "analyse", "complete": False, "evidence": []},
-            {"stage": "audit", "complete": None, "evidence": []},
         ],
         "next_stage": "acquire",
         "refs": {"outputs": ["sources/missing-paper.pdf"]},
