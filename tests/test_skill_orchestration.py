@@ -96,13 +96,15 @@ def test_collect_material_main_thread_drives_run_stage_from_disk_observations() 
     assert "不要调用" in skill
 
 
-def test_collect_material_pins_driver_gates_repair_and_author_rows() -> None:
+def test_collect_material_pins_main_thread_gates_repair_and_author_rows() -> None:
     skill = (ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
         encoding="utf-8"
     )
     assert "Workflow(" in skill
     assert 'scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs"' in skill
-    assert "general-purpose" in skill
+    # No intermediate driver layer: the main thread drives every material.
+    assert "driver" not in skill.lower()
+    assert "主线程" in skill
     assert "same identity" in skill or "same-identity" in skill
     assert "accept-current" in skill
     assert "use-recommended-year" in skill

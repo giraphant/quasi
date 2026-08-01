@@ -130,7 +130,7 @@ Author
 
 3. Search 完成后按 DOI、ISBN、Search identity slug，以及必要时规范化
    title+第一作者+year 合并同一 identity。保留 batch 原输入到 canonical item 的映射；去重必须
-   发生在启动任何 material driver 之前。
+   发生在派出任何材料的第一个 Stage 之前。
 
 4. 单材料 loop 每轮先运行 `quasi-status --kind K --slug S --json`，再由主线程选择一个
    run-stage 调用。不要机械采用 `next_stage`：例如 Translation observation 可能列出其它 target
@@ -174,15 +174,16 @@ Author
    `author.synthesise`。任何 foreign path 都停止为 owner ambiguity。修复后以 `pass:2` re-audit
    一次；仍有 escalation 就停止并完整展示，不再修复。
 
-7. Batch 在主线程完成所有 Search 与 coalescing 后，为每个 unique Paper/Book 启动一个 driver。
+7. Batch 在主线程完成所有 Search 与 coalescing 后，由主线程逐材料推进各自的单材料 loop：
+   同时在飞的 run-stage 至多五个（不同材料各一，同一 identity 至多一个），receipt 落地即受理。
    汇总时恢复用户原顺序，同一 identity 的所有输入指向同一结果；集中展示 gates、failed 和
    blocked 项，不让一个失败取消其它独立材料。
 
 8. Author 的 `discover-books` 与 `discover-papers` 可并行运行（count 分别来自 maxBooks、
-   maxPapers），然后以全部 candidates 调用 `resolve-membership`。按 identity 去重并运行 member
-   drivers；每个 driver 返回后运行
+   maxPapers），然后以全部 candidates 调用 `resolve-membership`。按 identity 去重后由主线程
+   逐成员推进其单材料 loop；每个成员完成后运行
    `quasi-status --kind K --slug S --json --identity`，只有 disk identity、canonical path 和该
-   driver 的 clean Audit receipt 都一致才 admission。把 admitted members 作为
+   成员的 clean Audit receipt 都一致才 admission。把 admitted members 作为
    `{material_key,kind,id,path,title}` 传给 `stage:"synthesise"`；随后 Audit，必要时按第 6 步
    repair。Author page 始终是 `vault/authors/{slug}.md`。
 
