@@ -2539,10 +2539,12 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
         kagi_dois, kagi_urls = _kagi_discover_paper(recovery_title, verify_author)
 
         # Try discovered URLs directly
+        kagi_proxy_urls: list[str] = []
         for kagi_url in kagi_urls:
             if kagi_url in _seen_urls:
                 continue
             _seen_urls.add(kagi_url)
+            kagi_proxy_urls.append(kagi_url)
             _remember_sciencedirect_url(kagi_url)
             print(f"  Kagi URL: {kagi_url[:80]}", file=sys.stderr)
             try:
@@ -2578,6 +2580,34 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                     except EZProxyCookieExpired:
                         pass
                     time.sleep(0.5)
+
+        # Discovered URLs through the proxy: the hosts Kagi surfaces for a
+        # paywalled paper (JSTOR, Springer, OUP) are exactly the ones a bare
+        # fetch cannot reach, and the discovered-DOI branch below already
+        # gets this retry.
+        if kagi_proxy_urls:
+            print(f"  Trying EZProxy for {len(kagi_proxy_urls)} Kagi URL(s)...",
+                  file=sys.stderr)
+            try:
+                kagi_proxy_result = _try_ezproxy_urls_with_refresh(
+                    kagi_proxy_urls,
+                    dest,
+                    text_fallback_path=text_dest,
+                    expected_author=verify_author,
+                    expected_title=verify_title,
+                )
+                if kagi_proxy_result:
+                    kagi_proxy_path = (
+                        kagi_proxy_result
+                        if isinstance(kagi_proxy_result, str)
+                        else dest
+                    )
+                    if _verify_and_accept(kagi_proxy_path, "Kagi EZProxy URL"):
+                        return kagi_proxy_path
+            except EZProxyCookieExpired:
+                print(f"  EZProxy cookie expired on Kagi URLs, continuing...",
+                      file=sys.stderr)
+            time.sleep(0.5)
 
         # Try discovered DOIs (different from the original)
         for kagi_doi in kagi_dois:

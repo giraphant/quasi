@@ -1745,3 +1745,38 @@ def test_download_paper_derives_jstor_stable_hint_from_jstor_doi(
         "https://www.jstor.org/stable/43154235",
         "https://www.jstor.org/stable/pdf/43154235.pdf?acceptTC=1",
     ]
+
+
+def test_download_paper_routes_kagi_discovered_urls_through_ezproxy(
+    monkeypatch, tmp_path
+):
+    mod = _load_module(DOWNLOAD, "download_kagi_ezproxy_under_test")
+    _stub_paper_network(mod, monkeypatch)
+    discovered = "https://www.jstor.org/stable/43154235"
+    monkeypatch.setattr(
+        mod, "_kagi_discover_paper", lambda *a, **k: ([], [discovered])
+    )
+    proxied: list[list[str]] = []
+
+    def fake_proxy_urls(urls, output_path, **kwargs):
+        proxied.append(list(urls))
+        Path(output_path).write_bytes(b"%PDF- jstor via proxy " + b"x" * 2000)
+        return True
+
+    monkeypatch.setattr(mod, "_try_ezproxy_urls_with_refresh", fake_proxy_urls)
+    monkeypatch.setattr(
+        mod, "_extract_pdf_text", lambda *a, **k: _RIGHT_PAPER_TEXT
+    )
+
+    result = mod.download_paper(
+        doi="10.5840/philtopics19962427",
+        output_dir=str(tmp_path),
+        filename="clarke-1996",
+        verify_author="Randolph Clarke",
+        verify_title=(
+            "Agent Causation and Event Causation in the Production of Free Action"
+        ),
+    )
+
+    assert result == str(tmp_path / "clarke-1996.pdf")
+    assert proxied == [[discovered]]
