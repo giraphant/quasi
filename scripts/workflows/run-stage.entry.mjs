@@ -42,6 +42,8 @@ export const RUN_STAGE_REGISTRY = {
     "discover-books": "author.discover-books",
     "discover-papers": "author.discover-papers",
     "resolve-membership": "author.resolve-membership",
+    synthesise: "author.synthesise",
+    audit: "author.audit",
   },
   member: { "admission-probe": "member.admission-probe" },
 };

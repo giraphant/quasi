@@ -347,6 +347,7 @@ def book_status(root: Path, slug: str, *, include_identity: bool = False) -> dic
         }
     elif next_stage == "analyse":
         refs = {
+            "manifest": relative(root, chapter_root / "manifest.json"),
             "inputs": [relative(root, path) for path in chapter_inputs],
             "outputs": [relative(root, path) for path in chapter_outputs],
         }
@@ -397,29 +398,18 @@ def talk_status(root: Path, slug: str, *, include_identity: bool = False) -> dic
         observed_frontmatter(root, canonical)
     )
 
+    prepare_evidence = evidence(root, sources) + evidence(root, transcripts)
     stages = [
-        stage(
-            "acquire",
-            any(item.usable for item in source_observations),
-            evidence(root, sources),
-        ),
         stage(
             "prepare",
             any(item.usable for item in transcript_observations),
-            evidence(root, transcripts),
+            prepare_evidence,
         ),
         stage("analyse", canonical_complete, canonical_evidence),
-        stage(
-            "synthesise",
-            canonical_complete,
-            canonical_evidence,
-        ),
         stage("audit", None, []),
     ]
     next_stage = first_incomplete(stages)
-    if next_stage == "acquire":
-        refs: dict[str, Any] = {"outputs": [relative(root, path) for path in sources]}
-    elif next_stage == "prepare":
+    if next_stage == "prepare":
         refs = {
             "inputs": [
                 relative(root, path)
@@ -452,6 +442,39 @@ def talk_status(root: Path, slug: str, *, include_identity: bool = False) -> dic
         ),
         include_identity=include_identity,
     )
+
+
+def translation_status(root: Path, slug: str) -> dict[str, Any]:
+    source = root / "sources" / f"{slug}.pdf"
+    source_observation = observe_file(source, nonempty=True)
+    translation_root = root / "processing" / "translations"
+    try:
+        derivatives = sorted(
+            translation_root.glob(f"{slug}-*.pdf"), key=lambda path: path.name
+        )
+    except OSError:
+        derivatives = []
+    derivative_observations = [
+        observe_file(path, nonempty=True) for path in derivatives
+    ]
+    stages = [
+        stage(
+            "acquire",
+            source_observation.usable,
+            evidence(root, [source]),
+        ),
+        stage(
+            "prepare",
+            any(item.usable for item in derivative_observations),
+            evidence(root, derivatives),
+        ),
+    ]
+    next_stage = first_incomplete(stages)
+    refs: dict[str, Any] = {
+        "source": relative(root, source),
+        "derivatives": [relative(root, path) for path in derivatives],
+    }
+    return status_payload("translation", slug, stages, next_stage, refs)
 
 
 def first_incomplete(stages: Iterable[dict[str, Any]]) -> str | None:
@@ -549,7 +572,11 @@ def scan_status(root: Path) -> dict[str, Any]:
 
 
 def material_status(
-    root: Path, kind: str, slug: str, *, include_identity: bool = False
+    root: Path,
+    kind: str,
+    slug: str,
+    *,
+    include_identity: bool = False,
 ) -> dict[str, Any]:
     if kind == "paper":
         return paper_status(root, slug, include_identity=include_identity)
@@ -557,12 +584,16 @@ def material_status(
         return book_status(root, slug, include_identity=include_identity)
     if kind == "talk":
         return talk_status(root, slug, include_identity=include_identity)
+    if kind == "translation":
+        if include_identity:
+            raise InvocationError("--identity is not supported for translation")
+        return translation_status(root, slug)
     raise AssertionError(f"unsupported kind: {kind}")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = StatusArgumentParser(add_help=True, prog="quasi-status")
-    parser.add_argument("--kind", choices=("paper", "book", "talk"))
+    parser.add_argument("--kind", choices=("paper", "book", "talk", "translation"))
     parser.add_argument("--slug")
     parser.add_argument("--scan", action="store_true")
     parser.add_argument("--identity", action="store_true")

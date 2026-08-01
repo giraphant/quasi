@@ -73,6 +73,8 @@ def run_stage(args: dict[str, Any]) -> dict[str, Any]:
         ("translation", "prepare", "translation.prepare"),
         ("topic", "audit", "topic.audit"),
         ("author", "resolve-membership", "author.resolve-membership"),
+        ("author", "synthesise", "author.synthesise"),
+        ("author", "audit", "author.audit"),
         ("member", "admission-probe", "member.admission-probe"),
     ],
 )
@@ -84,6 +86,21 @@ def test_registry_resolves_one_stage_per_kind(
         context["target"] = "vault/topics/example/00-overview.md"
     if kind == "member":
         context["member_kind"] = "paper"
+    if kind == "author" and stage == "synthesise":
+        context.update(
+            {
+                "full_name": "Example Author",
+                "inputs": [
+                    {
+                        "material_key": "paper:example-paper",
+                        "kind": "paper",
+                        "id": "example-paper",
+                        "path": "vault/papers/example-paper.md",
+                        "title": "Example Paper",
+                    }
+                ],
+            }
+        )
     report = run_stage(
         {"kind": kind, "slug": "example", "stage": stage, "context": context}
     )

@@ -7,171 +7,204 @@ description: Use when the user wants to process or collect one or more papers, a
 
 ## 任务
 
-把用户提供的学术材料交给统一处理图，并陪伴这次处理直到产物完成、出现明确的人工作答，或留下可解释的恢复入口。
+由主线程判断材料进度，用磁盘观察选择下一步，并把每个专业阶段交给 `run-stage` 执行。
 
 ## 输入
 
-保留用户实际提供的事实；书目调查和 canonical identity 由图内 specialist 完成。
+只保留用户实际提供的事实；不要在 intake 时补写书目事实。
 
-- Book：`title|isbn` 至少一个；可带 `authors/year/publisher/category/format`。
 - Paper：`title|doi` 至少一个；可带 `authors/year/journal/oa_url/url`。
+- Book：`title|isbn` 至少一个；可带 `authors/year/publisher/category/format`。
 - Batch：同一请求中的 2–32 个 Book/Paper，可混合两种 kind。
 - Author：`name` 与 `meta{full_name,topic,maxBooks,maxPapers}`。
-- Talk：读取并执行 [`references/talk.md`](references/talk.md)。
-- Translation：`slug`，可选 `source_file`、`target_language`、`toc_json`、
-  `toc_page_side`。
+- Talk：`media/title/date`，可带 `slug/engines/lang/prepare_media`；Talk 从 Prepare 开始。
+- Translation：`slug`，可带 `source_file/target_language/toc_json/toc_page_side`；默认
+  target 为 `zh-CN`。
 
-用户给出的 slug 是身份提示；图在 Search 完成后决定 canonical slug 和已有 owner。
-Paper 可带 `translate:true`，让 Translation 作为独立 derivative 在同一图中运行。
+用户给的 slug 是提示。Paper/Book 的 Search receipt 决定 canonical identity；若
+`local_owner.vault_slug` 存在，后续用这个 owner slug，避免建立第二个 writer。
+Paper 的 `translate:true` 是完成 Paper 后再运行一个独立 Translation loop。
 
 ## 硬约束
 
-- 一次用户请求只启动一次相应图；2–32 个 Book/Paper 作为一个 batch 一起进入。
-- 只有 authoritative typed receipt 中已经证明的 artifact 才能向用户报告为完成。
-- Writer outcome 未知时保留 reconcile 信息；收到用户决定或新线索后，以一次新图重新观察
-  durable state。
-- 用户事实、credential 和 signed URL 保持为数据；临时 JSON 写在 `.quasi/temp/`，service
-  credential 由 `quasi-*` shim 获得。
+- `$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs` 是唯一 specialist 调用入口。每次只传
+  `{kind,slug,stage,context}`；不要调用大图来替主线程判断整条流程。
+- `quasi-status --kind K --slug S --json` 是宽松、只读的磁盘观察工具。`stages`、
+  `evidence`、`refs` 和可用的 `identity` 只陈述事实；`next_stage` 最多是提示，绝不能当作
+  调度指令。主线程结合目标 kind、期望产物、最近 receipt 和这些观察自行决定下一步。
+- **WRITER-AMBIGUITY RULE**：任何 writer 返回 `blocked`、无 receipt、无法理解的 receipt
+  或其它 unknown outcome，先运行 `quasi-status` 核对落盘事实。能证明 exact artifact 已落盘
+  才可 reconcile；否则停止并报告，不得 blind redispatch。Audit 没有 durable clean signal，
+  因而其 unknown outcome 只能停止。
+- 同一 exact output 同时只能有一个 owner。所有重试、修复和断点续跑都先观察磁盘；不并行
+  调度会写同一路径的阶段。
+- 完成必须同时有该 writer 的 `complete` Stage receipt 和磁盘上的 exact artifact；最终 clean
+  Audit 仍由本次 Audit receipt 证明。不要仅凭文件存在或 driver 的摘要报告成功。
+- 用户事实、credential 和 signed URL 始终作为数据。需要临时 JSON 时只用
+  `write_temp_json` 写到 `.quasi/temp/`；service credential 由 `quasi-*` shim 提供。
 
 ## 状态
 
-Workflow 是材料状态的唯一所有者。它用 typed receipts 记录 identity、Stage terminal、
-artifacts、failure 和 resume。Skill 只保留本次用户意图与用户随后给出的决定。
+主线程拥有本次请求的 flow judgment；它不另存 cursor 或材料数据库。
 
-- 一项 Book/Paper：`quasi.material-ingress.receipt/0.2` 与
-  `quasi.material-loop.receipt/0.2`。
-- 一批材料：`quasi.collection.material-batch.receipt/0.2`，并保持输入顺序。
-- Author：collection receipt。
-- Translation：`quasi.derivative.translation.receipt/0.1`。
-- Specialist Stage：`quasi.stage.receipt/0.2`，terminal 为
-  `complete|needs_input|blocked|failed`。
-
-`complete` 证明了本阶段交给下一阶段的 exact artifacts。MaterialReceipt 的 `user_gate` 始终
-存在：`needs_input` 时它是闭合的 typed gate，带用户可以回答的问题以及所需 candidates、
-conflicts 或 evidence；其它 terminal 时为 `null`。`blocked` 表示现有能力或 writer outcome
-无法可靠继续；`failed` 是 specialist 已经尽力调查后的确定失败。
+- `quasi-status` 是可重复调用的 disk oracle；`--identity` 只用于 Paper/Book/Talk 的 canonical
+  frontmatter admission。
+- `run-stage` 返回 `quasi.stage.receipt/0.2`。唯一 terminal union 是
+  `complete|needs_input|blocked|failed`，非 complete terminal 带一个 typed `issue`。
+- Search 的 `identity`、`local_owner` 与用户决定构成本次 canonical context；随后每次 status
+  观察与 Stage receipt 构成短期运行记录。
+- Batch/Author driver 只返回其材料的最终状态、最近 observation、receipts、gate 或 failure；
+  主线程用 `quasi-status` 重新 admission，不信任 driver 自报的文件结果。
 
 ## Agent / Helper 合同
 
-统一入口是 `$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs`：
+用 Claude Code Workflow 工具运行插件 workflow `run-stage`：
 
-- Claude Code 使用 Workflow 工具。
+```python
+Workflow(
+    scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs",
+    args={"kind": kind, "slug": slug, "stage": stage, "context": context},
+)
+```
 
-图选择 specialist、注入 goal/capabilities/exact refs 和 output schema。Specialist 在自己的
-能力范围内完成调查或局部恢复，再返回一个 Stage terminal。Skill 根据 terminal 与用户沟通，
-不重演 specialist 的内部判断。
+Workflow 只选择 descriptor row、组装 schema-enforced envelope，并原样返回 specialist receipt。
+主线程负责读 observation、选择 stage、处理用户 gate 和判断是否停止。
 
-Book/Author 完成后可运行 LOCALISE sidecar：`quasi-helpers localise scan` 产生候选，
-`localisation-agent` 判断 edition relation，helper 写入缓存。
+Book chapter inventory 只从 Prepare evidence 中已观察到的 exact
+`processing/chapters/{slug}/manifest.json` 用 `read_json` 读取。不得用 Glob、rg 或猜测文件名
+发现输入。Author membership 先用 `author/resolve-membership` row 观察 owner，完成
+driver 后再直接运行 `quasi-status --identity` admission；不要调用
+`member/admission-probe` relay。
+
+Batch 和 Author 为每个去重后的 canonical material 启动一个 `general-purpose` driver Agent。
+给 driver 的 envelope 只含 kind、canonical slug、identity、用户事实和本节合同；driver 执行下述
+单材料 loop，并返回 JSON 摘要。不同材料可 modest parallel（最多五个）；同一 identity 始终只有
+一个 driver。`needs_input` 返回主线程集中提问，回答后先重新 status，再继续该材料。
 
 ## 工作流
 
 ```text
-用户请求
-  │
-  ▼
-一次 Workflow（单项或一整个 batch）
-  Recall       归一化请求并合并同一材料
-  Search       specialist 调查 metadata / identity 并核对本地 owner
-  Acquire      核验或取得 source
-  Prepare      建立可供生产者使用的 text / chapters / transcript / translation
-  Analyse      写 Paper / Chapter / Talk canonical
-  Synthesise   汇合 Book / Author 等 collection 产物
-  Audit        验证 exact schema 和产品一致性
-  │
-  ▼
-Skill 汇报产物；集中处理 needs_input；解释 blocked / failed 与恢复入口
+Paper / Book
+  Intake → Search(run-stage) → 主线程 identity coalescing
+         → status observations ⇄ 主线程判断 ⇄ one run-stage Stage
+         → clean Audit
+
+Talk
+  Intake → Prepare → Analyse（仅 live）→ Audit
+
+Translation
+  Intake → 观察 source 与已有 derivative → Prepare
+
+Batch
+  所有 Search → same-identity coalescing → one driver / unique material
+             → 主线程按原输入顺序聚合
+
+Author
+  discover-books + discover-papers → resolve-membership → identity coalescing
+  → one driver / unique member → quasi-status --identity admission
+  → author.synthesise → author.audit
 ```
 
-一批材料始终是一张图。各 item 在每个 phase 的 FIFO 限流下独立向前推进，因此 Search、
-Acquire、Prepare 等阶段会自然形成可观察的 pipeline。
+这些箭头是主线程的专业判断范围，不是 `quasi-status.next_stage` 的解释器。
 
 ## 执行流程
 
-```python
-requests = parse_user_requests()
-if not requests:
-    report("请提供要处理的材料")
-    return
+1. 从请求抽取 kind 和 hints。没有材料就请用户补充；超过 32 个 Book/Paper 时请用户拆批。
 
-if len(requests) > 1:
-    # A batch is one Workflow row, with one correlated result per input item.
-    wf_args = {
-        "kind": "batch",
-        "items": [project_material_request(item) for item in requests],
-    }
-else:
-    wf_args = project_single_request(requests[0])
+2. 每个 Paper/Book 先运行：
 
-def run_graph(args):
-    return Workflow(
-        scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs",
-        args=args,
-    )
-
-result = run_graph(wf_args)
-
-if wf_args["kind"] == "batch":
-    batch = require_receipt(
-        result,
-        "quasi.collection.material-batch.receipt/0.2",
-    )
-    report_batch_progress(batch)
-    report_completed_artifacts(batch)
-    questions = collect_needs_input(batch)
-    if questions:
-        present_questions_together(questions)
-    report_blocked_and_failed_items(batch)
-    return
-
-typed = authoritative_receipt(result)
-if typed.status == "complete":
-    report_completed_artifacts(typed)
-    maybe_localise_completed_books(typed)
-    best_effort_open_primary_artifact(typed)
-elif typed.status == "needs_input":
-    gate = require_closed_user_gate(
-        typed.gate
-        if typed.schema_version == "quasi.derivative.translation.receipt/0.1"
-        else typed.user_gate
-    )
-    present_question(
-        stage=typed.stage,
-        question=gate.question,
-        evidence=gate,
-    )
-elif typed.status == "blocked":
-    explain_block(
-        stage=typed.stage,
-        issue=typed.issue or typed.failure,
-        resume=typed.resume,
-    )
-else:
-    explain_failure(
-        stage=typed.stage,
-        issue=typed.issue or typed.failure,
-        attempts=typed.attempts,
-    )
+```json
+{
+  "kind": "paper|book",
+  "slug": "provisional-slug",
+  "stage": "search",
+  "context": {"query": {"user_hints": "保留原始结构"}}
+}
 ```
 
-Book 年份选择和 Translation source selection 使用 receipt 提供的 exact candidates/evidence。
-用户作答后，把该决定放进一次新的 Workflow args；新图重新观察持久产物，不依赖旧的 JS
-cursor。Unknown writer outcome 保持 suspended；下一次明确请求重新进入图，由 Search 观察
-local owner，再由对应生产阶段 reconcile durable artifact。
+   - `complete`：保存 receipt 的 `identity`；后续 slug 取
+     `local_owner.vault_slug || identity.slug`。
+   - `needs_input`：把 `issue.user_question`、`candidates` 和 `conflicts` 原样展示给用户；把答案
+     加进 `context.query.user_decision` 后重新 Search。Search 是 readonly，unknown 或明确
+     retryable failure 最多允许一次有实质变化的 reformulation。
+   - `blocked|failed`：说明 observation 与 issue；没有新证据就停止该项。
+
+3. Search 完成后按 DOI、ISBN、Search identity slug，以及必要时规范化
+   title+第一作者+year 合并同一 identity。保留 batch 原输入到 canonical item 的映射；去重必须
+   发生在启动任何 material driver 之前。
+
+4. 单材料 loop 每轮先运行 `quasi-status --kind K --slug S --json`，再由主线程选择一个
+   run-stage 调用。不要机械采用 `next_stage`：例如 Translation observation 可能列出其它 target
+   的 derivative；Talk 的媒体 intake 属于 Prepare；Audit clean 也没有 status 行可证明。
+
+   常用 caller-side context：
+
+   - Acquire：`meta|identity`；Book 另带 `allowed_formats`，有 gate 时带 `year_decision`。
+   - Prepare：Paper 使用 accepted source；Book 从 observation 选 exact source 与 `format`；Talk
+     保留 intake meta；Translation 带 `source_file/target_language/toc_json/toc_page_side` 和用户的
+     `source_decision`。
+   - Paper Analyse：`selected_input` 取最近 Prepare receipt 的 exact `selected_input`；断点续跑而
+     receipt 不在时，只在 observation 唯一指向一个可用 normalized text 时采用它，否则请用户
+     选择，不自行判断文本质量。
+   - Book Analyse：从 Prepare evidence 中的 exact manifest 用 `read_json` 取得完整 `chapters`，
+     每章一次 `stage:"analyse"`、`context.chapter:<exact row>`；不同 exact chapter outputs 可
+     最多五个并行。
+   - Talk Analyse：仅当 Prepare receipt 的 `classification=="live"`；`inputs` 取该 receipt 中
+     primary transcript 与同 generation engine artifacts 的 `{role,path,sha256,size}`。`dead|empty`
+     canonical 由 Prepare 拥有，不再调用 Analyse。
+   - Book Synthesise：`input_paths` 取 status observation 中已落盘的完整 chapter canonical 列表。
+   - Audit：Paper/Book/Talk 使用 exact canonical target 与 `pass:1`；Author 同理。Translation
+     没有独立 Audit stage。
+
+5. 每个 Stage receipt 都按 terminal 处理：
+
+   - `complete`：立刻再 status；只有 expected exact artifact 已出现才进入下一判断。
+   - `needs_input`：原样展示 `issue.user_question` 及 receipt 中的 candidates/conflicts/evidence。
+     Book year gate 只接受 receipt 给出的 verbatim action：`accept-current` 或
+     `use-recommended-year`。构造
+     `year_decision={action,tmp_path,year_evidence}`；后者还要把 identity year 和 slug 的末尾年份
+     改成 `recommended_year`，然后以该 canonical identity 重新进入 Acquire context。
+   - `failed`：先看 issue、attempts、retryable/write_state，再 status。只有已证明
+     `not_written`、磁盘仍未完成且有实质不同的 context/method 时，才可选择一次不同方式的尝试；
+     否则向用户展示或停止。
+   - `blocked`、receipt 缺失或不 intelligible：执行 WRITER-AMBIGUITY RULE。
+
+6. Audit `complete` 且 `escalated` 非空时，只做一次 owner-correct repair：把 exact diagnostics
+   交回拥有该 path 的 producer，使用 `mode:"repair"`。Paper/Talk canonical 回到 Analyse；Book
+   chapter 回到该 chapter Analyse，Book overview 回到 Synthesise；Author page 回到
+   `author.synthesise`。任何 foreign path 都停止为 owner ambiguity。修复后以 `pass:2` re-audit
+   一次；仍有 escalation 就停止并完整展示，不再修复。
+
+7. Batch 在主线程完成所有 Search 与 coalescing 后，为每个 unique Paper/Book 启动一个 driver。
+   汇总时恢复用户原顺序，同一 identity 的所有输入指向同一结果；集中展示 gates、failed 和
+   blocked 项，不让一个失败取消其它独立材料。
+
+8. Author 的 `discover-books` 与 `discover-papers` 可并行运行（count 分别来自 maxBooks、
+   maxPapers），然后以全部 candidates 调用 `resolve-membership`。按 identity 去重并运行 member
+   drivers；每个 driver 返回后运行
+   `quasi-status --kind K --slug S --json --identity`，只有 disk identity、canonical path 和该
+   driver 的 clean Audit receipt 都一致才 admission。把 admitted members 作为
+   `{material_key,kind,id,path,title}` 传给 `stage:"synthesise"`；随后 Audit，必要时按第 6 步
+   repair。Author page 始终是 `vault/authors/{slug}.md`。
 
 ## 断点续跑
 
-| terminal | Skill 的下一步 |
-| --- | --- |
-| `complete` | 展示 receipt 中的 canonical artifacts，并运行适用的完成后 sidecar |
-| `needs_input` | 展示 specialist 的问题和证据；收到答案后构造一次新的 graph request |
-| `blocked` | 解释能力边界或 unknown writer，保留 exact resume/reconcile 信息 |
-| `failed` | 展示 specialist 已尝试的路径与确定失败原因，帮助用户补充新的线索 |
-| Batch `partial` | 先报告整批进度，再集中收集问题；后续仍以一个受影响项 batch 进入图 |
+对任意已知 slug 重新运行 `quasi-status --kind K --slug S --json`，读取实际 evidence，再结合
+用户目标选择下一次 `run-stage`；不需要 JS cursor 或旧 graph receipt。
+
+- Paper/Book/Talk 用 `--identity` 可核对已存在 canonical owner。
+- Translation 的 derivative glob 只是 observation；主线程按请求的完整 target tag 识别 exact
+  `processing/translations/{slug}-{target-tag-lower}.pdf`，必要时用 Prepare reconcile。
+- unknown writer 若 status 不能证明 exact output，保持 stopped；新会话也不能自动 replay。
+- Audit unknown 不能靠 status 恢复 clean 证明；向用户说明需要一次新的明确 Audit 请求。
 
 ## 输出
 
-只把 typed receipt 中已经证明的 artifacts 报告为结果。常见产物包括：
+报告每项 canonical identity、完成到的阶段、已证明的 exact artifacts、仍需回答的 gate，以及
+blocked/failed issue。Batch 保持原输入顺序并标出 coalesced items；Author 同时报告 admitted 与
+未完成 members。
+
+常见成功产物：
 
 ```text
 sources/{slug}.{pdf|epub}
@@ -179,7 +212,7 @@ processing/papers/{slug}/source.txt
 processing/chapters/{slug}/{manifest.json,*.txt}
 vault/papers/{slug}.md
 vault/books/{slug}/{00-overview.md,ch{slot}-*.md}
+vault/talks/{slug}/talk.md
 vault/authors/{author}.md
-processing/translations/{slug}-{language}.pdf
-.quasi/localise/cndouban.json
+processing/translations/{slug}-{target-tag-lower}.pdf
 ```

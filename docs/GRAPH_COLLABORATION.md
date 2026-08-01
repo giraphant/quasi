@@ -38,7 +38,9 @@ skills and agent contracts must not cite it at runtime.
   artifact probe (`quasi-status` is the shared prover), never
   cross-examination of receipt fields. Receipts can lie; the disk cannot.
   This applies at joins too: child admission re-proves from disk, not by
-  introspecting the child's receipt.
+  introspecting the child's receipt. The oracle reports **observations,
+  not inferences**: stage order, dispatchability, and next-step choice are
+  the driving agent's judgment, never encoded into the status tool.
 - **Judgment is proven by no one.** The agent returns one honest terminal;
   the graph routes it verbatim. A schema-valid failure receipt is never
   reinterpreted as malformed because the graph disagrees with the method.

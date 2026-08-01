@@ -40,7 +40,7 @@ def complete_map(payload: dict) -> dict[str, bool | None]:
     return {item["stage"]: item["complete"] for item in payload["stages"]}
 
 
-def test_status_reports_all_three_material_layouts(tmp_path: Path):
+def test_status_reports_material_layouts(tmp_path: Path):
     project = tmp_path / "project"
     project.mkdir()
 
@@ -107,10 +107,8 @@ def test_status_reports_all_three_material_layouts(tmp_path: Path):
         "audit": None,
     }
     assert complete_map(talk_payload) == {
-        "acquire": True,
         "prepare": True,
         "analyse": True,
-        "synthesise": True,
         "audit": None,
     }
     assert paper_payload["next_stage"] is None
@@ -121,6 +119,73 @@ def test_status_reports_all_three_material_layouts(tmp_path: Path):
         f"vault/books/{book}/ch01-opening.md",
         f"vault/books/{book}/ch02-closing.md",
     ]
+
+
+def test_translation_status_reports_all_existing_derivatives_as_observations(
+    tmp_path: Path,
+):
+    project = tmp_path / "project"
+    slug = "multi-translation"
+    write(project / "sources" / f"{slug}.pdf", b"%PDF-source")
+    for tag in ("zh-cn", "fr-fr"):
+        write(
+            project / "processing" / "translations" / f"{slug}-{tag}.pdf",
+            b"%PDF-translation",
+        )
+        write(
+            project
+            / "processing"
+            / "translations"
+            / f"{slug}-{tag}.manifest.json",
+            "{}",
+        )
+
+    result = run_status(
+        project,
+        "--kind",
+        "translation",
+        "--slug",
+        slug,
+        "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["next_stage"] is None
+    assert complete_map(payload) == {"acquire": True, "prepare": True}
+    assert payload["stages"][1]["evidence"] == [
+        f"processing/translations/{slug}-fr-fr.pdf",
+        f"processing/translations/{slug}-zh-cn.pdf",
+    ]
+    assert payload["refs"]["derivatives"] == [
+        f"processing/translations/{slug}-fr-fr.pdf",
+        f"processing/translations/{slug}-zh-cn.pdf",
+    ]
+
+
+def test_translation_status_keeps_precondition_as_evidence_not_next_stage(
+    tmp_path: Path,
+):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = run_status(
+        project,
+        "--kind",
+        "translation",
+        "--slug",
+        "missing-source",
+        "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert complete_map(payload) == {"acquire": False, "prepare": False}
+    assert payload["next_stage"] == "acquire"
+    assert payload["refs"] == {
+        "source": "sources/missing-source.pdf",
+        "derivatives": [],
+    }
 
 
 def test_status_marks_a_corrupt_book_manifest_incomplete(tmp_path: Path):

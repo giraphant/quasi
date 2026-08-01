@@ -1,7 +1,9 @@
 import {
+  AUTHOR_ARTIFACT_CONTRACT,
   BOOK_ARTIFACT_CONTRACT,
   PAPER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
+import { validText } from "../../runtime.mjs";
 import { defineOperation } from "../define.mjs";
 
 const SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
@@ -117,6 +119,40 @@ const resolvedMemberSchema = {
       type: ["string", "null"],
       enum: ["slug", "isbn", "doi", "title", null],
     },
+  },
+};
+
+const actionPayloads = ({ mode }) => ({
+  complete: {
+    required: ["action"],
+    properties: {
+      action: {
+        type: "string",
+        enum:
+          mode === "create"
+            ? ["create", "reconciled"]
+            : ["repair", "reconciled"],
+      },
+    },
+  },
+  failed: {
+    required: ["action"],
+    properties: { action: { const: mode } },
+  },
+  blocked: {
+    required: ["action"],
+    properties: { action: { const: mode } },
+  },
+});
+
+const AUDIT_DIAGNOSTIC_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path", "kind", "reason"],
+  properties: {
+    path: { type: "string" },
+    kind: { type: "string" },
+    reason: { type: "string" },
   },
 };
 
@@ -312,6 +348,122 @@ material_key and effect echoed exactly, attempt=1, and one honest four-way termi
 ${JSON.stringify(request, null, 2)}
 \`\`\``,
   },
+  {
+    operation: "author.synthesise",
+    stage: "Synthesise",
+    effect: "writer",
+    agentType: "quasi:synthesis-agent",
+    refs: ({ materialKey, inputs, output, mode }) => ({
+      materialKey,
+      inputs,
+      output,
+      mode,
+    }),
+    payloadProperties: ({ inputs, output }) => ({
+      required: [
+        "input_material_keys",
+        "input_paths",
+        "output_path",
+        "artifact_roles",
+        "materials_analyzed",
+      ],
+      properties: {
+        input_material_keys: {
+          const: inputs.map((input) => input.material_key),
+        },
+        input_paths: { const: inputs.map((input) => input.path) },
+        output_path: { const: output },
+        artifact_roles: { const: ["canonical"] },
+        materials_analyzed: { const: inputs.length },
+      },
+    }),
+    terminalPayloads: actionPayloads,
+    complete: (receipt, context) =>
+      [
+        ...(context.mode === "create" ? ["create"] : ["repair"]),
+        "reconciled",
+      ].includes(receipt.terminal.action),
+    envelope: (
+      { materialKey, name, fullName, topic, diagnostics },
+      { inputs, output, mode },
+    ) => ({
+      schema_version: "quasi.operation.author.synthesise.request/0.1",
+      operation: "author.synthesise",
+      stage: "Synthesise",
+      material_key: materialKey,
+      collection_key: materialKey,
+      inputs: inputs.map((input) => ({
+        material_key: input.material_key,
+        kind: input.kind,
+        id: input.id,
+        role: "canonical",
+        path: input.path,
+        title: input.title,
+      })),
+      input_material_keys: inputs.map((input) => input.material_key),
+      input_paths: inputs.map((input) => input.path),
+      output: { role: "canonical", path: output },
+      identity: { slug: name, full_name: fullName, topic },
+      artifact_contract: AUTHOR_ARTIFACT_CONTRACT,
+      frontmatter_seed: { type: "author", name: fullName },
+      mode,
+      overwrite: mode === "repair",
+      repair_diagnostics: mode === "repair" ? diagnostics : [],
+    }),
+  },
+  {
+    operation: "author.audit",
+    stage: "Audit",
+    effect: "writer",
+    agentType: "quasi:audit-agent",
+    refs: ({ materialKey, target, pass }) => ({ materialKey, target, pass }),
+    payloadProperties: ({ target, pass }) => ({
+      required: [
+        "target_path",
+        "pass",
+        "artifact_roles",
+        "remaining_violations",
+        "escalated",
+        "mutated_paths",
+      ],
+      properties: {
+        target_path: { const: target },
+        pass: { const: pass },
+        artifact_roles: { const: ["canonical"] },
+        remaining_violations: { type: "integer", minimum: 0 },
+        escalated: { type: "array", items: AUDIT_DIAGNOSTIC_SCHEMA },
+        mutated_paths: {
+          type: "array",
+          uniqueItems: true,
+          items: { type: "string" },
+        },
+      },
+    }),
+    complete: (receipt) =>
+      receipt.escalated.every(
+        (item) =>
+          validText(item.path, 1, 2048) &&
+          validText(item.kind, 1, 200) &&
+          validText(item.reason, 1, 4000),
+      ) &&
+      receipt.mutated_paths.every((path) => validText(path, 1, 2048)) &&
+      (receipt.remaining_violations === 0
+        ? receipt.escalated.length === 0
+        : receipt.remaining_violations === receipt.escalated.length),
+    envelope: ({ materialKey }, { target, pass }) => ({
+      schema_version: "quasi.operation.author.audit.request/0.1",
+      operation: "author.audit",
+      stage: "Audit",
+      material_key: materialKey,
+      collection_key: materialKey,
+      effect: "writer",
+      pass,
+      mode: pass === 1 ? "audit" : "re-audit",
+      target: { role: "canonical", path: target },
+      exact_output: target,
+      composite_debt: true,
+    }),
+  },
 ];
 
 export const authorOperations = Object.fromEntries(
@@ -324,3 +476,6 @@ export const authorDiscoverPapers =
   authorOperations["author.discover-papers"];
 export const authorResolveMembership =
   authorOperations["author.resolve-membership"];
+export const authorSynthesise =
+  authorOperations["author.synthesise"];
+export const authorAudit = authorOperations["author.audit"];

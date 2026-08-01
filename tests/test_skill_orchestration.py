@@ -77,27 +77,41 @@ def test_frontmatter_descriptions_are_short_routing_hints() -> None:
         assert "Phase" not in value and "→" not in value, path
 
 
-def test_collect_material_starts_one_graph_and_does_not_shadow_ingress() -> None:
+def test_collect_material_main_thread_drives_run_stage_from_disk_observations() -> None:
     skill = (ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
         encoding="utf-8"
     )
-    assert "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" in skill
-    assert '"kind": "batch"' in skill
+    assert "$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs" in skill
+    assert "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" not in skill
+    assert '"stage": "search"' in skill
+    assert "quasi-status --kind K --slug S --json" in skill
+    assert "next_stage" in skill and "绝不能当作" in skill
+    assert "WRITER-AMBIGUITY RULE" in skill
+    assert "不得 blind redispatch" in skill
     assert "2–32" in skill
-    assert "quasi.collection.material-batch.receipt/0.2" in skill
     assert "material.recall" not in skill
     assert "quasi-search book" not in skill
     assert "quasi-helpers vault resolve" not in skill
-    assert "collect_needs_input" in skill
-    assert "report_blocked_and_failed_items" in skill
+    assert "member/admission-probe" in skill
+    assert "不要调用" in skill
 
 
-def test_collect_material_uses_native_claude_workflow_only() -> None:
+def test_collect_material_pins_driver_gates_repair_and_author_rows() -> None:
     skill = (ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
         encoding="utf-8"
     )
     assert "Workflow(" in skill
-    assert 'scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs"' in skill
+    assert 'scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs"' in skill
+    assert "general-purpose" in skill
+    assert "same identity" in skill or "same-identity" in skill
+    assert "accept-current" in skill
+    assert "use-recommended-year" in skill
+    assert 'mode:"repair"' in skill
+    assert "discover-books" in skill
+    assert "discover-papers" in skill
+    assert "resolve-membership" in skill
+    assert 'stage:"synthesise"' in skill
+    assert "--identity" in skill
     for name in ("quasi-pi-runner", "quasi-codex-driver", "quasi-codex-runner"):
         assert name not in skill
 

@@ -176,6 +176,26 @@ export function makeOperationContext(kind, slug, operation, rawContext) {
         output: `vault/authors/${slug}.md`,
         candidates: context.candidates || [],
       };
+    case "author.synthesise":
+      return {
+        ...base,
+        name: slug,
+        fullName:
+          value(context, "fullName", "full_name") ||
+          value(meta, "fullName", "full_name") ||
+          slug,
+        topic: context.topic || meta.topic || "",
+        inputs: context.inputs || [],
+        output: `vault/authors/${slug}.md`,
+        mode,
+        diagnostics,
+      };
+    case "author.audit":
+      return {
+        ...base,
+        target: `vault/authors/${slug}.md`,
+        pass: context.pass || 1,
+      };
     case "member.admission-probe":
       return {
         ...base,
