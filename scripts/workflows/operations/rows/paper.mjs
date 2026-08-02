@@ -1,5 +1,4 @@
 import { PAPER_ARTIFACT_CONTRACT } from "../../artifact-contracts/generated.mjs";
-import { defineOperation } from "../define.mjs";
 import { posixSingleQuote } from "../shared.mjs";
 
 const ATTEMPT_SCHEMA = {
@@ -161,7 +160,7 @@ export const paperOperationRows = [
         (receipt.terminal.disposition === "reused" &&
           receipt.write_state === "not_written")),
     envelope: ({ slug, meta, materialKey }, { output }) => ({
-      schema_version: "quasi.stage.paper-acquire.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "paper.acquire",
       stage: "Acquire",
       material_key: materialKey,
@@ -259,7 +258,7 @@ export const paperOperationRows = [
       );
     },
     envelope: ({ materialKey }, refs) => ({
-      schema_version: "quasi.stage.paper-prepare.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "paper.prepare",
       stage: "Prepare",
       material_key: materialKey,
@@ -306,7 +305,7 @@ export const paperOperationRows = [
         "reconciled",
       ].includes(receipt.terminal.action),
     envelope: ({ meta, materialKey, diagnostics }, refs) => ({
-      schema_version: "quasi.operation.paper.analyse.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "paper.analyse",
       stage: "Analyse",
       material_key: materialKey,
@@ -376,7 +375,7 @@ ${JSON.stringify(request, null, 2)}`,
         ? receipt.escalated.length === 0
         : receipt.remaining_violations === receipt.escalated.length,
     envelope: ({ materialKey }, { target, pass }) => ({
-      schema_version: "quasi.operation.paper.audit.request/0.2",
+      schema_version: "quasi.stage.request/0.2",
       operation: "paper.audit",
       stage: "Audit",
       material_key: materialKey,
@@ -387,12 +386,3 @@ ${JSON.stringify(request, null, 2)}`,
     }),
   },
 ];
-
-export const paperOperations = Object.fromEntries(
-  paperOperationRows.map((row) => [row.operation, defineOperation(row)]),
-);
-
-export const paperAcquire = paperOperations["paper.acquire"];
-export const paperPrepare = paperOperations["paper.prepare"];
-export const paperAnalyse = paperOperations["paper.analyse"];
-export const paperAudit = paperOperations["paper.audit"];

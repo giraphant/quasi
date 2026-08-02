@@ -4,7 +4,6 @@ import {
   PAPER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
 import { validText } from "../../runtime.mjs";
-import { defineOperation } from "../define.mjs";
 
 const SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
 
@@ -387,7 +386,7 @@ ${JSON.stringify(request, null, 2)}
       { materialKey, name, fullName, topic, diagnostics },
       { inputs, output, mode },
     ) => ({
-      schema_version: "quasi.operation.author.synthesise.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "author.synthesise",
       stage: "Synthesise",
       material_key: materialKey,
@@ -451,7 +450,7 @@ ${JSON.stringify(request, null, 2)}
         ? receipt.escalated.length === 0
         : receipt.remaining_violations === receipt.escalated.length),
     envelope: ({ materialKey }, { target, pass }) => ({
-      schema_version: "quasi.operation.author.audit.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "author.audit",
       stage: "Audit",
       material_key: materialKey,
@@ -465,17 +464,3 @@ ${JSON.stringify(request, null, 2)}
     }),
   },
 ];
-
-export const authorOperations = Object.fromEntries(
-  authorOperationRows.map((row) => [row.operation, defineOperation(row)]),
-);
-
-export const authorDiscoverBooks =
-  authorOperations["author.discover-books"];
-export const authorDiscoverPapers =
-  authorOperations["author.discover-papers"];
-export const authorResolveMembership =
-  authorOperations["author.resolve-membership"];
-export const authorSynthesise =
-  authorOperations["author.synthesise"];
-export const authorAudit = authorOperations["author.audit"];

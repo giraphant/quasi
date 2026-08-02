@@ -1,5 +1,3 @@
-import { defineOperation } from "../define.mjs";
-
 const HASH = /^[0-9a-f]{64}$/;
 
 export const validTranslationHash = (value) =>
@@ -281,7 +279,7 @@ export const translationOperationRows = [
       { materialKey, requestedSource, sourceDecision },
       refs,
     ) => ({
-      schema_version: "quasi.stage.translation-prepare.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "translation.prepare",
       stage: "Prepare",
       material_key: materialKey,
@@ -311,9 +309,3 @@ export const translationOperationRows = [
     }),
   },
 ];
-
-export const translationOperations = Object.fromEntries(
-  translationOperationRows.map((row) => [row.operation, defineOperation(row)]),
-);
-
-export const translationPrepare = translationOperations["translation.prepare"];

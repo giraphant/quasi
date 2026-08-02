@@ -55,6 +55,7 @@ DEAD_NAMES = [
     "quasi-codex-runner",
     "quasi-codex-driver",
     "quasi-codex-agents",
+    "member.admission-probe",
     "process-material.mjs",
     "materials/interpreter.mjs",
     "materials/paper.mjs",

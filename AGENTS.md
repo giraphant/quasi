@@ -31,7 +31,7 @@ This file holds only the contracts a maintainer needs before editing. The detail
 - The skill main process owns material identity and processing state, derived from `quasi-status` observations plus the current receipt — never a second hidden state file, never writer success inferred from prose, never a second receipt validator, and never reinterpreting a schema-valid failure because it disagrees with the specialist's method.
 - StructuredOutput may ask a still-running agent to repair malformed output; that provider-level correction is not a new stage dispatch. A receipt is consumed once. Cross-field checks that JSON Schema cannot express stay small and concrete in the owning descriptor row (exact path join, count equality, coherent manifest generation).
 - Unknown writer outcomes stop the run: no duplicate writers, no path discovery outside the envelope, no replay after an ambiguous write. Resume begins with a fresh disk observation.
-- Collection and research skills admit child materials from disk testimony: `member.admission-probe` runs `quasi-status --identity`, and the skill consumes that receipt before adding a member. Audit has no durable status signal yet; a clean final audit is receipt-proven for the current invocation only.
+- Collection and research skills admit child materials directly from disk testimony: the skill runs `quasi-status --identity` and consumes that observation before adding a member. Audit has no durable status signal yet; a clean final audit is receipt-proven for the current invocation only.
 - Per-agent write ownership, skill routing (`collect-material` / `research-topic` / `finalise-draft`), batch semantics, and topic products are specified in `docs/ARCHITECTURE.md`.
 
 ## Path roots

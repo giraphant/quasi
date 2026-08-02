@@ -62,10 +62,12 @@ if (resolved) {
     resolved.operation,
     config.args.context,
   )
+  const refs = resolved.descriptor.refs(context)
   direct = {
     operation: resolved.operation,
     prompt: resolved.row.prompt(context),
     schema: resolved.row.schema(context),
+    request: resolved.descriptor.envelope(context, refs),
   }
 }
 process.stdout.write(JSON.stringify({ result, trace, direct }))
@@ -132,7 +134,6 @@ EXPECTED_REGISTRY = {
         "synthesise": "author.synthesise",
         "audit": "author.audit",
     },
-    "member": {"admission-probe": "member.admission-probe"},
     "translate": {"prepare": "translation.prepare"},
 }
 
@@ -187,8 +188,6 @@ def stage_context(kind: str, stage: str) -> dict[str, Any]:
         )
     if kind == "topic" and stage == "audit":
         context["target"] = "vault/topics/example/00-overview.md"
-    if kind == "member":
-        context["member_kind"] = "paper"
     if kind == "author" and stage == "synthesise":
         context.update(
             {
@@ -246,7 +245,6 @@ def test_every_registered_stage_resolves_to_its_descriptor_row() -> None:
         ("author", "resolve-membership", "author.resolve-membership"),
         ("author", "synthesise", "author.synthesise"),
         ("author", "audit", "author.audit"),
-        ("member", "admission-probe", "member.admission-probe"),
     ],
 )
 def test_registry_resolves_one_stage_per_kind(
@@ -313,6 +311,30 @@ def test_prompt_and_schema_are_exactly_the_selected_row_pair() -> None:
         "paper:example-paper"
     )
     assert "terminal" in schema["required"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "stage"),
+    [
+        (kind, stage)
+        for kind, stages in EXPECTED_REGISTRY.items()
+        for stage in stages
+    ],
+)
+def test_every_request_envelope_uses_shared_stage_tag(
+    kind: str, stage: str
+) -> None:
+    report = run_stage(
+        {
+            "kind": kind,
+            "slug": "example",
+            "stage": stage,
+            "context": stage_context(kind, stage),
+        }
+    )
+    assert report["direct"]["request"]["schema_version"] == (
+        "quasi.stage.request/0.2"
+    )
 
 
 def test_talk_analyse_prompt_requires_verified_section_ranges_and_full_index() -> None:

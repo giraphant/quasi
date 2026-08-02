@@ -2,7 +2,6 @@ import {
   BOOK_ARTIFACT_CONTRACT,
   PAPER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
-import { defineOperation } from "../define.mjs";
 
 const MATERIAL_SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
 const MATERIAL_IDENTITY_CONFLICTS = [
@@ -137,7 +136,7 @@ export const materialSearchOperationRows = [
       receipt.identity.confidence === receipt.confidence &&
       validLocalOwner(receipt.local_owner, receipt.kind),
     envelope: (_context, refs) => ({
-      schema_version: "quasi.stage.material-search.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "material.search",
       stage: "Search",
       material_key: refs.materialKey,
@@ -186,29 +185,3 @@ export const materialSearchOperationRows = [
     }),
   },
 ];
-
-export const materialSearchOperations = Object.fromEntries(
-  materialSearchOperationRows.map((row) => [row.operation, defineOperation(row)]),
-);
-
-export const materialSearch = materialSearchOperations["material.search"];
-
-const requestContext = (request) => ({
-  materialKey: request.request_key,
-  kind: request.kind,
-  requestedSlug: request.requested_slug,
-  query: request.query,
-  yearDecision: request.year_decision || null,
-});
-
-export const materialSearchStageSchema = (request) =>
-  materialSearch.schema(requestContext(request));
-export const materialSearchPrompt = (request) =>
-  materialSearch.prompt(requestContext(request));
-export const MATERIAL_SEARCH_STAGE_CONTRACT = {
-  ...materialSearch.contract,
-  schema: materialSearchStageSchema({
-    request_key: "material:placeholder",
-    kind: "paper",
-  }),
-};

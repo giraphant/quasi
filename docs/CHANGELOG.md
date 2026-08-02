@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.58.0** (2026-08-01): **Workflow 层收口为唯一 `run-stage` descriptor 路径：删除漂移的 member relay，统一 request envelope tag，并移除零调用 standalone API。**
+  - `member.admission-probe` 已与 Skill 现状漂移：`collect-material` 和 `research-topic` 都由主线程直接运行 `quasi-status --identity` 并消费磁盘观察，relay 只剩 row、registry/context 和旧测试自我引用，没有运行调用方。因此以 Skill 现行合同为准删掉整条 member 链，并把死名加入不得复活哨兵；Audit 仍只有当次 receipt 证明，未伪造持久状态。
+  - descriptor rows 实测并存 generic、per-stage 和 per-operation 三族 request tag，但旧 per-operation 字面量在 `agents/` 和 `tests/` 零消费者，`steer-agent` / `webcard-agent` 要求的原本就是 `quasi.stage.request/0.2`。本轮就地替换 16 个特化 tag，不加 factory 或注入层；新增的 parity 测试遍历全部已注册 row 的 request envelope，防止再次分叉。
+  - 逐个 `rg` 证明 39 个 row 尾 standalone named export 除自身定义与生成物外没有命中，它们只会误示 `run-stage` 之外尚有第二入口，故全部删除并清理失效 import；连同 member row 的 3 个 export，本次共删 42 个 named export。`normalizeLanguage` 仍被 `run-stage-context.mjs` 实际 import，各 `*OperationRows` 仍是唯一注册表面，两者均保留。
+
 - **0.57.9** (2026-08-01): **Talk 分节摘要补入经转写核对的可点击起止时间，同时保留文末详尽时间索引。**
   - 新产物此前只有文末 `时间脉络` 的起始点，阅读摘要时看不到每个内容小节覆盖的录制范围；若直接把时间轴改成区间，又会失去章节内部的重要转折索引。
   - 最小修复只改既有 producer 合同：live Talk 的每个 H3 下首行固定为「时间：`[mm:ss]`–`[mm:ss]`」，两个端点逐项对照同 generation 的 transcript evidence；文末 `时间脉络` 继续使用更细粒度的反引号时间点，不得由分节区间替代。未新增 H2、状态、receipt、helper 或 skill 路由；重建 workflow 投影并用 schema / prompt 回归测试钉住合同。

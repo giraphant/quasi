@@ -1,6 +1,5 @@
 import { TALK_ARTIFACT_CONTRACT } from "../../artifact-contracts/generated.mjs";
 import { validText } from "../../runtime.mjs";
-import { defineOperation } from "../define.mjs";
 
 const HASH_PATTERN = "^[a-f0-9]{64}$";
 
@@ -216,7 +215,7 @@ export const talkOperationRows = [
       },
       refs,
     ) => ({
-      schema_version: "quasi.stage.talk-prepare.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "talk.prepare",
       stage: "Prepare",
       material_key: materialKey,
@@ -286,7 +285,7 @@ export const talkOperationRows = [
       { materialKey, title, date, media, diagnostics },
       { inputs, output, mode },
     ) => ({
-      schema_version: "quasi.operation.talk.analyse.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "talk.analyse",
       stage: "Analyse",
       material_key: materialKey,
@@ -348,7 +347,7 @@ export const talkOperationRows = [
         ? receipt.escalated.length === 0
         : receipt.remaining_violations === receipt.escalated.length),
     envelope: ({ materialKey }, { target, pass }) => ({
-      schema_version: "quasi.operation.talk.audit.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "talk.audit",
       stage: "Audit",
       material_key: materialKey,
@@ -361,11 +360,3 @@ export const talkOperationRows = [
     }),
   },
 ];
-
-export const talkOperations = Object.fromEntries(
-  talkOperationRows.map((row) => [row.operation, defineOperation(row)]),
-);
-
-export const talkPrepare = talkOperations["talk.prepare"];
-export const talkAnalyse = talkOperations["talk.analyse"];
-export const talkAudit = talkOperations["talk.audit"];

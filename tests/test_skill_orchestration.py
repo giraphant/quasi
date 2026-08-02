@@ -92,8 +92,8 @@ def test_collect_material_main_thread_drives_run_stage_from_disk_observations() 
     assert "material.recall" not in skill
     assert "quasi-search book" not in skill
     assert "quasi-helpers vault resolve" not in skill
-    assert "member/admission-probe" in skill
-    assert "不要调用" in skill
+    assert "quasi-status --identity" in skill
+    assert "member/admission-probe" not in skill
 
 
 def test_collect_material_pins_main_thread_gates_repair_and_author_rows() -> None:

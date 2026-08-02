@@ -205,12 +205,6 @@ export function makeOperationContext(kind, slug, operation, rawContext) {
         target: `vault/authors/${slug}.md`,
         pass: context.pass || 1,
       };
-    case "member.admission-probe":
-      return {
-        ...base,
-        kind: context.member_kind || context.kind,
-        materialKey: value(context, "materialKey", "material_key") || `${context.member_kind || context.kind}:${slug}`,
-      };
     default:
       return base;
   }

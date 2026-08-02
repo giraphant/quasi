@@ -4,7 +4,6 @@ import {
 } from "../../artifact-contracts/generated.mjs";
 import { sameClosedValue, validText } from "../../runtime.mjs";
 import { BOOK_TEMP_PATH, validYearEvidence } from "../book-year-evidence.mjs";
-import { defineOperation } from "../define.mjs";
 import { posixSingleQuote } from "../shared.mjs";
 
 const ATTEMPT_SCHEMA = {
@@ -339,7 +338,7 @@ export const bookOperationRows = [
     ) => {
       const formats = allowedSources.map(({ format }) => format);
       return {
-        schema_version: "quasi.stage.book-acquire.request/0.1",
+        schema_version: "quasi.stage.request/0.2",
         operation: "book.acquire",
         stage: "Acquire",
         material_key: materialKey,
@@ -502,7 +501,7 @@ export const bookOperationRows = [
       );
     },
     envelope: ({ materialKey, identity }, refs) => ({
-      schema_version: "quasi.stage.book-prepare.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "book.prepare",
       stage: "Prepare",
       material_key: materialKey,
@@ -579,7 +578,7 @@ export const bookOperationRows = [
           ? chapter.authors
           : meta.authors;
       return {
-        schema_version: "quasi.operation.chapter.analyse.request/0.1",
+        schema_version: "quasi.stage.request/0.2",
         operation: "chapter.analyse",
         stage: "Analyse",
         material_key: materialKey,
@@ -644,7 +643,7 @@ export const bookOperationRows = [
         "reconciled",
       ].includes(receipt.terminal.action),
     envelope: ({ slug, meta, materialKey, diagnostics }, refs) => ({
-      schema_version: "quasi.operation.book.synthesise.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "book.synthesise",
       stage: "Synthesise",
       material_key: materialKey,
@@ -715,7 +714,7 @@ export const bookOperationRows = [
         ? receipt.escalated.length === 0
         : receipt.remaining_violations === receipt.escalated.length),
     envelope: ({ materialKey }, { target, pass }) => ({
-      schema_version: "quasi.operation.book.audit.request/0.1",
+      schema_version: "quasi.stage.request/0.2",
       operation: "book.audit",
       stage: "Audit",
       material_key: materialKey,
@@ -726,13 +725,3 @@ export const bookOperationRows = [
     }),
   },
 ];
-
-export const bookOperations = Object.fromEntries(
-  bookOperationRows.map((row) => [row.operation, defineOperation(row)]),
-);
-
-export const bookAcquire = bookOperations["book.acquire"];
-export const bookPrepare = bookOperations["book.prepare"];
-export const chapterAnalyse = bookOperations["chapter.analyse"];
-export const bookSynthesise = bookOperations["book.synthesise"];
-export const bookAudit = bookOperations["book.audit"];

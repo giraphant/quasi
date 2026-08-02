@@ -1,7 +1,6 @@
 import { defineOperation } from "./operations/define.mjs";
 import { authorOperationRows } from "./operations/rows/author.mjs";
 import { bookOperationRows } from "./operations/rows/book.mjs";
-import { memberOperationRows } from "./operations/rows/member.mjs";
 import { paperOperationRows } from "./operations/rows/paper.mjs";
 import { materialSearchOperationRows } from "./operations/rows/search.mjs";
 import { talkOperationRows } from "./operations/rows/talk.mjs";
@@ -18,7 +17,6 @@ const descriptors = Object.fromEntries(
     ...translationOperationRows,
     ...topicOperationRows,
     ...authorOperationRows,
-    ...memberOperationRows,
   ].map((row) => [row.operation, row]),
 );
 
@@ -45,7 +43,6 @@ export const RUN_STAGE_REGISTRY = {
     synthesise: "author.synthesise",
     audit: "author.audit",
   },
-  member: { "admission-probe": "member.admission-probe" },
 };
 RUN_STAGE_REGISTRY.translate = RUN_STAGE_REGISTRY.translation;
 

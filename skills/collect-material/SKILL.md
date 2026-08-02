@@ -73,7 +73,7 @@ Workflow 只选择 descriptor row、组装 schema-enforced envelope，并原样�
 Book chapter inventory 只从 Prepare evidence 中已观察到的 exact
 `processing/chapters/{slug}/manifest.json` 用 `read_json` 读取。不得用 Glob、rg 或猜测文件名
 发现输入。Author membership 先用 `author/resolve-membership` row 观察 owner，成员完成后
-直接运行 `quasi-status --identity` admission；不要调用 `member/admission-probe` relay。
+直接运行 `quasi-status --identity` admission。
 
 Batch 和 Author 不派中间层 Agent：主线程自己驱动每个去重后的 canonical material。
 `run-stage` 是后台 workflow，主线程可同时保持至多五个在飞（不同材料各一，同一 identity

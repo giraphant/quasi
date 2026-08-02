@@ -1,6 +1,4 @@
-import { defineOperation } from "../define.mjs";
 import { cardPath, validCardSlug } from "../steer.mjs";
-import { stageContract, stageReceiptSchema } from "../../stage.mjs";
 
 const SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
 const SUBQUESTION_PATTERN = "^sq-[a-z0-9][a-z0-9-]{0,76}$";
@@ -162,48 +160,6 @@ const completeTopicRecall = (receipt, context) => {
     new Set(receipt.items.map((item) => `${item.kind}:${item.slug}`)).size ===
       receipt.items.length
   );
-};
-
-export const topicRecallStageSchema = ({
-  researchKey,
-  query,
-  maxItems,
-}) =>
-  stageReceiptSchema({
-    operation: "topic.recall",
-    stage: "Recall",
-    materialKey: researchKey,
-    effect: "readonly",
-    ...recallPayload({ researchKey, query, maxItems }),
-  });
-
-export const TOPIC_RECALL_SCHEMA = topicRecallStageSchema({
-  researchKey: "topic:placeholder",
-  query: "placeholder",
-  maxItems: 1,
-});
-
-export function topicRecallOperationPrompt(
-  researchKey,
-  query,
-  maxItems,
-) {
-  return recallPromptText(
-    recallEnvelope({
-      materialKey: researchKey,
-      researchKey,
-      query,
-      maxItems,
-    }),
-  );
-}
-
-export const TOPIC_RECALL_CONTRACT = {
-  ...stageContract({
-    schema: TOPIC_RECALL_SCHEMA,
-    complete: completeTopicRecall,
-  }),
-  echo: topicRecallEcho,
 };
 
 const OUTLINE_ITEM_SCHEMA = {
@@ -769,16 +725,3 @@ export const topicOperationRows = [
     }),
   },
 ];
-
-export const topicOperations = Object.fromEntries(
-  topicOperationRows.map((row) => [row.operation, defineOperation(row)]),
-);
-
-export const topicRecall = topicOperations["topic.recall"];
-export const topicSteer = topicOperations["topic.steer"];
-export const topicWebcard = topicOperations["topic.webcard"];
-export const topicOverview =
-  topicOperations["topic.synthesise.overview"];
-export const topicResources =
-  topicOperations["topic.synthesise.resources"];
-export const topicAudit = topicOperations["topic.audit"];
