@@ -34,9 +34,9 @@ def test_aa_mirror_defaults_match_current_official_domains():
     mod = _load_module(AA, "aa_mirrors_under_test")
 
     assert mod.STATIC_AA_MIRRORS == [
-        "https://annas-archive.pk",
         "https://annas-archive.gd",
         "https://annas-archive.gl",
+        "https://annas-archive.li",
     ]
 
 
@@ -61,27 +61,159 @@ def test_aa_wikipedia_infobox_mirror_parser_prefers_url_row():
     ]
 
 
-def test_aa_base_url_uses_wikipedia_recovery_after_static_mirrors_fail(monkeypatch):
-    mod = _load_module(AA, "aa_wikipedia_recovery_under_test")
-    tried: list[str] = []
+def test_aa_reachability_rejects_200_parking_page_without_anna(monkeypatch):
+    mod = _load_module(AA, "aa_parking_page_under_test")
+    calls: list[tuple[str, str, int]] = []
 
-    def fake_request(method, url, *, timeout=30, stream=False, browser_tls=True):
-        if method == "HEAD":
-            tried.append(url)
-        class Response:
-            status_code = 200 if url == "https://annas-archive.wf" else 503
-        return Response()
+    def fake_request(
+        method,
+        url,
+        *,
+        timeout=30,
+        stream=False,
+        browser_tls=True,
+        headers=None,
+    ):
+        calls.append((method, url, timeout))
+        return SimpleNamespace(
+            status_code=200,
+            text="<html><title>This domain is for sale</title></html>",
+        )
 
     monkeypatch.setattr(mod, "_request", fake_request)
-    monkeypatch.setattr(mod, "wikipedia_aa_mirrors", lambda: ["https://annas-archive.wf"])
+
+    assert mod._first_reachable_mirror(["https://annas-archive.gd"]) is None
+    assert calls == [("GET", "https://annas-archive.gd", 10)]
+
+
+def test_aa_base_url_uses_live_last_good_before_other_discovery(tmp_path, monkeypatch):
+    mod = _load_module(AA, "aa_last_good_priority_under_test")
+    cache_path = tmp_path / "aa-mirrors.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": mod.WIKIPEDIA_AA_URL,
+                "fetched_at": 100.0,
+                "mirrors": ["https://annas-archive.wf"],
+                "last_good": {
+                    "mirror": "https://annas-archive.se",
+                    "verified_at": 200.0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[tuple[str, str, int]] = []
+
+    def fake_request(
+        method,
+        url,
+        *,
+        timeout=30,
+        stream=False,
+        browser_tls=True,
+        headers=None,
+    ):
+        calls.append((method, url, timeout))
+        return SimpleNamespace(status_code=200, text="Anna's Archive")
+
+    monkeypatch.setattr(mod, "_aa_mirror_cache_path", lambda: cache_path)
+    monkeypatch.setattr(mod, "_request", fake_request)
+    monkeypatch.setattr(mod.time, "time", lambda: 300.0)
+    monkeypatch.setattr(
+        mod,
+        "wikipedia_aa_mirrors",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("Wikipedia must not be queried after a live last-good hit")
+        ),
+    )
+
+    assert mod.get_aa_base_url({"mirrors": []}) == "https://annas-archive.se"
+    assert calls == [("GET", "https://annas-archive.se", 10)]
+    cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert cache["last_good"] == {
+        "mirror": "https://annas-archive.se",
+        "verified_at": 300.0,
+    }
+    assert cache["mirrors"] == ["https://annas-archive.wf"]
+
+
+def test_aa_base_url_prefers_wikipedia_mirror_before_static_seed(tmp_path, monkeypatch):
+    mod = _load_module(AA, "aa_wikipedia_priority_under_test")
+    cache_path = tmp_path / "aa-mirrors.json"
+    calls: list[tuple[str, str, int]] = []
+
+    def fake_request(
+        method,
+        url,
+        *,
+        timeout=30,
+        stream=False,
+        browser_tls=True,
+        headers=None,
+    ):
+        calls.append((method, url, timeout))
+        return SimpleNamespace(status_code=200, text="Anna's Archive")
+
+    monkeypatch.setattr(mod, "_aa_mirror_cache_path", lambda: cache_path)
+    monkeypatch.setattr(mod, "_request", fake_request)
+    monkeypatch.setattr(mod.time, "time", lambda: 400.0)
+    monkeypatch.setattr(mod, "STATIC_AA_MIRRORS", ["https://annas-archive.gd"])
+    monkeypatch.setattr(
+        mod,
+        "wikipedia_aa_mirrors",
+        lambda: ["https://annas-archive.wf"],
+    )
 
     assert mod.get_aa_base_url({"mirrors": []}) == "https://annas-archive.wf"
-    assert tried == [
-        "https://annas-archive.pk",
-        "https://annas-archive.gd",
-        "https://annas-archive.gl",
-        "https://annas-archive.wf",
-    ]
+    assert calls == [("GET", "https://annas-archive.wf", 10)]
+    assert json.loads(cache_path.read_text(encoding="utf-8"))["last_good"] == {
+        "mirror": "https://annas-archive.wf",
+        "verified_at": 400.0,
+    }
+
+
+def test_aa_wikipedia_cache_older_than_seven_days_is_stale(tmp_path, monkeypatch):
+    mod = _load_module(AA, "aa_wikipedia_cache_ttl_under_test")
+    cache_path = tmp_path / "aa-mirrors.json"
+    now = 1_000_000.0
+    cache_path.write_text(
+        json.dumps(
+            {
+                "source": mod.WIKIPEDIA_AA_URL,
+                "fetched_at": now - (7 * 24 * 60 * 60) - 1,
+                "mirrors": ["https://annas-archive.wf"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mod, "_aa_mirror_cache_path", lambda: cache_path)
+
+    assert mod._read_cached_wikipedia_mirrors(now=now) == []
+
+
+def test_aa_last_good_cache_tolerates_missing_field_and_invalid_json(
+    tmp_path,
+    monkeypatch,
+):
+    mod = _load_module(AA, "aa_last_good_cache_damage_under_test")
+    cache_path = tmp_path / "aa-mirrors.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "fetched_at": 100.0,
+                "mirrors": ["https://annas-archive.wf"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mod, "_aa_mirror_cache_path", lambda: cache_path)
+
+    assert mod._read_cached_last_good() is None
+
+    cache_path.write_text("{not-json", encoding="utf-8")
+
+    assert mod._read_cached_last_good() is None
 
 
 def test_download_help_exposes_agent_contract():

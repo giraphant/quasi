@@ -38,12 +38,12 @@ except ImportError:
 # --- Config ---
 
 STATIC_AA_MIRRORS = [
-    "https://annas-archive.pk",
     "https://annas-archive.gd",
     "https://annas-archive.gl",
+    "https://annas-archive.li",
 ]
 DEFAULT_AA_MIRRORS = list(STATIC_AA_MIRRORS)
-AA_MIRROR_CACHE_TTL = 60 * 60 * 24 * 90
+AA_MIRROR_CACHE_TTL = 60 * 60 * 24 * 7
 WIKIPEDIA_AA_URL = "https://en.wikipedia.org/wiki/Anna%27s_Archive"
 _MIRROR_RE = re.compile(r"https://annas-archive\.[a-z0-9-]+/?", re.IGNORECASE)
 
@@ -137,41 +137,84 @@ def _aa_mirror_cache_path():
     return _quasi_data_dir() / "aa-mirrors.json"
 
 
-def _read_cached_wikipedia_mirrors(now=None):
-    now = time.time() if now is None else now
+def _read_aa_mirror_cache():
     path = _aa_mirror_cache_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_aa_mirror_cache(data):
+    path = _aa_mirror_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _read_cached_last_good():
+    last_good = _read_aa_mirror_cache().get("last_good")
+    if not isinstance(last_good, dict):
+        return None
+    mirror = last_good.get("mirror")
+    if not isinstance(mirror, str):
+        return None
+    mirror = _normalise_mirror(mirror)
+    try:
+        verified_at = float(last_good.get("verified_at"))
+    except (TypeError, ValueError):
+        return None
+    if not mirror:
+        return None
+    return {"mirror": mirror, "verified_at": verified_at}
+
+
+def _write_cached_last_good(mirror, now=None):
+    mirror = _normalise_mirror(mirror)
+    if not mirror:
+        return
+    data = _read_aa_mirror_cache()
+    data["last_good"] = {
+        "mirror": mirror,
+        "verified_at": time.time() if now is None else now,
+    }
+    _write_aa_mirror_cache(data)
+
+
+def _read_cached_wikipedia_mirrors(now=None):
+    now = time.time() if now is None else now
+    data = _read_aa_mirror_cache()
+    try:
+        fetched_at = float(data.get("fetched_at", 0) or 0)
+    except (TypeError, ValueError):
         return []
-    fetched_at = float(data.get("fetched_at", 0) or 0)
     if now - fetched_at > AA_MIRROR_CACHE_TTL:
         return []
-    return _dedupe_mirrors(data.get("mirrors", []))
+    mirrors = data.get("mirrors", [])
+    if not isinstance(mirrors, list):
+        return []
+    return _dedupe_mirrors(mirrors)
 
 
 def _write_cached_wikipedia_mirrors(mirrors, now=None):
     mirrors = _dedupe_mirrors(mirrors)
     if not mirrors:
         return
-    path = _aa_mirror_cache_path()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {
-                    "source": WIKIPEDIA_AA_URL,
-                    "fetched_at": time.time() if now is None else now,
-                    "mirrors": mirrors,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-    except OSError:
-        pass
+    data = _read_aa_mirror_cache()
+    data.update(
+        {
+            "source": WIKIPEDIA_AA_URL,
+            "fetched_at": time.time() if now is None else now,
+            "mirrors": mirrors,
+        }
+    )
+    _write_aa_mirror_cache(data)
 
 
 def _mirrors_from_wikipedia_html(html_text):
@@ -224,7 +267,7 @@ def load_aa_config():
     """Resolve Anna's Archive config from QUASI_ANNA_* env vars.
 
     Env is injected by the PreToolUse hook (see scripts/hooks/inject-userconfig.py).
-    Mirrors use the built-in default list.
+    Mirror discovery prefers last-good, then Wikipedia, then built-in seeds.
     """
     donator_key = os.environ.get("QUASI_ANNA_DONATOR_KEY", "").strip()
     if not donator_key:
@@ -234,15 +277,16 @@ def load_aa_config():
 
 def _first_reachable_mirror(mirrors):
     for mirror in _dedupe_mirrors(mirrors):
-        last_error = None
-        for method in ("HEAD", "GET"):
-            try:
-                r = _request(method, mirror, timeout=10)
-                if r.status_code < 400:
-                    return mirror
+        try:
+            r = _request("GET", mirror, timeout=10)
+            if r.status_code < 400 and "anna" in r.text[:20000].lower():
+                return mirror
+            if r.status_code >= 400:
                 last_error = f"HTTP {r.status_code}"
-            except Exception as e:
-                last_error = str(e)
+            else:
+                last_error = "response does not contain Anna's Archive content"
+        except Exception as e:
+            last_error = str(e)
         if last_error:
             print(f"  {mirror} -- unreachable: {last_error}", file=sys.stderr)
     return None
@@ -251,21 +295,28 @@ def _first_reachable_mirror(mirrors):
 def get_aa_base_url(config):
     """Find a reachable AA mirror.
 
-    Use the checked-in static mirror list first for deterministic offline-ish
-    behaviour. If those all fail, refresh the Wikipedia infobox mirror list and
-    try it as a dynamic recovery path.
+    Try the last-known good mirror first, then the cached or refreshed Wikipedia
+    infobox mirror list, and finally the checked-in static seed list.
     """
-    config_mirrors = config.get("mirrors", [])
-    base = _first_reachable_mirror(config_mirrors + STATIC_AA_MIRRORS)
-    if base:
-        return base
+    last_good = _read_cached_last_good()
+    if last_good:
+        base = _first_reachable_mirror([last_good["mirror"]])
+        if base:
+            _write_cached_last_good(base)
+            return base
 
     wiki_mirrors = wikipedia_aa_mirrors()
     if wiki_mirrors:
         print("  Trying AA mirrors from Wikipedia", file=sys.stderr)
         base = _first_reachable_mirror(wiki_mirrors)
         if base:
+            _write_cached_last_good(base)
             return base
+
+    base = _first_reachable_mirror(STATIC_AA_MIRRORS)
+    if base:
+        _write_cached_last_good(base)
+        return base
 
     print("Error: No AA mirror reachable.", file=sys.stderr)
     return None

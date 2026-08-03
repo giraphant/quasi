@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.58.1** (2026-08-03): **AA 镜像发现以维基百科为主路径：内容校验探活 + last-good 缓存，不再每次从头探测。**
+  - 实测事故：静态镜像表首位的 `annas-archive.pk` 死了一段时间，每次调用先在它身上烧最多 20 秒超时；而已有的维基百科 infobox 提取路径被埋成"三个静态镜像全部不可达才触发"的最后兜底，`.gd` 活着就永远轮不到。探活标准只有"状态码 <400"，停靠页 200 也会被当活镜像选中。
+  - 重排为：last-good 镜像先试（缓存在 `aa-mirrors.json`，命中即用，消掉每次的全表探测）→ 维基列表（缓存 TTL 90 天改 7 天，官方域名的权威来源）→ 静态种子表（去 `.pk` 补 `.li`，降级为维基不可用时的兜底）。探活改为单次 GET 且正文须含 Anna's Archive 特征串，堵住停靠页假阳性。发布当天 `.pk` 又活了回来并经维基路径被正确选中——镜像抖动正是这套设计要对付的场景。修改由 Codex worker 按配方执行，新增停靠页拒绝/last-good 优先/维基先于静态/TTL 四类单元测试。
+
 - **0.58.0** (2026-08-01): **Workflow 层收口为唯一 `run-stage` descriptor 路径：删除漂移的 member relay，统一 request envelope tag，并移除零调用 standalone API。**
   - `member.admission-probe` 已与 Skill 现状漂移：`collect-material` 和 `research-topic` 都由主线程直接运行 `quasi-status --identity` 并消费磁盘观察，relay 只剩 row、registry/context 和旧测试自我引用，没有运行调用方。因此以 Skill 现行合同为准删掉整条 member 链，并把死名加入不得复活哨兵；Audit 仍只有当次 receipt 证明，未伪造持久状态。
   - descriptor rows 实测并存 generic、per-stage 和 per-operation 三族 request tag，但旧 per-operation 字面量在 `agents/` 和 `tests/` 零消费者，`steer-agent` / `webcard-agent` 要求的原本就是 `quasi.stage.request/0.2`。本轮就地替换 16 个特化 tag，不加 factory 或注入层；新增的 parity 测试遍历全部已注册 row 的 request envelope，防止再次分叉。
