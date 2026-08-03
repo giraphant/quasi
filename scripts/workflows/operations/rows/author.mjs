@@ -126,9 +126,6 @@ const discoveryRow = (kind) => {
   const operation = `author.discover-${plural}`;
   return {
     operation,
-    stage: "Search",
-    effect: "readonly",
-    agentType: "quasi:discovery-agent",
     refs: ({ materialKey, fullName, topic, count }) => ({
       materialKey,
       collectionKey: materialKey,
@@ -247,9 +244,6 @@ export const authorOperationRows = [
   discoveryRow("paper"),
   {
     operation: "author.resolve-membership",
-    stage: "Search",
-    effect: "readonly",
-    agentType: "general-purpose",
     refs: membershipRefs,
     payloadProperties: (refs) => ({
       required: [
@@ -315,9 +309,6 @@ ${JSON.stringify(request, null, 2)}
   },
   {
     operation: "author.synthesise",
-    stage: "Synthesise",
-    effect: "writer",
-    agentType: "quasi:synthesis-agent",
     refs: ({ materialKey, inputs, output, mode }) => ({
       materialKey,
       inputs,

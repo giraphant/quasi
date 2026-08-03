@@ -76,9 +76,6 @@ const validLocalOwner = (owner, kind) => {
 export const materialSearchOperationRows = [
   {
     operation: "material.search",
-    stage: "Search",
-    effect: "readonly",
-    agentType: "quasi:metadata-agent",
     refs: ({ materialKey, kind, requestedSlug, query, yearDecision }) => ({
       materialKey,
       kind,

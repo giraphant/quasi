@@ -132,9 +132,6 @@ export const makeAuditRow = ({
   envelopeExtras = auditEnvelopeExtras,
 }) => ({
   operation,
-  stage: "Audit",
-  effect: "writer",
-  agentType: "quasi:audit-agent",
   refs,
   payloadProperties: ({ target, pass }) => ({
     required: [

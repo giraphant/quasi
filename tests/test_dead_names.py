@@ -72,6 +72,7 @@ DEAD_NAMES = [
     "derivatives/translation.mjs",
     "collections/author.mjs",
     "research/topic-recall.mjs",
+    "operations/chains.mjs",
 ]
 
 DEAD_GRAPH_PATHS = [

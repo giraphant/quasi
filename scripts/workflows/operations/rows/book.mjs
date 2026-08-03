@@ -141,9 +141,6 @@ const quoteOrNull = (value) =>
 export const bookOperationRows = [
   {
     operation: "book.acquire",
-    stage: "Acquire",
-    effect: "writer",
-    agentType: "quasi:download-agent",
     refs: ({ allowedSources, yearDecision }) => ({
       allowedSources,
       yearDecision,
@@ -310,9 +307,6 @@ export const bookOperationRows = [
   },
   {
     operation: "book.prepare",
-    stage: "Prepare",
-    effect: "writer",
-    agentType: "quasi:extract-agent",
     refs: (
       {
         source,
@@ -460,9 +454,6 @@ export const bookOperationRows = [
   },
   {
     operation: "chapter.analyse",
-    stage: "Analyse",
-    effect: "writer",
-    agentType: "quasi:analyse-agent",
     refs: ({ input, output, outputExists, mode }) => ({
       input,
       output,
@@ -547,9 +538,6 @@ export const bookOperationRows = [
   },
   {
     operation: "book.synthesise",
-    stage: "Synthesise",
-    effect: "writer",
-    agentType: "quasi:synthesis-agent",
     refs: ({ inputPaths, output, mode }) => ({ inputPaths, output, mode }),
     payloadProperties: ({ inputPaths, output }) => ({
       required: [

@@ -1,7 +1,5 @@
 import { stageContract, stageReceiptSchema } from "../stage.mjs";
 
-const EFFECTS = new Set(["readonly", "writer"]);
-
 const asFragment = (fragment) =>
   fragment && typeof fragment === "object" ? fragment : {};
 
@@ -10,7 +8,6 @@ export function defineOperation(descriptor) {
     operation,
     stage,
     effect,
-    agentType,
     refs: makeRefs,
     payloadProperties,
     terminalPayloads,
@@ -18,9 +15,6 @@ export function defineOperation(descriptor) {
     envelope,
     promptText,
   } = descriptor;
-  if (!EFFECTS.has(effect))
-    throw new Error(`unknown operation effect: ${effect}`);
-
   const refs = (context) => makeRefs(context);
   const schema = (context) => {
     const exactRefs = refs(context);

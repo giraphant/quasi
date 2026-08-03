@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.60.0** (2026-08-04): **Pipeline 的阶段顺序、operation 身份与 carries 收口为一份 Python manifest。**
+  - `scripts/schemas/pipeline.py` 现在唯一拥有 kind/stage 顺序、operation/phase/effect/agent 身份，以及 receipt-to-context carries；现有 Python exporter 像投影 artifact contracts 一样把它生成到 JavaScript，row 只保留 request/receipt schema、exact envelope 与 evidence behavior。
+  - `RUN_STAGE_REGISTRY` 和 chain table 都从投影后的 `PIPELINE` 派生，手写 registry literal 与 `scripts/workflows/operations/chains.mjs` 消失。构建时现在会拒绝重复 `(kind, stage)`、manifest/row 缺失或重复 join，以及读取非 required receipt field 的 carry，让错配在 build 中失败，而不是留成 runtime surprise。
+  - 这是把 pipeline 在三处、两种语言里的重复编码（registry + chains、context switch、`status.py`）压成一个来源的第一步；本轮只迁移 L0 identity/order/carries，不改变任何 prompt、schema、receipt 或 dispatch behavior，后两处将在后续步骤继续收口。
+
 - **0.59.3** (2026-08-04): **Descriptor row 的共享片段与五条 Audit 合同收口为单一实现。**
   - Row 层已经长出四份私有的同形 schema fragment，以及五份逐渐漂移的 Audit row；同一个边界因复制而分别落在 schema 与 `complete()` 的 JavaScript 复查里，导致某些 kind 会拒绝过长诊断，另一些 kind 却根本没有对应约束。本轮把真正同义的 issue、attempt、prepare-step、action payload 与 audit diagnostic 定义移入 `operations/shared.mjs`，保留角色、路径与 outcome vocabulary 确实不同的 kind-specific artifact/step schema。
   - 五个 `paper|book|talk|topic|author.audit` 现在都由一个 factory 生成，原有 refs、artifact roles、request envelope、target scope 与 prompt 原样保留；完成判据统一只数 `remaining_violations` 与 `escalated`，不再让某个 kind 在 schema 之外私自追加文本复查。

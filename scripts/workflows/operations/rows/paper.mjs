@@ -33,9 +33,6 @@ const quoteOrNull = (value) =>
 export const paperOperationRows = [
   {
     operation: "paper.acquire",
-    stage: "Acquire",
-    effect: "writer",
-    agentType: "quasi:download-agent",
     refs: ({ output, doi }) => ({ output, doi }),
     payloadProperties: ({ output, doi }) => ({
       required: [
@@ -128,9 +125,6 @@ export const paperOperationRows = [
   },
   {
     operation: "paper.prepare",
-    stage: "Prepare",
-    effect: "writer",
-    agentType: "quasi:extract-agent",
     refs: ({ source, normalized, recoverySource, recoveryText }) => ({
       source,
       normalized,
@@ -206,9 +200,6 @@ export const paperOperationRows = [
   },
   {
     operation: "paper.analyse",
-    stage: "Analyse",
-    effect: "writer",
-    agentType: "quasi:analyse-agent",
     refs: ({ input, output, mode }) => ({ input, output, mode }),
     payloadProperties: ({ input, output }) => ({
       required: ["input_path", "output_path", "artifact_roles"],

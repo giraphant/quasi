@@ -190,9 +190,6 @@ const VALIDATION_SCHEMA = {
 export const translationOperationRows = [
   {
     operation: "translation.prepare",
-    stage: "Prepare",
-    effect: "writer",
-    agentType: "quasi:translate-agent",
     refs: (
       {
         slug,

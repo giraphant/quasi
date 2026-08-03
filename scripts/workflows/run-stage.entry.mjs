@@ -1,5 +1,5 @@
+import { PIPELINE } from "./artifact-contracts/generated.mjs";
 import { defineOperation } from "./operations/define.mjs";
-import { STAGE_CHAINS } from "./operations/chains.mjs";
 import { authorOperationRows } from "./operations/rows/author.mjs";
 import { bookOperationRows } from "./operations/rows/book.mjs";
 import { paperOperationRows } from "./operations/rows/paper.mjs";
@@ -9,43 +9,64 @@ import { topicOperationRows } from "./operations/rows/topic.mjs";
 import { translationOperationRows } from "./operations/rows/translation.mjs";
 import { makeOperationContext } from "./run-stage-context.mjs";
 
+export { PIPELINE };
+
+export const OPERATION_ROWS = [
+  ...materialSearchOperationRows,
+  ...paperOperationRows,
+  ...bookOperationRows,
+  ...talkOperationRows,
+  ...translationOperationRows,
+  ...topicOperationRows,
+  ...authorOperationRows,
+];
+
 const descriptors = Object.fromEntries(
-  [
-    ...materialSearchOperationRows,
-    ...paperOperationRows,
-    ...bookOperationRows,
-    ...talkOperationRows,
-    ...translationOperationRows,
-    ...topicOperationRows,
-    ...authorOperationRows,
-  ].map((row) => [row.operation, row]),
+  OPERATION_ROWS.map((row) => [row.operation, row]),
 );
 
-export const RUN_STAGE_REGISTRY = {
-  paper: {
-    search: "material.search", acquire: "paper.acquire", prepare: "paper.prepare",
-    analyse: "paper.analyse", audit: "paper.audit",
-  },
-  book: {
-    search: "material.search", acquire: "book.acquire", prepare: "book.prepare",
-    analyse: "chapter.analyse", synthesise: "book.synthesise", audit: "book.audit",
-  },
-  talk: { prepare: "talk.prepare", analyse: "talk.analyse", audit: "talk.audit" },
-  translation: { prepare: "translation.prepare" },
-  topic: {
-    recall: "topic.recall", steer: "topic.steer", webcard: "topic.webcard",
-    "synthesise-overview": "topic.synthesise.overview",
-    "synthesise-resources": "topic.synthesise.resources", audit: "topic.audit",
-  },
-  author: {
-    "discover-books": "author.discover-books",
-    "discover-papers": "author.discover-papers",
-    "resolve-membership": "author.resolve-membership",
-    synthesise: "author.synthesise",
-    audit: "author.audit",
-  },
-};
+const stageIdentities = Object.fromEntries(
+  Object.entries(PIPELINE).map(([kind, definition]) => [
+    kind,
+    Object.fromEntries(
+      definition.stages.map((identity) => [identity.stage, identity]),
+    ),
+  ]),
+);
+
+export const RUN_STAGE_REGISTRY = Object.fromEntries(
+  Object.entries(PIPELINE).map(([kind, definition]) => [
+    kind,
+    Object.fromEntries(
+      definition.stages.map(({ stage, operation }) => [stage, operation]),
+    ),
+  ]),
+);
 RUN_STAGE_REGISTRY.translate = RUN_STAGE_REGISTRY.translation;
+
+export const STAGE_CHAINS = Object.fromEntries(
+  Object.entries(PIPELINE).flatMap(([kind, definition]) =>
+    definition.chain
+      ? [
+          [
+            kind,
+            {
+              sequence: [...definition.chain.sequence],
+              carries: definition.chain.carries.map(
+                ({ from, field, to }) => ({
+                  from,
+                  apply: (receipt, context) => ({
+                    ...context,
+                    [to]: receipt[field],
+                  }),
+                }),
+              ),
+            },
+          ],
+        ]
+      : [],
+  ),
+);
 
 export const workflowMeta = {
   name: "Quasi",
@@ -74,8 +95,15 @@ export function resolveStage(kind, stage) {
   const normalizedStage = typeof stage === "string" ? stage.trim().toLowerCase() : "";
   const operation = RUN_STAGE_REGISTRY[normalizedKind]?.[normalizedStage];
   if (!operation) return null;
-  const descriptor = descriptors[operation];
-  return { kind: normalizedKind === "translate" ? "translation" : normalizedKind, operation, descriptor, row: defineOperation(descriptor) };
+  const canonicalKind = normalizedKind === "translate" ? "translation" : normalizedKind;
+  const identity = stageIdentities[canonicalKind][normalizedStage];
+  const descriptor = {
+    ...descriptors[operation],
+    stage: identity.phase,
+    effect: identity.effect,
+    agentType: identity.agent,
+  };
+  return { kind: canonicalKind, operation, descriptor, row: defineOperation(descriptor) };
 }
 
 async function runChain({ agent, log }, args, resolved, chain, from, until) {

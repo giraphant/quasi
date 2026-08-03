@@ -558,9 +558,6 @@ const auditRefs = ({ materialKey, target, pass }) => ({
 export const topicOperationRows = [
   {
     operation: "topic.recall",
-    stage: "Recall",
-    effect: "readonly",
-    agentType: "general-purpose",
     refs: recallRefs,
     payloadProperties: recallPayload,
     complete: completeTopicRecall,
@@ -569,9 +566,6 @@ export const topicOperationRows = [
   },
   {
     operation: "topic.steer",
-    stage: "Search",
-    effect: "writer",
-    agentType: "quasi:steer-agent",
     refs: steerRefs,
     payloadProperties: steerPayload,
     terminalPayloads: steerTerminalPayloads,
@@ -604,9 +598,6 @@ export const topicOperationRows = [
   },
   {
     operation: "topic.webcard",
-    stage: "Search",
-    effect: "writer",
-    agentType: "quasi:webcard-agent",
     refs: webcardRefs,
     payloadProperties: webcardPayload,
     complete: completeWebcard,
@@ -647,9 +638,6 @@ export const topicOperationRows = [
   },
   ...["overview", "resources"].map((outputRole) => ({
     operation: `topic.synthesise.${outputRole}`,
-    stage: "Synthesise",
-    effect: "writer",
-    agentType: "quasi:synthesis-agent",
     refs: (context) => synthesisRefs({ ...context, outputRole }),
     payloadProperties: synthesisPayload,
     terminalPayloads: synthesisTerminalPayloads,

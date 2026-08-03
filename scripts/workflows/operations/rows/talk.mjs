@@ -68,9 +68,6 @@ export const TALK_EVIDENCE_RULES = [
 export const talkOperationRows = [
   {
     operation: "talk.prepare",
-    stage: "Prepare",
-    effect: "writer",
-    agentType: "quasi:transcribe-agent",
     refs: (
       {
         slug,
@@ -218,9 +215,6 @@ export const talkOperationRows = [
   },
   {
     operation: "talk.analyse",
-    stage: "Analyse",
-    effect: "writer",
-    agentType: "quasi:analyse-agent",
     refs: ({ inputs, output, mode }) => ({ inputs, output, mode }),
     payloadProperties: ({ inputs, output }) => ({
       required: [
