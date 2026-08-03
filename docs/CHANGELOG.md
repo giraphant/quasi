@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.58.5** (2026-08-04): **Orchestration 测试从技能文案快照收回为跨文件合同校验。**
+  - `tests/test_skill_orchestration.py` 曾钉住具体中文句子、规则名和工作流叙述；这些断言守住的不是运行合同，而是某一版 skill prose，导致每次简化 skill 都要同步缴纳测试维护税。本轮删除四项 collect/research prose photograph 与三句 owner 文案钉子，保留运行地标、frontmatter routing、container route 和 dead-name quarantine 等真实边界。
+  - 新测试从权威来源派生一致性：skill 中的 kind/stage token 必须解析到 `RUN_STAGE_REGISTRY`，Book gate vocabulary 必须同时存在于 row 与 driving skill，共享 receipt 版本必须在 stage module 与 maintainer guide 同步；凡调用 `Workflow()` 的 skill 只能走公开的 `workflows/run-stage.mjs` 并通过 `quasi-status` 观察磁盘，且所有 skill 都不得调用 agent-owned CLI（`quasi-search` / `quasi-download` / `quasi-extract` / `quasi-transcribe` / `quasi-translate` / `quasi-audit`）。这些检查继续守住名字、阶段、版本和 ownership boundary，同时让 prose 自由改写。
+
 - **0.58.4** (2026-08-04): **Workflow 顶部两行让位给运行时叙述行。**
   - `meta.name` / `meta.description` 都是编译期字面量，`slug` 只有运行时才知道，永远进不了这两个槽；能进的只有 stage，而 0.58.3 的 `log()` 叙述行已经在说 stage 了。原 description（"Runs one schema-enforced quasi stage and returns its receipt verbatim"）既重复又冗长，还在跟真正有信息量的那行抢注意力。改为 `Quasi` / `Pipeline`，三行各司其职：是谁 / 是什么 / 正在干什么（`Analyse × 30 — allison-nightwork-1994`）。
   - 考虑过 description 留空，否决：宿主要求 `name` 与 `description` 均必填，空串是否算"有"无法在不真跑一次 workflow 的前提下确认，且该串也是非 bypassPermissions 用户看到的权限对话框那行，空着显示为空行。也考虑过按 stage 拆七个 bundle 让名字带上 stage，同样否决：那只是把叙述行已有的词搬到第一行，是重复而非新信息，代价是七倍构建。`workflowMeta` 是纯展示，无测试或调用路径依赖（bundle 文件名来自 `build-workflows.mjs` 的 `WORKFLOWS` 常量，skill 用显式 scriptPath 调用）。

@@ -119,7 +119,7 @@ When changing config, runtime state, or handoff contracts:
 3. Keep `CLAUDE.md` and `AGENTS.md` byte-for-byte identical (verify with `cmp -s CLAUDE.md AGENTS.md`).
 4. Update active skills only when the executing model needs the information at runtime.
 5. Update agent files when an agent input/output contract changes.
-6. Update tests that guard dead names, frontmatter routing hints, CLI surface, or manifest schema and run `pytest tests/test_dead_names.py tests/test_skill_orchestration.py -q`.
+6. Update tests that guard dead names, frontmatter routing hints, CLI surface, or manifest schema and run `pytest tests/test_dead_names.py tests/test_skill_orchestration.py -q`. Orchestration tests assert cross-file coherence (shared names, stages, schema versions) and dead-name quarantine — never the presence of specific prose sentences.
 7. Run `claude plugin validate .` after manifest changes.
 
 ## Debugging gotchas

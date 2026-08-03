@@ -1,13 +1,18 @@
 """Maintainer-facing static contracts for quasi's orchestration layers.
 
-These checks intentionally assert ownership and public boundaries rather than
-freezing sentence-level prompt wording or a specialist's internal method.
+These tests assert cross-file coherence (shared names, stages, schema versions)
+and public boundaries — never the presence of specific prose sentences.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import re
+import shutil
+import subprocess
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,19 +33,38 @@ def description(path: Path) -> str:
     return match.group(1).strip()
 
 
+def run_stage_registry() -> dict[str, dict[str, str]]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+    entry = ROOT / "scripts" / "workflows" / "run-stage.entry.mjs"
+    script = (
+        f"import {{ RUN_STAGE_REGISTRY }} from {json.dumps(entry.as_uri())};"
+        "process.stdout.write(JSON.stringify(RUN_STAGE_REGISTRY));"
+    )
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
 
 
 def test_mirrored_maintainer_guides_are_identical() -> None:
     assert (ROOT / "AGENTS.md").read_bytes() == (ROOT / "CLAUDE.md").read_bytes()
 
 
-def test_skill_orchestration_guide_describes_the_three_owners() -> None:
-    text = (ROOT / "docs" / "SKILL_ORCHESTRATION.md").read_text(encoding="utf-8")
-    assert "The Workflow is a stage board" in text
-    assert "An Agent is a goal-owning specialist" in text
-    assert "deterministic CLI remains responsible" in text
-    assert "quasi.stage.receipt/0.2" in text
-    assert "complete" in text and "needs_input" in text
+def test_receipt_version_is_synced_between_stage_module_and_guide() -> None:
+    version = "quasi.stage.receipt/0.2"
+    stage = (ROOT / "scripts" / "workflows" / "stage.mjs").read_text(
+        encoding="utf-8"
+    )
+    guide = (ROOT / "docs" / "SKILL_ORCHESTRATION.md").read_text(encoding="utf-8")
+    assert version in stage
+    assert version in guide
 
 
 def test_active_skills_keep_the_runtime_landmarks() -> None:
@@ -77,45 +101,61 @@ def test_frontmatter_descriptions_are_short_routing_hints() -> None:
         assert "Phase" not in value and "→" not in value, path
 
 
-def test_collect_material_main_thread_drives_run_stage_from_disk_observations() -> None:
+def test_every_skill_dispatched_stage_resolves_in_the_registry() -> None:
+    registry = run_stage_registry()
+    registry_stages = {
+        stage for stages_by_kind in registry.values() for stage in stages_by_kind
+    }
+    for path in active_skill_files():
+        text = path.read_text(encoding="utf-8")
+        kinds = set(re.findall(r'"?kind"?\s*:\s*"([a-z]+)"', text))
+        stages = set(re.findall(r'"?stage"?\s*:\s*"([a-z-]+)"', text))
+        for kind in kinds:
+            assert kind in registry, f"{path.relative_to(ROOT)}: unknown kind {kind}"
+        for stage in stages:
+            assert stage in registry_stages, (
+                f"{path.relative_to(ROOT)}: unknown stage {stage}"
+            )
+
+
+def test_dispatching_skills_use_only_the_public_workflow_entry() -> None:
+    for path in active_skill_files():
+        text = path.read_text(encoding="utf-8")
+        if "Workflow(" not in text:
+            continue
+        assert (
+            'scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs"' in text
+        ), path
+        assert "quasi-status" in text, path
+        mjs_names = set(re.findall(r"[A-Za-z0-9_-]+\.mjs", text))
+        assert mjs_names == {"run-stage.mjs"}, path
+
+
+def test_skills_never_invoke_agent_owned_capabilities() -> None:
+    capabilities = (
+        "quasi-search",
+        "quasi-download",
+        "quasi-extract",
+        "quasi-transcribe",
+        "quasi-translate",
+        "quasi-audit",
+    )
+    for path in active_skill_files():
+        text = path.read_text(encoding="utf-8")
+        referenced = [capability for capability in capabilities if capability in text]
+        assert referenced == [], path
+
+
+def test_gate_decision_tokens_shared_between_row_and_skill() -> None:
+    row = (
+        ROOT / "scripts" / "workflows" / "operations" / "rows" / "book.mjs"
+    ).read_text(encoding="utf-8")
     skill = (ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
         encoding="utf-8"
     )
-    assert "$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs" in skill
-    assert "$CLAUDE_PLUGIN_ROOT/workflows/process-material.mjs" not in skill
-    assert '"stage": "search"' in skill
-    assert "quasi-status --kind K --slug S --json" in skill
-    assert "next_stage" in skill and "绝不能当作" in skill
-    assert "WRITER-AMBIGUITY RULE" in skill
-    assert "不得 blind redispatch" in skill
-    assert "2–32" in skill
-    assert "material.recall" not in skill
-    assert "quasi-search book" not in skill
-    assert "quasi-helpers vault resolve" not in skill
-    assert "quasi-status --identity" in skill
-    assert "member/admission-probe" not in skill
-
-
-def test_collect_material_pins_main_thread_gates_repair_and_author_rows() -> None:
-    skill = (ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    assert "Workflow(" in skill
-    assert 'scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs"' in skill
-    # No intermediate driver layer: the main thread drives every material.
-    assert "driver" not in skill.lower()
-    assert "主线程" in skill
-    assert "same identity" in skill or "same-identity" in skill
-    assert "accept-current" in skill
-    assert "use-recommended-year" in skill
-    assert 'mode:"repair"' in skill
-    assert "discover-books" in skill
-    assert "discover-papers" in skill
-    assert "resolve-membership" in skill
-    assert 'stage:"synthesise"' in skill
-    assert "--identity" in skill
-    for name in ("quasi-pi-runner", "quasi-codex-driver", "quasi-codex-runner"):
-        assert name not in skill
+    for token in ("accept-current", "use-recommended-year"):
+        assert token in row
+        assert token in skill
 
 
 def test_collection_container_route_exists_in_search_contract() -> None:
@@ -129,75 +169,6 @@ def test_collection_container_route_exists_in_search_contract() -> None:
     assert '"publication_type"' in row
     assert "publication_type" in agent
     assert "publication_type" in skill
-
-
-def test_research_topic_main_thread_drives_bounded_run_stage_rounds() -> None:
-    skill = (ROOT / "skills" / "research-topic" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    assert "name: research-topic" in skill
-    assert "$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs" in skill
-    assert "process-material.mjs" not in skill
-    assert 'scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs"' in skill
-    assert "主线程" in skill
-    assert "driver" not in skill.lower()
-    assert "Agent(" not in skill
-    assert "至多保持五个" in skill
-    assert "逐个受理" in skill
-    assert "maxRounds" in skill and "recall-only" in skill
-    assert "maxCardsPerRound" in skill and "共享资源" in skill
-    assert "process-now" in skill and "proceed-without" in skill
-
-
-def test_research_topic_pins_round_convergence_channels_and_repair() -> None:
-    skill = (ROOT / "skills" / "research-topic" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    for stage in (
-        'stage:"recall"',
-        'stage:"steer"',
-        'stage:"webcard"',
-        'stage:"synthesise-overview"',
-        'stage:"synthesise-resources"',
-        'stage:"audit"',
-    ):
-        assert stage in skill
-    assert "seen_demand_fingerprints" in skill
-    assert "[kind,query,subq,role,reason]" in skill
-    assert "seen_identities" in skill
-    assert 'signal:"saturated"' in skill
-    assert "没有 unseen demand/card" in skill
-    assert "hard bound" in skill
-    assert 'card_status:"empty"' in skill
-    assert "独立 evidence-card channel" in skill
-    assert "quasi-status --kind K --slug S --json --identity" in skill
-    assert "WRITER-AMBIGUITY RULE" in skill
-    assert 'mode:"repair"' in skill
-    assert "pass:2" in skill
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def test_removed_legacy_bins_do_not_reappear_in_active_prompts() -> None:
