@@ -146,11 +146,16 @@ loop。记录“原请求 → 容器 Book + 目标章节”的映射，并在最
   - Paper Analyse：`selected_input` 取最近 Prepare receipt 的 exact `selected_input`；断点续跑而
   receipt 不在时，只在 observation 唯一指向一个可用 normalized text 时采用它，否则请用户
   选择，不自行判断文本质量。
-  - Book Analyse：从 Prepare evidence 中的 exact manifest 用 `read_json` 取得完整 `chapters`；
-  每次 dispatch 前按 exact chapter output 在最新 status evidence 中是否存在，传入
-  `context={chapter:<exact row>,output_exists:true|false}`。`output_exists:false` 的 Create receipt
-  只允许 `create/written`，`output_exists:true` 只允许 `reconciled/not_written`；不同 exact
-  chapter outputs 可最多五个并行。
+  - Book Analyse：从 Prepare evidence 中的 exact manifest 用 `read_json` 取得完整 `chapters`，
+  先只做一次 `quasi-status` 观察，据此为每章判定 `output_exists`。然后只做一次
+  `run-stage` 调用，传入全部章节：
+  `units=[{label:<chapter.slug>,context:{chapter:<exact row>,output_exists:true|false}}, ...]`，
+  不得逐章各调用一次。返回的 `receipts` 数组与 `units` 下标一一对应，逐项按原有 terminal
+  规则受理：`output_exists:false` 的 Create receipt 只允许 `create/written`，
+  `output_exists:true` 只允许 `reconciled/not_written`。某项是 `null` 或 error 信封就是
+  unknown outcome：按 WRITER-AMBIGUITY RULE 重新观察磁盘，只有证明 exact artifact
+  已落盘才可 reconcile，否则停止并报告，不得 blind redispatch。批量内并发由宿主控制；
+  需要分波时由主线程自行把 `chapters` 切块后分次调用。
   - Talk Analyse：仅当 Prepare receipt 的 `classification=="live"`；`inputs` 取该 receipt 中
   primary transcript 与同 generation engine artifacts 的 `{role,path,sha256,size}`。`dead|empty`
   canonical 由 Prepare 拥有，不再调用 Analyse。
@@ -215,4 +220,3 @@ vault/talks/{slug}/talk.md
 vault/authors/{author}.md
 processing/translations/{slug}-{target-tag-lower}.pdf
 ```
-

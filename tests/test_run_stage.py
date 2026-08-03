@@ -46,16 +46,34 @@ if (config.args?.inspectProtocol) {
   process.exit(0)
 }
 const trace = []
+const logs = []
 const receipt = { sentinel: "returned-verbatim" }
+const hasUnits = Array.isArray(config.args.units) && config.args.units.length > 0
 const result = await run({
   agent: async (prompt, options) => {
     trace.push({ prompt, options })
-    return receipt
+    return hasUnits
+      ? { ...receipt, unit_label: options.label }
+      : receipt
+  },
+  parallel: async (thunks) => {
+    const out = []
+    for (const thunk of thunks) {
+      try {
+        out.push(await thunk())
+      } catch {
+        out.push(null)
+      }
+    }
+    return out
+  },
+  log: (message) => {
+    logs.push(message)
   },
 }, config.args)
 const resolved = resolveStage(config.args.kind, config.args.stage)
 let direct = null
-if (resolved && result.schema_version !== "quasi.run-stage.error/0.1") {
+if (resolved && !hasUnits && result.schema_version !== "quasi.run-stage.error/0.1") {
   const context = makeOperationContext(
     resolved.kind,
     config.args.slug,
@@ -70,7 +88,7 @@ if (resolved && result.schema_version !== "quasi.run-stage.error/0.1") {
     request: resolved.descriptor.envelope(context, refs),
   }
 }
-process.stdout.write(JSON.stringify({ result, trace, direct }))
+process.stdout.write(JSON.stringify({ result, trace, logs, direct }))
 """
 
 
@@ -205,6 +223,23 @@ def stage_context(kind: str, stage: str) -> dict[str, Any]:
             }
         )
     return context
+
+
+def chapter_unit(
+    slot: str, slug: str, title: str, *, output_exists: bool = False
+) -> dict[str, Any]:
+    return {
+        "label": slug,
+        "context": {
+            "chapter": {
+                "slot": slot,
+                "slug": slug,
+                "title": title,
+                "filename": f"ch{slot}-{slug}.md",
+            },
+            "output_exists": output_exists,
+        },
+    }
 
 
 def protocol_report() -> dict[str, Any]:
@@ -541,3 +576,112 @@ def test_unknown_selection_returns_typed_error(
     assert report["result"]["schema_version"] == "quasi.run-stage.error/0.1"
     assert report["result"]["status"] == "error"
     assert report["result"]["error"]["code"] == code
+
+
+def test_book_analyse_fans_out_units_and_preserves_receipt_order() -> None:
+    units = [
+        chapter_unit("01", "introduction", "Introduction"),
+        chapter_unit("02", "methods", "Methods"),
+        chapter_unit("03", "conclusion", "Conclusion", output_exists=True),
+    ]
+    report = run_stage(
+        {
+            "kind": "book",
+            "slug": "example-book",
+            "stage": "analyse",
+            "units": units,
+        }
+    )
+
+    result = report["result"]
+    expected_labels = [
+        "example-book:analyse:introduction",
+        "example-book:analyse:methods",
+        "example-book:analyse:conclusion",
+    ]
+    assert result["schema_version"] == "quasi.run-stage.batch/0.1"
+    assert result["kind"] == "book"
+    assert result["stage"] == "analyse"
+    assert result["count"] == 3
+    assert [call["options"]["label"] for call in report["trace"]] == expected_labels
+    assert [receipt["unit_label"] for receipt in result["receipts"]] == (
+        expected_labels
+    )
+
+
+def test_batch_invalid_context_is_per_unit_and_other_units_dispatch() -> None:
+    units = [
+        chapter_unit("01", "introduction", "Introduction"),
+        {"label": "broken", "context": {"output_exists": False}},
+        chapter_unit("03", "conclusion", "Conclusion"),
+    ]
+    report = run_stage(
+        {
+            "kind": "book",
+            "slug": "example-book",
+            "stage": "analyse",
+            "units": units,
+        }
+    )
+
+    receipts = report["result"]["receipts"]
+    assert len(receipts) == 3
+    assert receipts[0]["unit_label"] == "example-book:analyse:introduction"
+    assert receipts[1]["schema_version"] == "quasi.run-stage.error/0.1"
+    assert receipts[1]["error"]["code"] == "run-stage.invalid_context"
+    assert receipts[2]["unit_label"] == "example-book:analyse:conclusion"
+    assert [call["options"]["label"] for call in report["trace"]] == [
+        "example-book:analyse:introduction",
+        "example-book:analyse:conclusion",
+    ]
+
+
+def test_batch_duplicate_units_fail_before_any_agent_dispatch() -> None:
+    unit = chapter_unit("01", "introduction", "Introduction")
+    report = run_stage(
+        {
+            "kind": "book",
+            "slug": "example-book",
+            "stage": "analyse",
+            "units": [unit, unit],
+        }
+    )
+
+    assert report["result"]["schema_version"] == "quasi.run-stage.error/0.1"
+    assert report["result"]["error"]["code"] == "run-stage.duplicate_unit"
+    assert report["trace"] == []
+
+
+def test_single_mode_returns_verbatim_receipt_and_logs_narrative() -> None:
+    slug = "s" * 61
+    report = run_stage(
+        {"kind": "paper", "slug": slug, "stage": "prepare", "context": {}}
+    )
+
+    assert report["result"] == {"sentinel": "returned-verbatim"}
+    assert report["logs"] == [f"prepare — {slug[:60]}"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "stage", "code"),
+    [
+        ("unknown", "prepare", "run-stage.unknown_kind"),
+        ("paper", "unknown", "run-stage.unknown_stage"),
+    ],
+)
+def test_batch_unknown_selection_remains_a_top_level_error(
+    kind: str, stage: str, code: str
+) -> None:
+    report = run_stage(
+        {
+            "kind": kind,
+            "slug": "example",
+            "stage": stage,
+            "units": [{"context": {}}],
+        }
+    )
+
+    assert report["result"]["schema_version"] == "quasi.run-stage.error/0.1"
+    assert report["result"]["error"]["code"] == code
+    assert "receipts" not in report["result"]
+    assert report["trace"] == []

@@ -78,10 +78,12 @@ Skills are the drivers. They observe exact disk state through `quasi-status`,
 normalise and coalesce identity before writers, preserve batch input order, and
 select an applicable stage from
 `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`.
-Each run-stage invocation selects one descriptor row, gives one specialist a
-goal, exact refs, declared capabilities, and a closed
-`quasi.stage.receipt/0.2` schema, then returns the terminal unchanged. The
-specialist owns method and local recovery; the skill interprets the terminal and
+Each run-stage invocation selects one descriptor row and, for each request unit,
+gives one specialist a goal, exact refs, declared capabilities, and a closed
+`quasi.stage.receipt/0.2` schema, then returns that unit's terminal unchanged. A
+single invocation may fan out within one stage when every unit writes a distinct
+exact output; prompt-identical duplicate requests are rejected. The specialist
+owns method and local recovery; the skill interprets each terminal and
 re-observes disk before continuing. Unknown writer outcomes stop instead of
 racing a second writer.
 
