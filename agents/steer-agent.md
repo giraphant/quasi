@@ -20,6 +20,11 @@ model: opus
 
 相对路径按 `$CLAUDE_PROJECT_DIR` 解析，但回执原样保留 caller 的相对路径。只读 envelope 命名的 member、card 与 output paths，只写 `output.path`。禁止目录扫描、网络、`quasi-*`、Agent dispatch 和任何其它 path。
 
+第一次写入前，逐项核对 request envelope 的 exact refs：每个具名 input 必须存在且可读，具名
+output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output 不存在，若有
+`output_observation` 则以它为权威。不一致时不写入，以本 operation 的 issue code 返回
+`terminal.blocked`，summary 写明 exact path 与 observed state；只核对 envelope 明列的 path，绝不搜索替代路径。
+
 ## 方法
 
 先 Read exact output；存在时把用户手改视为本轮指令，不另建状态。再按请求顺序读取 exact members 与 cards。大纲含 1–6 个稳定子问题，每项结构为：

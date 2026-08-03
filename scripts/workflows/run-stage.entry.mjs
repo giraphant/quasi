@@ -1,4 +1,5 @@
 import { defineOperation } from "./operations/define.mjs";
+import { STAGE_CHAINS } from "./operations/chains.mjs";
 import { authorOperationRows } from "./operations/rows/author.mjs";
 import { bookOperationRows } from "./operations/rows/book.mjs";
 import { paperOperationRows } from "./operations/rows/paper.mjs";
@@ -77,6 +78,96 @@ export function resolveStage(kind, stage) {
   return { kind: normalizedKind === "translate" ? "translation" : normalizedKind, operation, descriptor, row: defineOperation(descriptor) };
 }
 
+async function runChain({ agent, log }, args, resolved, chain, from, until) {
+  const receipts = [];
+  let accumulatedContext =
+    args.context && typeof args.context === "object" ? args.context : {};
+  let stoppedAt = null;
+  let stopReason = "end";
+  const startIndex = chain.sequence.indexOf(from);
+  const untilIndex = chain.sequence.indexOf(until);
+
+  for (const currentStage of chain.sequence.slice(startIndex, untilIndex + 1)) {
+    const current =
+      currentStage === from
+        ? resolved
+        : resolveStage(resolved.kind, currentStage);
+    let stageContext;
+    let prompt;
+    let schema;
+    try {
+      stageContext = makeOperationContext(
+        resolved.kind,
+        args.slug,
+        current.operation,
+        accumulatedContext,
+      );
+      prompt = current.row.prompt(stageContext);
+      schema = current.row.schema(stageContext);
+    } catch (error) {
+      receipts.push({
+        stage: currentStage,
+        receipt: errorResult(
+          "run-stage.invalid_context",
+          { ...args, stage: currentStage },
+          error instanceof Error ? error.message : String(error),
+        ),
+      });
+      stopReason = "invalid_context";
+      break;
+    }
+
+    if (typeof log === "function") {
+      log(`${currentStage} — ${String(args.slug).slice(0, 60)}`);
+    }
+    const receipt = await agent(prompt, {
+      schema,
+      agentType: current.descriptor.agentType,
+      phase: current.descriptor.stage,
+      label: `${args.slug}:${currentStage}`,
+    });
+    stoppedAt = currentStage;
+    receipts.push({ stage: currentStage, receipt });
+
+    if (receipt == null) {
+      stopReason = "no_receipt";
+      break;
+    }
+    if (receipt.terminal.status !== "complete") {
+      stopReason = receipt.terminal.status;
+      break;
+    }
+
+    let coherent = false;
+    try {
+      coherent =
+        current.row.contract.statuses.complete(receipt, stageContext) === true;
+    } catch {
+      coherent = false;
+    }
+    if (!coherent) {
+      stopReason = "incoherent_complete";
+      break;
+    }
+
+    for (const carry of chain.carries) {
+      if (carry.from === currentStage)
+        accumulatedContext = carry.apply(receipt, accumulatedContext);
+    }
+  }
+
+  return {
+    schema_version: "quasi.run-stage.chain/0.1",
+    kind: resolved.kind,
+    slug: args.slug,
+    from,
+    until,
+    stopped_at: stoppedAt,
+    stop_reason: stopReason,
+    receipts,
+  };
+}
+
 export async function run({ agent, parallel, log }, inputArgs) {
   const args = inputArgs && typeof inputArgs === "object" ? inputArgs : {};
   const resolved = resolveStage(args.kind, args.stage);
@@ -93,6 +184,30 @@ export async function run({ agent, parallel, log }, inputArgs) {
   }
   const units =
     Array.isArray(args.units) && args.units.length > 0 ? args.units : null;
+  const hasUntil =
+    typeof args.until === "string" && args.until.trim().length > 0;
+  if (hasUntil) {
+    if (args.units !== undefined) {
+      return errorResult(
+        "run-stage.invalid_context",
+        args,
+        "run-stage until cannot be combined with units",
+      );
+    }
+    const from = args.stage.trim().toLowerCase();
+    const until = args.until.trim().toLowerCase();
+    const chain = STAGE_CHAINS[resolved.kind];
+    const fromIndex = chain?.sequence.indexOf(from) ?? -1;
+    const untilIndex = chain?.sequence.indexOf(until) ?? -1;
+    if (!chain || fromIndex < 0 || untilIndex < 0 || fromIndex > untilIndex) {
+      return errorResult(
+        "run-stage.invalid_chain",
+        args,
+        `No valid run-stage chain for kind=${resolved.kind} from=${from} until=${until}`,
+      );
+    }
+    return runChain({ agent, log }, args, resolved, chain, from, until);
+  }
   if (units) {
     if (units.length > 64) {
       return errorResult(

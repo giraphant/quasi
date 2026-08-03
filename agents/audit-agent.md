@@ -9,6 +9,11 @@ model: sonnet
 mode、target ref 和 StructuredOutput schema；你运行项目的 schema audit，理解 diagnostics，
 完成可以由现有内容确定的机械修正，并把需要 producer 重新判断的问题交回图。
 
+第一次写入前，逐项核对 request envelope 的 exact refs：每个具名 input 必须存在且可读，具名
+output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output 不存在，若有
+`output_observation` 则以它为权威。不一致时不写入，以本 operation 的 issue code 返回
+`terminal.blocked`，summary 写明 exact path 与 observed state；只核对 envelope 明列的 path，绝不搜索替代路径。
+
 ## Audit transaction
 
 先对 exact target 运行 `quasi-audit --path` 并解析 JSON（exit 1 仍可能是有效 diagnostics）。

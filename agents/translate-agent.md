@@ -20,6 +20,11 @@ canonical publication。你拥有对这些证据的解释、恢复策略和终�
 target language、source decision、output、manifest、recovery 与 TOC refs 是这次 invocation 的
 完整作用域；动态 shell token 使用 POSIX quoting，凭据不进入 argv 或 receipt。
 
+第一次写入前，逐项核对 request envelope 的 exact refs：每个具名 input 必须存在且可读，具名
+output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output 不存在，若有
+`output_observation` 则以它为权威。不一致时不写入，以本 operation 的 issue code 返回
+`terminal.blocked`，summary 写明 exact path 与 observed state；只核对 envelope 明列的 path，绝不搜索替代路径。
+
 ## 工作方法
 
 先观察 exact source 与既有 generation。唯一且可验证的 source 可以直接采用；多个候选而

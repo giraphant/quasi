@@ -6,6 +6,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
+import { STAGE_CHAINS } from "./workflows/operations/chains.mjs";
+import { makeOperationContext } from "./workflows/run-stage-context.mjs";
 
 const execFileAsync = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -25,6 +27,7 @@ const ARTIFACT_CONTRACT_MODULE = join(
   "generated.mjs",
 );
 const CHECK = process.argv.slice(2).includes("--check");
+const CHAIN_PROBE_CONTEXT_OVERRIDES = {};
 
 const ARTIFACT_CONTRACTS = [
   { type: "author", exportName: "AUTHOR_ARTIFACT_CONTRACT" },
@@ -59,6 +62,7 @@ async function buildWorkflow({ name, entry, output }) {
   const { workflowMeta } = entryModule;
   if (!workflowMeta || typeof workflowMeta !== "object")
     throw new Error(`${name} workflow source entry must export workflowMeta`);
+  validateStageChainParity(entryModule);
 
   const result = await build({
     absWorkingDir: ROOT,
@@ -104,6 +108,60 @@ return await __quasiWorkflow.run({ agent, parallel, phase, log }, args)
   } else {
     await writeFile(output, generated, "utf8");
     process.stdout.write(`generated workflows/${name}.mjs\n`);
+  }
+}
+
+function validateStageChainParity({ RUN_STAGE_REGISTRY, resolveStage }) {
+  for (const [kind, chain] of Object.entries(STAGE_CHAINS)) {
+    const registeredStages = RUN_STAGE_REGISTRY?.[kind];
+    if (!registeredStages)
+      throw new Error(
+        `stage chain parity: kind=${kind} is missing from RUN_STAGE_REGISTRY`,
+      );
+
+    for (const stage of chain.sequence) {
+      if (!Object.hasOwn(registeredStages, stage))
+        throw new Error(
+          `stage chain parity: kind=${kind} stage=${stage} is not registered`,
+        );
+    }
+
+    for (const carry of chain.carries) {
+      if (!chain.sequence.includes(carry.from))
+        throw new Error(
+          `stage chain parity: kind=${kind} carry.from=${carry.from} is not in the sequence`,
+        );
+      const operation = registeredStages[carry.from];
+      const resolved = resolveStage(kind, carry.from);
+      if (!resolved)
+        throw new Error(
+          `stage chain parity: kind=${kind} stage=${carry.from} does not resolve`,
+        );
+      const rawContext = CHAIN_PROBE_CONTEXT_OVERRIDES[operation] || {};
+      let schema;
+      try {
+        const context = makeOperationContext(
+          kind,
+          "probe",
+          operation,
+          rawContext,
+        );
+        schema = resolved.row.schema(context);
+      } catch (error) {
+        throw new Error(
+          `stage chain parity: cannot build receipt schema for operation=${operation}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+      const required = Array.isArray(schema?.required) ? schema.required : [];
+      for (const field of carry.reads) {
+        if (!required.includes(field))
+          throw new Error(
+            `stage chain parity: carry ${kind}.${carry.from} reads non-required receipt field=${field}`,
+          );
+      }
+    }
   }
 }
 

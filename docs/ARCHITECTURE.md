@@ -69,23 +69,30 @@ Removed legacy bins:
 ## Workflow source and runtime
 
 `scripts/workflows/**/*.mjs` contains the hand-maintained descriptor rows,
-run-stage entry/context, and shared Stage schema. `npm run build:workflows` uses
-the pinned esbuild dependency to produce only the committed
-`workflows/run-stage.mjs`; `npm run check:workflows` rejects a stale bundle or
+run-stage entry/context, and shared Stage schema. `scripts/workflows/operations/chains.mjs`
+owns each fixed kind sequence and its declarative receipt-to-context carries.
+`scripts/build-workflows.mjs` checks every chain stage against the registry and
+every declared carry read against that row's required receipt fields in both build
+and `--check` mode. The pinned esbuild dependency produces only the committed
+`workflows/run-stage.mjs`; `npm run check:workflows` also rejects a stale bundle or
 forbidden runtime imports.
 
 Skills are the drivers. They observe exact disk state through `quasi-status`,
 normalise and coalesce identity before writers, preserve batch input order, and
 select an applicable stage from
 `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`.
-Each run-stage invocation selects one descriptor row and, for each request unit,
-gives one specialist a goal, exact refs, declared capabilities, and a closed
-`quasi.stage.receipt/0.2` schema, then returns that unit's terminal unchanged. A
-single invocation may fan out within one stage when every unit writes a distinct
-exact output; prompt-identical duplicate requests are rejected. The specialist
-owns method and local recovery; the skill interprets each terminal and
-re-observes disk before continuing. Unknown writer outcomes stop instead of
-racing a second writer.
+Without `until`, each run-stage invocation selects one descriptor row and, for
+each request unit, gives one specialist a goal, exact refs, declared capabilities,
+and a closed `quasi.stage.receipt/0.2` schema, then returns that unit's terminal
+unchanged. A single invocation may fan out within one stage when every unit writes
+a distinct exact output; prompt-identical duplicate requests are rejected. With
+`until`, run-stage walks only the registered fixed slice, stopping when a terminal
+is not complete or the owning row's cross-field completion predicate rejects it.
+Carries thread receipt evidence without filesystem access; the Paper chain passes
+`paper.prepare.selected_input` into `paper.analyse.input`. Paper Search stays a
+single dispatch because the skill owns post-Search identity judgement, so its
+chain begins at Acquire. The specialist owns method and local recovery; unknown
+writer outcomes stop instead of racing a second writer.
 
 Root `settings.json` supplies a plugin-default `subagentStatusLine`. The
 zero-dependency `scripts/subagent-statusline.py` renders only quasi task rows,
@@ -149,8 +156,8 @@ access URLs, and canonical slug. Author/Topic candidate finding uses
 
 For 2–32 top-level Books/Papers, the skill preserves input order, normalises
 and coalesces duplicate identities before any writer, and drives independent
-items with bounded host-level concurrency. Each Workflow call still owns
-exactly one stage for one material.
+items with bounded host-level concurrency. A Paper call may own one fixed
+post-Search chain slice; every other Workflow call still owns one stage.
 
 Topic synthesis produces only `00-overview.md` and `01-resources.md` beside the
 user-editable `02-outline.md`; per-subquestion dossier pages are retired as a
@@ -171,8 +178,8 @@ and `docs/CHANGELOG.md`; this file plus `CLAUDE.md`,
 `docs/GRAPH_COLLABORATION.md` are the only maintained maintainer documents.
 
 Active skill writing follows `docs/SKILL_ORCHESTRATION.md`: Skill owns user
-intent and decisions, Workflow owns material state and phase routing, Agent owns
-specialist judgement, and CLI owns deterministic writes. Active `SKILL.md`
+intent, identity, state, and decisions; Workflow owns descriptor dispatch and
+fixed chain progression; Agent owns specialist judgement, and CLI owns deterministic writes. Active `SKILL.md`
 files contain runtime instructions, not links back to maintainer docs.
 
 ## Configure options and env flow

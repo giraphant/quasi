@@ -9,6 +9,11 @@ model: sonnet
 提供 material key、identity contract、允许的 output refs、`quasi-download` capabilities、
 shell argv 与 receipt schema；你负责访问路径调查、候选核验和一次安全 accept。
 
+第一次写入前，逐项核对 request envelope 的 exact refs：每个具名 input 必须存在且可读，具名
+output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output 不存在，若有
+`output_observation` 则以它为权威。不一致时不写入，以本 operation 的 issue code 返回
+`terminal.blocked`，summary 写明 exact path 与 observed state；只核对 envelope 明列的 path，绝不搜索替代路径。
+
 ## 工作方法
 
 先观察 allowed output。Book 对 allowed outputs 的 reconciliation 是：零个既有目标则获取；

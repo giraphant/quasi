@@ -2,6 +2,13 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.59.0** (2026-08-04): **Paper 的机械前进收进固定链，writer 在入口重证 exact refs。**
+  - `run-stage` 新增 `until` 链模式；首条且唯一的链是 Paper `Acquire → Prepare → Analyse → Audit`。它故意从 Acquire 而不是 Search 开始：Search receipt 之后仍有 canonical slug、`local_owner` admission 与 same-identity coalescing，这些 identity 判断属于 driving skill，不能伪装成机械阶段推进。链不分支、不重试、不 join，也不跨 invocation 保存状态。
+  - Descriptor row 的 `complete()` 跨字段谓词终于有了运行时归属。链在每个 `terminal.complete` 后调用 owning row predicate；schema 合法却谎称完成的 receipt 以 `incoherent_complete` 确定性停住，不再只靠测试发现。构建器同时校验 chain sequence 对 registry、carry reads 对 receipt required fields 的机械一致性。
+  - Workflow 脚本不能读磁盘，所以跨阶段 context 只从已验证 receipt 传递：`paper.prepare.selected_input` 直接成为后续 `paper.analyse.input`。`scripts/workflows/operations/chains.mjs` 只拥有固定顺序和这类声明式 carries，不重新发明 material state。
+  - 十一个 writer Agent 在第一次写入前重证 envelope 的 exact refs：所有具名 input 存在且可读，output state 符合 request，存在 `output_observation` 时以它为权威。Mismatch 不写入而返回本 operation 的 typed `blocked`；这项分散式 precondition check 让 unknown outcome 后的 status-first resume 安全——旧 writer 若已落盘，新 invocation 会在入口停住，而不是盲目覆盖或搜索替代路径。
+  - `collect-material` 的 Paper 路由从逐 Stage 机械转发收敛为 Search/identity 后一次 `stage:"acquire",until:"audit"`；主线程只消费 chain stop reason、展示 typed gate，并继续拥有 Audit→Analyse repair 与 status-first 断点续跑。Book、Talk、Author 和 Search 的调用形状不变。
+
 - **0.58.5** (2026-08-04): **Orchestration 测试从技能文案快照收回为跨文件合同校验。**
   - `tests/test_skill_orchestration.py` 曾钉住具体中文句子、规则名和工作流叙述；这些断言守住的不是运行合同，而是某一版 skill prose，导致每次简化 skill 都要同步缴纳测试维护税。本轮删除四项 collect/research prose photograph 与三句 owner 文案钉子，保留运行地标、frontmatter routing、container route 和 dead-name quarantine 等真实边界。
   - 新测试从权威来源派生一致性：skill 中的 kind/stage token 必须解析到 `RUN_STAGE_REGISTRY`，Book gate vocabulary 必须同时存在于 row 与 driving skill，共享 receipt 版本必须在 stage module 与 maintainer guide 同步；凡调用 `Workflow()` 的 skill 只能走公开的 `workflows/run-stage.mjs` 并通过 `quasi-status` 观察磁盘，且所有 skill 都不得调用 agent-owned CLI（`quasi-search` / `quasi-download` / `quasi-extract` / `quasi-transcribe` / `quasi-translate` / `quasi-audit`）。这些检查继续守住名字、阶段、版本和 ownership boundary，同时让 prose 自由改写。

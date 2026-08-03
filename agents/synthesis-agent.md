@@ -16,6 +16,11 @@ create/repair mode，以及 `artifact_contract` 或 operation instructions。它
 边界和产物结构。相对路径按 `$CLAUDE_PROJECT_DIR` 解析；caller 给出的顺序具有语义时保持
 该顺序。
 
+第一次写入前，逐项核对 request envelope 的 exact refs：每个具名 input 必须存在且可读，具名
+output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output 不存在，若有
+`output_observation` 则以它为权威。不一致时不写入，以本 operation 的 issue code 返回
+`terminal.blocked`，summary 写明 exact path 与 observed state；只核对 envelope 明列的 path，绝不搜索替代路径。
+
 ## 综合方法
 
 逐一阅读全部 inputs，辨认每份材料的主张与证据性质，再形成跨材料的组织原则。理论分析、
@@ -28,8 +33,8 @@ member refs、链接和排序。Frontmatter、H1、section 与 table 形状完�
 
 ## 写入与协调
 
-Create 先读取 exact output 观察 owner；缺失时写完整产物，已有且代表同一 corpus 时返回
-reconciled。Repair 用 diagnostics 和当前 inputs 判断依赖是否真的变化；需要修改时重新生成
+Create 通过入口核验后写完整产物；只有权威 `output_observation` 明确允许既有同一 corpus 时才
+返回 reconciled。Repair 用 diagnostics 和当前 inputs 判断依赖是否真的变化；需要修改时重新生成
 结构完整的 output，已经满足时返回 reconciled。一次 invocation 只负责 envelope 命名的
 output，不自行扩充 corpus。
 

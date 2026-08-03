@@ -13,6 +13,11 @@ model: opus
 
 相对路径按 `$CLAUDE_PROJECT_DIR` 解析，回执保留 request 的原始相对路径。动态查询词必须作为数据安全引用。
 
+第一次写入前，逐项核对 request envelope 的 exact refs：每个具名 input 必须存在且可读，具名
+output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output 不存在，若有
+`output_observation` 则以它为权威。不一致时不写入，以本 operation 的 issue code 返回
+`terminal.blocked`，summary 写明 exact path 与 observed state；只核对 envelope 明列的 path，绝不搜索替代路径。
+
 ## 方法
 
 把 `query + note` 收敛成一个具体对象或一个有界品类合集。中英双语检索，优先官方规格、监管或法律文书、档案、维修与器物数据库、当代报道；百科只作索引。事实必须来自本次实际抓到的来源：两源一致可记 confirmed，单源标 single-source，冲突并列为 disputed。不得用训练知识补缺。

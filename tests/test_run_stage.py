@@ -48,10 +48,18 @@ if (config.args?.inspectProtocol) {
 const trace = []
 const logs = []
 const receipt = { sentinel: "returned-verbatim" }
+const stageReceipts = config.stageReceipts || null
 const hasUnits = Array.isArray(config.args.units) && config.args.units.length > 0
 const result = await run({
   agent: async (prompt, options) => {
     trace.push({ prompt, options })
+    const stageKey = options.phase.toLowerCase()
+    if (
+      stageReceipts &&
+      Object.prototype.hasOwnProperty.call(stageReceipts, stageKey)
+    ) {
+      return stageReceipts[stageKey]
+    }
     return hasUnits
       ? { ...receipt, unit_label: options.label }
       : receipt
@@ -92,7 +100,11 @@ process.stdout.write(JSON.stringify({ result, trace, logs, direct }))
 """
 
 
-def run_stage(args: dict[str, Any]) -> dict[str, Any]:
+def run_stage(
+    args: dict[str, Any],
+    *,
+    stage_receipts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
@@ -104,8 +116,11 @@ def run_stage(args: dict[str, Any]) -> dict[str, Any]:
             json.dumps((ROOT / "scripts" / "workflows" / "stage.mjs").as_uri()),
         )
     )
+    config: dict[str, Any] = {"args": args}
+    if stage_receipts is not None:
+        config["stageReceipts"] = stage_receipts
     proc = subprocess.run(
-        [node, "--input-type=module", "-e", script, json.dumps({"args": args})],
+        [node, "--input-type=module", "-e", script, json.dumps(config)],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -223,6 +238,84 @@ def stage_context(kind: str, stage: str) -> dict[str, Any]:
             }
         )
     return context
+
+
+def paper_chain_receipts(slug: str = "example-paper") -> dict[str, Any]:
+    normalized = f"processing/papers/{slug}/source.txt"
+    material_key = f"paper:{slug}"
+    return {
+        "acquire": {
+            "schema_version": "quasi.stage.receipt/0.2",
+            "operation": "paper.acquire",
+            "stage": "Acquire",
+            "material_key": material_key,
+            "effect": "writer",
+            "attempt": 1,
+            "output_path": f"sources/{slug}.pdf",
+            "doi": None,
+            "write_state": "written",
+            "identity_verified": True,
+            "attempts": [],
+            "terminal": {
+                "status": "complete",
+                "issue": None,
+                "disposition": "created",
+                "source": "open_access",
+            },
+        },
+        "prepare": {
+            "schema_version": "quasi.stage.receipt/0.2",
+            "operation": "paper.prepare",
+            "stage": "Prepare",
+            "material_key": material_key,
+            "effect": "writer",
+            "attempt": 1,
+            "source_path": f"sources/{slug}.pdf",
+            "selected_input": normalized,
+            "artifacts": [
+                {
+                    "role": "normalized_text",
+                    "path": normalized,
+                    "exists": True,
+                    "usable": True,
+                }
+            ],
+            "steps": [],
+            "diagnostics": [],
+            "terminal": {"status": "complete", "issue": None},
+        },
+        "analyse": {
+            "schema_version": "quasi.stage.receipt/0.2",
+            "operation": "paper.analyse",
+            "stage": "Analyse",
+            "material_key": material_key,
+            "effect": "writer",
+            "attempt": 1,
+            "input_path": normalized,
+            "output_path": f"vault/papers/{slug}.md",
+            "artifact_roles": ["canonical"],
+            "terminal": {
+                "status": "complete",
+                "issue": None,
+                "action": "create",
+            },
+        },
+        "audit": {
+            "schema_version": "quasi.stage.receipt/0.2",
+            "operation": "paper.audit",
+            "stage": "Audit",
+            "material_key": material_key,
+            "effect": "writer",
+            "attempt": 1,
+            "target_path": f"vault/papers/{slug}.md",
+            "pass": 1,
+            "artifact_roles": ["canonical"],
+            "remaining_violations": 0,
+            "escalated": [],
+            "mutated_paths": [],
+            "terminal": {"status": "complete", "issue": None},
+        },
+    }
 
 
 def chapter_unit(
@@ -576,6 +669,205 @@ def test_unknown_selection_returns_typed_error(
     assert report["result"]["schema_version"] == "quasi.run-stage.error/0.1"
     assert report["result"]["status"] == "error"
     assert report["result"]["error"]["code"] == code
+
+
+def test_paper_chain_dispatches_fixed_sequence_and_carries_prepare_input() -> None:
+    slug = "example-paper"
+    receipts = paper_chain_receipts(slug)
+    report = run_stage(
+        {
+            "kind": "paper",
+            "slug": slug,
+            "stage": "acquire",
+            "until": "audit",
+            "context": stage_context("paper", "acquire"),
+        },
+        stage_receipts=receipts,
+    )
+
+    assert [call["options"]["label"] for call in report["trace"]] == [
+        f"{slug}:acquire",
+        f"{slug}:prepare",
+        f"{slug}:analyse",
+        f"{slug}:audit",
+    ]
+    assert [call["options"]["phase"] for call in report["trace"]] == [
+        "Acquire",
+        "Prepare",
+        "Analyse",
+        "Audit",
+    ]
+    assert report["logs"] == [
+        f"acquire — {slug}",
+        f"prepare — {slug}",
+        f"analyse — {slug}",
+        f"audit — {slug}",
+    ]
+    analyse_request = json.loads(report["trace"][2]["prompt"].split("\n", 2)[2])
+    assert analyse_request["input"]["path"] == (
+        f"processing/papers/{slug}/source.txt"
+    )
+
+    result = report["result"]
+    assert result["schema_version"] == "quasi.run-stage.chain/0.1"
+    assert result["kind"] == "paper"
+    assert result["slug"] == slug
+    assert result["from"] == "acquire"
+    assert result["until"] == "audit"
+    assert result["stopped_at"] == "audit"
+    assert result["stop_reason"] == "end"
+    assert [item["stage"] for item in result["receipts"]] == [
+        "acquire",
+        "prepare",
+        "analyse",
+        "audit",
+    ]
+    assert [item["receipt"] for item in result["receipts"]] == [
+        receipts["acquire"],
+        receipts["prepare"],
+        receipts["analyse"],
+        receipts["audit"],
+    ]
+
+
+def test_paper_chain_stops_at_needs_input_gate() -> None:
+    receipts = paper_chain_receipts()
+    receipts["acquire"] = {
+        **receipts["acquire"],
+        "write_state": "not_written",
+        "identity_verified": False,
+        "terminal": {
+            "status": "needs_input",
+            "issue": {
+                "code": "paper.acquire_choice_required",
+                "operation": "paper.acquire",
+                "summary": "The accepted source needs a user decision.",
+                "user_question": "Which accepted source should be used?",
+                "retryable": True,
+            },
+        },
+    }
+    report = run_stage(
+        {
+            "kind": "paper",
+            "slug": "example-paper",
+            "stage": "acquire",
+            "until": "audit",
+            "context": stage_context("paper", "acquire"),
+        },
+        stage_receipts=receipts,
+    )
+
+    assert len(report["trace"]) == 1
+    assert report["result"]["stop_reason"] == "needs_input"
+    assert report["result"]["stopped_at"] == "acquire"
+    assert report["result"]["receipts"] == [
+        {"stage": "acquire", "receipt": receipts["acquire"]}
+    ]
+
+
+def test_paper_chain_rejects_incoherent_complete_before_next_stage() -> None:
+    receipts = paper_chain_receipts()
+    receipts["prepare"] = {**receipts["prepare"], "selected_input": None}
+    report = run_stage(
+        {
+            "kind": "paper",
+            "slug": "example-paper",
+            "stage": "acquire",
+            "until": "audit",
+            "context": stage_context("paper", "acquire"),
+        },
+        stage_receipts=receipts,
+    )
+
+    assert [call["options"]["phase"] for call in report["trace"]] == [
+        "Acquire",
+        "Prepare",
+    ]
+    assert report["result"]["stop_reason"] == "incoherent_complete"
+    assert report["result"]["stopped_at"] == "prepare"
+    assert [item["stage"] for item in report["result"]["receipts"]] == [
+        "acquire",
+        "prepare",
+    ]
+
+
+def test_paper_chain_records_dead_agent_as_null_receipt() -> None:
+    receipts = paper_chain_receipts()
+    receipts["prepare"] = None
+    report = run_stage(
+        {
+            "kind": "paper",
+            "slug": "example-paper",
+            "stage": "acquire",
+            "until": "audit",
+            "context": stage_context("paper", "acquire"),
+        },
+        stage_receipts=receipts,
+    )
+
+    assert [call["options"]["phase"] for call in report["trace"]] == [
+        "Acquire",
+        "Prepare",
+    ]
+    assert report["result"]["stop_reason"] == "no_receipt"
+    assert report["result"]["stopped_at"] == "prepare"
+    assert report["result"]["receipts"][-1] == {
+        "stage": "prepare",
+        "receipt": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "units",
+    [
+        [{"context": stage_context("paper", "acquire")}],
+        [],
+    ],
+)
+def test_chain_rejects_units_as_invalid_context(units: list[dict[str, Any]]) -> None:
+    report = run_stage(
+        {
+            "kind": "paper",
+            "slug": "example-paper",
+            "stage": "acquire",
+            "until": "audit",
+            "units": units,
+        }
+    )
+
+    assert report["trace"] == []
+    assert report["result"]["error"]["code"] == "run-stage.invalid_context"
+
+
+def test_chain_rejects_reverse_range() -> None:
+    report = run_stage(
+        {
+            "kind": "paper",
+            "slug": "example-paper",
+            "stage": "audit",
+            "until": "acquire",
+            "context": {},
+        }
+    )
+
+    assert report["trace"] == []
+    assert report["result"]["error"]["code"] == "run-stage.invalid_chain"
+
+
+def test_chain_rejects_kind_without_sequence() -> None:
+    report = run_stage(
+        {
+            "kind": "talk",
+            "slug": "example-talk",
+            "stage": "prepare",
+            "until": "audit",
+            "context": {},
+        }
+    )
+
+    assert report["trace"] == []
+    assert report["result"]["error"]["code"] == "run-stage.invalid_chain"
 
 
 def test_book_analyse_fans_out_units_and_preserves_receipt_order() -> None:
