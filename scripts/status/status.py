@@ -20,6 +20,11 @@ from typing import Any, Iterable
 
 import yaml
 
+PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+from scripts.schemas.pipeline import PIPELINE  # noqa: E402
+
 
 STATUS_VERSION = "quasi.status/0.1"
 SCAN_VERSION = "quasi.status-scan/0.1"
@@ -65,6 +70,23 @@ def project_root() -> Path:
     """Use the same project-root precedence as quasi's agent-facing shims."""
 
     return Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+
+
+def artifact_path(
+    root: Path,
+    kind: str,
+    stage_name: str,
+    role: str,
+    **values: str,
+) -> Path:
+    """Expand one canonical pipeline artifact template under ``root``."""
+
+    stage_definition = next(
+        item
+        for item in PIPELINE[kind]["stages"]
+        if item["stage"] == stage_name
+    )
+    return root / stage_definition["artifacts"][role].format(**values)
 
 
 def relative(root: Path, path: Path) -> str:
@@ -193,8 +215,10 @@ def chapter_refs(
     ``vault/books/{slug}/ch{slot}-{chapter-slug}.md``.
     """
 
-    chapter_root = root / "processing" / "chapters" / slug
-    manifest = chapter_root / "manifest.json"
+    chapter_root = artifact_path(
+        root, "book", "prepare", "outputDir", slug=slug
+    )
+    manifest = artifact_path(root, "book", "prepare", "manifest", slug=slug)
     manifest_found = evidence(root, [manifest])
     observation = observe_file(manifest, nonempty=True)
     if not observation.usable:
@@ -233,11 +257,17 @@ def chapter_refs(
 
 
 def paper_status(root: Path, slug: str, *, include_identity: bool = False) -> dict[str, Any]:
-    source = root / "sources" / f"{slug}.pdf"
-    source_text = root / "processing" / "papers" / slug / "source.txt"
-    ocr_source = root / "processing" / "papers" / slug / "ocr.pdf"
-    ocr_text = root / "processing" / "papers" / slug / "ocr.txt"
-    canonical = root / "vault" / "papers" / f"{slug}.md"
+    source = artifact_path(root, "paper", "acquire", "output", slug=slug)
+    source_text = artifact_path(
+        root, "paper", "prepare", "normalized", slug=slug
+    )
+    ocr_source = artifact_path(
+        root, "paper", "prepare", "recoverySource", slug=slug
+    )
+    ocr_text = artifact_path(
+        root, "paper", "prepare", "recoveryText", slug=slug
+    )
+    canonical = artifact_path(root, "paper", "analyse", "output", slug=slug)
 
     acquire = observe_file(source, nonempty=True)
     prepared = [source_text, ocr_text]
@@ -245,14 +275,18 @@ def paper_status(root: Path, slug: str, *, include_identity: bool = False) -> di
     analyse_complete, analyse_evidence, canonical_frontmatter = observed_frontmatter(
         root, canonical
     )
-    stages = [
-        stage("acquire", acquire.usable, evidence(root, [source])),
-        stage(
-            "prepare",
+    observations = {
+        "acquire": (acquire.usable, evidence(root, [source])),
+        "prepare": (
             any(item.usable for item in prepared_observations),
             evidence(root, prepared),
         ),
-        stage("analyse", analyse_complete, analyse_evidence),
+        "analyse": (analyse_complete, analyse_evidence),
+    }
+    stages = [
+        stage(item["stage"], *observations[item["stage"]])
+        for item in PIPELINE["paper"]["stages"]
+        if item["stage"] in observations
     ]
     next_stage = first_incomplete(stages)
     if next_stage == "acquire":
@@ -293,13 +327,19 @@ def paper_status(root: Path, slug: str, *, include_identity: bool = False) -> di
 
 
 def book_status(root: Path, slug: str, *, include_identity: bool = False) -> dict[str, Any]:
-    source_epub = root / "sources" / f"{slug}.epub"
-    source_pdf = root / "sources" / f"{slug}.pdf"
+    source_epub = artifact_path(
+        root, "book", "prepare", "source", slug=slug, format="epub"
+    )
+    source_pdf = artifact_path(
+        root, "book", "prepare", "source", slug=slug, format="pdf"
+    )
     sources = [source_epub, source_pdf]
     source_observations = [observe_file(path, nonempty=True) for path in sources]
     inventory_valid, chapters, manifest_evidence = chapter_refs(root, slug)
 
-    chapter_root = root / "processing" / "chapters" / slug
+    chapter_root = artifact_path(
+        root, "book", "prepare", "outputDir", slug=slug
+    )
     chapter_inputs = [chapter_root / item["filename"] for item in chapters]
     input_observations = [observe_file(path, nonempty=True) for path in chapter_inputs]
     prepare_evidence = manifest_evidence + evidence(root, chapter_inputs)
@@ -307,7 +347,8 @@ def book_status(root: Path, slug: str, *, include_identity: bool = False) -> dic
         item.usable for item in input_observations
     )
 
-    book_dir = root / "vault" / "books" / slug
+    overview = artifact_path(root, "book", "synthesise", "output", slug=slug)
+    book_dir = overview.parent
     chapter_outputs = [
         book_dir / f"ch{item['slot']}-{item['slug']}.md" for item in chapters
     ]
@@ -315,20 +356,23 @@ def book_status(root: Path, slug: str, *, include_identity: bool = False) -> dic
     analyse_complete = inventory_valid and all(
         complete for complete, _found, _frontmatter in chapter_frontmatter
     )
-    overview = book_dir / "00-overview.md"
     synthesise_complete, synthesise_evidence, overview_frontmatter = (
         observed_frontmatter(root, overview)
     )
 
-    stages = [
-        stage(
-            "acquire",
+    observations = {
+        "acquire": (
             any(item.usable for item in source_observations),
             evidence(root, sources),
         ),
-        stage("prepare", prepare_complete, prepare_evidence),
-        stage("analyse", analyse_complete, evidence(root, chapter_outputs)),
-        stage("synthesise", synthesise_complete, synthesise_evidence),
+        "prepare": (prepare_complete, prepare_evidence),
+        "analyse": (analyse_complete, evidence(root, chapter_outputs)),
+        "synthesise": (synthesise_complete, synthesise_evidence),
+    }
+    stages = [
+        stage(item["stage"], *observations[item["stage"]])
+        for item in PIPELINE["book"]["stages"]
+        if item["stage"] in observations
     ]
     next_stage = first_incomplete(stages)
     if next_stage == "acquire":
@@ -341,11 +385,17 @@ def book_status(root: Path, slug: str, *, include_identity: bool = False) -> dic
                 if item.usable
             ],
             "output_dir": relative(root, chapter_root),
-            "manifest": relative(root, chapter_root / "manifest.json"),
+            "manifest": relative(
+                root,
+                artifact_path(root, "book", "prepare", "manifest", slug=slug),
+            ),
         }
     elif next_stage == "analyse":
         refs = {
-            "manifest": relative(root, chapter_root / "manifest.json"),
+            "manifest": relative(
+                root,
+                artifact_path(root, "book", "prepare", "manifest", slug=slug),
+            ),
             "inputs": [relative(root, path) for path in chapter_inputs],
             "outputs": [relative(root, path) for path in chapter_outputs],
         }
@@ -372,7 +422,9 @@ def book_status(root: Path, slug: str, *, include_identity: bool = False) -> dic
 
 
 def talk_transcripts(root: Path, slug: str) -> list[Path]:
-    directory = root / "processing" / "talks" / slug
+    directory = artifact_path(
+        root, "talk", "prepare", "processingDir", slug=slug
+    )
     try:
         entries = sorted(directory.iterdir(), key=lambda item: item.name)
     except OSError:
@@ -391,19 +443,26 @@ def talk_status(root: Path, slug: str, *, include_identity: bool = False) -> dic
     transcript_observations = [
         observe_file(path, nonempty=True) for path in transcripts
     ]
-    canonical = root / "vault" / "talks" / slug / "talk.md"
+    processing_dir = artifact_path(
+        root, "talk", "prepare", "processingDir", slug=slug
+    )
+    canonical = artifact_path(root, "talk", "analyse", "output", slug=slug)
     canonical_complete, canonical_evidence, canonical_frontmatter = (
         observed_frontmatter(root, canonical)
     )
 
     prepare_evidence = evidence(root, sources) + evidence(root, transcripts)
-    stages = [
-        stage(
-            "prepare",
+    observations = {
+        "prepare": (
             any(item.usable for item in transcript_observations),
             prepare_evidence,
         ),
-        stage("analyse", canonical_complete, canonical_evidence),
+        "analyse": (canonical_complete, canonical_evidence),
+    }
+    stages = [
+        stage(item["stage"], *observations[item["stage"]])
+        for item in PIPELINE["talk"]["stages"]
+        if item["stage"] in observations
     ]
     next_stage = first_incomplete(stages)
     if next_stage == "prepare":
@@ -413,7 +472,7 @@ def talk_status(root: Path, slug: str, *, include_identity: bool = False) -> dic
                 for path, item in zip(sources, source_observations)
                 if item.usable
             ],
-            "output_dir": relative(root, root / "processing" / "talks" / slug),
+            "output_dir": relative(root, processing_dir),
         }
     elif next_stage == "analyse":
         refs = {
@@ -442,28 +501,39 @@ def talk_status(root: Path, slug: str, *, include_identity: bool = False) -> dic
 
 
 def translation_status(root: Path, slug: str) -> dict[str, Any]:
-    source = root / "sources" / f"{slug}.pdf"
+    source = artifact_path(root, "translation", "prepare", "source", slug=slug)
     source_observation = observe_file(source, nonempty=True)
-    translation_root = root / "processing" / "translations"
+    derivative_pattern = artifact_path(
+        root, "translation", "prepare", "derivatives", slug=slug
+    )
     try:
         derivatives = sorted(
-            translation_root.glob(f"{slug}-*.pdf"), key=lambda path: path.name
+            derivative_pattern.parent.glob(derivative_pattern.name),
+            key=lambda path: path.name,
         )
     except OSError:
         derivatives = []
     derivative_observations = [
         observe_file(path, nonempty=True) for path in derivatives
     ]
+    observations = {
+        "prepare": (
+            any(item.usable for item in derivative_observations),
+            evidence(root, derivatives),
+        )
+    }
     stages = [
+        # Acquire is an observation view of Prepare's source precondition, not
+        # a dispatchable Translation pipeline stage.
         stage(
             "acquire",
             source_observation.usable,
             evidence(root, [source]),
         ),
-        stage(
-            "prepare",
-            any(item.usable for item in derivative_observations),
-            evidence(root, derivatives),
+        *(
+            stage(item["stage"], *observations[item["stage"]])
+            for item in PIPELINE["translation"]["stages"]
+            if item["stage"] in observations
         ),
     ]
     next_stage = first_incomplete(stages)
@@ -524,13 +594,46 @@ def scan_status(root: Path) -> dict[str, Any]:
     """
 
     discovered: dict[str, set[str]] = {"paper": set(), "book": set(), "talk": set()}
+    scan_slug = "scan-root"
     for directory, kind, suffix in (
-        (root / "vault" / "papers", "paper", ".md"),
-        (root / "processing" / "papers", "paper", None),
-        (root / "vault" / "books", "book", None),
-        (root / "processing" / "chapters", "book", None),
-        (root / "vault" / "talks", "talk", None),
-        (root / "processing" / "talks", "talk", None),
+        (
+            artifact_path(root, "paper", "analyse", "output", slug=scan_slug).parent,
+            "paper",
+            ".md",
+        ),
+        (
+            artifact_path(
+                root, "paper", "prepare", "normalized", slug=scan_slug
+            ).parent.parent,
+            "paper",
+            None,
+        ),
+        (
+            artifact_path(
+                root, "book", "synthesise", "output", slug=scan_slug
+            ).parent.parent,
+            "book",
+            None,
+        ),
+        (
+            artifact_path(
+                root, "book", "prepare", "outputDir", slug=scan_slug
+            ).parent,
+            "book",
+            None,
+        ),
+        (
+            artifact_path(root, "talk", "analyse", "output", slug=scan_slug).parent.parent,
+            "talk",
+            None,
+        ),
+        (
+            artifact_path(
+                root, "talk", "prepare", "processingDir", slug=scan_slug
+            ).parent,
+            "talk",
+            None,
+        ),
     ):
         for entry in children(directory):
             name = entry.stem if suffix else entry.name
@@ -539,7 +642,10 @@ def scan_status(root: Path) -> dict[str, Any]:
             if valid_slug(name):
                 discovered[kind].add(name)
 
-    for entry in children(root / "sources"):
+    source_directory = artifact_path(
+        root, "paper", "acquire", "output", slug=scan_slug
+    ).parent
+    for entry in children(source_directory):
         name = entry.name
         suffix = entry.suffix.lower()
         slug = entry.stem

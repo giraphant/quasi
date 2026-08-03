@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scripts.status import status as status_module
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 STATUS = PLUGIN_ROOT / "scripts" / "status" / "status.py"
@@ -225,6 +227,29 @@ def test_status_empty_project_reports_first_missing_stage_and_exact_refs(tmp_pat
         "next_stage": "acquire",
         "refs": {"outputs": ["sources/missing-paper.pdf"]},
     }
+
+
+def test_paper_status_uses_live_pipeline_artifact_template(
+    tmp_path: Path, monkeypatch,
+):
+    project = tmp_path / "project"
+    slug = "manifest-paper"
+    source = write(project / "alternate-sources" / f"{slug}.pdf", b"%PDF")
+    acquire = next(
+        item
+        for item in status_module.PIPELINE["paper"]["stages"]
+        if item["stage"] == "acquire"
+    )
+    monkeypatch.setitem(
+        acquire["artifacts"], "output", "alternate-sources/{slug}.pdf"
+    )
+
+    payload = status_module.paper_status(project, slug)
+
+    assert payload["stages"][0]["evidence"] == [
+        f"alternate-sources/{slug}.pdf"
+    ]
+    assert payload["refs"]["input"] == source.relative_to(project).as_posix()
 
 
 def test_status_scan_discovers_and_deduplicates_kind_specific_layouts(tmp_path: Path):

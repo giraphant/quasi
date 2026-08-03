@@ -44,6 +44,11 @@ separate:
 | `quasi-doctor` | runtime healthcheck: venv sync, core Python deps, optional external tools by profile |
 | `quasi-translate` | configured `immersive|pdf2zh` PDF translation; shared alternating-page, TOC, ToUnicode, and coverage contract |
 
+`quasi-status` imports `scripts/schemas/pipeline.py::PIPELINE` for the reported
+stage order and exact artifact path templates. Its hardened manifest parsing,
+frontmatter reads, media enumeration, derivative globbing, and scan discovery
+remain explicit Python observation logic rather than a rule-DSL walker.
+
 Removed legacy bins:
 
 - `quasi-citation` → use `quasi-helpers citation ...`

@@ -1320,6 +1320,8 @@ export const PIPELINE = {
         "effect": "writer",
         "agent": "quasi:translate-agent",
         "artifacts": {
+          "source": "sources/{slug}.pdf",
+          "derivatives": "processing/translations/{slug}-*.pdf",
           "output": "processing/translations/{slug}-{target}.pdf",
           "manifest": "processing/translations/{slug}-{target}.manifest.json",
           "recoverySource": "processing/translations/{slug}-{target}-reocr.pdf"

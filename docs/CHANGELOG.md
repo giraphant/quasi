@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.63.0** (2026-08-04): **流水线最后一份“三处、两种语言”编码消失：状态观察与 Workflow 现在读取同一份 manifest。**
+  - 0.60.0 已把 Stage 顺序收进 `scripts/schemas/pipeline.py`，0.61.0 又把 artifact path template 收进去，但 `scripts/status/status.py` 仍以 Python 字面量各自抄写顺序与路径，形成 manifest、Workflow 投影、status 三处知识。本轮让 status 直接 import 同一个 `PIPELINE`，按各 kind 当前公开的观察 Stage 过滤其顺序，并从 manifest role 展开所有 exact path；Translation 补齐 source 与 derivative wildcard 两个此前缺失的 role。今后改一个 Stage 或路径只需一处编辑。
+  - 这不是把观察器改造成 rule DSL 或 generic walker：损坏 manifest 的保守解析、frontmatter 可读性、Book chapter join、Talk media/transcript 枚举、Translation derivative glob 与 scan 去歧义仍是手写且经事故淬炼的 Python 逻辑。六种代表性磁盘状态加一次 `--scan` 的 before/after 原始 JSON byte diff 为空，新增 live-manifest guard 证明改动 template 会真实改变 status evidence 与 refs。
+
 - **0.62.0** (2026-08-04): **Workflow 层从 JSDoc 检查的 JavaScript 正式转换为 TypeScript。**
   - `scripts/workflows/` 下全部手写模块由 `.mjs` 改为 `.mts`，JSDoc 类型替换为真实的 import type、type alias、interface、参数与返回值语法；esbuild 在构建时直接编译这些源码，strict `tsc --noEmit` 继续守住由 generated declarations 提供的 kind/stage/operation literal 边界。
   - 0.61.0 为避免打断直接 import 源文件的 Python/Node 测试 harness，先用 `checkJs` 引入类型检查而保留 JavaScript 语法。本轮让生成 bundle 导出 `PIPELINE`、registry、stage protocol、resolver、context resolver 与 `run`，harness 改为 import 用户实际执行的 `workflows/run-stage.mjs`；这个约束因而消失，测试同时覆盖 shipped artifact。
