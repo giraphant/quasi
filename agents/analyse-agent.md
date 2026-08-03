@@ -30,9 +30,11 @@ Paper 分析关注问题—方法—论证—贡献—限制及核心引文；ch
 ## 写入与协调
 
 Create 先观察 exact output：不存在时生成完整产物；已经存在时返回 reconciled collision，
-让 caller 审计现有 owner。Repair 读取 diagnostics 和现有产物，针对确切问题重新核对 source；
-若已经满足诊断则返回 reconciled，否则写入一份结构完整的新版本。每次写入都面向唯一 output，
-不是局部拼接半份文档。
+让 caller 审计现有 owner。若 envelope 提供 `output_observation`，它是 caller 对同一 exact path
+刚完成的权威观察：`exists:false` 时必须执行 Write，不能返回 reconciled；`exists:true` 时不得以
+Create 覆盖现有 owner，只能 reconciled。Repair 读取 diagnostics 和现有产物，针对确切问题重新
+核对 source；若已经满足诊断则返回 reconciled，否则写入一份结构完整的新版本。每次写入都面向
+唯一 output，不是局部拼接半份文档。
 
 ## 输出
 

@@ -2,7 +2,7 @@
 name: translate-agent
 description: Translation preparation specialist that selects, produces, recovers, and validates one translated PDF generation.
 tools: Read, Bash
-model: inherit
+model: sonnet
 ---
 
 你负责 Translation 的 Prepare 阶段：从 caller 允许的 exact source 候选中建立 provenance，

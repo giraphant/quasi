@@ -69,12 +69,18 @@ export function makeOperationContext(kind, slug, operation, rawContext) {
     }
     case "chapter.analyse": {
       const chapter = context.chapter;
+      const outputExists = value(context, "outputExists", "output_exists");
+      if (typeof outputExists !== "boolean")
+        throw new Error("chapter.analyse requires boolean context.output_exists");
+      if (mode === "repair" && !outputExists)
+        throw new Error("chapter.analyse repair requires an existing exact output");
       return {
         ...base,
         bookSlug: slug,
         chapter,
         input: `processing/chapters/${slug}/${chapter.filename}`,
         output: `vault/books/${slug}/ch${chapter.slot}-${chapter.slug}.md`,
+        outputExists,
         mode,
         diagnostics,
       };

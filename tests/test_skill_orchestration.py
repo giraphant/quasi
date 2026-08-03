@@ -118,6 +118,19 @@ def test_collect_material_pins_main_thread_gates_repair_and_author_rows() -> Non
         assert name not in skill
 
 
+def test_collection_container_route_exists_in_search_contract() -> None:
+    row = (ROOT / "scripts" / "workflows" / "operations" / "rows" / "search.mjs").read_text(
+        encoding="utf-8"
+    )
+    agent = (ROOT / "agents" / "metadata-agent.md").read_text(encoding="utf-8")
+    skill = (ROOT / "skills" / "collect-material" / "SKILL.md").read_text(encoding="utf-8")
+    # The conflict vocabulary lives in the row; the method and the routing must
+    # both be able to name it, or a container-only work has no honest exit.
+    assert '"publication_type"' in row
+    assert "publication_type" in agent
+    assert "publication_type" in skill
+
+
 def test_research_topic_main_thread_drives_bounded_run_stage_rounds() -> None:
     skill = (ROOT / "skills" / "research-topic" / "SKILL.md").read_text(
         encoding="utf-8"

@@ -205,6 +205,18 @@ const actionPayloads = ({ mode, writeState = false }) => ({
   },
 });
 
+const chapterActionPayloads = ({ mode, outputExists }) => {
+  const payloads = actionPayloads({ mode, writeState: true });
+  if (mode !== "create") return payloads;
+  payloads.complete.properties.action = {
+    const: outputExists ? "reconciled" : "create",
+  };
+  payloads.complete.properties.write_state = {
+    const: outputExists ? "not_written" : "written",
+  };
+  return payloads;
+};
+
 const AUDIT_DIAGNOSTIC_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -541,7 +553,12 @@ export const bookOperationRows = [
     stage: "Analyse",
     effect: "writer",
     agentType: "quasi:analyse-agent",
-    refs: ({ input, output, mode }) => ({ input, output, mode }),
+    refs: ({ input, output, outputExists, mode }) => ({
+      input,
+      output,
+      outputExists,
+      mode,
+    }),
     payloadProperties: ({ input, output }) => ({
       required: ["input_path", "output_path", "artifact_roles"],
       properties: {
@@ -555,14 +572,16 @@ export const bookOperationRows = [
         },
       },
     }),
-    terminalPayloads: ({ mode }) => actionPayloads({ mode, writeState: true }),
+    terminalPayloads: ({ mode, outputExists }) =>
+      chapterActionPayloads({ mode, outputExists }),
     complete: (receipt, context) => {
       const { action, write_state: writeState } = receipt.terminal;
+      if (context.mode === "create")
+        return context.outputExists
+          ? action === "reconciled" && writeState === "not_written"
+          : action === "create" && writeState === "written";
       return (
-        [
-          ...(context.mode === "create" ? ["create"] : ["repair"]),
-          "reconciled",
-        ].includes(action) &&
+        ["repair", "reconciled"].includes(action) &&
         writeState === (action === "reconciled" ? "not_written" : "written")
       );
     },
@@ -584,6 +603,11 @@ export const bookOperationRows = [
         material_key: materialKey,
         input: { role: "normalized_chapter", path: refs.input },
         output: { role: "chapter_canonical", path: refs.output },
+        output_observation: {
+          path: refs.output,
+          exists: refs.outputExists,
+          authority: "caller",
+        },
         identity: {
           book_slug: bookSlug,
           book_title: meta.title,

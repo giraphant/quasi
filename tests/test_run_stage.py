@@ -55,7 +55,7 @@ const result = await run({
 }, config.args)
 const resolved = resolveStage(config.args.kind, config.args.stage)
 let direct = null
-if (resolved) {
+if (resolved && result.schema_version !== "quasi.run-stage.error/0.1") {
   const context = makeOperationContext(
     resolved.kind,
     config.args.slug,
@@ -161,6 +161,7 @@ def stage_context(kind: str, stage: str) -> dict[str, Any]:
             "title": "Introduction",
             "filename": "ch01-introduction.md",
         }
+        context["output_exists"] = False
     if kind == "topic" and stage == "webcard":
         context.update(
             {
@@ -261,6 +262,62 @@ def test_registry_resolves_one_stage_per_kind(
     assert report["direct"]["operation"] == operation
     assert report["result"] == {"sentinel": "returned-verbatim"}
     assert len(report["trace"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("output_exists", "expected_action", "expected_write_state"),
+    [
+        (False, "create", "written"),
+        (True, "reconciled", "not_written"),
+    ],
+)
+def test_chapter_analyse_pins_complete_to_caller_output_observation(
+    output_exists: bool, expected_action: str, expected_write_state: str
+) -> None:
+    context = stage_context("book", "analyse")
+    context["output_exists"] = output_exists
+    report = run_stage(
+        {
+            "kind": "book",
+            "slug": "example-book",
+            "stage": "analyse",
+            "context": context,
+        }
+    )
+
+    request = report["direct"]["request"]
+    assert request["output_observation"] == {
+        "path": "vault/books/example-book/ch01-introduction.md",
+        "exists": output_exists,
+        "authority": "caller",
+    }
+
+    terminal = report["direct"]["schema"]["properties"]["terminal"]
+    complete = next(
+        branch
+        for branch in terminal["anyOf"]
+        if branch["properties"]["status"]["const"] == "complete"
+    )
+    assert complete["properties"]["action"]["const"] == expected_action
+    assert complete["properties"]["write_state"]["const"] == expected_write_state
+
+
+def test_chapter_analyse_requires_caller_output_observation() -> None:
+    context = stage_context("book", "analyse")
+    del context["output_exists"]
+    report = run_stage(
+        {
+            "kind": "book",
+            "slug": "example-book",
+            "stage": "analyse",
+            "context": context,
+        }
+    )
+
+    assert report["result"]["schema_version"] == "quasi.run-stage.error/0.1"
+    assert report["result"]["error"]["code"] == "run-stage.invalid_context"
+    assert report["direct"] is None
+    assert report["trace"] == []
 
 
 def test_paper_acquire_prompt_preserves_urls_and_real_diagnostic_capabilities() -> None:

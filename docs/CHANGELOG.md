@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.58.2** (2026-08-03): **章节 Analyse 由 caller 的磁盘观察定死写入分支；文集专属作品在 Search 得到一条诚实出口。**
+  - 事故一：五本书卡在 Analyse 中段。`chapter.analyse` 的 create 分支同时接受 `create/written` 与 `reconciled/not_written`，于是 worker 可以在产物根本不存在时返回 `reconciled/not_written`——receipt 内部自洽、host 校验通过，主线程却在下一次 status 观察里看不到文件。本轮把 caller 刚做完的磁盘观察作为权威传进 envelope（`output_observation{path,exists,authority:"caller"}`），并按它把 row 的 complete payload 收紧成单值 const：`exists:false` 只允许 `create/written`，`exists:true` 只允许 `reconciled/not_written`。analyse-agent 合同同步声明这条权威关系；`collect-material` 每次 dispatch 前须带 `output_exists`。判断权仍在磁盘，不在 worker 的自述。
+  - 事故二：只存在于文集里的作品（如 Chisholm "Freedom and Action"，收于 Lehrer 编 *Freedom and Determinism* 1966）没有独立出版形态，metadata-agent 只能把容器题名硬塞进 `journal`、DOI 填 null，凑出一个下游必然获取失败的期刊身份，用户全程没有选择机会。`material.search` 的 `conflicts` 枚举本就有 `publication_type`，缺的只是使用它的方法词汇。本轮不动 schema（该 receipt 序列化已 4898 字节，超 auto 模式 4096 分类上限，加字段只会更糟），只补方法与路由：agent 在证据显示 container-only 时返回 `needs_input`，`issue.user_question` 给出可执行的容器方案（题名/主编/出版社/年份/ISBN + 目标章节）；skill 收到用户改收容器的回答后新建 `kind:"book"` 材料走完整 loop，原 Paper 条目以 redirected 结束而非 failed。判据写死为「该条目是否作为可独立检索取得的出版物流通」，因此学会年刊单篇（Strawson "Freedom and Resentment", PBA 48）与独立讲座小册（Chisholm "Human Freedom and the Self", Lindley Lecture）仍按 Paper 处理，不被误判。
+  - 附带：`translate-agent` 的 `model` 由 `inherit` 改为 `sonnet`，与其余 specialist 一致，不再随主线程模型漂移。
+  - 两项主改动由不同 Codex worker 按配方执行，共享同一工作树；SKILL.md 同时承载两者，故合并为一个版本发布。全量 433 测试过，`check:workflows` bundle 同步。
+
 - **0.58.1** (2026-08-03): **AA 镜像发现以维基百科为主路径：内容校验探活 + last-good 缓存，不再每次从头探测。**
   - 实测事故：静态镜像表首位的 `annas-archive.pk` 死了一段时间，每次调用先在它身上烧最多 20 秒超时；而已有的维基百科 infobox 提取路径被埋成"三个静态镜像全部不可达才触发"的最后兜底，`.gd` 活着就永远轮不到。探活标准只有"状态码 <400"，停靠页 200 也会被当活镜像选中。
   - 重排为：last-good 镜像先试（缓存在 `aa-mirrors.json`，命中即用，消掉每次的全表探测）→ 维基列表（缓存 TTL 90 天改 7 天，官方域名的权威来源）→ 静态种子表（去 `.pk` 补 `.li`，降级为维基不可用时的兜底）。探活改为单次 GET 且正文须含 Anna's Archive 特征串，堵住停靠页假阳性。发布当天 `.pk` 又活了回来并经维基路径被正确选中——镜像抖动正是这套设计要对付的场景。修改由 Codex worker 按配方执行，新增停靠页拒绝/last-good 优先/维基先于静态/TTL 四类单元测试。
