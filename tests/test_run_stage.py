@@ -10,11 +10,17 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ENTRY = ROOT / "scripts" / "workflows" / "run-stage.entry.mjs"
+ENTRY = ROOT / "workflows" / "run-stage.mjs"
 
 NODE_HARNESS = r"""
-import { RUN_STAGE_REGISTRY, resolveStage, resolveStageContext, run } from __ENTRY__
-import { STAGE_STATUSES, stageReceiptSchema } from __STAGE__
+import {
+  RUN_STAGE_REGISTRY,
+  STAGE_STATUSES,
+  resolveStage,
+  resolveStageContext,
+  run,
+  stageReceiptSchema,
+} from __ENTRY__
 
 const config = JSON.parse(process.argv[1])
 if (config.args?.inspectProtocol) {
@@ -105,13 +111,7 @@ def run_stage(
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
-    script = (
-        NODE_HARNESS.replace("__ENTRY__", json.dumps(ENTRY.as_uri()))
-        .replace(
-            "__STAGE__",
-            json.dumps((ROOT / "scripts" / "workflows" / "stage.mjs").as_uri()),
-        )
-    )
+    script = NODE_HARNESS.replace("__ENTRY__", json.dumps(ENTRY.as_uri()))
     config: dict[str, Any] = {"args": args}
     if stage_receipts is not None:
         config["stageReceipts"] = stage_receipts

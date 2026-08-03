@@ -2,25 +2,18 @@
 
 const CONTROL_CHARS = new RegExp("[\\u0000-\\u001f\\u007f-\\u009f]");
 
-/**
- * @param {unknown} value
- * @param {number} min
- * @param {number} max
- * @returns {value is string}
- */
-export const validText = (value, min, max) =>
+export const validText = (
+  value: unknown,
+  min: number,
+  max: number,
+): value is string =>
   typeof value === "string" &&
   value === value.trim() &&
   value.length >= min &&
   value.length <= max &&
   !CONTROL_CHARS.test(value);
 
-/**
- * @param {any} value
- * @param {readonly string[]} keys
- * @returns {boolean}
- */
-export const exactKeys = (value, keys) =>
+export const exactKeys = (value: any, keys: readonly string[]): boolean =>
   !!(
     value &&
     typeof value === "object" &&
@@ -31,12 +24,7 @@ export const exactKeys = (value, keys) =>
     )
   );
 
-/**
- * @param {any} left
- * @param {any} right
- * @returns {boolean}
- */
-export function sameClosedValue(left, right) {
+export function sameClosedValue(left: any, right: any): boolean {
   if (Array.isArray(left) || Array.isArray(right))
     return (
       Array.isArray(left) &&

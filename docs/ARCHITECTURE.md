@@ -11,7 +11,7 @@ the layer directly below them.
 
 ```text
 L5 skills/          user-facing coordinators and human gates
-L4 scripts/workflows/ modular source for host-neutral stage graphs
+L4 scripts/workflows/ modular TypeScript source for host-neutral stage graphs
 L4 workflows/       generated, host-loadable workflow entries
 L3 agents/          specialist LLM workers, only calls quasi-* bins
 L2 bin/             stable command surface
@@ -73,17 +73,18 @@ operation identity (`operation`, display phase, effect, and agent), declarative
 receipt-to-context carries, and stage artifact path templates. The Python exporter
 projects `PIPELINE` into `scripts/workflows/artifact-contracts/generated.mjs` alongside
 the canonical artifact contracts, and emits `generated.d.mts` literal unions and
-interfaces from the same source. `scripts/workflows/operations/rows/*.mjs` owns
+interfaces from the same source. `scripts/workflows/operations/rows/*.mts` owns
 operation-specific context derivation as well as request/receipt behavior;
-`run-stage.entry.mjs` supplies the shared passthrough/default base, expands manifest
+`run-stage.entry.mts` supplies the shared passthrough/default base, expands manifest
 templates after row context is known, and derives both `RUN_STAGE_REGISTRY` and runtime
 chain functions. The former central context switch is gone. `scripts/build-workflows.mjs`
 rejects duplicate kind/stage pairs, missing or duplicate row joins, unregistered rows,
 invalid manifest identity, and carries whose source field is not required by the owning
-receipt schema in both build and `--check` mode. The pinned esbuild dependency produces
-the committed `workflows/run-stage.mjs`; `npm run check:workflows` also rejects a stale
-projection, declaration, bundle, or forbidden runtime import, then runs strict
-`tsc --noEmit` checking over the editable `.mjs` workflow layer.
+receipt schema in both build and `--check` mode. The pinned esbuild dependency compiles
+the editable `.mts` layer into the committed `workflows/run-stage.mjs` at build time;
+`npm run check:workflows` also rejects a stale projection, declaration, bundle, or
+forbidden runtime import, then runs strict `tsc --noEmit` checking over those
+TypeScript sources.
 
 Skills are the drivers. They observe exact disk state through `quasi-status`,
 normalise and coalesce identity before writers, preserve batch input order, and

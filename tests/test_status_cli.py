@@ -111,7 +111,7 @@ def test_status_reports_material_layouts(tmp_path: Path):
     assert paper_payload["next_stage"] is None
     assert book_payload["next_stage"] is None
     assert talk_payload["next_stage"] is None
-    # This mirrors book.mjs::chapterOutputPath exactly.
+    # This mirrors book.mts::chapterOutputPath exactly.
     assert book_payload["stages"][2]["evidence"] == [
         f"vault/books/{book}/ch01-opening.md",
         f"vault/books/{book}/ch02-closing.md",

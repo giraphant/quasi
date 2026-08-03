@@ -13,7 +13,7 @@ contracts must contain only the runtime information their executing model needs.
    select the next applicable stage, present typed human gates, and stop honestly
    on blocked, failed, or unknown writer outcomes.
 2. **Rows plus run-stage** (`scripts/workflows/operations/rows/`,
-   `scripts/workflows/run-stage.entry.mjs`, and the generated
+   `scripts/workflows/run-stage.entry.mts`, and the generated
    `workflows/run-stage.mjs`) form the host boundary. A descriptor row owns one
    operation's exact refs, envelope, Agent type, phase, receipt schema, and narrow
    completion contract. run-stage resolves one `kind + stage`, invokes exactly one
@@ -95,7 +95,7 @@ Tests defend the capability layer and the surviving stage protocol:
   protocol tests;
 - run-stage protocol coverage resolves every registered kind/stage row, checks
   schema generation, and pins the four closed terminal branches from
-  `stage.mjs`;
+  `scripts/workflows/stage.mts`;
 - do not recreate per-loop edge-order, ingress, join, scheduler, retry, or batch
   harnesses for deleted machinery;
 - a failing characterization test is not authority when it contradicts this

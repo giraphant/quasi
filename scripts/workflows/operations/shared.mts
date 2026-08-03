@@ -1,21 +1,25 @@
 // Small deterministic helpers shared by Operation schema builders.  This
 // module contains no material policy and no Agent workflow.
 
-/** @typedef {import("../artifact-contracts/generated.mjs").JsonSchema} JsonSchema */
-/** @typedef {import("../artifact-contracts/generated.mjs").OperationName} OperationName */
-/** @typedef {import("../artifact-contracts/generated.mjs").OperationRow} OperationRow */
-/** @typedef {import("../artifact-contracts/generated.mjs").StageReceipt} StageReceipt */
-/** @typedef {import("../artifact-contracts/generated.mjs").WorkflowContext} WorkflowContext */
+import type {
+  JsonSchema,
+  OperationName,
+  OperationRow,
+  StageReceipt,
+  WorkflowContext,
+} from "../artifact-contracts/generated.mjs";
 
-/** @type {(...args: any[]) => JsonSchema} */
-export const composedSchema = (base, overrides, branches) => ({
+export const composedSchema: (...args: any[]) => JsonSchema = (
+  base,
+  overrides,
+  branches,
+) => ({
   ...base,
   properties: { ...base.properties, ...overrides },
   anyOf: Object.values(branches),
 });
 
-/** @param {any} value @returns {string} */
-export const posixSingleQuote = (value) =>
+export const posixSingleQuote = (value: any): string =>
   `'${String(value).split("'").join("'\"'\"'")}'`;
 
 export const ATTEMPT_SCHEMA = {
@@ -33,17 +37,11 @@ export const ATTEMPT_SCHEMA = {
   },
 };
 
-/**
- * @param {OperationName} operation
- * @param {string | string[]} codes
- * @param {{questionRequired?: boolean}} [options]
- * @returns {JsonSchema}
- */
 export const issueSchema = (
-  operation,
-  codes,
-  { questionRequired = false } = {},
-) => ({
+  operation: OperationName,
+  codes: string | string[],
+  { questionRequired = false }: { questionRequired?: boolean } = {},
+): JsonSchema => ({
   type: "object",
   additionalProperties: false,
   required: [
@@ -93,11 +91,13 @@ export const AUDIT_DIAGNOSTIC_SCHEMA = {
   },
 };
 
-/**
- * @param {{mode: any, writeState?: boolean}} options
- * @returns {WorkflowContext}
- */
-export const actionPayloads = ({ mode, writeState = false }) => ({
+export const actionPayloads = ({
+  mode,
+  writeState = false,
+}: {
+  mode: any;
+  writeState?: boolean;
+}): WorkflowContext => ({
   complete: {
     required: ["action", ...(writeState ? ["write_state"] : [])],
     properties: {
@@ -134,26 +134,25 @@ export const actionPayloads = ({ mode, writeState = false }) => ({
   },
 });
 
-/** @param {StageReceipt} receipt @returns {boolean} */
-const auditComplete = (receipt) =>
+const auditComplete = (receipt: StageReceipt): boolean =>
   receipt.remaining_violations === 0
     ? receipt.escalated.length === 0
     : receipt.remaining_violations === receipt.escalated.length;
 
-/** @type {(context: any, refs: any) => WorkflowContext} */
-const auditEnvelopeExtras = () => ({});
+const auditEnvelopeExtras: (
+  context: any,
+  refs: any,
+) => WorkflowContext = () => ({});
 
-/**
- * @param {{
- *   operation: OperationName,
- *   refs: (context: any) => WorkflowContext,
- *   targetRole: string,
- *   artifactRoles?: any,
- *   exactPaths?: boolean,
- *   envelopeExtras?: (context: any, refs: any) => WorkflowContext,
- * }} options
- * @returns {OperationRow}
- */
+interface AuditRowOptions {
+  operation: OperationName;
+  refs: (context: any) => WorkflowContext;
+  targetRole: string;
+  artifactRoles?: any;
+  exactPaths?: boolean;
+  envelopeExtras?: (context: any, refs: any) => WorkflowContext;
+}
+
 export const makeAuditRow = ({
   operation,
   refs,
@@ -161,7 +160,7 @@ export const makeAuditRow = ({
   artifactRoles,
   exactPaths = false,
   envelopeExtras = auditEnvelopeExtras,
-}) => ({
+}: AuditRowOptions): OperationRow => ({
   operation,
   refs,
   payloadProperties: ({ target, pass }) => ({

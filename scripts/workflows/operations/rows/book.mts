@@ -2,9 +2,9 @@ import {
   BOOK_ARTIFACT_CONTRACT,
   CHAPTER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
-import { contextValue } from "../../context-base.mjs";
-import { sameClosedValue, validText } from "../../runtime.mjs";
-import { BOOK_TEMP_PATH, validYearEvidence } from "../book-year-evidence.mjs";
+import { contextValue } from "../../context-base.mts";
+import { sameClosedValue, validText } from "../../runtime.mts";
+import { BOOK_TEMP_PATH, validYearEvidence } from "../book-year-evidence.mts";
 import {
   ATTEMPT_SCHEMA,
   PREPARE_STEP_SCHEMA,
@@ -12,10 +12,10 @@ import {
   issueSchema,
   makeAuditRow,
   posixSingleQuote,
-} from "../shared.mjs";
+} from "../shared.mts";
+import type { OperationRow } from "../../artifact-contracts/generated.mjs";
 
-/** @typedef {import("../../artifact-contracts/generated.mjs").OperationRow} OperationRow */
-/** @typedef {(...args: any[]) => any} AnyFunction */
+type AnyFunction = (...args: any[]) => any;
 
 const preparedArtifactSchema = {
   type: "array",
@@ -75,12 +75,10 @@ const chapterRefSchema = {
   },
 };
 
-/** @param {unknown} value @returns {value is string} */
-export const validChapterSlot = (value) =>
+export const validChapterSlot = (value: unknown): value is string =>
   typeof value === "string" && CHAPTER_SLOT.test(value);
 
-/** @type {AnyFunction} */
-const validChapterRef = (chapter) => {
+const validChapterRef: AnyFunction = (chapter) => {
   const filenameIsSafe =
     validText(chapter && chapter.filename, 1, 128) &&
     chapter.filename.startsWith(`${chapter.slot}_`) &&
@@ -109,19 +107,18 @@ const validChapterRef = (chapter) => {
   return noPages || startOnly || pages;
 };
 
-/** @type {AnyFunction} */
-const uniqueChapters = (chapters) => {
+const uniqueChapters: AnyFunction = (chapters) => {
   if (
     !chapters.length ||
     chapters.some(
-      (/** @type {any} */ chapter) => !validChapterRef(chapter),
+      (chapter: any) => !validChapterRef(chapter),
     )
   )
     return false;
   const slots = new Set();
   const filenames = new Set();
   const slugs = new Set();
-  return chapters.every((/** @type {any} */ chapter) => {
+  return chapters.every((chapter: any) => {
     if (
       slots.has(chapter.slot) ||
       filenames.has(chapter.filename) ||
@@ -135,8 +132,7 @@ const uniqueChapters = (chapters) => {
   });
 };
 
-/** @type {AnyFunction} */
-const chapterActionPayloads = ({ mode, outputExists }) => {
+const chapterActionPayloads: AnyFunction = ({ mode, outputExists }) => {
   const payloads = actionPayloads({ mode, writeState: true });
   if (mode !== "create") return payloads;
   payloads.complete.properties.action = {
@@ -148,12 +144,10 @@ const chapterActionPayloads = ({ mode, outputExists }) => {
   return payloads;
 };
 
-/** @type {AnyFunction} */
-const quoteOrNull = (value) =>
+const quoteOrNull: AnyFunction = (value) =>
   value == null || value === "" ? null : posixSingleQuote(value);
 
-/** @type {OperationRow[]} */
-export const bookOperationRows = [
+export const bookOperationRows: OperationRow[] = [
   {
     operation: "book.acquire",
     context: (rawContext, base) => {
@@ -162,7 +156,7 @@ export const bookOperationRows = [
         (base.meta.format ? [base.meta.format] : ["epub", "pdf"]);
       return {
         ...base,
-        allowedSources: formats.map((/** @type {any} */ format) => ({
+        allowedSources: formats.map((format: any) => ({
           format,
           path: `sources/${base.slug}.${format}`,
         })),
@@ -194,17 +188,13 @@ export const bookOperationRows = [
         output_path: {
           type: ["string", "null"],
           enum: [
-            ...allowedSources.map(
-              (/** @type {any} */ { path }) => path,
-            ),
+            ...allowedSources.map(({ path }: any) => path),
             null,
           ],
         },
         format: { type: ["string", "null"], enum: ["epub", "pdf", null] },
         allowed_output_paths: {
-          const: allowedSources.map(
-            (/** @type {any} */ { path }) => path,
-          ),
+          const: allowedSources.map(({ path }: any) => path),
         },
         write_state: {
           type: "string",
@@ -259,7 +249,7 @@ export const bookOperationRows = [
     }),
     complete: (receipt, context) => {
       const output = context.allowedSources.find(
-        (/** @type {any} */ { path, format }) =>
+        ({ path, format }: any) =>
           receipt.output_path === path && receipt.format === format,
       );
       const dispositionCoherent =
@@ -295,9 +285,7 @@ export const bookOperationRows = [
       { slug, meta, materialKey, batchAcceptYear },
       { allowedSources, yearDecision },
     ) => {
-      const formats = allowedSources.map(
-        (/** @type {any} */ { format }) => format,
-      );
+      const formats = allowedSources.map(({ format }: any) => format);
       return {
         schema_version: "quasi.stage.request/0.2",
         operation: "book.acquire",
@@ -324,15 +312,15 @@ export const bookOperationRows = [
         resource_bounds: { fetch_budget_per_candidate: 1, accept_budget: 1 },
         shell_argv: {
           slug: posixSingleQuote(slug),
-          allowed_outputs: allowedSources.map(
-            (/** @type {any} */ { path }) => posixSingleQuote(path),
+          allowed_outputs: allowedSources.map(({ path }: any) =>
+            posixSingleQuote(path),
           ),
           expected_title: posixSingleQuote(meta.title),
           expected_author: posixSingleQuote(meta.authors[0]),
           year: posixSingleQuote(meta.year),
           isbn: quoteOrNull(meta.isbn),
-          format_preference: formats.map(
-            (/** @type {any} */ format) => posixSingleQuote(format),
+          format_preference: formats.map((format: any) =>
+            posixSingleQuote(format),
           ),
           year_decision_tmp_path: yearDecision
             ? posixSingleQuote(yearDecision.tmp_path)
@@ -429,7 +417,7 @@ export const bookOperationRows = [
     }),
     complete: (receipt, context) => {
       const chapterPaths = receipt.chapters.map(
-        (/** @type {any} */ chapter) =>
+        (chapter: any) =>
           `${context.outputDir}/${chapter.filename}`,
       );
       const allowed = new Set([
@@ -442,12 +430,12 @@ export const bookOperationRows = [
       const listedChapters = new Set(
         receipt.artifacts
           .filter(
-            (/** @type {any} */ artifact) =>
+            (artifact: any) =>
               artifact.role === "normalized_chapter" &&
               artifact.exists === true &&
               artifact.usable === true,
           )
-          .map((/** @type {any} */ artifact) => artifact.path),
+          .map((artifact: any) => artifact.path),
       );
       return (
         typeof receipt.selected_source === "string" &&
@@ -456,14 +444,14 @@ export const bookOperationRows = [
         typeof receipt.disposition === "string" &&
         receipt.chapter_count === receipt.chapters.length &&
         uniqueChapters(receipt.chapters) &&
-        receipt.artifacts.every((/** @type {any} */ artifact) =>
+        receipt.artifacts.every((artifact: any) =>
           allowed.has(artifact.path),
         ) &&
-        chapterPaths.every((/** @type {any} */ path) =>
+        chapterPaths.every((path: any) =>
           listedChapters.has(path),
         ) &&
         receipt.artifacts.some(
-          (/** @type {any} */ artifact) =>
+          (artifact: any) =>
             artifact.role === "chapter_manifest" &&
             artifact.path === receipt.manifest_path &&
             artifact.exists === true &&
@@ -561,9 +549,7 @@ export const bookOperationRows = [
           ? action === "reconciled" && writeState === "not_written"
           : action === "create" && writeState === "written";
       return (
-        ["repair", "reconciled"].includes(
-          /** @type {string} */ (action),
-        ) &&
+        ["repair", "reconciled"].includes(action as string) &&
         writeState === (action === "reconciled" ? "not_written" : "written")
       );
     },
@@ -649,13 +635,13 @@ export const bookOperationRows = [
       [
         ...(context.mode === "create" ? ["create"] : ["repair"]),
         "reconciled",
-      ].includes(/** @type {string} */ (receipt.terminal.action)),
+      ].includes(receipt.terminal.action as string),
     envelope: ({ slug, meta, materialKey, diagnostics }, refs) => ({
       schema_version: "quasi.stage.request/0.2",
       operation: "book.synthesise",
       stage: "Synthesise",
       material_key: materialKey,
-      inputs: refs.inputPaths.map((/** @type {any} */ path) => ({
+      inputs: refs.inputPaths.map((path: any) => ({
         role: "chapter_canonical",
         path,
       })),

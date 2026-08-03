@@ -1,21 +1,18 @@
-import { exactKeys, validText } from "../runtime.mjs";
+import { exactKeys, validText } from "../runtime.mts";
 
 export const BOOK_TEMP_PATH =
   /^\.quasi\/temp\/downloads\/[A-Za-z0-9][A-Za-z0-9._-]{0,220}\.(?:epub|pdf)$/;
 
-/** @param {any} value @returns {boolean} */
-const nullableYear = (value) =>
+const nullableYear = (value: any): boolean =>
   value === null ||
   (Number.isInteger(value) && value >= 1000 && value <= 2500);
 
 // One exact Book year-evidence contract is shared by Search decisions,
 // acquisition receipts and user gates.
-/**
- * @param {any} evidence
- * @param {any} expectedYear
- * @returns {boolean}
- */
-export function validYearEvidence(evidence, expectedYear) {
+export function validYearEvidence(
+  evidence: any,
+  expectedYear: any,
+): boolean {
   if (
     !exactKeys(evidence, [
       "slug_year",
@@ -31,7 +28,7 @@ export function validYearEvidence(evidence, expectedYear) {
     Array.isArray(evidence.source_years) ||
     Object.keys(evidence.source_years).length > 64 ||
     Object.entries(
-      /** @type {Record<string, any>} */ (evidence.source_years),
+      evidence.source_years as Record<string, any>,
     ).some(
       ([source, year]) =>
         !validText(source, 1, 200) || !nullableYear(year) || year === null,
@@ -48,7 +45,7 @@ export function validYearEvidence(evidence, expectedYear) {
     !Array.isArray(evidence.pdf_signals.other_years) ||
     evidence.pdf_signals.other_years.length > 64 ||
     evidence.pdf_signals.other_years.some(
-      (/** @type {any} */ year) => !nullableYear(year) || year === null,
+      (year: any) => !nullableYear(year) || year === null,
     ) ||
     !nullableYear(evidence.recommended_year) ||
     !validText(evidence.recommendation_reason, 1, 4000) ||

@@ -37,7 +37,7 @@ def run_stage_registry() -> dict[str, dict[str, str]]:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
-    entry = ROOT / "scripts" / "workflows" / "run-stage.entry.mjs"
+    entry = ROOT / "workflows" / "run-stage.mjs"
     script = (
         f"import {{ RUN_STAGE_REGISTRY }} from {json.dumps(entry.as_uri())};"
         "process.stdout.write(JSON.stringify(RUN_STAGE_REGISTRY));"
@@ -59,7 +59,7 @@ def test_mirrored_maintainer_guides_are_identical() -> None:
 
 def test_receipt_version_is_synced_between_stage_module_and_guide() -> None:
     version = "quasi.stage.receipt/0.2"
-    stage = (ROOT / "scripts" / "workflows" / "stage.mjs").read_text(
+    stage = (ROOT / "scripts" / "workflows" / "stage.mts").read_text(
         encoding="utf-8"
     )
     guide = (ROOT / "docs" / "SKILL_ORCHESTRATION.md").read_text(encoding="utf-8")
@@ -148,7 +148,7 @@ def test_skills_never_invoke_agent_owned_capabilities() -> None:
 
 def test_gate_decision_tokens_shared_between_row_and_skill() -> None:
     row = (
-        ROOT / "scripts" / "workflows" / "operations" / "rows" / "book.mjs"
+        ROOT / "scripts" / "workflows" / "operations" / "rows" / "book.mts"
     ).read_text(encoding="utf-8")
     skill = (ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
         encoding="utf-8"
@@ -159,7 +159,7 @@ def test_gate_decision_tokens_shared_between_row_and_skill() -> None:
 
 
 def test_collection_container_route_exists_in_search_contract() -> None:
-    row = (ROOT / "scripts" / "workflows" / "operations" / "rows" / "search.mjs").read_text(
+    row = (ROOT / "scripts" / "workflows" / "operations" / "rows" / "search.mts").read_text(
         encoding="utf-8"
     )
     agent = (ROOT / "agents" / "metadata-agent.md").read_text(encoding="utf-8")

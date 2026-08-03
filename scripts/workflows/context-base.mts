@@ -1,32 +1,25 @@
-/** @typedef {import("./artifact-contracts/generated.mjs").ArtifactTemplates} ArtifactTemplates */
-/** @typedef {import("./artifact-contracts/generated.mjs").KindName} KindName */
-/** @typedef {import("./artifact-contracts/generated.mjs").WorkflowContext} WorkflowContext */
+import type {
+  ArtifactTemplates,
+  KindName,
+  WorkflowContext,
+} from "./artifact-contracts/generated.mjs";
 
-/**
- * @param {WorkflowContext} source
- * @param {string} camel
- * @param {string} [snake]
- * @returns {any}
- */
-export const contextValue = (source, camel, snake = camel) =>
+export const contextValue = (
+  source: WorkflowContext,
+  camel: string,
+  snake: string = camel,
+): any =>
   source[camel] === undefined ? source[snake] : source[camel];
 
-/**
- * @param {KindName} kind
- * @param {string} slug
- * @param {unknown} rawContext
- * @param {readonly string[]} [artifactRoles]
- * @returns {WorkflowContext}
- */
 export function operationContextBase(
-  kind,
-  slug,
-  rawContext,
-  artifactRoles = [],
-) {
-  const context = /** @type {WorkflowContext} */ (
+  kind: KindName,
+  slug: string,
+  rawContext: unknown,
+  artifactRoles: readonly string[] = [],
+): WorkflowContext {
+  const context = (
     rawContext && typeof rawContext === "object" ? rawContext : {}
-  );
+  ) as WorkflowContext;
   const artifactRoleSet = new Set(artifactRoles);
   const passthrough = Object.fromEntries(
     Object.entries(context).filter(([name]) => !artifactRoleSet.has(name)),
@@ -49,16 +42,14 @@ export function operationContextBase(
 const EXACT_TEMPLATE_VALUE = /^\{([A-Za-z][A-Za-z0-9]*)\}$/;
 const TEMPLATE_VALUE = /\{([A-Za-z][A-Za-z0-9]*)\}/g;
 
-/**
- * @param {ArtifactTemplates} templates
- * @param {unknown} rawContext
- * @param {WorkflowContext} context
- * @returns {WorkflowContext}
- */
-export function expandArtifactTemplates(templates, rawContext, context) {
-  const raw = /** @type {WorkflowContext} */ (
+export function expandArtifactTemplates(
+  templates: ArtifactTemplates,
+  rawContext: unknown,
+  context: WorkflowContext,
+): WorkflowContext {
+  const raw = (
     rawContext && typeof rawContext === "object" ? rawContext : {}
-  );
+  ) as WorkflowContext;
   const values = { ...raw, ...context };
   const expanded = Object.fromEntries(
     Object.entries(templates || {}).map(([role, template]) => {

@@ -3,31 +3,28 @@
 // one of four honest terminal judgements. run-stage supplies the boundaries
 // and host-validated receipt shape; the driving skill consumes the terminal.
 
-/** @typedef {import("./artifact-contracts/generated.mjs").JsonSchema} JsonSchema */
-/** @typedef {import("./artifact-contracts/generated.mjs").StageReceipt} StageReceipt */
-/** @typedef {import("./artifact-contracts/generated.mjs").StageTerminal} StageTerminal */
-/** @typedef {StageTerminal["status"]} StageStatus */
-/** @typedef {import("./artifact-contracts/generated.mjs").WorkflowContext} WorkflowContext */
+import type {
+  JsonSchema,
+  StageReceipt,
+  StageTerminal,
+  WorkflowContext,
+} from "./artifact-contracts/generated.mjs";
+
+export type StageStatus = StageTerminal["status"];
 
 export const STAGE_RECEIPT_VERSION = "quasi.stage.receipt/0.2";
 
-/** @type {StageStatus[]} */
-export const STAGE_STATUSES = [
+export const STAGE_STATUSES: StageStatus[] = [
   "complete",
   "needs_input",
   "blocked",
   "failed",
 ];
 
-/**
- * @param {string} operation
- * @param {{questionRequired?: boolean}} [options]
- * @returns {JsonSchema}
- */
 const stageIssueObjectSchema = (
-  operation,
-  { questionRequired = false } = {},
-) => ({
+  operation: string,
+  { questionRequired = false }: { questionRequired?: boolean } = {},
+): JsonSchema => ({
   type: "object",
   additionalProperties: false,
   required: [
@@ -53,8 +50,7 @@ const stageIssueObjectSchema = (
 // JSON-data keywords whose values are payload literals, not subschemas.
 const SCHEMA_DATA_KEYWORDS = new Set(["const", "enum", "default", "examples"]);
 
-/** @param {any} value @returns {string} */
-const constType = (value) => {
+const constType = (value: any): string => {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
   if (typeof value === "number")
@@ -66,12 +62,10 @@ const constType = (value) => {
 // `const` and stringify non-string echoes (1 -> "1", ["canonical"] ->
 // "[\"canonical\"]"), which makes exact-echo validation deterministically
 // impossible. Every const therefore carries an explicit `type` hint.
-/** @param {any} node @returns {any} */
-export const annotateConstTypes = (node) => {
+export const annotateConstTypes = (node: any): any => {
   if (Array.isArray(node)) return node.map(annotateConstTypes);
   if (!node || typeof node !== "object") return node;
-  /** @type {WorkflowContext} */
-  const out = {};
+  const out: WorkflowContext = {};
   for (const [key, value] of Object.entries(node))
     out[key] = SCHEMA_DATA_KEYWORDS.has(key)
       ? value
@@ -80,27 +74,19 @@ export const annotateConstTypes = (node) => {
   return out;
 };
 
-/**
- * @param {WorkflowContext} payloads
- * @param {StageStatus} status
- * @returns {WorkflowContext}
- */
-const terminalPayload = (payloads, status) => {
+const terminalPayload = (
+  payloads: WorkflowContext,
+  status: StageStatus,
+): WorkflowContext => {
   const payload = payloads && payloads[status];
   return payload && typeof payload === "object" ? payload : {};
 };
 
-/**
- * @param {string} operation
- * @param {StageStatus} status
- * @param {WorkflowContext} payloads
- * @returns {JsonSchema}
- */
 const stageTerminalBranch = (
-  operation,
-  status,
-  payloads,
-) => {
+  operation: string,
+  status: StageStatus,
+  payloads: WorkflowContext,
+): JsonSchema => {
   const payload = terminalPayload(payloads, status);
   return {
     type: "object",
@@ -122,29 +108,25 @@ const stageTerminalBranch = (
 // Claude rejects top-level schema combinators, so the discriminated union lives
 // inside one required property. The host can now reject hybrid terminals (for
 // example complete plus a non-null issue) before the receipt reaches the skill.
-/**
- * @param {string} operation
- * @param {WorkflowContext} [payloads]
- * @returns {JsonSchema}
- */
-export const stageTerminalSchema = (operation, payloads = {}) => ({
+export const stageTerminalSchema = (
+  operation: string,
+  payloads: WorkflowContext = {},
+): JsonSchema => ({
   anyOf: STAGE_STATUSES.map((status) =>
     stageTerminalBranch(operation, status, payloads),
   ),
 });
 
-/**
- * @param {{
- *   operation: string,
- *   stage: string,
- *   materialKey: any,
- *   effect: string,
- *   required?: string[],
- *   properties?: WorkflowContext,
- *   terminalPayloads?: WorkflowContext,
- * }} definition
- * @returns {JsonSchema}
- */
+export interface StageReceiptDefinition {
+  operation: string;
+  stage: string;
+  materialKey: any;
+  effect: string;
+  required?: string[];
+  properties?: WorkflowContext;
+  terminalPayloads?: WorkflowContext;
+}
+
 export function stageReceiptSchema({
   operation,
   stage,
@@ -153,7 +135,7 @@ export function stageReceiptSchema({
   required = [],
   properties = {},
   terminalPayloads = {},
-}) {
+}: StageReceiptDefinition): JsonSchema {
   return annotateConstTypes({
     type: "object",
     additionalProperties: false,
@@ -184,22 +166,21 @@ export function stageReceiptSchema({
 // Stage exits, not the specialist's internal method. Operation-specific
 // completion predicates should prove only the exact artifacts needed by the
 // next stage.
-/**
- * @param {{
- *   schema: JsonSchema | null,
- *   complete: (receipt: StageReceipt, context: any) => boolean,
- * }} definition
- */
-export function stageContract({ schema, complete }) {
+interface StageContractDefinition {
+  schema: JsonSchema | null;
+  complete: (receipt: StageReceipt, context: any) => boolean;
+}
+
+export function stageContract({
+  schema,
+  complete,
+}: StageContractDefinition) {
   return {
     schema,
-    status: (/** @type {StageReceipt} */ receipt) =>
+    status: (receipt: StageReceipt) =>
       receipt.terminal.status,
     statuses: {
-      complete: (
-        /** @type {StageReceipt} */ receipt,
-        /** @type {any} */ context,
-      ) =>
+      complete: (receipt: StageReceipt, context: any) =>
         complete(receipt, context) === true,
       needs_input: () => true,
       blocked: () => true,
@@ -214,13 +195,12 @@ export function stageContract({ schema, complete }) {
   };
 }
 
-/**
- * @param {StageReceipt | null | undefined} receipt
- * @returns {StageStatus | null}
- */
-export const stageStatus = (receipt) =>
+export const stageStatus = (
+  receipt: StageReceipt | null | undefined,
+): StageStatus | null =>
   receipt && receipt.terminal ? receipt.terminal.status : null;
 
-/** @param {StageReceipt | null | undefined} receipt */
-export const stageIssue = (receipt) =>
+export const stageIssue = (
+  receipt: StageReceipt | null | undefined,
+) =>
   receipt && receipt.terminal ? receipt.terminal.issue : null;

@@ -3,16 +3,15 @@ import {
   BOOK_ARTIFACT_CONTRACT,
   PAPER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
-import { contextValue } from "../../context-base.mjs";
-import { actionPayloads, makeAuditRow } from "../shared.mjs";
+import { contextValue } from "../../context-base.mts";
+import { actionPayloads, makeAuditRow } from "../shared.mts";
+import type { OperationRow } from "../../artifact-contracts/generated.mjs";
 
-/** @typedef {import("../../artifact-contracts/generated.mjs").OperationRow} OperationRow */
-/** @typedef {(...args: any[]) => any} AnyFunction */
+type AnyFunction = (...args: any[]) => any;
 
 const SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
 
-/** @type {AnyFunction} */
-const candidateSchema = (kind) => ({
+const candidateSchema: AnyFunction = (kind) => ({
   type: "object",
   additionalProperties: false,
   required:
@@ -126,8 +125,7 @@ const resolvedMemberSchema = {
   },
 };
 
-/** @type {(kind: "book" | "paper") => OperationRow} */
-const discoveryRow = (kind) => {
+const discoveryRow = (kind: "book" | "paper"): OperationRow => {
   const plural = kind === "book" ? "books" : "papers";
   const operation =
     kind === "book"
@@ -172,7 +170,7 @@ const discoveryRow = (kind) => {
       },
     }),
     complete: (receipt, context) =>
-      receipt.candidates.every((/** @type {any} */ candidate) =>
+      receipt.candidates.every((candidate: any) =>
         candidate.authors.includes(context.fullName),
       ),
     envelope: (_context, refs) => ({
@@ -196,17 +194,16 @@ const discoveryRow = (kind) => {
   };
 };
 
-/** @type {AnyFunction} */
-const membershipRefs = ({ materialKey, name, output, candidates }) => {
+const membershipRefs: AnyFunction = ({ materialKey, name, output, candidates }) => {
   const requests = candidates.map(
-    (/** @type {any} */ { kind, slug }) => ({
+    ({ kind, slug }: any) => ({
       kind,
       slug,
     }),
   );
   const helperItems = [
     { kind: "author", slug: name },
-    ...candidates.map((/** @type {any} */ candidate) => ({
+    ...candidates.map((candidate: any) => ({
       kind: candidate.kind,
       slug: candidate.slug,
       ...(candidate.kind === "book"
@@ -232,20 +229,16 @@ const membershipRefs = ({ materialKey, name, output, candidates }) => {
   };
 };
 
-/** @type {AnyFunction} */
-const completeMembership = (receipt, context) => {
+const completeMembership: AnyFunction = (receipt, context) => {
   const requests = context.candidates.map(
-    (/** @type {any} */ { kind, slug }) => ({
+    ({ kind, slug }: any) => ({
       kind,
       slug,
     }),
   );
   return (
     receipt.resolved.length === requests.length &&
-    requests.every((
-      /** @type {any} */ request,
-      /** @type {number} */ index,
-    ) => {
+    requests.every((request: any, index: number) => {
       const row = receipt.resolved[index];
       if (
         row.kind !== request.kind ||
@@ -263,8 +256,7 @@ const completeMembership = (receipt, context) => {
   );
 };
 
-/** @type {OperationRow[]} */
-export const authorOperationRows = [
+export const authorOperationRows: OperationRow[] = [
   discoveryRow("book"),
   discoveryRow("paper"),
   {
@@ -365,12 +357,10 @@ ${JSON.stringify(request, null, 2)}
       ],
       properties: {
         input_material_keys: {
-          const: inputs.map(
-            (/** @type {any} */ input) => input.material_key,
-          ),
+          const: inputs.map((input: any) => input.material_key),
         },
         input_paths: {
-          const: inputs.map((/** @type {any} */ input) => input.path),
+          const: inputs.map((input: any) => input.path),
         },
         output_path: { const: output },
         artifact_roles: { const: ["canonical"] },
@@ -382,7 +372,7 @@ ${JSON.stringify(request, null, 2)}
       [
         ...(context.mode === "create" ? ["create"] : ["repair"]),
         "reconciled",
-      ].includes(/** @type {string} */ (receipt.terminal.action)),
+      ].includes(receipt.terminal.action as string),
     envelope: (
       { materialKey, name, fullName, topic, diagnostics },
       { inputs, output, mode },
@@ -392,7 +382,7 @@ ${JSON.stringify(request, null, 2)}
       stage: "Synthesise",
       material_key: materialKey,
       collection_key: materialKey,
-      inputs: inputs.map((/** @type {any} */ input) => ({
+      inputs: inputs.map((input: any) => ({
         material_key: input.material_key,
         kind: input.kind,
         id: input.id,
@@ -400,12 +390,8 @@ ${JSON.stringify(request, null, 2)}
         path: input.path,
         title: input.title,
       })),
-      input_material_keys: inputs.map(
-        (/** @type {any} */ input) => input.material_key,
-      ),
-      input_paths: inputs.map(
-        (/** @type {any} */ input) => input.path,
-      ),
+      input_material_keys: inputs.map((input: any) => input.material_key),
+      input_paths: inputs.map((input: any) => input.path),
       output: { role: "canonical", path: output },
       identity: { slug: name, full_name: fullName, topic },
       artifact_contract: AUTHOR_ARTIFACT_CONTRACT,

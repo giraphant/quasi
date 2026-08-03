@@ -1,16 +1,14 @@
-import { contextValue } from "../../context-base.mjs";
+import { contextValue } from "../../context-base.mts";
+import type { OperationRow } from "../../artifact-contracts/generated.mjs";
 
-/** @typedef {import("../../artifact-contracts/generated.mjs").OperationRow} OperationRow */
-/** @typedef {(...args: any[]) => any} AnyFunction */
+type AnyFunction = (...args: any[]) => any;
 
 const HASH = /^[0-9a-f]{64}$/;
 
-/** @param {unknown} value @returns {value is string} */
-export const validTranslationHash = (value) =>
+export const validTranslationHash = (value: unknown): value is string =>
   typeof value === "string" && HASH.test(value);
 
-/** @param {unknown} value @returns {string | null} */
-export function normalizeLanguage(value) {
+export function normalizeLanguage(value: unknown): string | null {
   if (
     typeof value !== "string" ||
     !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(value)
@@ -26,11 +24,7 @@ export function normalizeLanguage(value) {
     .join("-");
 }
 
-/**
- * @param {string} slug
- * @param {string} targetLanguage
- */
-export function sourceRoles(slug, targetLanguage) {
+export function sourceRoles(slug: string, targetLanguage: string) {
   const langTag = targetLanguage.toLowerCase();
   return {
     canonical: `sources/${slug}.pdf`,
@@ -39,35 +33,31 @@ export function sourceRoles(slug, targetLanguage) {
   };
 }
 
-/**
- * @param {string} path
- * @param {string} slug
- * @param {string} targetLanguage
- */
-export function validRequestedSource(path, slug, targetLanguage) {
+export function validRequestedSource(
+  path: string,
+  slug: string,
+  targetLanguage: string,
+) {
   const roles = sourceRoles(slug, targetLanguage);
   return [roles.canonical, roles.paperOcr, roles.derivativeRecovery].includes(
     path,
   );
 }
 
-/**
- * @param {string} path
- * @param {string} slug
- * @param {string} targetLanguage
- */
-export function validSelectableSource(path, slug, targetLanguage) {
+export function validSelectableSource(
+  path: string,
+  slug: string,
+  targetLanguage: string,
+) {
   const roles = sourceRoles(slug, targetLanguage);
   return [roles.canonical, roles.paperOcr].includes(path);
 }
 
-/** @type {AnyFunction} */
-const nullableStringSchema = (properties = {}) => ({
+const nullableStringSchema: AnyFunction = (properties = {}) => ({
   anyOf: [{ type: "null" }, { type: "string", ...properties }],
 });
 
-/** @type {AnyFunction} */
-const nullableNumberSchema = (properties = {}) => ({
+const nullableNumberSchema: AnyFunction = (properties = {}) => ({
   anyOf: [{ type: "null" }, { type: "number", ...properties }],
 });
 
@@ -146,8 +136,7 @@ const gateSchema = {
   },
 };
 
-/** @type {AnyFunction} */
-const validCoverage = (value) => {
+const validCoverage: AnyFunction = (value) => {
   if (!value || typeof value !== "object") return false;
   if (value.signal === "pass")
     return (
@@ -211,14 +200,13 @@ const VALIDATION_SCHEMA = {
   },
 };
 
-/** @type {OperationRow[]} */
-export const translationOperationRows = [
+export const translationOperationRows: OperationRow[] = [
   {
     operation: "translation.prepare",
     context: (rawContext, base) => {
-      const targetLanguage = /** @type {string} */ (normalizeLanguage(
+      const targetLanguage = normalizeLanguage(
         rawContext.target_language || rawContext.targetLanguage || "zh-CN",
-      ));
+      ) as string;
       const target = targetLanguage.toLowerCase();
       const stem = `${base.slug}-${target}`;
       return {

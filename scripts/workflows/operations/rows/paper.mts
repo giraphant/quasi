@@ -6,13 +6,12 @@ import {
   issueSchema,
   makeAuditRow,
   posixSingleQuote,
-} from "../shared.mjs";
+} from "../shared.mts";
+import type { OperationRow } from "../../artifact-contracts/generated.mjs";
 
-/** @typedef {import("../../artifact-contracts/generated.mjs").OperationRow} OperationRow */
-/** @typedef {(...args: any[]) => any} AnyFunction */
+type AnyFunction = (...args: any[]) => any;
 
-/** @type {AnyFunction} */
-const preparedArtifactSchema = (paths) => ({
+const preparedArtifactSchema: AnyFunction = (paths) => ({
   type: "array",
   maxItems: 256,
   items: {
@@ -31,12 +30,10 @@ const preparedArtifactSchema = (paths) => ({
   },
 });
 
-/** @type {AnyFunction} */
-const quoteOrNull = (value) =>
+const quoteOrNull: AnyFunction = (value) =>
   value == null || value === "" ? null : posixSingleQuote(value);
 
-/** @type {OperationRow[]} */
-export const paperOperationRows = [
+export const paperOperationRows: OperationRow[] = [
   {
     operation: "paper.acquire",
     refs: ({ output, meta }) => ({ output, doi: meta.doi || null }),
@@ -172,11 +169,11 @@ export const paperOperationRows = [
       ]);
       return (
         typeof receipt.selected_input === "string" &&
-        receipt.artifacts.every((/** @type {any} */ artifact) =>
+        receipt.artifacts.every((artifact: any) =>
           allowed.has(artifact.path),
         ) &&
         receipt.artifacts.some(
-          (/** @type {any} */ artifact) =>
+          (artifact: any) =>
             artifact.role === "normalized_text" &&
             artifact.path === receipt.selected_input &&
             artifact.exists === true &&
@@ -231,7 +228,7 @@ export const paperOperationRows = [
       [
         ...(context.mode === "create" ? ["create"] : ["repair"]),
         "reconciled",
-      ].includes(/** @type {string} */ (receipt.terminal.action)),
+      ].includes(receipt.terminal.action as string),
     envelope: ({ meta, materialKey, diagnostics }, refs) => ({
       schema_version: "quasi.stage.request/0.2",
       operation: "paper.analyse",

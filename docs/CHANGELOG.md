@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.62.0** (2026-08-04): **Workflow 层从 JSDoc 检查的 JavaScript 正式转换为 TypeScript。**
+  - `scripts/workflows/` 下全部手写模块由 `.mjs` 改为 `.mts`，JSDoc 类型替换为真实的 import type、type alias、interface、参数与返回值语法；esbuild 在构建时直接编译这些源码，strict `tsc --noEmit` 继续守住由 generated declarations 提供的 kind/stage/operation literal 边界。
+  - 0.61.0 为避免打断直接 import 源文件的 Python/Node 测试 harness，先用 `checkJs` 引入类型检查而保留 JavaScript 语法。本轮让生成 bundle 导出 `PIPELINE`、registry、stage protocol、resolver、context resolver 与 `run`，harness 改为 import 用户实际执行的 `workflows/run-stage.mjs`；这个约束因而消失，测试同时覆盖 shipped artifact。
+  - 全部 27 条 kind/stage probe 在转换前后保持相同 registry、resolved identity、prompt 与 schema；只负责旧 JavaScript/build-script ambient types 的 `node-shims.d.ts` 随之删除，没有改变任何 Workflow 行为。
+
 - **0.61.0** (2026-08-04): **Artifact path grammar 与 Workflow 类型边界收口到同一份 Pipeline 来源。**
   - Stage artifact path templates 现在与 kind/stage identity 和 carries 一起住在 `scripts/schemas/pipeline.py`；engine 统一展开模板与 passthrough/default base，真正的 per-operation context 判断回到 owning row，原先 217 行的集中 switch 因而删除，27 条 probe 的 registry、resolved identity、prompt 与 schema 保持逐字节相同。
   - Python exporter 从同一份 manifest 额外生成 Kind/Stage/Operation literal unions 与 Pipeline/receipt declarations；保留 `.mjs` 的整个 `scripts/workflows/` 层现在由 strict `checkJs` + `tsc --noEmit` 检查，operation、stage、carry 名或 terminal access 的拼写错误都会成为编译错误。
@@ -13,7 +18,7 @@ Newest first. Entries record what changed and why at the time each release shipp
   - 这是把 pipeline 在三处、两种语言里的重复编码（registry + chains、context switch、`status.py`）压成一个来源的第一步；本轮只迁移 L0 identity/order/carries，不改变任何 prompt、schema、receipt 或 dispatch behavior，后两处将在后续步骤继续收口。
 
 - **0.59.3** (2026-08-04): **Descriptor row 的共享片段与五条 Audit 合同收口为单一实现。**
-  - Row 层已经长出四份私有的同形 schema fragment，以及五份逐渐漂移的 Audit row；同一个边界因复制而分别落在 schema 与 `complete()` 的 JavaScript 复查里，导致某些 kind 会拒绝过长诊断，另一些 kind 却根本没有对应约束。本轮把真正同义的 issue、attempt、prepare-step、action payload 与 audit diagnostic 定义移入 `operations/shared.mjs`，保留角色、路径与 outcome vocabulary 确实不同的 kind-specific artifact/step schema。
+  - Row 层已经长出四份私有的同形 schema fragment，以及五份逐渐漂移的 Audit row；同一个边界因复制而分别落在 schema 与 `complete()` 的 JavaScript 复查里，导致某些 kind 会拒绝过长诊断，另一些 kind 却根本没有对应约束。本轮把真正同义的 issue、attempt、prepare-step、action payload 与 audit diagnostic 定义移入 `operations/shared.mts`，保留角色、路径与 outcome vocabulary 确实不同的 kind-specific artifact/step schema。
   - 五个 `paper|book|talk|topic|author.audit` 现在都由一个 factory 生成，原有 refs、artifact roles、request envelope、target scope 与 prompt 原样保留；完成判据统一只数 `remaining_violations` 与 `escalated`，不再让某个 kind 在 schema 之外私自追加文本复查。
   - Audit diagnostic 的 `path` / `kind` / `reason` 统一为 2048 / 200 / 4000 上限且全部非空，`mutated_paths` 统一在 schema 中限制 2048 字符。验证因此只住在一处，过去「一个 kind 用 JS enforce、另一个完全不 enforce」的漂移面被删除。
 
@@ -135,7 +140,7 @@ Newest first. Entries record what changed and why at the time each release shipp
 
 - **0.55.1** (2026-08-01): **给 receipt schema 里所有 exact-echo `const` 补显式 `type` 注解，弱模型宿主不再把非字符串 echo 串化到撞死重试上限。**
   - 实测故障：一次 paper Audit 连续 5 次 StructuredOutput 校验失败（重试上限），worker 模型是 glm-5.2，它把 `pass: 1` 发成 `"1"`、`artifact_roles: ["canonical"]` 发成字符串化数组——schema 里裸 `const`（无 `type`）会让弱模型默认按字符串输出，而同一收据里带 `type: "integer"` 的顶层 `attempt: 1` 是对的。Claude worker 在相同 row 上从未失败，说明这是 type 提示缺失、不是合同错误。
-  - 修复只落在唯一咽喉 `stage.mjs::stageReceiptSchema`：`annotateConstTypes` 递归给每个缺 `type` 的 `const` 节点按值推断补注解，不改 `const`/`enum`/`default`/`examples` 的字面值。exact-echo 纪律原样保留——echo 仍是把 receipt 绑到 exact refs 的身份证明，只是现在弱模型也能满足它。
+  - 修复只落在唯一咽喉 `stage.mts::stageReceiptSchema`：`annotateConstTypes` 递归给每个缺 `type` 的 `const` 节点按值推断补注解，不改 `const`/`enum`/`default`/`examples` 的字面值。exact-echo 纪律原样保留——echo 仍是把 receipt 绑到 exact refs 的身份证明，只是现在弱模型也能满足它。
   - 新增全 registry 扫描测试：所有注册 kind/stage row 生成的 schema 里不允许出现裸 `const`，并单独钉住 `paper.audit` 的 `pass`/`artifact_roles` 注解形状。
 
 - **0.55.0** (2026-08-01): **运行架构倒置为 Skill 驱动，删除已经没有职责的自运行 Graph driver。**
@@ -196,7 +201,7 @@ Newest first. Entries record what changed and why at the time each release shipp
 
 - **0.52.20** (2026-07-31): **把 Workflow 收敛为 Operation 图：回执校验进入 Schema/Runtime，Agent 接回稳定执行合同。**
   - Writer 的 exact path、ordered inputs、status matrix 与 closed failure 现在由每次调用的 composed StructuredOutput schema 直接约束；仍在运行的原 Agent 会被宿主要求修正不合格 receipt，Graph 只消费 `unknown|mismatch|reconcile|blocked|failed|ok` 闭合边，不再复制一套细粒度验证或在 unknown writer outcome 后重投。
-  - `runtime.mjs::operate` 用同一个 host schema 做统一 backstop；跨字段计数、年份证据、人类决定 replay、reconcile 解释等 JSON Schema 无法表达的少量语义留在 Operation contract。Author/Topic 的 child MaterialReceipt join 继续严格重证 identity、canonical artifact 与 final audit，host-pluggable dispatch seam 不被错误信任。
+  - `runtime.mts::operate` 用同一个 host schema 做统一 backstop；跨字段计数、年份证据、人类决定 replay、reconcile 解释等 JSON Schema 无法表达的少量语义留在 Operation contract。Author/Topic 的 child MaterialReceipt join 继续严格重证 identity、canonical artifact 与 final audit，host-pluggable dispatch seam 不被错误信任。
   - 有明确 owner Agent 的 operation prompt 改为自足 JSON envelope。Agent 合同统一拥有 exact-command/transaction discipline、JSON 类型保真、禁止 alternate command/retry/自行选图边；operation request 只携带业务词汇、exact refs、mode、diagnostics 与 evidence policy，host schema 拥有最终 receipt 形状。Talk transcription 合同因此从大段示例与字段清单收敛为稳定 relay 协议。
   - Book/Paper/Talk/Author/strict Topic/Translation 图移除重复 prompt pack 与 receipt predicate，生成 bundle 保持在 Claude Code 上限内；410 项 workflow 回归和 19 项 Talk/Translation relay 合同回归通过。
 

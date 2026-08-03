@@ -1,7 +1,6 @@
 {
   "compilerOptions": {
-    "allowJs": true,
-    "checkJs": true,
+    "allowImportingTsExtensions": true,
     "forceConsistentCasingInFileNames": true,
     "lib": ["ES2022"],
     "module": "NodeNext",
@@ -12,9 +11,6 @@
     "target": "ES2022"
   },
   "include": [
-    "scripts/build-workflows.mjs",
-    "scripts/workflows/**/*.mjs",
-    "scripts/workflows/**/*.d.mts",
-    "scripts/workflows/**/*.d.ts"
+    "scripts/workflows/**/*.mts"
   ]
 }

@@ -2,37 +2,86 @@ import { PIPELINE } from "./artifact-contracts/generated.mjs";
 import {
   expandArtifactTemplates,
   operationContextBase,
-} from "./context-base.mjs";
-import { defineOperation } from "./operations/define.mjs";
-import { authorOperationRows } from "./operations/rows/author.mjs";
-import { bookOperationRows } from "./operations/rows/book.mjs";
-import { paperOperationRows } from "./operations/rows/paper.mjs";
-import { materialSearchOperationRows } from "./operations/rows/search.mjs";
-import { talkOperationRows } from "./operations/rows/talk.mjs";
-import { topicOperationRows } from "./operations/rows/topic.mjs";
-import { translationOperationRows } from "./operations/rows/translation.mjs";
+} from "./context-base.mts";
+import {
+  defineOperation,
+  type DefinedOperation,
+} from "./operations/define.mts";
+import { authorOperationRows } from "./operations/rows/author.mts";
+import { bookOperationRows } from "./operations/rows/book.mts";
+import { paperOperationRows } from "./operations/rows/paper.mts";
+import { materialSearchOperationRows } from "./operations/rows/search.mts";
+import { talkOperationRows } from "./operations/rows/talk.mts";
+import { topicOperationRows } from "./operations/rows/topic.mts";
+import { translationOperationRows } from "./operations/rows/translation.mts";
+import { STAGE_STATUSES, stageReceiptSchema } from "./stage.mts";
+import type {
+  KindName,
+  OperationDescriptor,
+  OperationName,
+  OperationRow,
+  PipelineStage,
+  StageName,
+  StageReceipt,
+  WorkflowContext,
+} from "./artifact-contracts/generated.mjs";
 
-/** @typedef {import("./artifact-contracts/generated.mjs").KindName} KindName */
-/** @typedef {import("./artifact-contracts/generated.mjs").OperationDescriptor} OperationDescriptor */
-/** @typedef {import("./artifact-contracts/generated.mjs").OperationName} OperationName */
-/** @typedef {import("./artifact-contracts/generated.mjs").OperationRow} OperationRow */
-/** @typedef {import("./artifact-contracts/generated.mjs").PipelineStage} PipelineStage */
-/** @typedef {import("./artifact-contracts/generated.mjs").StageName} StageName */
-/** @typedef {import("./artifact-contracts/generated.mjs").StageReceipt} StageReceipt */
-/** @typedef {import("./artifact-contracts/generated.mjs").WorkflowContext} WorkflowContext */
-/** @typedef {{schema: (context: WorkflowContext) => Record<string, any>, contract: any, prompt: (context: WorkflowContext) => string}} DefinedOperation */
-/** @typedef {{kind: KindName, operation: OperationName, descriptor: OperationDescriptor, row: DefinedOperation}} ResolvedStage */
-/** @typedef {{sequence: StageName[], carries: Array<{from: StageName, apply: (receipt: StageReceipt, context: WorkflowContext) => WorkflowContext}>}} StageChain */
-/** @typedef {{slug?: any, label?: string, context?: WorkflowContext}} RunUnit */
-/** @typedef {{kind?: any, slug?: any, stage?: any, until?: any, context?: WorkflowContext, units?: RunUnit[]}} RunArgs */
-/** @typedef {{schema: Record<string, any>, agentType: string, phase: string, label: string}} AgentOptions */
-/** @typedef {(prompt: string, options: AgentOptions) => Promise<StageReceipt | null>} Agent */
-/** @typedef {{agent: Agent, parallel?: (thunks: Array<() => Promise<StageReceipt | null>>) => Promise<Array<StageReceipt | null>>, log?: (message: string) => void}} RunRuntime */
+export { PIPELINE, STAGE_STATUSES, stageReceiptSchema };
 
-export { PIPELINE };
+export interface ResolvedStage {
+  kind: KindName;
+  operation: OperationName;
+  descriptor: OperationDescriptor;
+  row: DefinedOperation;
+}
 
-/** @type {OperationRow[]} */
-export const OPERATION_ROWS = [
+interface StageChain {
+  sequence: StageName[];
+  carries: Array<{
+    from: StageName;
+    apply: (
+      receipt: StageReceipt,
+      context: WorkflowContext,
+    ) => WorkflowContext;
+  }>;
+}
+
+interface RunUnit {
+  slug?: any;
+  label?: string;
+  context?: WorkflowContext;
+}
+
+interface RunArgs {
+  kind?: any;
+  slug?: any;
+  stage?: any;
+  until?: any;
+  context?: WorkflowContext;
+  units?: RunUnit[];
+}
+
+interface AgentOptions {
+  schema: Record<string, any>;
+  agentType: string;
+  phase: string;
+  label: string;
+}
+
+type Agent = (
+  prompt: string,
+  options: AgentOptions,
+) => Promise<StageReceipt | null>;
+
+interface RunRuntime {
+  agent: Agent;
+  parallel?: (
+    thunks: Array<() => Promise<StageReceipt | null>>,
+  ) => Promise<Array<StageReceipt | null>>;
+  log?: (message: string) => void;
+}
+
+export const OPERATION_ROWS: OperationRow[] = [
   ...materialSearchOperationRows,
   ...paperOperationRows,
   ...bookOperationRows,
@@ -42,13 +91,13 @@ export const OPERATION_ROWS = [
   ...authorOperationRows,
 ];
 
-const descriptors = /** @type {Record<OperationName, OperationRow>} */ (
+const descriptors = (
   Object.fromEntries(
     OPERATION_ROWS.map((row) => [row.operation, row]),
   )
-);
+) as Record<OperationName, OperationRow>;
 
-const stageIdentities = /** @type {Record<KindName, Partial<Record<StageName, PipelineStage>>>} */ (
+const stageIdentities = (
   Object.fromEntries(
     Object.entries(PIPELINE).map(([kind, definition]) => [
       kind,
@@ -57,10 +106,12 @@ const stageIdentities = /** @type {Record<KindName, Partial<Record<StageName, Pi
       ),
     ]),
   )
-);
+) as Record<KindName, Partial<Record<StageName, PipelineStage>>>;
 
-/** @type {Record<string, Partial<Record<StageName, OperationName>>>} */
-export const RUN_STAGE_REGISTRY = Object.fromEntries(
+export const RUN_STAGE_REGISTRY: Record<
+  string,
+  Partial<Record<StageName, OperationName>>
+> = Object.fromEntries(
   Object.entries(PIPELINE).map(([kind, definition]) => [
     kind,
     Object.fromEntries(
@@ -70,7 +121,6 @@ export const RUN_STAGE_REGISTRY = Object.fromEntries(
 );
 RUN_STAGE_REGISTRY.translate = RUN_STAGE_REGISTRY.translation;
 
-/** @type {Partial<Record<KindName, StageChain>>} */
 export const STAGE_CHAINS = Object.fromEntries(
   Object.entries(PIPELINE).flatMap(([kind, definition]) =>
     definition.chain
@@ -82,8 +132,10 @@ export const STAGE_CHAINS = Object.fromEntries(
               carries: definition.chain.carries.map(
                 ({ from, field, to }) => ({
                   from,
-                  /** @param {StageReceipt} receipt @param {WorkflowContext} context */
-                  apply: (receipt, context) => ({
+                  apply: (
+                    receipt: StageReceipt,
+                    context: WorkflowContext,
+                  ) => ({
                     ...context,
                     [to]: receipt[field],
                   }),
@@ -94,7 +146,7 @@ export const STAGE_CHAINS = Object.fromEntries(
         ]
       : [],
   ),
-);
+) as Partial<Record<KindName, StageChain>>;
 
 export const workflowMeta = {
   name: "Quasi",
@@ -106,12 +158,7 @@ export const workflowMeta = {
   ],
 };
 
-/**
- * @param {string} code
- * @param {RunArgs} args
- * @param {string} message
- */
-const errorResult = (code, args, message) => ({
+const errorResult = (code: string, args: RunArgs, message: string) => ({
   schema_version: "quasi.run-stage.error/0.1",
   status: "error",
   error: {
@@ -123,40 +170,36 @@ const errorResult = (code, args, message) => ({
   },
 });
 
-/**
- * @param {unknown} kind
- * @param {unknown} stage
- * @returns {ResolvedStage | null}
- */
-export function resolveStage(kind, stage) {
+export function resolveStage(
+  kind: unknown,
+  stage: unknown,
+): ResolvedStage | null {
   const normalizedKind = typeof kind === "string" ? kind.trim().toLowerCase() : "";
   const normalizedStage = typeof stage === "string" ? stage.trim().toLowerCase() : "";
-  const stageName = /** @type {StageName} */ (normalizedStage);
+  const stageName = normalizedStage as StageName;
   const operation = RUN_STAGE_REGISTRY[normalizedKind]?.[stageName];
   if (!operation) return null;
-  const canonicalKind = /** @type {KindName} */ (
+  const canonicalKind = (
     normalizedKind === "translate" ? "translation" : normalizedKind
-  );
-  const identity = /** @type {PipelineStage} */ (
+  ) as KindName;
+  const identity = (
     stageIdentities[canonicalKind][stageName]
-  );
-  const descriptor = /** @type {OperationDescriptor} */ ({
+  ) as PipelineStage;
+  const descriptor = {
     ...descriptors[operation],
     stage: identity.phase,
     effect: identity.effect,
     agentType: identity.agent,
     artifacts: identity.artifacts || {},
-  });
+  } as OperationDescriptor;
   return { kind: canonicalKind, operation, descriptor, row: defineOperation(descriptor) };
 }
 
-/**
- * @param {ResolvedStage} resolved
- * @param {any} slug
- * @param {unknown} rawContext
- * @returns {WorkflowContext}
- */
-export function resolveStageContext(resolved, slug, rawContext) {
+export function resolveStageContext(
+  resolved: ResolvedStage,
+  slug: any,
+  rawContext: unknown,
+): WorkflowContext {
   const templates = resolved.descriptor.artifacts;
   const base = operationContextBase(
     resolved.kind,
@@ -174,30 +217,28 @@ export function resolveStageContext(resolved, slug, rawContext) {
   return expandArtifactTemplates(templates, rawContext, context);
 }
 
-/**
- * @param {RunRuntime} runtime
- * @param {RunArgs} args
- * @param {ResolvedStage} resolved
- * @param {StageChain} chain
- * @param {StageName} from
- * @param {StageName} until
- */
-async function runChain({ agent, log }, args, resolved, chain, from, until) {
-  /** @type {Array<{stage: StageName, receipt: any}>} */
-  const receipts = [];
+async function runChain(
+  { agent, log }: RunRuntime,
+  args: RunArgs,
+  resolved: ResolvedStage,
+  chain: StageChain,
+  from: StageName,
+  until: StageName,
+) {
+  const receipts: Array<{ stage: StageName; receipt: any }> = [];
   let accumulatedContext =
     args.context && typeof args.context === "object" ? args.context : {};
-  let stoppedAt = null;
+  let stoppedAt: StageName | null = null;
   let stopReason = "end";
   const startIndex = chain.sequence.indexOf(from);
   const untilIndex = chain.sequence.indexOf(until);
 
   for (const currentStage of chain.sequence.slice(startIndex, untilIndex + 1)) {
-    const current = /** @type {ResolvedStage} */ (
+    const current = (
       currentStage === from
         ? resolved
         : resolveStage(resolved.kind, currentStage)
-    );
+    ) as ResolvedStage;
     let stageContext;
     let prompt;
     let schema;
@@ -273,14 +314,13 @@ async function runChain({ agent, log }, args, resolved, chain, from, until) {
   };
 }
 
-/**
- * @param {RunRuntime} runtime
- * @param {unknown} inputArgs
- */
-export async function run({ agent, parallel, log }, inputArgs) {
+export async function run(
+  { agent, parallel, log }: RunRuntime,
+  inputArgs: unknown,
+) {
   const args =
     inputArgs && typeof inputArgs === "object"
-      ? /** @type {RunArgs} */ (inputArgs)
+      ? (inputArgs as RunArgs)
       : {};
   const resolved = resolveStage(args.kind, args.stage);
   if (!resolved) {
@@ -306,8 +346,8 @@ export async function run({ agent, parallel, log }, inputArgs) {
         "run-stage until cannot be combined with units",
       );
     }
-    const from = args.stage.trim().toLowerCase();
-    const until = args.until.trim().toLowerCase();
+    const from = args.stage.trim().toLowerCase() as StageName;
+    const until = args.until.trim().toLowerCase() as StageName;
     const chain = STAGE_CHAINS[resolved.kind];
     const fromIndex = chain?.sequence.indexOf(from) ?? -1;
     const untilIndex = chain?.sequence.indexOf(until) ?? -1;

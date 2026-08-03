@@ -1,14 +1,13 @@
 import { TALK_ARTIFACT_CONTRACT } from "../../artifact-contracts/generated.mjs";
-import { contextValue } from "../../context-base.mjs";
-import { actionPayloads, makeAuditRow } from "../shared.mjs";
+import { contextValue } from "../../context-base.mts";
+import { actionPayloads, makeAuditRow } from "../shared.mts";
+import type { OperationRow } from "../../artifact-contracts/generated.mjs";
 
-/** @typedef {import("../../artifact-contracts/generated.mjs").OperationRow} OperationRow */
-/** @typedef {(...args: any[]) => any} AnyFunction */
+type AnyFunction = (...args: any[]) => any;
 
 const HASH_PATTERN = "^[a-f0-9]{64}$";
 
-/** @type {AnyFunction} */
-const observationSchema = (path) => ({
+const observationSchema: AnyFunction = (path) => ({
   type: ["object", "null"],
   additionalProperties: false,
   required: ["path", "sha256"],
@@ -18,8 +17,7 @@ const observationSchema = (path) => ({
   },
 });
 
-/** @type {AnyFunction} */
-const generationSchema = (manifest) => ({
+const generationSchema: AnyFunction = (manifest) => ({
   type: ["object", "null"],
   additionalProperties: false,
   required: ["manifest_path", "request_fingerprint"],
@@ -71,8 +69,7 @@ export const TALK_EVIDENCE_RULES = [
   "分节摘要的每组起止时间与时间脉络的每个时间点必须逐项对照 transcript evidence 定位，不得用相邻分节边界作未核对的推算",
 ];
 
-/** @type {OperationRow[]} */
-export const talkOperationRows = [
+export const talkOperationRows: OperationRow[] = [
   {
     operation: "talk.prepare",
     context: (_rawContext, base) => ({
@@ -152,7 +149,7 @@ export const talkOperationRows = [
         context.subtitle,
         context.canonical,
         ...context.engines.map(
-          (/** @type {any} */ engine) =>
+          (engine: any) =>
             `${context.processingDir}/transcript.${engine}.srt`,
         ),
       ]);
@@ -166,24 +163,24 @@ export const talkOperationRows = [
         (receipt.canonical_observation === null ||
           (receipt.canonical_observation.path === context.canonical &&
             receipt.canonical_observation.sha256 !== "0".repeat(64))) &&
-        receipt.artifacts.every((/** @type {any} */ row) =>
+        receipt.artifacts.every((row: any) =>
           allowed.has(row.path),
         ) &&
         receipt.artifacts.some(
-          (/** @type {any} */ row) =>
+          (row: any) =>
             row.role === "transcript" && row.path === context.transcript,
         ) &&
         (receipt.classification === "live"
           ? receipt.canonical_action === null &&
             !receipt.artifacts.some(
-              (/** @type {any} */ row) => row.role === "canonical",
+              (row: any) => row.role === "canonical",
             )
           : receipt.canonical_observation !== null &&
             ["create", "repair", "reconciled"].includes(
               receipt.canonical_action,
             ) &&
             receipt.artifacts.some(
-              (/** @type {any} */ row) =>
+              (row: any) =>
                 row.role === "canonical" &&
                 row.path === context.canonical &&
                 row.sha256 === receipt.canonical_observation.sha256,
@@ -258,10 +255,10 @@ export const talkOperationRows = [
       ],
       properties: {
         input_paths: {
-          const: inputs.map((/** @type {any} */ input) => input.path),
+          const: inputs.map((input: any) => input.path),
         },
         input_sha256s: {
-          const: inputs.map((/** @type {any} */ input) => input.sha256),
+          const: inputs.map((input: any) => input.sha256),
         },
         output_path: { const: output },
         artifact_roles: {
@@ -277,7 +274,7 @@ export const talkOperationRows = [
       [
         ...(context.mode === "create" ? ["create"] : ["repair"]),
         "reconciled",
-      ].includes(/** @type {string} */ (receipt.terminal.action)),
+      ].includes(receipt.terminal.action as string),
     envelope: (
       { materialKey, title, date, media, diagnostics },
       { inputs, output, mode },
@@ -286,7 +283,7 @@ export const talkOperationRows = [
       operation: "talk.analyse",
       stage: "Analyse",
       material_key: materialKey,
-      inputs: inputs.map((/** @type {any} */ input) => ({
+      inputs: inputs.map((input: any) => ({
         role: input.role,
         path: input.path,
         sha256: input.sha256,
