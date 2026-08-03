@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.59.2** (2026-08-04): **删除无调用方的迁移脚本，并让 Agent 合同回到方法本身。**
+  - 0.52 以来的仓库增长测量显示，新增行集中在真实 capability code 与 workflow contract machinery；维护痛点却集中在同一概念同时寄居多处。本轮据此坚持净删除，不压缩仍承重的方法与恢复知识。
+  - `scripts/migrations/` 的两支脚本经全仓引用审计确认没有调用方，连同缓存目录整体删除，不再为可从 git 历史恢复的旧迁移承担活跃维护面。仍由 `scripts/core/core.py` 读取的 `QUA_PROJECT_ROOT` 只保留为 legacy compatibility override。
+  - Agent prose 删除 row 已经闭合约束的 receipt terminal、payload 与 echo 复述，只保留专业方法、停止判断和本地恢复；receipt semantics 现在只在 descriptor row schema 中定义。0.55.0 前的 graph vocabulary 与 sibling-stage narration 同时退出活跃合同面，后续控制回到 driving skill 与 exact request context。
+
 - **0.59.1** (2026-08-04): **全量审计清掉测试残渣与一条不可达的 Agent 路径。**
   - 全套测试审计显示，现有测试绝大多数确实守住运行合同与 institutional memory；最痛的 skill prose photographs 已在 0.58.5 移除。本轮继续删除审计确认的七项 construction-pinned、mechanism-duplicate 或 tautological 测试，只留下权威层的结构与行为保证，不再让 UI 标签、shell 源码行或内部常量冒充公共合同。
   - `localisation-agent` 没有 descriptor row、`RUN_STAGE_REGISTRY` entry 或 Skill dispatch path，中文版本匹配早已由确定性的 `quasi-helpers localise scan|write` 完成。因此删除这个不可达 Agent，清理现行文档/模块上下文中的消费者叙述，并把名字加入 dead-name quarantine，防止无调用方的模型边界复活。

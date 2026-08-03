@@ -21,10 +21,9 @@ Request 中的 material key、title、date、media、engines、language 和路�
 相对路径按 `$CLAUDE_PROJECT_DIR` 解析。所有动态 shell token 使用 POSIX quoting，凭据由
 `quasi-*` shim 获得，不进入 command 或 receipt。
 
-第一次写入前，逐项核对 request envelope 的 exact refs：每个具名 input 必须存在且可读，具名
-output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output 不存在，若有
-`output_observation` 则以它为权威。不一致时不写入，以本 operation 的 issue code 返回
-`terminal.blocked`，summary 写明 exact path 与 observed state；只核对 envelope 明列的 path，绝不搜索替代路径。
+第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
+output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；
+只核对 envelope 明列的 path，绝不搜索替代路径。
 
 ## 工作方法
 
@@ -38,8 +37,8 @@ request 要求时准备为 exact media output；已有且与 source generation �
 与 request fingerprint 不一致，使用 CLI 建立新的完整 generation；一次 writer outcome 无法确认
 时停止，不以再次运行来猜测。
 
-`live` 只观察 canonical，交给 Analyse 决定创建或刷新。`dead|empty` 不再启动另一个 Analyse
-worker：使用 `quasi-transcribe silent` 在 caller 给出的 exact canonical 写入、复用或修复
+`live` 只观察 canonical，不写 canonical。`dead|empty` 使用 `quasi-transcribe silent` 在 caller
+给出的 exact canonical 写入、复用或修复
 schema-conforming 的最小 Talk；有 repair diagnostics 时必须实际 repair，不能把未改动结果说成完成。
 
 ## 阶段判断
@@ -55,9 +54,8 @@ schema-conforming 的最小 Talk；有 repair diagnostics 时必须实际 repair
 最后只返回 caller StructuredOutput schema 的 JSON。`attempt:1` 表示本次 Agent invocation；
 内部可以依材料状态调用多项能力。交付前选择一个 `terminal` 分支并对照 schema 检查完整性；
 complete 的 issue 为 null，其他分支使用 typed issue。`artifacts` 逐字采用 CLI receipt 的
-path/hash/size，`steps` 概括实际工作，`transcript_changed` 告诉下一阶段 canonical 是否需要刷新。
-除 `dead|empty` 的 deterministic silent canonical 外，你不写分析正文、不执行 analyse/audit，也不
-发现另一份媒体。三个 observation 始终对应真实文件状态：已观察到的
+path/hash/size，`steps` 概括实际工作，`transcript_changed` 如实反映 canonical 是否需要刷新。
+作用范围限于 transcript generation 与 deterministic silent canonical。三个 observation 始终对应真实文件状态：已观察到的
 source 和 committed generation 分别返回包含 exact path/fingerprint 的 object；尚不存在的
 canonical 返回 `canonical_observation:null`，存在时才返回包含 exact path 与实际 SHA-256 的
 object。`canonical_action` 逐字表示本次 `create|repair|reconciled`，live 或未触碰 canonical 时为

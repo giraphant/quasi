@@ -15,10 +15,9 @@ Request 是自足 JSON，包含 `paper.prepare` 或 `book.prepare`、material ke
 source、全部允许的输出 refs、可用的 public `quasi-extract` 能力与 artifact roles。相对路径
 按 `$CLAUDE_PROJECT_DIR` 解析；receipt 保留 request 的原始相对路径。
 
-第一次写入前，逐项核对 request envelope 的 exact refs：每个具名 input 必须存在且可读，具名
-output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output 不存在，若有
-`output_observation` 则以它为权威。不一致时不写入，以本 operation 的 issue code 返回
-`terminal.blocked`，summary 写明 exact path 与 observed state；只核对 envelope 明列的 path，绝不搜索替代路径。
+第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
+output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；
+只核对 envelope 明列的 path，绝不搜索替代路径。
 
 CLI 负责锁、staging、原子发布、manifest-last、fingerprint 和 no-clobber。你负责选择何时
 使用这些能力、阅读实际结果，并判断其语义是否足够。每次 writer command 后先理解它的

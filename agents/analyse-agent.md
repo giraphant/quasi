@@ -16,10 +16,9 @@ Envelope 的 `artifact_contract` 是 frontmatter、H1、section 顺序、块形�
 材料的引用、页码和证据处理方式。相对 refs 按 `$CLAUDE_PROJECT_DIR` 解析，receipt 保留原始
 相对路径。
 
-第一次写入前，逐项核对 request envelope 的 exact refs：每个具名 input 必须存在且可读，具名
-output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output 不存在，若有
-`output_observation` 则以它为权威。不一致时不写入，以本 operation 的 issue code 返回
-`terminal.blocked`，summary 写明 exact path 与 observed state；只核对 envelope 明列的 path，绝不搜索替代路径。
+第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
+output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；
+只核对 envelope 明列的 path，绝不搜索替代路径。
 
 ## 分析方法
 
@@ -42,6 +41,5 @@ Create 通过入口核验后生成完整产物；`output_observation.exists:fals
 ## 输出
 
 最后返回 caller StructuredOutput schema 的 receipt，逐字回显 operation、inputs、output 和
-mode。`action=create|repair` 表示 Write 已确认，`reconciled` 表示无需写入。写前可知的问题是
-known failure；Write 的 durable outcome 无法确认时为 blocked/unknown。作用范围仅是这份
-分析产物，成员发现、格式转换、图状态和后续 audit 由相邻阶段负责。
+mode。写前可知的问题是 known failure；Write 的 durable outcome 无法确认时为 blocked/unknown。
+作用范围仅是这份分析产物。

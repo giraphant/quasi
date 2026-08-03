@@ -37,7 +37,7 @@ This file holds only the contracts a maintainer needs before editing. The detail
 ## Path roots
 
 - The current working directory is the project/vault root for user data. Workflow specialists may receive an empty `CLAUDE_PROJECT_DIR`; when it is non-empty it takes precedence, otherwise resolve relative paths from cwd.
-- `$CLAUDE_PLUGIN_ROOT` is versioned plugin code, read-only at runtime. `$CLAUDE_PLUGIN_DATA` is persistent plugin data (venvs, caches, EZProxy throttle state); `${CLAUDE_PLUGIN_DATA:-~/.cache/quasi}` is the non-plugin fallback used by shims and bootstrap. `QUA_PROJECT_ROOT` is a legacy override still accepted by some migration code; do not introduce it into active skill or agent contracts.
+- `$CLAUDE_PLUGIN_ROOT` is versioned plugin code, read-only at runtime. `$CLAUDE_PLUGIN_DATA` is persistent plugin data (venvs, caches, EZProxy throttle state); `${CLAUDE_PLUGIN_DATA:-~/.cache/quasi}` is the non-plugin fallback used by shims and bootstrap. `QUA_PROJECT_ROOT` is a legacy compatibility override still accepted by `scripts/core/core.py`; do not introduce it into active skill or agent contracts.
 - `vault/` holds user-facing reading outputs; `sources/` holds accepted source files; `processing/chapters/`, `processing/translations/`, and `processing/talks/` hold user-inspectable intermediates; `.quasi/` holds orchestration state, manifests, caches, audit output, and temp downloads. Temp JSON passed to helpers lives under `.quasi/temp/` unless a specific helper contract says otherwise.
 
 ## Configure options and env flow

@@ -30,7 +30,7 @@
 | `bin/` | 9 | 314 | 9 个无扩展名 shell shim |
 | `scripts/` | 127 | 38,833 | Python 101/32,123；MJS 18/5,445；Markdown 3/994；shell 3/178；Swift 1/68；TOML 1/18；txt 1/7 |
 
-`scripts/` 最大文件包括 `scripts/download/download.py` 3,179 行、`scripts/migrations/zotero_bibtex.py` 2,397 行、`scripts/translate/translate_commit.py` 1,595 行、生成的 artifact contracts 1,143 行、`scripts/transcribe/transcribe.py` 1,069 行。
+`scripts/` 最大文件包括 `scripts/download/download.py` 3,179 行、`scripts/translate/translate_commit.py` 1,595 行、生成的 artifact contracts 1,143 行、`scripts/transcribe/transcribe.py` 1,069 行。
 
 生成链的可编辑源与输出：
 
@@ -136,7 +136,7 @@
 
 | 排名 | 机会 | 预计省行 | 风险 | 涉及生成物 | 源文件与行号 | 重建 |
 |---:|---|---:|---|---|---|---|
-| 1 | 删除无调用方的一次性 migrations（不保留兼容入口） | **2,601** | 低；风险仅是有人在仓库外手工调用 | 否 | 删除 `scripts/migrations/zotero_bibtex.py:1-2397`、`scripts/migrations/cndouban_externalise.py:1-204`；仓库内除自身无引用 | 否 |
+| 1 | 删除无调用方的一次性迁移工具（不保留兼容入口） | **2,601** | 低；风险仅是有人在仓库外手工调用 | 否 | 两个旧脚本整体删除；仓库内除自身无引用 | 否 |
 | 2 | artifact-contract generated module 改为 compact emission | **约 1,120–1,130（全为生成行）** | 低；语义/bytes 不增 | 是 | 改 `scripts/build-workflows.mjs:131-150`，特别是 `JSON.stringify(..., null, 2)`；不要改 `artifact-contracts/generated.mjs` | **是** |
 | 3 | 删除 extract/transcribe/translate 的 strict/legacy 双表面，只留闭合 JSON operation | **约 450–550** | 中；会立即断开旧人工 CLI，符合本轮方针 | 否 | `split_chapters.py:284-503,874-885`; `process_epub.py:495-541`; `transcribe.py:533-566,827-888,923-1001`; `translate.py:185-195,242-279,299-331`; `bin/quasi-translate:23-53`; `bin/quasi-transcribe:12-14`; `talk/compress_media.py:54-64,399-423,552-565`; `transcribe/silent.py:84-96` | 否 |
 | 4 | rows 共享 schema fragments + Audit/Writer factories（不含死 API） | **约 300–380** | 中；cross-field check 不能被泛化掉 | 是 | §2.2 所列 `author/book/paper/talk/topic/translation` 区间；factory 源为 `define.mjs:8-47`、`shared.mjs:4-11` | **是** |
@@ -165,7 +165,7 @@
 |---|---|---|
 | row 的 instantiated exports | `paperAcquire`、`bookPrepare`、`talkAudit`、`topicOverview`、`materialSearchPrompt` 等每个符号经 `rg` 都只命中定义文件自己；范围见 §2.2 | 直接删，只导出 `*OperationRows` |
 | `topicRecallStageSchema` / `TOPIC_RECALL_SCHEMA` / `topicRecallOperationPrompt` / `TOPIC_RECALL_CONTRACT` | `topic.mjs:167-207` 只自引用；run-stage 用 row descriptor | 直接删，不留 standalone adapter |
-| `scripts/migrations/*` | 两个脚本在 README/docs/skills/agents/bin/active scripts/tests 均无调用点 | 直接删整个目录 |
+| 一次性迁移工具 | 两个脚本在 README/docs/skills/agents/bin/active scripts/tests 均无调用点 | 直接删除 |
 | `skills/collect-material/references/talk.md` | active skill 没有链接它；唯一外部提及为 `docs/ARCHITECTURE.md:133` | 删除 reference 与该说明 |
 
 ### 4.2 合同漂移/疑似死 operation
@@ -180,7 +180,7 @@
 - Extraction：`scripts/extract/split_chapters.py:284-503,874-885` 保留 legacy prose route 和另一套 auto/pages builder；`process_epub.py:495-541` 保留 historical renderer。
 - Transcription/Talk：`bin/quasi-transcribe:12-14` 宣告 legacy calls；`transcribe.py:533-566,827-888,923-1001` 为每个 command 保留非 strict 输出；`talk/compress_media.py:62,406-423` 保留 `--force`/legacy skip；`transcribe/silent.py:84-96` 是 legacy helper。
 - Schema aliases：`schemas/registry.py:47-86`、typecheck/autofix/audit consumers 仍为旧 type 做 diagnostics/migration。
-- Path root：`scripts/core/core.py:52-59` 与 `scripts/migrations/cndouban_externalise.py:34-38` 仍接受 `QUA_PROJECT_ROOT`；无兼容方针下 core 应只用 `CLAUDE_PROJECT_DIR`→cwd，迁移脚本整体删除。对应 tests 为 `scripts/core/tests/test_core.py:24-35`。
+- Path root：`scripts/core/core.py:52-59` 仍接受 `QUA_PROJECT_ROOT` 作为 legacy compatibility override；对应 tests 为 `scripts/core/tests/test_core.py:24-35`。
 - 旧 field：`scripts/typecheck/autofix_mechanical.py:171` 仍把 singular `topic` 作为 legacy field 丢弃；应在 Topic/material 合并时确认新树只使用 `topics` 或新的统一关系字段，不保留双读。
 - 旧 operation/statusline regex：`scripts/subagent-statusline.py:39` 仍匹配 `paper.download.legacy|extract-text|assess|ocr|analyse|audit` 的历史 label。当前 workflow label 由 `run-stage.entry.mjs:107-112` 生成 `{slug}:{stage}`，这条 regex 是 legacy UI adapter，应直接删并更新相关测试。
 - Search flags：`scripts/search/search.py:671,685` 的 `--json` 明说“Accepted for compatibility; output is always JSON”；可把 `--json` 从 parser 删除并让 callers 不再传，或反过来规定 `--json` 为唯一强制表面；不要继续接受无效果 flag。

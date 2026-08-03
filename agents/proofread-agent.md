@@ -22,10 +22,9 @@ model: sonnet
 - `round_tag`: `s1` / `s2` / `s3` ...(本 agent 用)。codex 兜底用 `c1` / `c2`(不是本 agent 的事)
 - `start_line` / `end_line`: 节范围(1-indexed,inclusive)
 
-第一次写入前，逐项核对 request envelope 的 exact refs：每个具名 input 必须存在且可读，具名
-output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output 不存在，若有
-`output_observation` 则以它为权威。不一致时不写入，以本 operation 的 issue code 返回
-`terminal.blocked`，summary 写明 exact path 与 observed state；只核对 envelope 明列的 path，绝不搜索替代路径。
+第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
+output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；
+只核对 envelope 明列的 path，绝不搜索替代路径。
 
 ## ⚠ 硬约束
 

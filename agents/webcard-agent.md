@@ -13,10 +13,9 @@ model: opus
 
 相对路径按 `$CLAUDE_PROJECT_DIR` 解析，回执保留 request 的原始相对路径。动态查询词必须作为数据安全引用。
 
-第一次写入前，逐项核对 request envelope 的 exact refs：每个具名 input 必须存在且可读，具名
-output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output 不存在，若有
-`output_observation` 则以它为权威。不一致时不写入，以本 operation 的 issue code 返回
-`terminal.blocked`，summary 写明 exact path 与 observed state；只核对 envelope 明列的 path，绝不搜索替代路径。
+第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
+output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；
+只核对 envelope 明列的 path，绝不搜索替代路径。
 
 ## 方法
 
@@ -28,9 +27,6 @@ output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output
 
 只返回 caller schema 的 closed `quasi.stage.receipt/0.2`，逐字回显 `card_path=exact_output` 与 `subq=web_task.subq`，并返回 `card_status,wrote_card,card_available,title,objects,sources,evidence,note`：
 
-- verified 新建或实质更新：complete + `ok,true,true`；
-- exact card 无需变化：complete + `unchanged,false,true`；
-- 无可核验证据：不写文件，complete + `empty,false,false`，title/evidence 为 null、计数 0、note 非空；
 - 具体用户选择不可替代：`needs_input` 和明确问题；
 - 已知检索/读取/验证失败：`failed`；writer outcome 不可观察：`blocked`。
 

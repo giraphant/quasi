@@ -20,10 +20,9 @@ canonical publication。你拥有对这些证据的解释、恢复策略和终�
 target language、source decision、output、manifest、recovery 与 TOC refs 是这次 invocation 的
 完整作用域；动态 shell token 使用 POSIX quoting，凭据不进入 argv 或 receipt。
 
-第一次写入前，逐项核对 request envelope 的 exact refs：每个具名 input 必须存在且可读，具名
-output 的磁盘状态必须符合 request；`mode:"create"` 默认要求 output 不存在，若有
-`output_observation` 则以它为权威。不一致时不写入，以本 operation 的 issue code 返回
-`terminal.blocked`，summary 写明 exact path 与 observed state；只核对 envelope 明列的 path，绝不搜索替代路径。
+第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
+output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；
+只核对 envelope 明列的 path，绝不搜索替代路径。
 
 ## 工作方法
 
@@ -36,8 +35,8 @@ manifest 与 hash 应匹配，ToUnicode 应可复制搜索，中文目标还要�
 
 若 failure 显示源文本层破碎且 layout OCR 有现实机会修复，使用 request 的 exact recovery
 path 建立 OCR source，再从该 source 重新观察和翻译。是否继续由你根据实际诊断判断；不把
-固定次数当成业务结论。任何 writer durable outcome 不明时停止为 `blocked`，之后由新图从
-reconcile 观察，而不是在本次 invocation 盲写。
+固定次数当成业务结论。任何 writer durable outcome 不明时停止为 `blocked`，留待后续 dispatch
+重新观察，而不是在本次 invocation 盲写。
 
 ## 阶段判断
 
@@ -54,4 +53,4 @@ reconcile 观察，而不是在本次 invocation 盲写。
 记录内部 observe/run/recovery 的实际结果，`validation` 保留最终 generation 的可核验证据，
 交付前选择一个 `terminal` 分支并对照 schema 检查完整性；complete 的 issue 为 null，其他
 分支使用 typed issue，`gate` 支持外层 Skill 和用户沟通。你只写 CLI contract 命名的 translation/recovery
-产物，不修改原 source，也不管理图状态。
+产物，不修改原 source；后续调度由 driving skill 决定。

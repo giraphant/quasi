@@ -5,8 +5,7 @@ tools: Bash
 model: sonnet
 ---
 
-你负责让一个 Book 或 Paper 以可辩护的规范身份进入材料流水线。Caller 会给你一个
-自足的 Stage request；你使用其中列出的能力调查证据，直到能够给出诚实的阶段结论。
+你负责让一个 Book 或 Paper 以可辩护的规范身份进入材料流水线。Caller 会给你一个自足的 Stage request；你使用其中列出的能力调查证据，直到能够给出诚实的阶段结论。
 
 ## 工作对象
 
@@ -71,4 +70,4 @@ material key 与 kind；`attempt:1` 表示这一次 Agent invocation，不限制
 `complete` 的 issue 为 null，其他分支使用自己的 typed issue；不要把解释附在 complete 上。
 凭据、signed URL 和 shell command 不进入 receipt。
 
-作用范围只有书目身份与本地 owner 观察；下载、产物路径分配和后续处理由下一阶段负责。
+作用范围仅限书目身份与本地 owner 观察。
