@@ -9,7 +9,6 @@ import sys
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 HOOK = PLUGIN_ROOT / "scripts" / "hooks" / "inject-userconfig.py"
-PLUGIN_MANIFEST = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
 
 
 def run_hook(command: str, env: dict[str, str]) -> dict:
@@ -31,25 +30,6 @@ def load_hook_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def test_translation_config_labels_are_short_and_grouped_by_backend():
-    manifest = json.loads(PLUGIN_MANIFEST.read_text(encoding="utf-8"))
-    config = manifest["userConfig"]
-
-    translation_keys = [
-        "translate_backend",
-        "immersive_auth_key",
-        "translate_base_url",
-        "translate_api_key",
-        "translate_model",
-    ]
-    assert [key for key in config if key in translation_keys] == translation_keys
-    assert config["translate_backend"]["title"] == "PDF translation backend"
-    assert "immersive" in config["translate_backend"]["description"]
-    assert "pdf2zh" in config["translate_backend"]["description"]
-    assert config["translate_base_url"]["title"] == "pdf2zh: API base URL"
-    assert "OpenAI-compatible" in config["translate_base_url"]["description"]
 
 
 def test_hook_reads_quasi_options_from_claude_keychain_blob():
@@ -105,23 +85,6 @@ def test_hook_existing_quasi_env_is_not_serialised_into_command():
     updated = out["hookSpecificOutput"]["updatedInput"]["command"]
     assert "QUASI_KAGI_SESSION_TOKEN=from-env" not in updated
     assert "quasi-search paper --title X" in updated
-
-
-def test_python_shims_load_keychain_config_themselves():
-    shims = [
-        "quasi-audit",
-        "quasi-doctor",
-        "quasi-download",
-        "quasi-extract",
-        "quasi-helpers",
-        "quasi-search",
-        "quasi-transcribe",
-        "quasi-translate",
-    ]
-
-    for name in shims:
-        text = (PLUGIN_ROOT / "bin" / name).read_text(encoding="utf-8")
-        assert '. "$PLUGIN_ROOT/scripts/load-keychain-env.sh"' in text
 
 
 def test_hook_does_not_inject_session_token_for_native_kagi_command():
@@ -187,26 +150,6 @@ def test_hook_does_not_inject_session_token_for_embedded_native_kagi_command():
     )
 
     assert result.stdout == ""
-
-
-def test_hook_keeps_quasi_user_config_injection():
-    out = run_hook(
-        "quasi-search book --title X",
-        {
-            "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
-            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
-            "CLAUDE_PLUGIN_DATA": "/plugin/data",
-        },
-    )
-
-    updated = out["hookSpecificOutput"]["updatedInput"]["command"]
-    if sys.platform == "darwin":
-        assert "--keychain-exports" in updated
-        assert "session-token" not in updated
-    else:
-        assert "QUASI_KAGI_SESSION_TOKEN=session-token" in updated
-    assert "CLAUDE_PLUGIN_ROOT=/plugin/root" in updated
-    assert "CLAUDE_PLUGIN_DATA=/plugin/data" in updated
 
 
 def test_macos_hook_never_serialises_plugin_secret_into_updated_input():

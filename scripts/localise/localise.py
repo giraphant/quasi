@@ -2,7 +2,7 @@
 """quasi-helpers localise — deterministic Chinese-edition cache helpers.
 
 This helper is scale-facing, not agent-facing. Top-level skills call it around
-localisation-agent / quasi-search output:
+quasi-search output in the deterministic localise helper flow:
 
     scan   enumerate book overviews and report ISBN-keyed localise state
     write  merge one search result's zh candidates into .quasi/localise/cndouban.json
@@ -282,7 +282,7 @@ def _cmd_write(argv: list[str]) -> int:
     )
     ap.add_argument("--isbn", help="Original book ISBN; normalized to ISBN-13")
     ap.add_argument("--book-path", help="Book overview path; used for ISBN fallback and book snapshot")
-    ap.add_argument("--search-result-file", help="JSON search/localisation-agent result containing localisations.zh.candidates")
+    ap.add_argument("--search-result-file", help="JSON search result containing localisations.zh.candidates")
     ap.add_argument("--candidates-file", help="JSON array of already curated cndouban candidates")
     ap.add_argument("--candidates-json", help="JSON array of already curated cndouban candidates")
     ap.add_argument("--checked-at", default=None, help="Override checked_at date (YYYY-MM-DD)")

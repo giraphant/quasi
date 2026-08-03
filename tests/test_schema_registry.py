@@ -485,20 +485,3 @@ def test_typecheck_passes_full_and_silent_talk_bodies(tmp_path: Path) -> None:
     assert full_result["body_violations"] == []
     assert silent_result["frontmatter_errors"] == []
     assert silent_result["body_violations"] == []
-
-
-def test_typecheck_allows_freeform_transcript_body(tmp_path: Path) -> None:
-    fp = tmp_path / "transcript.md"
-    fp.write_text(
-        "---\n"
-        "type: transcript\n"
-        "title: Lajilao — 转写\n"
-        "talk: lajilao-20241108\n"
-        "---\n\n# 垃圾佬 — 转写\n\n"
-        "> whisper/soniox 自动转写,未校对。\n\n"
-        "`[00:00]` 开场介绍 ...\n\n`[00:45]` 研究起点 ...\n",
-        encoding="utf-8",
-    )
-    result = check_file(fp)
-    assert result["frontmatter_errors"] == []
-    assert result["body_violations"] == []

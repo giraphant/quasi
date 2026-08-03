@@ -26,6 +26,8 @@ DEAD_NAMES = [
     "quasi-download batch",
     "mode: papers",
     "--finalize-book",
+    "localisation-agent",
+    "quasi:localisation-agent",
     "quasi:local-agent",
     "local-agent",
     "quasi-audit localise",

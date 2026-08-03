@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.59.1** (2026-08-04): **全量审计清掉测试残渣与一条不可达的 Agent 路径。**
+  - 全套测试审计显示，现有测试绝大多数确实守住运行合同与 institutional memory；最痛的 skill prose photographs 已在 0.58.5 移除。本轮继续删除审计确认的七项 construction-pinned、mechanism-duplicate 或 tautological 测试，只留下权威层的结构与行为保证，不再让 UI 标签、shell 源码行或内部常量冒充公共合同。
+  - `localisation-agent` 没有 descriptor row、`RUN_STAGE_REGISTRY` entry 或 Skill dispatch path，中文版本匹配早已由确定性的 `quasi-helpers localise scan|write` 完成。因此删除这个不可达 Agent，清理现行文档/模块上下文中的消费者叙述，并把名字加入 dead-name quarantine，防止无调用方的模型边界复活。
+  - 同时移除 `scripts/workflows/` 下四个已经清空的旧 materials / collections / derivatives / research scaffolding 目录；这些目录不承载生成器、descriptor row 或运行时状态。
+
 - **0.59.0** (2026-08-04): **Paper 的机械前进收进固定链，writer 在入口重证 exact refs。**
   - `run-stage` 新增 `until` 链模式；首条且唯一的链是 Paper `Acquire → Prepare → Analyse → Audit`。它故意从 Acquire 而不是 Search 开始：Search receipt 之后仍有 canonical slug、`local_owner` admission 与 same-identity coalescing，这些 identity 判断属于 driving skill，不能伪装成机械阶段推进。链不分支、不重试、不 join，也不跨 invocation 保存状态。
   - Descriptor row 的 `complete()` 跨字段谓词终于有了运行时归属。链在每个 `terminal.complete` 后调用 owning row predicate；schema 合法却谎称完成的 receipt 以 `incoherent_complete` 确定性停住，不再只靠测试发现。构建器同时校验 chain sequence 对 registry、carry reads 对 receipt required fields 的机械一致性。

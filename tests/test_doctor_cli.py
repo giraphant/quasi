@@ -87,14 +87,6 @@ def test_doctor_does_not_report_dokobot(tmp_path: Path):
     assert "dokobot" not in payload["summary"]["optional_missing"]
 
 
-def test_doctor_profile_registry_excludes_dokobot_and_download_profile():
-    doctor = load_doctor_module()
-
-    assert "download" not in doctor.EXTERNAL_PROFILES
-    serialized = json.dumps(doctor.EXTERNAL_PROFILES)
-    assert "dokobot" not in serialized.lower()
-
-
 def test_strict_optional_failures_have_distinct_exit_code():
     doctor = load_doctor_module()
 

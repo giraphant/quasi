@@ -24,7 +24,7 @@ Historical migration plans are intentionally not part of the active tree.
 Removed since 0.24.0 (no back-compat): `books`, `papers`, `metadata`, `validate`, `scholar`, `backfill`, `cndouban`.
 
 ## Dependencies
-- Internal: used by `metadata-agent`, `discovery-agent`, `localisation-agent`, and skill main processes
+- Internal: used by `metadata-agent`, `discovery-agent`, the deterministic `quasi-helpers localise` helper, and skill main processes
 - External APIs: OpenAlex, Crossref, OpenLibrary, Google Books (HTTP; rate limits surface as adapter errors), Google Scholar (HTML scrape with proxy support)
 - Scrapers: Goodreads, StoryGraph (curl_cffi), Amazon, Douban CN (direct HTTP subject lookup)
 - Python: requests, beautifulsoup4, curl_cffi (all in scripts/requirements.txt)

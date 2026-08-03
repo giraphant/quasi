@@ -522,30 +522,6 @@ def test_every_request_envelope_uses_shared_stage_tag(
     )
 
 
-def test_talk_analyse_prompt_requires_verified_section_ranges_and_full_index() -> None:
-    report = run_stage(
-        {
-            "kind": "talk",
-            "slug": "example-talk",
-            "stage": "analyse",
-            "context": {
-                "meta": {
-                    "title": "Example Talk",
-                    "date": "2026-08-01",
-                    "media": "recording.mp4",
-                },
-                "inputs": [],
-            },
-        }
-    )
-    prompt = report["direct"]["prompt"]
-
-    assert "时间：`[mm:ss]`–`[mm:ss]`" in prompt
-    assert "粒度细于分节摘要" in prompt
-    assert "分节摘要的每组起止时间" in prompt
-    assert "不得用相邻分节边界作未核对的推算" in prompt
-
-
 def test_stage_protocol_has_exactly_four_closed_terminal_branches() -> None:
     report = protocol_report()
     assert report["statuses"] == [

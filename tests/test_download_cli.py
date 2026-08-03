@@ -1393,11 +1393,6 @@ def test_ezproxy_throttle_treats_corrupt_state_as_no_prior(tmp_path):
     assert state.read_text().strip() == "1000.0"
 
 
-def test_ezproxy_min_interval_default_is_thirty():
-    mod = _load_module(DOWNLOAD, "download_throttle_default_under_test")
-    assert mod.EZPROXY_MIN_INTERVAL == 30
-
-
 def test_ezproxy_throttle_serializes_across_processes(tmp_path):
     """Real cross-process proof: the exclusive lock is held across the sleep,
     so concurrent processes pass the gate at least one interval apart. A version

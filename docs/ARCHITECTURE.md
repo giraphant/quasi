@@ -104,7 +104,6 @@ so unrelated subagents retain Claude Code's default row.
 |---|---|
 | `metadata-agent` | `quasi-search` + vault resolve → one canonical identity and local owner |
 | `discovery-agent` | `quasi-search book|paper` → bounded Author/Topic/citation candidates |
-| `localisation-agent` | `quasi-search book` localisation sidecar |
 | `steer-agent` | topic outline page + `quasi-search` |
 | `webcard-agent` | `quasi-search kagi` + WebFetch → topic `cards/` page |
 | `download-agent` | `quasi-download`, direct AA search import |
@@ -119,7 +118,7 @@ so unrelated subagents retain Claude Code's default row.
 
 ### Write ownership
 
-- `metadata-agent`, `discovery-agent`, and `localisation-agent` return JSON and do not write files.
+- `metadata-agent` and `discovery-agent` return JSON and do not write files.
 - `download-agent` reconciles or accepts one exact Book/Paper source through `quasi-download`; it returns that material's direct Acquire receipt, including a standard `needs_input` terminal for a Book year gate, and does not own caller manifests. A failed download preserves `failure_reason` and per-source `attempts` in its receipt.
 - `extract-agent` owns Paper/Book Prepare judgement and local recovery over caller-named refs. It invokes deterministic `quasi-extract` transactions; those CLI transactions own chapter files and `processing/chapters/{slug}/manifest.json`.
 - `analyse-agent`, `synthesis-agent`, `proofread-agent`, and `citecheck-agent` write only the exact product path assigned by the caller.
@@ -152,7 +151,8 @@ hints and current disk observations. One `material.search` Stage Unit gives
 specialist establishes the canonical identity and exact existing owner in one
 investigation; Search owns author order, year, identifiers, venue/publisher,
 access URLs, and canonical slug. Author/Topic candidate finding uses
-`discovery-agent`; Chinese-edition matching uses `localisation-agent`.
+`discovery-agent`; Chinese-edition matching uses the deterministic
+`quasi-helpers localise scan|write` helper.
 
 For 2–32 top-level Books/Papers, the skill preserves input order, normalises
 and coalesces duplicate identities before any writer, and drives independent
