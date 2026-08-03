@@ -6,7 +6,23 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
-import { makeOperationContext } from "./workflows/run-stage-context.mjs";
+
+/** @typedef {import("./workflows/artifact-contracts/generated.mjs").KindDefinition} KindDefinition */
+/** @typedef {import("./workflows/artifact-contracts/generated.mjs").KindName} KindName */
+/** @typedef {import("./workflows/artifact-contracts/generated.mjs").OperationName} OperationName */
+/** @typedef {import("./workflows/artifact-contracts/generated.mjs").OperationRow} OperationRow */
+/** @typedef {import("./workflows/artifact-contracts/generated.mjs").StageName} StageName */
+/** @typedef {import("./workflows/artifact-contracts/generated.mjs").WorkflowContext} WorkflowContext */
+/** @typedef {{name: string, entry: string, output: string}} WorkflowBuild */
+/** @typedef {{sequence: StageName[], carries: Array<{from: StageName, apply: (receipt: any, context: WorkflowContext) => WorkflowContext}>}} StageChain */
+/** @typedef {{
+ *   PIPELINE: Readonly<Record<KindName, KindDefinition>>,
+ *   OPERATION_ROWS: OperationRow[],
+ *   RUN_STAGE_REGISTRY: Record<string, Record<string, OperationName>>,
+ *   STAGE_CHAINS: Record<string, StageChain>,
+ *   resolveStage: (kind: unknown, stage: unknown) => any,
+ *   resolveStageContext: (resolved: any, slug: string, context: unknown) => WorkflowContext,
+ * }} WorkflowEntryModule */
 
 const execFileAsync = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -25,7 +41,12 @@ const ARTIFACT_CONTRACT_MODULE = join(
   ARTIFACT_CONTRACT_ROOT,
   "generated.mjs",
 );
+const ARTIFACT_CONTRACT_TYPES = join(
+  ARTIFACT_CONTRACT_ROOT,
+  "generated.d.mts",
+);
 const CHECK = process.argv.slice(2).includes("--check");
+/** @type {Partial<Record<OperationName, WorkflowContext>>} */
 const CHAIN_PROBE_CONTEXT_OVERRIDES = {};
 
 const ARTIFACT_CONTRACTS = [
@@ -38,11 +59,18 @@ const ARTIFACT_CONTRACTS = [
 
 const generatedArtifactContractModule =
   await renderArtifactContractModule();
+const generatedArtifactContractTypes =
+  await renderArtifactContractDeclarations();
 if (CHECK) {
   await assertCurrent(
     ARTIFACT_CONTRACT_MODULE,
     generatedArtifactContractModule,
     "artifact-contract module is stale; run npm run build:workflows",
+  );
+  await assertCurrent(
+    ARTIFACT_CONTRACT_TYPES,
+    generatedArtifactContractTypes,
+    "artifact-contract declarations are stale; run npm run build:workflows",
   );
 } else {
   await writeFile(
@@ -50,10 +78,16 @@ if (CHECK) {
     generatedArtifactContractModule,
     "utf8",
   );
+  await writeFile(
+    ARTIFACT_CONTRACT_TYPES,
+    generatedArtifactContractTypes,
+    "utf8",
+  );
 }
 
 for (const workflow of WORKFLOWS) await buildWorkflow(workflow);
 
+/** @param {WorkflowBuild} workflow */
 async function buildWorkflow({ name, entry, output }) {
   const entryModule = await import(
     `${pathToFileURL(entry).href}?workflow-build=${name}`
@@ -110,12 +144,14 @@ return await __quasiWorkflow.run({ agent, parallel, phase, log }, args)
   }
 }
 
+/** @param {WorkflowEntryModule} entryModule */
 function validatePipelineStructure({
   PIPELINE,
   OPERATION_ROWS,
   RUN_STAGE_REGISTRY,
   STAGE_CHAINS,
   resolveStage,
+  resolveStageContext,
 }) {
   if (!PIPELINE || typeof PIPELINE !== "object" || Array.isArray(PIPELINE))
     throw new Error("pipeline manifest must be an object keyed by kind");
@@ -124,15 +160,6 @@ function validatePipelineStructure({
 
   const rowCounts = new Map();
   for (const row of OPERATION_ROWS) {
-    if (!row || typeof row.operation !== "string" || !row.operation)
-      throw new Error("pipeline row is missing its operation join key");
-    const identityFields = ["stage", "effect", "agentType"].filter(
-      (field) => Object.hasOwn(row, field),
-    );
-    if (identityFields.length)
-      throw new Error(
-        `pipeline row operation=${row.operation} duplicates manifest identity fields=${identityFields.join(",")}`,
-      );
     rowCounts.set(row.operation, (rowCounts.get(row.operation) || 0) + 1);
   }
 
@@ -237,10 +264,9 @@ function validatePipelineStructure({
       const rawContext = CHAIN_PROBE_CONTEXT_OVERRIDES[operation] || {};
       let schema;
       try {
-        const context = makeOperationContext(
-          kind,
+        const context = resolveStageContext(
+          resolved,
           "probe",
-          operation,
           rawContext,
         );
         schema = resolved.row.schema(context);
@@ -275,6 +301,7 @@ function validatePipelineStructure({
   }
 }
 
+/** @returns {Promise<string>} */
 async function renderArtifactContractModule() {
   const python =
     process.env.PYTHON ||
@@ -333,18 +360,58 @@ ${declarations.join("\n\n")}
 `;
 }
 
+/** @returns {Promise<string>} */
+async function renderArtifactContractDeclarations() {
+  const python =
+    process.env.PYTHON ||
+    (process.env.VIRTUAL_ENV
+      ? join(process.env.VIRTUAL_ENV, "bin", "python")
+      : "python3");
+  const exporter = join(
+    ROOT,
+    "scripts",
+    "schemas",
+    "export_contracts.py",
+  );
+  const { stdout } = await execFileAsync(
+    python,
+    [
+      exporter,
+      "--typescript",
+      ...ARTIFACT_CONTRACTS.map((contract) => contract.type),
+    ],
+    {
+      cwd: ROOT,
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+  if (!stdout.startsWith("// GENERATED by scripts/build-workflows.mjs. DO NOT EDIT."))
+    throw new Error("artifact schema exporter omitted TypeScript declarations");
+  return stdout;
+}
+
+/**
+ * @param {string} path
+ * @param {string} expected
+ * @param {string} message
+ */
 async function assertCurrent(path, expected, message) {
   let current;
   try {
     current = await readFile(path, "utf8");
   } catch (error) {
-    if (error && error.code === "ENOENT")
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    )
       throw new Error(message);
     throw error;
   }
   if (current !== expected) throw new Error(message);
 }
 
+/** @param {string} source */
 function validateRuntimeBundle(source) {
   const metaExports = source.match(
     /^\s*export\s+const\s+meta\s*=/gm,
@@ -388,6 +455,7 @@ function validateRuntimeBundle(source) {
   );
 }
 
+/** @param {string} source */
 function validateBundleSize(source) {
   const bytes = Buffer.byteLength(source, "utf8");
   if (bytes > CLAUDE_WORKFLOW_MAX_BYTES)

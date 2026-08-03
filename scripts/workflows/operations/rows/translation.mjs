@@ -1,8 +1,15 @@
+import { contextValue } from "../../context-base.mjs";
+
+/** @typedef {import("../../artifact-contracts/generated.mjs").OperationRow} OperationRow */
+/** @typedef {(...args: any[]) => any} AnyFunction */
+
 const HASH = /^[0-9a-f]{64}$/;
 
+/** @param {unknown} value @returns {value is string} */
 export const validTranslationHash = (value) =>
   typeof value === "string" && HASH.test(value);
 
+/** @param {unknown} value @returns {string | null} */
 export function normalizeLanguage(value) {
   if (
     typeof value !== "string" ||
@@ -19,6 +26,10 @@ export function normalizeLanguage(value) {
     .join("-");
 }
 
+/**
+ * @param {string} slug
+ * @param {string} targetLanguage
+ */
 export function sourceRoles(slug, targetLanguage) {
   const langTag = targetLanguage.toLowerCase();
   return {
@@ -28,6 +39,11 @@ export function sourceRoles(slug, targetLanguage) {
   };
 }
 
+/**
+ * @param {string} path
+ * @param {string} slug
+ * @param {string} targetLanguage
+ */
 export function validRequestedSource(path, slug, targetLanguage) {
   const roles = sourceRoles(slug, targetLanguage);
   return [roles.canonical, roles.paperOcr, roles.derivativeRecovery].includes(
@@ -35,15 +51,22 @@ export function validRequestedSource(path, slug, targetLanguage) {
   );
 }
 
+/**
+ * @param {string} path
+ * @param {string} slug
+ * @param {string} targetLanguage
+ */
 export function validSelectableSource(path, slug, targetLanguage) {
   const roles = sourceRoles(slug, targetLanguage);
   return [roles.canonical, roles.paperOcr].includes(path);
 }
 
+/** @type {AnyFunction} */
 const nullableStringSchema = (properties = {}) => ({
   anyOf: [{ type: "null" }, { type: "string", ...properties }],
 });
 
+/** @type {AnyFunction} */
 const nullableNumberSchema = (properties = {}) => ({
   anyOf: [{ type: "null" }, { type: "number", ...properties }],
 });
@@ -123,6 +146,7 @@ const gateSchema = {
   },
 };
 
+/** @type {AnyFunction} */
 const validCoverage = (value) => {
   if (!value || typeof value !== "object") return false;
   if (value.signal === "pass")
@@ -187,9 +211,45 @@ const VALIDATION_SCHEMA = {
   },
 };
 
+/** @type {OperationRow[]} */
 export const translationOperationRows = [
   {
     operation: "translation.prepare",
+    context: (rawContext, base) => {
+      const targetLanguage = /** @type {string} */ (normalizeLanguage(
+        rawContext.target_language || rawContext.targetLanguage || "zh-CN",
+      ));
+      const target = targetLanguage.toLowerCase();
+      const stem = `${base.slug}-${target}`;
+      return {
+        ...base,
+        materialKey:
+          contextValue(rawContext, "materialKey", "material_key") ||
+          `translation:paper:${base.slug}:${targetLanguage}`,
+        targetLanguage,
+        target,
+        stem,
+        requestedSource:
+          contextValue(
+            rawContext,
+            "requestedSource",
+            "requested_source",
+          ) ||
+          rawContext.source_file ||
+          null,
+        sourceDecision:
+          contextValue(
+            rawContext,
+            "sourceDecision",
+            "source_decision",
+          ) || null,
+        tocJson:
+          contextValue(rawContext, "tocJson", "toc_json") || null,
+        tocPageSide:
+          contextValue(rawContext, "tocPageSide", "toc_page_side") ||
+          "original",
+      };
+    },
     refs: (
       {
         slug,

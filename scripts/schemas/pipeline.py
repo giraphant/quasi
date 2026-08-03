@@ -16,6 +16,7 @@ PIPELINE = {
                 "phase": "Acquire",
                 "effect": "writer",
                 "agent": "quasi:download-agent",
+                "artifacts": {"output": "sources/{slug}.pdf"},
             },
             {
                 "stage": "prepare",
@@ -23,6 +24,12 @@ PIPELINE = {
                 "phase": "Prepare",
                 "effect": "writer",
                 "agent": "quasi:extract-agent",
+                "artifacts": {
+                    "source": "sources/{slug}.pdf",
+                    "normalized": "processing/papers/{slug}/source.txt",
+                    "recoverySource": "processing/papers/{slug}/ocr.pdf",
+                    "recoveryText": "processing/papers/{slug}/ocr.txt",
+                },
             },
             {
                 "stage": "analyse",
@@ -30,6 +37,7 @@ PIPELINE = {
                 "phase": "Analyse",
                 "effect": "writer",
                 "agent": "quasi:analyse-agent",
+                "artifacts": {"output": "vault/papers/{slug}.md"},
             },
             {
                 "stage": "audit",
@@ -37,6 +45,7 @@ PIPELINE = {
                 "phase": "Audit",
                 "effect": "writer",
                 "agent": "quasi:audit-agent",
+                "artifacts": {"target": "vault/papers/{slug}.md"},
             },
         ],
         "chain": {
@@ -72,6 +81,14 @@ PIPELINE = {
                 "phase": "Prepare",
                 "effect": "writer",
                 "agent": "quasi:extract-agent",
+                "artifacts": {
+                    "source": "sources/{slug}.{format}",
+                    "normalized": "processing/chapters/{slug}/source.txt",
+                    "recoverySource": "processing/chapters/{slug}/ocr.pdf",
+                    "recoveryText": "processing/chapters/{slug}/ocr.txt",
+                    "outputDir": "processing/chapters/{slug}",
+                    "manifest": "processing/chapters/{slug}/manifest.json",
+                },
             },
             {
                 "stage": "analyse",
@@ -86,6 +103,7 @@ PIPELINE = {
                 "phase": "Synthesise",
                 "effect": "writer",
                 "agent": "quasi:synthesis-agent",
+                "artifacts": {"output": "vault/books/{slug}/00-overview.md"},
             },
             {
                 "stage": "audit",
@@ -93,6 +111,7 @@ PIPELINE = {
                 "phase": "Audit",
                 "effect": "writer",
                 "agent": "quasi:audit-agent",
+                "artifacts": {"target": "vault/books/{slug}"},
             },
         ],
     },
@@ -104,6 +123,14 @@ PIPELINE = {
                 "phase": "Prepare",
                 "effect": "writer",
                 "agent": "quasi:transcribe-agent",
+                "artifacts": {
+                    "processingDir": "processing/talks/{slug}",
+                    "manifest": "processing/talks/{slug}/manifest.json",
+                    "prepared": "vault/talks/{slug}/recording.mp4",
+                    "transcript": "vault/talks/{slug}/transcript.md",
+                    "subtitle": "vault/talks/{slug}/recording.srt",
+                    "canonical": "vault/talks/{slug}/talk.md",
+                },
             },
             {
                 "stage": "analyse",
@@ -111,6 +138,7 @@ PIPELINE = {
                 "phase": "Analyse",
                 "effect": "writer",
                 "agent": "quasi:analyse-agent",
+                "artifacts": {"output": "vault/talks/{slug}/talk.md"},
             },
             {
                 "stage": "audit",
@@ -118,6 +146,7 @@ PIPELINE = {
                 "phase": "Audit",
                 "effect": "writer",
                 "agent": "quasi:audit-agent",
+                "artifacts": {"target": "vault/talks/{slug}/talk.md"},
             },
         ],
     },
@@ -129,6 +158,11 @@ PIPELINE = {
                 "phase": "Prepare",
                 "effect": "writer",
                 "agent": "quasi:translate-agent",
+                "artifacts": {
+                    "output": "processing/translations/{slug}-{target}.pdf",
+                    "manifest": "processing/translations/{slug}-{target}.manifest.json",
+                    "recoverySource": "processing/translations/{slug}-{target}-reocr.pdf",
+                },
             }
         ],
     },
@@ -147,6 +181,7 @@ PIPELINE = {
                 "phase": "Search",
                 "effect": "writer",
                 "agent": "quasi:steer-agent",
+                "artifacts": {"outputPath": "vault/topics/{slug}/02-outline.md"},
             },
             {
                 "stage": "webcard",
@@ -154,6 +189,9 @@ PIPELINE = {
                 "phase": "Search",
                 "effect": "writer",
                 "agent": "quasi:webcard-agent",
+                "artifacts": {
+                    "cardPath": "vault/topics/{slug}/cards/{target}.md"
+                },
             },
             {
                 "stage": "synthesise-overview",
@@ -161,6 +199,10 @@ PIPELINE = {
                 "phase": "Synthesise",
                 "effect": "writer",
                 "agent": "quasi:synthesis-agent",
+                "artifacts": {
+                    "outlinePath": "vault/topics/{slug}/02-outline.md",
+                    "outputPath": "vault/topics/{slug}/00-overview.md",
+                },
             },
             {
                 "stage": "synthesise-resources",
@@ -168,6 +210,10 @@ PIPELINE = {
                 "phase": "Synthesise",
                 "effect": "writer",
                 "agent": "quasi:synthesis-agent",
+                "artifacts": {
+                    "outlinePath": "vault/topics/{slug}/02-outline.md",
+                    "outputPath": "vault/topics/{slug}/01-resources.md",
+                },
             },
             {
                 "stage": "audit",
@@ -175,6 +221,7 @@ PIPELINE = {
                 "phase": "Audit",
                 "effect": "writer",
                 "agent": "quasi:audit-agent",
+                "artifacts": {"target": "{target}"},
             },
         ],
     },
@@ -200,6 +247,7 @@ PIPELINE = {
                 "phase": "Search",
                 "effect": "readonly",
                 "agent": "general-purpose",
+                "artifacts": {"output": "vault/authors/{slug}.md"},
             },
             {
                 "stage": "synthesise",
@@ -207,6 +255,7 @@ PIPELINE = {
                 "phase": "Synthesise",
                 "effect": "writer",
                 "agent": "quasi:synthesis-agent",
+                "artifacts": {"output": "vault/authors/{slug}.md"},
             },
             {
                 "stage": "audit",
@@ -214,6 +263,7 @@ PIPELINE = {
                 "phase": "Audit",
                 "effect": "writer",
                 "agent": "quasi:audit-agent",
+                "artifacts": {"target": "vault/authors/{slug}.md"},
             },
         ],
     },

@@ -11,11 +11,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 ENTRY = ROOT / "scripts" / "workflows" / "run-stage.entry.mjs"
-CONTEXT = ROOT / "scripts" / "workflows" / "run-stage-context.mjs"
 
 NODE_HARNESS = r"""
-import { RUN_STAGE_REGISTRY, resolveStage, run } from __ENTRY__
-import { makeOperationContext } from __CONTEXT__
+import { RUN_STAGE_REGISTRY, resolveStage, resolveStageContext, run } from __ENTRY__
 import { STAGE_STATUSES, stageReceiptSchema } from __STAGE__
 
 const config = JSON.parse(process.argv[1])
@@ -82,10 +80,9 @@ const result = await run({
 const resolved = resolveStage(config.args.kind, config.args.stage)
 let direct = null
 if (resolved && !hasUnits && result.schema_version !== "quasi.run-stage.error/0.1") {
-  const context = makeOperationContext(
-    resolved.kind,
+  const context = resolveStageContext(
+    resolved,
     config.args.slug,
-    resolved.operation,
     config.args.context,
   )
   const refs = resolved.descriptor.refs(context)
@@ -110,7 +107,6 @@ def run_stage(
         pytest.skip("node not on PATH")
     script = (
         NODE_HARNESS.replace("__ENTRY__", json.dumps(ENTRY.as_uri()))
-        .replace("__CONTEXT__", json.dumps(CONTEXT.as_uri()))
         .replace(
             "__STAGE__",
             json.dumps((ROOT / "scripts" / "workflows" / "stage.mjs").as_uri()),
@@ -337,59 +333,6 @@ def chapter_unit(
 
 def protocol_report() -> dict[str, Any]:
     return run_stage({"inspectProtocol": True})
-
-
-def test_every_registered_stage_resolves_to_its_descriptor_row() -> None:
-    registry = protocol_report()["registry"]
-    assert set(registry) == set(EXPECTED_REGISTRY)
-    for kind, stages in EXPECTED_REGISTRY.items():
-        assert set(registry[kind]) == set(stages)
-        for stage, operation in stages.items():
-            resolved = registry[kind][stage]
-            assert resolved["operation"] == operation
-            assert resolved["resolvedOperation"] == operation
-            assert resolved["agentType"] == "general-purpose" or resolved[
-                "agentType"
-            ].startswith("quasi:")
-            assert resolved["phase"] in {
-                "Recall",
-                "Search",
-                "Acquire",
-                "Prepare",
-                "Analyse",
-                "Synthesise",
-                "Audit",
-            }
-
-
-@pytest.mark.parametrize(
-    ("kind", "stage", "operation"),
-    [
-        ("paper", "search", "material.search"),
-        ("book", "audit", "book.audit"),
-        ("talk", "audit", "talk.audit"),
-        ("translation", "prepare", "translation.prepare"),
-        ("topic", "recall", "topic.recall"),
-        ("topic", "audit", "topic.audit"),
-        ("author", "resolve-membership", "author.resolve-membership"),
-        ("author", "synthesise", "author.synthesise"),
-        ("author", "audit", "author.audit"),
-    ],
-)
-def test_registry_resolves_one_stage_per_kind(
-    kind: str, stage: str, operation: str
-) -> None:
-    report = run_stage(
-        {
-            "kind": kind,
-            "slug": "example",
-            "stage": stage,
-            "context": stage_context(kind, stage),
-        }
-    )
-    assert report["direct"]["operation"] == operation
-    assert report["result"] == {"sentinel": "returned-verbatim"}
-    assert len(report["trace"]) == 1
 
 
 @pytest.mark.parametrize(

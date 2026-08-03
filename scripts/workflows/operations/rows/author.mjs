@@ -3,10 +3,15 @@ import {
   BOOK_ARTIFACT_CONTRACT,
   PAPER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
+import { contextValue } from "../../context-base.mjs";
 import { actionPayloads, makeAuditRow } from "../shared.mjs";
+
+/** @typedef {import("../../artifact-contracts/generated.mjs").OperationRow} OperationRow */
+/** @typedef {(...args: any[]) => any} AnyFunction */
 
 const SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
 
+/** @type {AnyFunction} */
 const candidateSchema = (kind) => ({
   type: "object",
   additionalProperties: false,
@@ -121,11 +126,21 @@ const resolvedMemberSchema = {
   },
 };
 
+/** @type {(kind: "book" | "paper") => OperationRow} */
 const discoveryRow = (kind) => {
   const plural = kind === "book" ? "books" : "papers";
-  const operation = `author.discover-${plural}`;
+  const operation =
+    kind === "book"
+      ? "author.discover-books"
+      : "author.discover-papers";
   return {
     operation,
+    context: (rawContext, base) => ({
+      ...base,
+      fullName: contextValue(rawContext, "fullName", "full_name"),
+      topic: rawContext.topic,
+      count: rawContext.count,
+    }),
     refs: ({ materialKey, fullName, topic, count }) => ({
       materialKey,
       collectionKey: materialKey,
@@ -157,7 +172,7 @@ const discoveryRow = (kind) => {
       },
     }),
     complete: (receipt, context) =>
-      receipt.candidates.every((candidate) =>
+      receipt.candidates.every((/** @type {any} */ candidate) =>
         candidate.authors.includes(context.fullName),
       ),
     envelope: (_context, refs) => ({
@@ -181,14 +196,17 @@ const discoveryRow = (kind) => {
   };
 };
 
+/** @type {AnyFunction} */
 const membershipRefs = ({ materialKey, name, output, candidates }) => {
-  const requests = candidates.map(({ kind, slug }) => ({
-    kind,
-    slug,
-  }));
+  const requests = candidates.map(
+    (/** @type {any} */ { kind, slug }) => ({
+      kind,
+      slug,
+    }),
+  );
   const helperItems = [
     { kind: "author", slug: name },
-    ...candidates.map((candidate) => ({
+    ...candidates.map((/** @type {any} */ candidate) => ({
       kind: candidate.kind,
       slug: candidate.slug,
       ...(candidate.kind === "book"
@@ -214,14 +232,20 @@ const membershipRefs = ({ materialKey, name, output, candidates }) => {
   };
 };
 
+/** @type {AnyFunction} */
 const completeMembership = (receipt, context) => {
-  const requests = context.candidates.map(({ kind, slug }) => ({
-    kind,
-    slug,
-  }));
+  const requests = context.candidates.map(
+    (/** @type {any} */ { kind, slug }) => ({
+      kind,
+      slug,
+    }),
+  );
   return (
     receipt.resolved.length === requests.length &&
-    requests.every((request, index) => {
+    requests.every((
+      /** @type {any} */ request,
+      /** @type {number} */ index,
+    ) => {
       const row = receipt.resolved[index];
       if (
         row.kind !== request.kind ||
@@ -239,11 +263,17 @@ const completeMembership = (receipt, context) => {
   );
 };
 
+/** @type {OperationRow[]} */
 export const authorOperationRows = [
   discoveryRow("book"),
   discoveryRow("paper"),
   {
     operation: "author.resolve-membership",
+    context: (rawContext, base) => ({
+      ...base,
+      name: base.slug,
+      candidates: rawContext.candidates || [],
+    }),
     refs: membershipRefs,
     payloadProperties: (refs) => ({
       required: [
@@ -309,6 +339,16 @@ ${JSON.stringify(request, null, 2)}
   },
   {
     operation: "author.synthesise",
+    context: (rawContext, base) => ({
+      ...base,
+      name: base.slug,
+      fullName:
+        contextValue(rawContext, "fullName", "full_name") ||
+        contextValue(base.meta, "fullName", "full_name") ||
+        base.slug,
+      topic: rawContext.topic || base.meta.topic || "",
+      inputs: rawContext.inputs || [],
+    }),
     refs: ({ materialKey, inputs, output, mode }) => ({
       materialKey,
       inputs,
@@ -325,9 +365,13 @@ ${JSON.stringify(request, null, 2)}
       ],
       properties: {
         input_material_keys: {
-          const: inputs.map((input) => input.material_key),
+          const: inputs.map(
+            (/** @type {any} */ input) => input.material_key,
+          ),
         },
-        input_paths: { const: inputs.map((input) => input.path) },
+        input_paths: {
+          const: inputs.map((/** @type {any} */ input) => input.path),
+        },
         output_path: { const: output },
         artifact_roles: { const: ["canonical"] },
         materials_analyzed: { const: inputs.length },
@@ -338,7 +382,7 @@ ${JSON.stringify(request, null, 2)}
       [
         ...(context.mode === "create" ? ["create"] : ["repair"]),
         "reconciled",
-      ].includes(receipt.terminal.action),
+      ].includes(/** @type {string} */ (receipt.terminal.action)),
     envelope: (
       { materialKey, name, fullName, topic, diagnostics },
       { inputs, output, mode },
@@ -348,7 +392,7 @@ ${JSON.stringify(request, null, 2)}
       stage: "Synthesise",
       material_key: materialKey,
       collection_key: materialKey,
-      inputs: inputs.map((input) => ({
+      inputs: inputs.map((/** @type {any} */ input) => ({
         material_key: input.material_key,
         kind: input.kind,
         id: input.id,
@@ -356,8 +400,12 @@ ${JSON.stringify(request, null, 2)}
         path: input.path,
         title: input.title,
       })),
-      input_material_keys: inputs.map((input) => input.material_key),
-      input_paths: inputs.map((input) => input.path),
+      input_material_keys: inputs.map(
+        (/** @type {any} */ input) => input.material_key,
+      ),
+      input_paths: inputs.map(
+        (/** @type {any} */ input) => input.path,
+      ),
       output: { role: "canonical", path: output },
       identity: { slug: name, full_name: fullName, topic },
       artifact_contract: AUTHOR_ARTIFACT_CONTRACT,

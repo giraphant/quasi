@@ -69,17 +69,21 @@ Removed legacy bins:
 ## Workflow source and runtime
 
 `scripts/schemas/pipeline.py` is the single source of run-stage kind/stage order,
-operation identity (`operation`, display phase, effect, and agent), and declarative
-receipt-to-context carries. The existing Python exporter projects `PIPELINE` into
-`scripts/workflows/artifact-contracts/generated.mjs` alongside the canonical artifact
-contracts. `scripts/workflows/operations/rows/*.mjs` owns only operation behavior;
-`run-stage.entry.mjs` joins those rows to the projected manifest and derives both
-`RUN_STAGE_REGISTRY` and runtime chain functions. `scripts/build-workflows.mjs` rejects
-duplicate kind/stage pairs, missing or duplicate row joins, unregistered rows, invalid
-manifest identity, and carries whose source field is not required by the owning receipt
-schema in both build and `--check` mode. The pinned esbuild dependency produces only the
-committed `workflows/run-stage.mjs`; `npm run check:workflows` also rejects a stale
-projection, stale bundle, or forbidden runtime imports.
+operation identity (`operation`, display phase, effect, and agent), declarative
+receipt-to-context carries, and stage artifact path templates. The Python exporter
+projects `PIPELINE` into `scripts/workflows/artifact-contracts/generated.mjs` alongside
+the canonical artifact contracts, and emits `generated.d.mts` literal unions and
+interfaces from the same source. `scripts/workflows/operations/rows/*.mjs` owns
+operation-specific context derivation as well as request/receipt behavior;
+`run-stage.entry.mjs` supplies the shared passthrough/default base, expands manifest
+templates after row context is known, and derives both `RUN_STAGE_REGISTRY` and runtime
+chain functions. The former central context switch is gone. `scripts/build-workflows.mjs`
+rejects duplicate kind/stage pairs, missing or duplicate row joins, unregistered rows,
+invalid manifest identity, and carries whose source field is not required by the owning
+receipt schema in both build and `--check` mode. The pinned esbuild dependency produces
+the committed `workflows/run-stage.mjs`; `npm run check:workflows` also rejects a stale
+projection, declaration, bundle, or forbidden runtime import, then runs strict
+`tsc --noEmit` checking over the editable `.mjs` workflow layer.
 
 Skills are the drivers. They observe exact disk state through `quasi-status`,
 normalise and coalesce identity before writers, preserve batch input order, and

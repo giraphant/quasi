@@ -8,6 +8,10 @@ import {
   posixSingleQuote,
 } from "../shared.mjs";
 
+/** @typedef {import("../../artifact-contracts/generated.mjs").OperationRow} OperationRow */
+/** @typedef {(...args: any[]) => any} AnyFunction */
+
+/** @type {AnyFunction} */
 const preparedArtifactSchema = (paths) => ({
   type: "array",
   maxItems: 256,
@@ -27,13 +31,15 @@ const preparedArtifactSchema = (paths) => ({
   },
 });
 
+/** @type {AnyFunction} */
 const quoteOrNull = (value) =>
   value == null || value === "" ? null : posixSingleQuote(value);
 
+/** @type {OperationRow[]} */
 export const paperOperationRows = [
   {
     operation: "paper.acquire",
-    refs: ({ output, doi }) => ({ output, doi }),
+    refs: ({ output, meta }) => ({ output, doi: meta.doi || null }),
     payloadProperties: ({ output, doi }) => ({
       required: [
         "output_path",
@@ -166,9 +172,11 @@ export const paperOperationRows = [
       ]);
       return (
         typeof receipt.selected_input === "string" &&
-        receipt.artifacts.every((artifact) => allowed.has(artifact.path)) &&
+        receipt.artifacts.every((/** @type {any} */ artifact) =>
+          allowed.has(artifact.path),
+        ) &&
         receipt.artifacts.some(
-          (artifact) =>
+          (/** @type {any} */ artifact) =>
             artifact.role === "normalized_text" &&
             artifact.path === receipt.selected_input &&
             artifact.exists === true &&
@@ -200,6 +208,10 @@ export const paperOperationRows = [
   },
   {
     operation: "paper.analyse",
+    context: (rawContext, base) => ({
+      ...base,
+      input: rawContext.input || rawContext.selected_input,
+    }),
     refs: ({ input, output, mode }) => ({ input, output, mode }),
     payloadProperties: ({ input, output }) => ({
       required: ["input_path", "output_path", "artifact_roles"],
@@ -219,7 +231,7 @@ export const paperOperationRows = [
       [
         ...(context.mode === "create" ? ["create"] : ["repair"]),
         "reconciled",
-      ].includes(receipt.terminal.action),
+      ].includes(/** @type {string} */ (receipt.terminal.action)),
     envelope: ({ meta, materialKey, diagnostics }, refs) => ({
       schema_version: "quasi.stage.request/0.2",
       operation: "paper.analyse",

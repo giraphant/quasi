@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.61.0** (2026-08-04): **Artifact path grammar 与 Workflow 类型边界收口到同一份 Pipeline 来源。**
+  - Stage artifact path templates 现在与 kind/stage identity 和 carries 一起住在 `scripts/schemas/pipeline.py`；engine 统一展开模板与 passthrough/default base，真正的 per-operation context 判断回到 owning row，原先 217 行的集中 switch 因而删除，27 条 probe 的 registry、resolved identity、prompt 与 schema 保持逐字节相同。
+  - Python exporter 从同一份 manifest 额外生成 Kind/Stage/Operation literal unions 与 Pipeline/receipt declarations；保留 `.mjs` 的整个 `scripts/workflows/` 层现在由 strict `checkJs` + `tsc --noEmit` 检查，operation、stage、carry 名或 terminal access 的拼写错误都会成为编译错误。
+  - 两项 registry/row wiring 测试退出：0.60.0 的构建结构校验已经在相同错配下直接失败；生成/runtime parity、registry uniqueness、chain carry parity 与 bundle staleness 检查仍保留。
+
 - **0.60.0** (2026-08-04): **Pipeline 的阶段顺序、operation 身份与 carries 收口为一份 Python manifest。**
   - `scripts/schemas/pipeline.py` 现在唯一拥有 kind/stage 顺序、operation/phase/effect/agent 身份，以及 receipt-to-context carries；现有 Python exporter 像投影 artifact contracts 一样把它生成到 JavaScript，row 只保留 request/receipt schema、exact envelope 与 evidence behavior。
   - `RUN_STAGE_REGISTRY` 和 chain table 都从投影后的 `PIPELINE` 派生，手写 registry literal 与 `scripts/workflows/operations/chains.mjs` 消失。构建时现在会拒绝重复 `(kind, stage)`、manifest/row 缺失或重复 join，以及读取非 required receipt field 的 carry，让错配在 build 中失败，而不是留成 runtime surprise。

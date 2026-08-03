@@ -1,8 +1,13 @@
 import { TALK_ARTIFACT_CONTRACT } from "../../artifact-contracts/generated.mjs";
+import { contextValue } from "../../context-base.mjs";
 import { actionPayloads, makeAuditRow } from "../shared.mjs";
+
+/** @typedef {import("../../artifact-contracts/generated.mjs").OperationRow} OperationRow */
+/** @typedef {(...args: any[]) => any} AnyFunction */
 
 const HASH_PATTERN = "^[a-f0-9]{64}$";
 
+/** @type {AnyFunction} */
 const observationSchema = (path) => ({
   type: ["object", "null"],
   additionalProperties: false,
@@ -13,6 +18,7 @@ const observationSchema = (path) => ({
   },
 });
 
+/** @type {AnyFunction} */
 const generationSchema = (manifest) => ({
   type: ["object", "null"],
   additionalProperties: false,
@@ -65,9 +71,23 @@ export const TALK_EVIDENCE_RULES = [
   "分节摘要的每组起止时间与时间脉络的每个时间点必须逐项对照 transcript evidence 定位，不得用相邻分节边界作未核对的推算",
 ];
 
+/** @type {OperationRow[]} */
 export const talkOperationRows = [
   {
     operation: "talk.prepare",
+    context: (_rawContext, base) => ({
+      ...base,
+      title: base.meta.title,
+      date: base.meta.date,
+      language: base.meta.lang || base.meta.language || "auto",
+      engines: base.meta.engines || [],
+      media: base.meta.media,
+      prepareMedia: Boolean(
+        contextValue(base.meta, "prepareMedia", "prepare_media"),
+      ),
+      repairDiagnostics: base.diagnostics,
+      repair: base.mode === "repair",
+    }),
     refs: (
       {
         slug,
@@ -132,7 +152,8 @@ export const talkOperationRows = [
         context.subtitle,
         context.canonical,
         ...context.engines.map(
-          (engine) => `${context.processingDir}/transcript.${engine}.srt`,
+          (/** @type {any} */ engine) =>
+            `${context.processingDir}/transcript.${engine}.srt`,
         ),
       ]);
       return (
@@ -145,19 +166,24 @@ export const talkOperationRows = [
         (receipt.canonical_observation === null ||
           (receipt.canonical_observation.path === context.canonical &&
             receipt.canonical_observation.sha256 !== "0".repeat(64))) &&
-        receipt.artifacts.every((row) => allowed.has(row.path)) &&
+        receipt.artifacts.every((/** @type {any} */ row) =>
+          allowed.has(row.path),
+        ) &&
         receipt.artifacts.some(
-          (row) => row.role === "transcript" && row.path === context.transcript,
+          (/** @type {any} */ row) =>
+            row.role === "transcript" && row.path === context.transcript,
         ) &&
         (receipt.classification === "live"
           ? receipt.canonical_action === null &&
-            !receipt.artifacts.some((row) => row.role === "canonical")
+            !receipt.artifacts.some(
+              (/** @type {any} */ row) => row.role === "canonical",
+            )
           : receipt.canonical_observation !== null &&
             ["create", "repair", "reconciled"].includes(
               receipt.canonical_action,
             ) &&
             receipt.artifacts.some(
-              (row) =>
+              (/** @type {any} */ row) =>
                 row.role === "canonical" &&
                 row.path === context.canonical &&
                 row.sha256 === receipt.canonical_observation.sha256,
@@ -215,6 +241,13 @@ export const talkOperationRows = [
   },
   {
     operation: "talk.analyse",
+    context: (rawContext, base) => ({
+      ...base,
+      title: base.meta.title,
+      date: base.meta.date,
+      media: base.meta.media,
+      inputs: rawContext.inputs || [],
+    }),
     refs: ({ inputs, output, mode }) => ({ inputs, output, mode }),
     payloadProperties: ({ inputs, output }) => ({
       required: [
@@ -224,8 +257,12 @@ export const talkOperationRows = [
         "artifact_roles",
       ],
       properties: {
-        input_paths: { const: inputs.map((input) => input.path) },
-        input_sha256s: { const: inputs.map((input) => input.sha256) },
+        input_paths: {
+          const: inputs.map((/** @type {any} */ input) => input.path),
+        },
+        input_sha256s: {
+          const: inputs.map((/** @type {any} */ input) => input.sha256),
+        },
         output_path: { const: output },
         artifact_roles: {
           type: "array",
@@ -240,7 +277,7 @@ export const talkOperationRows = [
       [
         ...(context.mode === "create" ? ["create"] : ["repair"]),
         "reconciled",
-      ].includes(receipt.terminal.action),
+      ].includes(/** @type {string} */ (receipt.terminal.action)),
     envelope: (
       { materialKey, title, date, media, diagnostics },
       { inputs, output, mode },
@@ -249,7 +286,7 @@ export const talkOperationRows = [
       operation: "talk.analyse",
       stage: "Analyse",
       material_key: materialKey,
-      inputs: inputs.map((input) => ({
+      inputs: inputs.map((/** @type {any} */ input) => ({
         role: input.role,
         path: input.path,
         sha256: input.sha256,

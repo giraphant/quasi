@@ -2,6 +2,10 @@ import {
   BOOK_ARTIFACT_CONTRACT,
   PAPER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
+import { contextValue } from "../../context-base.mjs";
+
+/** @typedef {import("../../artifact-contracts/generated.mjs").OperationRow} OperationRow */
+/** @typedef {(...args: any[]) => any} AnyFunction */
 
 const MATERIAL_SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
 const MATERIAL_IDENTITY_CONFLICTS = [
@@ -13,6 +17,7 @@ const MATERIAL_IDENTITY_CONFLICTS = [
   "publication_type",
 ];
 
+/** @type {AnyFunction} */
 const identitySchema = (kind) => ({
   type: "object",
   additionalProperties: false,
@@ -61,6 +66,7 @@ const localOwnerSchema = {
   },
 };
 
+/** @type {AnyFunction} */
 const validLocalOwner = (owner, kind) => {
   if (owner === null) return true;
   if (!owner) return false;
@@ -73,9 +79,17 @@ const validLocalOwner = (owner, kind) => {
   return owner.path === expected && owner.match !== null;
 };
 
+/** @type {OperationRow[]} */
 export const materialSearchOperationRows = [
   {
     operation: "material.search",
+    context: (rawContext, base) => ({
+      ...base,
+      requestedSlug: base.slug,
+      query: rawContext.query || rawContext.request || base.meta,
+      yearDecision:
+        contextValue(rawContext, "yearDecision", "year_decision") || null,
+    }),
     refs: ({ materialKey, kind, requestedSlug, query, yearDecision }) => ({
       materialKey,
       kind,

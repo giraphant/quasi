@@ -1,4 +1,8 @@
 import { PIPELINE } from "./artifact-contracts/generated.mjs";
+import {
+  expandArtifactTemplates,
+  operationContextBase,
+} from "./context-base.mjs";
 import { defineOperation } from "./operations/define.mjs";
 import { authorOperationRows } from "./operations/rows/author.mjs";
 import { bookOperationRows } from "./operations/rows/book.mjs";
@@ -7,10 +11,27 @@ import { materialSearchOperationRows } from "./operations/rows/search.mjs";
 import { talkOperationRows } from "./operations/rows/talk.mjs";
 import { topicOperationRows } from "./operations/rows/topic.mjs";
 import { translationOperationRows } from "./operations/rows/translation.mjs";
-import { makeOperationContext } from "./run-stage-context.mjs";
+
+/** @typedef {import("./artifact-contracts/generated.mjs").KindName} KindName */
+/** @typedef {import("./artifact-contracts/generated.mjs").OperationDescriptor} OperationDescriptor */
+/** @typedef {import("./artifact-contracts/generated.mjs").OperationName} OperationName */
+/** @typedef {import("./artifact-contracts/generated.mjs").OperationRow} OperationRow */
+/** @typedef {import("./artifact-contracts/generated.mjs").PipelineStage} PipelineStage */
+/** @typedef {import("./artifact-contracts/generated.mjs").StageName} StageName */
+/** @typedef {import("./artifact-contracts/generated.mjs").StageReceipt} StageReceipt */
+/** @typedef {import("./artifact-contracts/generated.mjs").WorkflowContext} WorkflowContext */
+/** @typedef {{schema: (context: WorkflowContext) => Record<string, any>, contract: any, prompt: (context: WorkflowContext) => string}} DefinedOperation */
+/** @typedef {{kind: KindName, operation: OperationName, descriptor: OperationDescriptor, row: DefinedOperation}} ResolvedStage */
+/** @typedef {{sequence: StageName[], carries: Array<{from: StageName, apply: (receipt: StageReceipt, context: WorkflowContext) => WorkflowContext}>}} StageChain */
+/** @typedef {{slug?: any, label?: string, context?: WorkflowContext}} RunUnit */
+/** @typedef {{kind?: any, slug?: any, stage?: any, until?: any, context?: WorkflowContext, units?: RunUnit[]}} RunArgs */
+/** @typedef {{schema: Record<string, any>, agentType: string, phase: string, label: string}} AgentOptions */
+/** @typedef {(prompt: string, options: AgentOptions) => Promise<StageReceipt | null>} Agent */
+/** @typedef {{agent: Agent, parallel?: (thunks: Array<() => Promise<StageReceipt | null>>) => Promise<Array<StageReceipt | null>>, log?: (message: string) => void}} RunRuntime */
 
 export { PIPELINE };
 
+/** @type {OperationRow[]} */
 export const OPERATION_ROWS = [
   ...materialSearchOperationRows,
   ...paperOperationRows,
@@ -21,19 +42,24 @@ export const OPERATION_ROWS = [
   ...authorOperationRows,
 ];
 
-const descriptors = Object.fromEntries(
-  OPERATION_ROWS.map((row) => [row.operation, row]),
+const descriptors = /** @type {Record<OperationName, OperationRow>} */ (
+  Object.fromEntries(
+    OPERATION_ROWS.map((row) => [row.operation, row]),
+  )
 );
 
-const stageIdentities = Object.fromEntries(
-  Object.entries(PIPELINE).map(([kind, definition]) => [
-    kind,
-    Object.fromEntries(
-      definition.stages.map((identity) => [identity.stage, identity]),
-    ),
-  ]),
+const stageIdentities = /** @type {Record<KindName, Partial<Record<StageName, PipelineStage>>>} */ (
+  Object.fromEntries(
+    Object.entries(PIPELINE).map(([kind, definition]) => [
+      kind,
+      Object.fromEntries(
+        definition.stages.map((identity) => [identity.stage, identity]),
+      ),
+    ]),
+  )
 );
 
+/** @type {Record<string, Partial<Record<StageName, OperationName>>>} */
 export const RUN_STAGE_REGISTRY = Object.fromEntries(
   Object.entries(PIPELINE).map(([kind, definition]) => [
     kind,
@@ -44,6 +70,7 @@ export const RUN_STAGE_REGISTRY = Object.fromEntries(
 );
 RUN_STAGE_REGISTRY.translate = RUN_STAGE_REGISTRY.translation;
 
+/** @type {Partial<Record<KindName, StageChain>>} */
 export const STAGE_CHAINS = Object.fromEntries(
   Object.entries(PIPELINE).flatMap(([kind, definition]) =>
     definition.chain
@@ -55,6 +82,7 @@ export const STAGE_CHAINS = Object.fromEntries(
               carries: definition.chain.carries.map(
                 ({ from, field, to }) => ({
                   from,
+                  /** @param {StageReceipt} receipt @param {WorkflowContext} context */
                   apply: (receipt, context) => ({
                     ...context,
                     [to]: receipt[field],
@@ -78,6 +106,11 @@ export const workflowMeta = {
   ],
 };
 
+/**
+ * @param {string} code
+ * @param {RunArgs} args
+ * @param {string} message
+ */
 const errorResult = (code, args, message) => ({
   schema_version: "quasi.run-stage.error/0.1",
   status: "error",
@@ -90,23 +123,67 @@ const errorResult = (code, args, message) => ({
   },
 });
 
+/**
+ * @param {unknown} kind
+ * @param {unknown} stage
+ * @returns {ResolvedStage | null}
+ */
 export function resolveStage(kind, stage) {
   const normalizedKind = typeof kind === "string" ? kind.trim().toLowerCase() : "";
   const normalizedStage = typeof stage === "string" ? stage.trim().toLowerCase() : "";
-  const operation = RUN_STAGE_REGISTRY[normalizedKind]?.[normalizedStage];
+  const stageName = /** @type {StageName} */ (normalizedStage);
+  const operation = RUN_STAGE_REGISTRY[normalizedKind]?.[stageName];
   if (!operation) return null;
-  const canonicalKind = normalizedKind === "translate" ? "translation" : normalizedKind;
-  const identity = stageIdentities[canonicalKind][normalizedStage];
-  const descriptor = {
+  const canonicalKind = /** @type {KindName} */ (
+    normalizedKind === "translate" ? "translation" : normalizedKind
+  );
+  const identity = /** @type {PipelineStage} */ (
+    stageIdentities[canonicalKind][stageName]
+  );
+  const descriptor = /** @type {OperationDescriptor} */ ({
     ...descriptors[operation],
     stage: identity.phase,
     effect: identity.effect,
     agentType: identity.agent,
-  };
+    artifacts: identity.artifacts || {},
+  });
   return { kind: canonicalKind, operation, descriptor, row: defineOperation(descriptor) };
 }
 
+/**
+ * @param {ResolvedStage} resolved
+ * @param {any} slug
+ * @param {unknown} rawContext
+ * @returns {WorkflowContext}
+ */
+export function resolveStageContext(resolved, slug, rawContext) {
+  const templates = resolved.descriptor.artifacts;
+  const base = operationContextBase(
+    resolved.kind,
+    slug,
+    rawContext,
+    Object.keys(templates),
+  );
+  const context =
+    typeof resolved.descriptor.context === "function"
+      ? resolved.descriptor.context(
+          rawContext && typeof rawContext === "object" ? rawContext : {},
+          base,
+        )
+      : base;
+  return expandArtifactTemplates(templates, rawContext, context);
+}
+
+/**
+ * @param {RunRuntime} runtime
+ * @param {RunArgs} args
+ * @param {ResolvedStage} resolved
+ * @param {StageChain} chain
+ * @param {StageName} from
+ * @param {StageName} until
+ */
 async function runChain({ agent, log }, args, resolved, chain, from, until) {
+  /** @type {Array<{stage: StageName, receipt: any}>} */
   const receipts = [];
   let accumulatedContext =
     args.context && typeof args.context === "object" ? args.context : {};
@@ -116,18 +193,18 @@ async function runChain({ agent, log }, args, resolved, chain, from, until) {
   const untilIndex = chain.sequence.indexOf(until);
 
   for (const currentStage of chain.sequence.slice(startIndex, untilIndex + 1)) {
-    const current =
+    const current = /** @type {ResolvedStage} */ (
       currentStage === from
         ? resolved
-        : resolveStage(resolved.kind, currentStage);
+        : resolveStage(resolved.kind, currentStage)
+    );
     let stageContext;
     let prompt;
     let schema;
     try {
-      stageContext = makeOperationContext(
-        resolved.kind,
+      stageContext = resolveStageContext(
+        current,
         args.slug,
-        current.operation,
         accumulatedContext,
       );
       prompt = current.row.prompt(stageContext);
@@ -196,8 +273,15 @@ async function runChain({ agent, log }, args, resolved, chain, from, until) {
   };
 }
 
+/**
+ * @param {RunRuntime} runtime
+ * @param {unknown} inputArgs
+ */
 export async function run({ agent, parallel, log }, inputArgs) {
-  const args = inputArgs && typeof inputArgs === "object" ? inputArgs : {};
+  const args =
+    inputArgs && typeof inputArgs === "object"
+      ? /** @type {RunArgs} */ (inputArgs)
+      : {};
   const resolved = resolveStage(args.kind, args.stage);
   if (!resolved) {
     const normalizedKind =
@@ -253,10 +337,9 @@ export async function run({ agent, parallel, log }, inputArgs) {
       let prompt;
       let schema;
       try {
-        const context = makeOperationContext(
-          resolved.kind,
+        const context = resolveStageContext(
+          resolved,
           unitSlug,
-          resolved.operation,
           unit?.context,
         );
         prompt = resolved.row.prompt(context);
@@ -320,7 +403,7 @@ export async function run({ agent, parallel, log }, inputArgs) {
   let prompt;
   let schema;
   try {
-    context = makeOperationContext(resolved.kind, args.slug, resolved.operation, args.context);
+    context = resolveStageContext(resolved, args.slug, args.context);
     prompt = resolved.row.prompt(context);
     schema = resolved.row.schema(context);
   } catch (error) {

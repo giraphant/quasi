@@ -1,8 +1,21 @@
 import { stageContract, stageReceiptSchema } from "../stage.mjs";
 
+/** @typedef {import("../artifact-contracts/generated.mjs").JsonSchema} JsonSchema */
+/** @typedef {import("../artifact-contracts/generated.mjs").OperationDescriptor} OperationDescriptor */
+/** @typedef {import("../artifact-contracts/generated.mjs").WorkflowContext} WorkflowContext */
+
+/** @param {any} fragment @returns {WorkflowContext} */
 const asFragment = (fragment) =>
   fragment && typeof fragment === "object" ? fragment : {};
 
+/**
+ * @param {OperationDescriptor} descriptor
+ * @returns {{
+ *   schema: (context: WorkflowContext) => JsonSchema,
+ *   contract: any,
+ *   prompt: (context: WorkflowContext) => string,
+ * }}
+ */
 export function defineOperation(descriptor) {
   const {
     operation,
@@ -15,7 +28,9 @@ export function defineOperation(descriptor) {
     envelope,
     promptText,
   } = descriptor;
+  /** @param {WorkflowContext} context */
   const refs = (context) => makeRefs(context);
+  /** @param {WorkflowContext} context @returns {JsonSchema} */
   const schema = (context) => {
     const exactRefs = refs(context);
     const payload = asFragment(payloadProperties(exactRefs));
@@ -32,6 +47,7 @@ export function defineOperation(descriptor) {
     });
   };
   const contract = stageContract({ schema: null, complete });
+  /** @param {WorkflowContext} context @returns {string} */
   const prompt = (context) => {
     const request = envelope(context, refs(context));
     return promptText
