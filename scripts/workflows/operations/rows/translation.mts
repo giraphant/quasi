@@ -303,8 +303,6 @@ export const translationOperationRows: OperationRow[] = [
       receipt.backend !== null &&
       ["created", "reused", "recovered"].includes(receipt.disposition) &&
       receipt.gate === null &&
-      receipt.output_path === context.output &&
-      receipt.manifest_path === context.manifest &&
       validRequestedSource(
         receipt.source.path,
         context.slug,

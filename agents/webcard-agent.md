@@ -25,7 +25,7 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 
 ## 回执
 
-只返回 caller schema 的 closed `quasi.stage.receipt/0.2`，逐字回显 `card_path=exact_output` 与 `subq=web_task.subq`，并返回 `card_status,wrote_card,card_available,title,objects,sources,evidence,note`：
+只返回 caller schema 的 closed `quasi.stage.receipt/0.3`，逐字回显 `card_path=exact_output` 与 `subq=web_task.subq`，并返回 `card_status,wrote_card,card_available,title,objects,sources,evidence,note`：
 
 - 具体用户选择不可替代：`needs_input` 和明确问题；
 - 已知检索/读取/验证失败：`failed`；writer outcome 不可观察：`blocked`。

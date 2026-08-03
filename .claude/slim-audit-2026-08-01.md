@@ -172,7 +172,7 @@
 
 - `member.admission-probe`：根指南 `CLAUDE.md/AGENTS.md:35` 说 collection/research 应通过该 receipt admission；但 active `collect-material/SKILL.md:73-76` 明确“不要调用”，`research-topic/SKILL.md:90-104` 直接调用 `quasi-status --identity`，全仓没有 skill dispatch `kind:"member"`。应先选定唯一合同：按当前 skill 行为则删 `member.mjs`、entry/context registry 和根指南旧句；若根指南才是目标，则这不是瘦身项而是 skill regression。不要同时保留两条路径。
 - `translate` kind alias：`run-stage.entry.mjs:50,80` 把 `translate` 映射到 `translation`，测试 `tests/test_run_stage.py:120-137` 仍只登记 `translate`；这是明确兼容 alias。无兼容方针下只保留 `translation` 并同步 tests/skill caller。
-- request schema tag 漂移：同一个 Stage request boundary 同时存在 `quasi.stage.request/0.2` 和 13 个 `...request/0.1|0.2` 名称（例如 `paper.mjs:164,262,309,379`; `book.mjs:342,505,582,647,718`; `talk.mjs:218,288,350`）。这些 tag 当前没有通用 validator，除 Topic agents 明确要求 `quasi.stage.request/0.2` 外也无分派用途。建议无兼容升级为一个 `quasi.stage.request/0.2`，由 `defineOperation` 注入；不要保留旧 tag alias。当前 `quasi.stage.receipt/0.2` 是 live shared receipt，不是旧版本。
+- request schema tag 漂移：同一个 Stage request boundary 同时存在 `quasi.stage.request/0.2` 和 13 个 `...request/0.1|0.2` 名称（例如 `paper.mjs:164,262,309,379`; `book.mjs:342,505,582,647,718`; `talk.mjs:218,288,350`）。这些 tag 当前没有通用 validator，除 Topic agents 明确要求 `quasi.stage.request/0.2` 外也无分派用途。建议无兼容升级为一个 `quasi.stage.request/0.2`，由 `defineOperation` 注入；不要保留旧 tag alias。当前 `quasi.stage.receipt/0.3` 是 live shared receipt，不是旧版本。
 
 ### 4.3 明确 legacy 兼容实现
 

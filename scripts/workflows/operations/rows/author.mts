@@ -323,7 +323,7 @@ Echo the request's collection_key, output_path, and requests exactly. Any missin
 reordered, foreign, malformed, or contradictory helper row is a known failed receipt; do
 not repair or guess. A known failure still echoes requests, sets output_exists=false and
 resolved=[], and does not invent partial rows. Return only one closed
-quasi.stage.receipt/0.2 with operation="author.resolve-membership", stage="Search",
+quasi.stage.receipt/0.3 with operation="author.resolve-membership", stage="Search",
 material_key and effect echoed exactly, attempt=1, and one honest four-way terminal.
 \`\`\`json
 ${JSON.stringify(request, null, 2)}

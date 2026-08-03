@@ -46,7 +46,7 @@ Audit 仍由本次 Audit receipt 证明。不要仅凭文件存在就报告成�
 
 - `quasi-status` 是可重复调用的 disk oracle；`--identity` 只用于 Paper/Book/Talk 的 canonical
 frontmatter admission。
-- 单阶段返回 `quasi.stage.receipt/0.2`；Paper 链返回 `quasi.run-stage.chain/0.1`，内含原样
+- 单阶段返回 `quasi.stage.receipt/0.3`；Paper 链返回 `quasi.run-stage.chain/0.1`，内含原样
 Stage receipts。唯一 terminal union 是
 `complete|needs_input|blocked|failed`，非 complete terminal 带一个 typed `issue`。
 - Search 的 `identity`、`local_owner` 与用户决定构成本次 canonical context；随后每次 status

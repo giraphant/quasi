@@ -1,4 +1,8 @@
-import { stageContract, stageReceiptSchema } from "../stage.mts";
+import {
+  stageContract,
+  stageReceiptPartition,
+  type StageReceiptPartition,
+} from "../stage.mts";
 import type {
   JsonSchema,
   OperationDescriptor,
@@ -6,6 +10,7 @@ import type {
 } from "../artifact-contracts/generated.mjs";
 
 export interface DefinedOperation {
+  receiptSchema: (context: WorkflowContext) => StageReceiptPartition;
   schema: (context: WorkflowContext) => JsonSchema;
   contract: any;
   prompt: (context: WorkflowContext) => string;
@@ -29,10 +34,12 @@ export function defineOperation(
     promptText,
   } = descriptor;
   const refs = (context: WorkflowContext) => makeRefs(context);
-  const schema = (context: WorkflowContext): JsonSchema => {
+  const receiptSchema = (
+    context: WorkflowContext,
+  ): StageReceiptPartition => {
     const exactRefs = refs(context);
     const payload = asFragment(payloadProperties(exactRefs));
-    return stageReceiptSchema({
+    return stageReceiptPartition({
       operation,
       stage,
       materialKey: context.materialKey,
@@ -44,6 +51,8 @@ export function defineOperation(
         : {},
     });
   };
+  const schema = (context: WorkflowContext): JsonSchema =>
+    receiptSchema(context).modelSchema;
   const contract = stageContract({ schema: null, complete });
   const prompt = (context: WorkflowContext): string => {
     const request = envelope(context, refs(context));
@@ -51,5 +60,5 @@ export function defineOperation(
       ? promptText(request)
       : JSON.stringify(request, null, 2);
   };
-  return { schema, contract, prompt };
+  return { receiptSchema, schema, contract, prompt };
 }

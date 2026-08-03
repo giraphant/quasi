@@ -154,7 +154,6 @@ export const talkOperationRows: OperationRow[] = [
         ),
       ]);
       return (
-        receipt.slug === context.slug &&
         receipt.source_observation !== null &&
         receipt.source_observation.path === context.media &&
         receipt.generation_observation !== null &&

@@ -38,4 +38,4 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 
 ## 回执
 
-只返回 StructuredOutput 要求的 closed `quasi.stage.receipt/0.2`；不得在同一 invocation 重放 writer。
+只返回 StructuredOutput 要求的 closed `quasi.stage.receipt/0.3`；不得在同一 invocation 重放 writer。

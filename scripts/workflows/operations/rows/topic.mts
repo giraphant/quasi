@@ -83,7 +83,7 @@ max_items. A recalled item's path is an exact proved canonical path or explicit 
 non-null path only when that product was proved present and read; otherwise return null rather
 than derive or guess it.
 
-Return only a closed quasi.stage.receipt/0.2 receipt with schema_version,operation,stage,
+Return only a closed quasi.stage.receipt/0.3 receipt with schema_version,operation,stage,
 material_key,effect,attempt,research_key,query,max_items,items,terminal. Echo
 research_key/query/max_items exactly. terminal is one of complete|needs_input|blocked|failed:
 complete proves the recalled rows needed by membership and has issue:null; needs_input carries
@@ -195,20 +195,10 @@ const validRecalledItem: AnyFunction = (item) =>
 
 const recallContext: AnyFunction = (context) => context.state || context;
 
-const topicRecallEcho: AnyFunction = (receipt, context) => {
-  const expected = recallContext(context);
-  return (
-    receipt.research_key === expected.researchKey &&
-    receipt.query === (expected.desc || expected.query) &&
-    receipt.max_items === (expected.maxItems || expected.max_items)
-  );
-};
-
 const completeTopicRecall: AnyFunction = (receipt, context) => {
   const expected = recallContext(context);
   const maxItems = expected.maxItems || expected.max_items;
   return (
-    topicRecallEcho(receipt, context) &&
     receipt.items.length <= maxItems &&
     receipt.items.every((item: any) =>
       validRecalledItem(item),
@@ -642,8 +632,7 @@ const synthesisRow = (
     refs: (context) => synthesisRefs({ ...context, outputRole }),
     payloadProperties: synthesisPayload,
     terminalPayloads: synthesisTerminalPayloads,
-    complete: (receipt, context) =>
-      receipt.output_path === context.outputPath,
+    complete: () => true,
     envelope: (_context, refs) => synthesisEnvelope(operation, refs),
   };
 };
@@ -664,8 +653,7 @@ export const topicOperationRows: OperationRow[] = [
     refs: steerRefs,
     payloadProperties: steerPayload,
     terminalPayloads: steerTerminalPayloads,
-    complete: (receipt, context) =>
-      receipt.output_path === context.outputPath,
+    complete: () => true,
     envelope: (_context, refs) => ({
       schema_version: "quasi.stage.request/0.2",
       operation: "topic.steer",

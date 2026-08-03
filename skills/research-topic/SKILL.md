@@ -63,7 +63,7 @@ description: Use when the user wants to define and research a precise topic thro
 - `card_refs`：只有 `card_available:true` 的 `{slug,path,subq,title}`；`card_status:empty` 不产生 ref。
 - 当前 `subquestions`、未完成工作、用户回答与轮数只是会话内判断记录。
 
-`run-stage` 返回 `quasi.stage.receipt/0.2`；terminal 只有
+`run-stage` 返回 `quasi.stage.receipt/0.3`；terminal 只有
 `complete|needs_input|blocked|failed`。`complete` 之后仍核对 expected exact artifact；其它 terminal
 带一个 typed `issue`。断点续跑不要求保留这些 receipt。
 

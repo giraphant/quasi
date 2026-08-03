@@ -53,7 +53,8 @@ Every Workflow invocation selects one data row:
   completion_contract }
 ```
 
-- Receipts share `quasi.stage.receipt/0.2` and exactly four terminals:
+- Receipts share `quasi.stage.receipt/0.3` and exactly four terminals; run-stage
+  host-stamps top-level single-value `const` fields after model-output validation:
   `complete | needs_input | blocked | failed`.
 - `workflows/run-stage.mjs` accepts `kind`, `slug`, `stage`, and caller context,
   resolves one row, makes one Agent call, and returns the result.

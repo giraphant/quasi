@@ -14,7 +14,11 @@ import { materialSearchOperationRows } from "./operations/rows/search.mts";
 import { talkOperationRows } from "./operations/rows/talk.mts";
 import { topicOperationRows } from "./operations/rows/topic.mts";
 import { translationOperationRows } from "./operations/rows/translation.mts";
-import { STAGE_STATUSES, stageReceiptSchema } from "./stage.mts";
+import {
+  STAGE_STATUSES,
+  stageReceiptPartition,
+  stageReceiptSchema,
+} from "./stage.mts";
 import type {
   KindName,
   OperationDescriptor,
@@ -26,7 +30,12 @@ import type {
   WorkflowContext,
 } from "./artifact-contracts/generated.mjs";
 
-export { PIPELINE, STAGE_STATUSES, stageReceiptSchema };
+export {
+  PIPELINE,
+  STAGE_STATUSES,
+  stageReceiptPartition,
+  stageReceiptSchema,
+};
 
 export interface ResolvedStage {
   kind: KindName;
@@ -71,7 +80,7 @@ interface AgentOptions {
 type Agent = (
   prompt: string,
   options: AgentOptions,
-) => Promise<StageReceipt | null>;
+) => Promise<WorkflowContext | null>;
 
 interface RunRuntime {
   agent: Agent;
@@ -170,6 +179,29 @@ const errorResult = (code: string, args: RunArgs, message: string) => ({
   },
 });
 
+const stampStageReceipt = (
+  stampedValues: WorkflowContext,
+  modelOutput: WorkflowContext | null,
+): StageReceipt | null => {
+  if (modelOutput == null) return null;
+  const collisions = Object.keys(stampedValues).filter((key) =>
+    Object.prototype.hasOwnProperty.call(modelOutput, key),
+  );
+  if (collisions.length > 0)
+    throw new Error(
+      `validated model output contains host-stamped receipt fields: ${collisions.join(", ")}`,
+    );
+  return { ...stampedValues, ...modelOutput } as StageReceipt;
+};
+
+const dispatchStageUnit = async (
+  agent: Agent,
+  prompt: string,
+  options: AgentOptions,
+  stampedValues: WorkflowContext,
+): Promise<StageReceipt | null> =>
+  stampStageReceipt(stampedValues, await agent(prompt, options));
+
 export function resolveStage(
   kind: unknown,
   stage: unknown,
@@ -242,6 +274,7 @@ async function runChain(
     let stageContext;
     let prompt;
     let schema;
+    let stampedValues;
     try {
       stageContext = resolveStageContext(
         current,
@@ -249,7 +282,8 @@ async function runChain(
         accumulatedContext,
       );
       prompt = current.row.prompt(stageContext);
-      schema = current.row.schema(stageContext);
+      ({ modelSchema: schema, stampedValues } =
+        current.row.receiptSchema(stageContext));
     } catch (error) {
       receipts.push({
         stage: currentStage,
@@ -266,12 +300,17 @@ async function runChain(
     if (typeof log === "function") {
       log(`${currentStage} — ${String(args.slug).slice(0, 60)}`);
     }
-    const receipt = await agent(prompt, {
-      schema,
-      agentType: current.descriptor.agentType,
-      phase: current.descriptor.stage,
-      label: `${args.slug}:${currentStage}`,
-    });
+    const receipt = await dispatchStageUnit(
+      agent,
+      prompt,
+      {
+        schema,
+        agentType: current.descriptor.agentType,
+        phase: current.descriptor.stage,
+        label: `${args.slug}:${currentStage}`,
+      },
+      stampedValues,
+    );
     stoppedAt = currentStage;
     receipts.push({ stage: currentStage, receipt });
 
@@ -376,6 +415,7 @@ export async function run(
       const unitArgs = { ...args, slug: unitSlug, context: unit?.context };
       let prompt;
       let schema;
+      let stampedValues;
       try {
         const context = resolveStageContext(
           resolved,
@@ -383,7 +423,8 @@ export async function run(
           unit?.context,
         );
         prompt = resolved.row.prompt(context);
-        schema = resolved.row.schema(context);
+        ({ modelSchema: schema, stampedValues } =
+          resolved.row.receiptSchema(context));
       } catch (error) {
         receipts[index] = errorResult(
           "run-stage.invalid_context",
@@ -409,6 +450,7 @@ export async function run(
         index,
         prompt,
         schema,
+        stampedValues,
         label: `${unitSlug}:${args.stage}${cleanLabel ? `:${cleanLabel}` : ""}`,
       });
     }
@@ -416,13 +458,18 @@ export async function run(
       log(`${args.stage} × ${units.length} — ${String(args.slug).slice(0, 60)}`);
     }
     const thunks = pending.map(
-      ({ prompt, schema, label }) => async () =>
-        agent(prompt, {
-          schema,
-          agentType: resolved.descriptor.agentType,
-          phase: resolved.descriptor.stage,
-          label,
-        }),
+      ({ prompt, schema, stampedValues, label }) => async () =>
+        dispatchStageUnit(
+          agent,
+          prompt,
+          {
+            schema,
+            agentType: resolved.descriptor.agentType,
+            phase: resolved.descriptor.stage,
+            label,
+          },
+          stampedValues,
+        ),
     );
     const dispatched =
       typeof parallel === "function"
@@ -442,20 +489,27 @@ export async function run(
   let context;
   let prompt;
   let schema;
+  let stampedValues;
   try {
     context = resolveStageContext(resolved, args.slug, args.context);
     prompt = resolved.row.prompt(context);
-    schema = resolved.row.schema(context);
+    ({ modelSchema: schema, stampedValues } =
+      resolved.row.receiptSchema(context));
   } catch (error) {
     return errorResult("run-stage.invalid_context", args, error instanceof Error ? error.message : String(error));
   }
   if (typeof log === "function") {
     log(`${args.stage} — ${String(args.slug).slice(0, 60)}`);
   }
-  return agent(prompt, {
-    schema,
-    agentType: resolved.descriptor.agentType,
-    phase: resolved.descriptor.stage,
-    label: `${args.slug}:${args.stage}`,
-  });
+  return dispatchStageUnit(
+    agent,
+    prompt,
+    {
+      schema,
+      agentType: resolved.descriptor.agentType,
+      phase: resolved.descriptor.stage,
+      label: `${args.slug}:${args.stage}`,
+    },
+    stampedValues,
+  );
 }

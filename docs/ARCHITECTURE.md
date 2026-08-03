@@ -97,8 +97,10 @@ select an applicable stage from
 `Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`.
 Without `until`, each run-stage invocation selects one descriptor row and, for
 each request unit, gives one specialist a goal, exact refs, declared capabilities,
-and a closed `quasi.stage.receipt/0.2` schema, then returns that unit's terminal
-unchanged. A single invocation may fan out within one stage when every unit writes
+and a closed `quasi.stage.receipt/0.3` model-facing schema. After StructuredOutput
+validates the model-produced judgement fields and complete terminal, run-stage stamps
+the top-level single-value `const` fields and returns the full receipt. A single
+invocation may fan out within one stage when every unit writes
 a distinct exact output; prompt-identical duplicate requests are rejected. With
 `until`, run-stage walks only the registered fixed slice, stopping when a terminal
 is not complete or the owning row's cross-field completion predicate rejects it.

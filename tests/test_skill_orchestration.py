@@ -58,7 +58,7 @@ def test_mirrored_maintainer_guides_are_identical() -> None:
 
 
 def test_receipt_version_is_synced_between_stage_module_and_guide() -> None:
-    version = "quasi.stage.receipt/0.2"
+    version = "quasi.stage.receipt/0.3"
     stage = (ROOT / "scripts" / "workflows" / "stage.mts").read_text(
         encoding="utf-8"
     )

@@ -12,7 +12,7 @@ import type {
 
 export type StageStatus = StageTerminal["status"];
 
-export const STAGE_RECEIPT_VERSION = "quasi.stage.receipt/0.2";
+export const STAGE_RECEIPT_VERSION = "quasi.stage.receipt/0.3";
 
 export const STAGE_STATUSES: StageStatus[] = [
   "complete",
@@ -127,7 +127,43 @@ export interface StageReceiptDefinition {
   terminalPayloads?: WorkflowContext;
 }
 
-export function stageReceiptSchema({
+export interface StageReceiptPartition {
+  modelSchema: JsonSchema;
+  stampedValues: WorkflowContext;
+}
+
+export const partitionStageReceiptSchema = (
+  fullSchema: JsonSchema,
+): StageReceiptPartition => {
+  const properties: WorkflowContext = fullSchema.properties || {};
+  const stampedKeys = new Set(
+    Object.entries(properties)
+      .filter(([, propertySchema]) =>
+        propertySchema &&
+        typeof propertySchema === "object" &&
+        Object.prototype.hasOwnProperty.call(propertySchema, "const"),
+      )
+      .map(([key]) => key),
+  );
+  return {
+    modelSchema: {
+      ...fullSchema,
+      required: (fullSchema.required || []).filter(
+        (key: string) => !stampedKeys.has(key),
+      ),
+      properties: Object.fromEntries(
+        Object.entries(properties).filter(([key]) => !stampedKeys.has(key)),
+      ),
+    },
+    stampedValues: Object.fromEntries(
+      Object.entries(properties)
+        .filter(([key]) => stampedKeys.has(key))
+        .map(([key, propertySchema]) => [key, propertySchema.const]),
+    ),
+  };
+};
+
+export function stageReceiptPartition({
   operation,
   stage,
   materialKey,
@@ -135,8 +171,8 @@ export function stageReceiptSchema({
   required = [],
   properties = {},
   terminalPayloads = {},
-}: StageReceiptDefinition): JsonSchema {
-  return annotateConstTypes({
+}: StageReceiptDefinition): StageReceiptPartition {
+  const fullSchema = annotateConstTypes({
     type: "object",
     additionalProperties: false,
     required: [
@@ -160,6 +196,13 @@ export function stageReceiptSchema({
       terminal: stageTerminalSchema(operation, terminalPayloads),
     },
   });
+  return partitionStageReceiptSchema(fullSchema);
+}
+
+export function stageReceiptSchema(
+  definition: StageReceiptDefinition,
+): JsonSchema {
+  return stageReceiptPartition(definition).modelSchema;
 }
 
 // The common matrix is intentionally small. It checks the meaning of the four

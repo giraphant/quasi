@@ -92,10 +92,14 @@ if (resolved && !hasUnits && result.schema_version !== "quasi.run-stage.error/0.
     config.args.context,
   )
   const refs = resolved.descriptor.refs(context)
+  const receiptSchema = typeof resolved.row.receiptSchema === "function"
+    ? resolved.row.receiptSchema(context)
+    : { modelSchema: resolved.row.schema(context), stampedValues: null }
   direct = {
     operation: resolved.operation,
     prompt: resolved.row.prompt(context),
-    schema: resolved.row.schema(context),
+    schema: receiptSchema.modelSchema,
+    stampedValues: receiptSchema.stampedValues,
     request: resolved.descriptor.envelope(context, refs),
   }
 }
@@ -191,6 +195,10 @@ def stage_context(kind: str, stage: str) -> dict[str, Any]:
             "filename": "ch01-introduction.md",
         }
         context["output_exists"] = False
+    if kind == "book" and stage == "prepare":
+        context["format"] = "epub"
+    if kind == "paper" and stage == "analyse":
+        context["input"] = "processing/papers/example/source.txt"
     if kind == "topic" and stage == "webcard":
         context.update(
             {
@@ -233,22 +241,21 @@ def stage_context(kind: str, stage: str) -> dict[str, Any]:
                 ],
             }
         )
+    if kind == "author" and stage in {"discover-books", "discover-papers"}:
+        context.update(
+            {
+                "full_name": "Example Author",
+                "topic": "example topic",
+                "count": 5,
+            }
+        )
     return context
 
 
-def paper_chain_receipts(slug: str = "example-paper") -> dict[str, Any]:
+def paper_chain_model_outputs(slug: str = "example-paper") -> dict[str, Any]:
     normalized = f"processing/papers/{slug}/source.txt"
-    material_key = f"paper:{slug}"
     return {
         "acquire": {
-            "schema_version": "quasi.stage.receipt/0.2",
-            "operation": "paper.acquire",
-            "stage": "Acquire",
-            "material_key": material_key,
-            "effect": "writer",
-            "attempt": 1,
-            "output_path": f"sources/{slug}.pdf",
-            "doi": None,
             "write_state": "written",
             "identity_verified": True,
             "attempts": [],
@@ -260,13 +267,6 @@ def paper_chain_receipts(slug: str = "example-paper") -> dict[str, Any]:
             },
         },
         "prepare": {
-            "schema_version": "quasi.stage.receipt/0.2",
-            "operation": "paper.prepare",
-            "stage": "Prepare",
-            "material_key": material_key,
-            "effect": "writer",
-            "attempt": 1,
-            "source_path": f"sources/{slug}.pdf",
             "selected_input": normalized,
             "artifacts": [
                 {
@@ -281,14 +281,6 @@ def paper_chain_receipts(slug: str = "example-paper") -> dict[str, Any]:
             "terminal": {"status": "complete", "issue": None},
         },
         "analyse": {
-            "schema_version": "quasi.stage.receipt/0.2",
-            "operation": "paper.analyse",
-            "stage": "Analyse",
-            "material_key": material_key,
-            "effect": "writer",
-            "attempt": 1,
-            "input_path": normalized,
-            "output_path": f"vault/papers/{slug}.md",
             "artifact_roles": ["canonical"],
             "terminal": {
                 "status": "complete",
@@ -297,21 +289,53 @@ def paper_chain_receipts(slug: str = "example-paper") -> dict[str, Any]:
             },
         },
         "audit": {
-            "schema_version": "quasi.stage.receipt/0.2",
-            "operation": "paper.audit",
-            "stage": "Audit",
-            "material_key": material_key,
-            "effect": "writer",
-            "attempt": 1,
-            "target_path": f"vault/papers/{slug}.md",
-            "pass": 1,
-            "artifact_roles": ["canonical"],
             "remaining_violations": 0,
             "escalated": [],
             "mutated_paths": [],
             "terminal": {"status": "complete", "issue": None},
         },
     }
+
+
+def expected_paper_chain_receipt(
+    stage: str,
+    model_output: dict[str, Any],
+    slug: str = "example-paper",
+) -> dict[str, Any]:
+    normalized = f"processing/papers/{slug}/source.txt"
+    common = {
+        "schema_version": "quasi.stage.receipt/0.3",
+        "material_key": f"paper:{slug}",
+        "effect": "writer",
+        "attempt": 1,
+    }
+    stage_stamps = {
+        "acquire": {
+            "operation": "paper.acquire",
+            "stage": "Acquire",
+            "output_path": f"sources/{slug}.pdf",
+            "doi": None,
+        },
+        "prepare": {
+            "operation": "paper.prepare",
+            "stage": "Prepare",
+            "source_path": f"sources/{slug}.pdf",
+        },
+        "analyse": {
+            "operation": "paper.analyse",
+            "stage": "Analyse",
+            "input_path": normalized,
+            "output_path": f"vault/papers/{slug}.md",
+        },
+        "audit": {
+            "operation": "paper.audit",
+            "stage": "Audit",
+            "target_path": f"vault/papers/{slug}.md",
+            "pass": 1,
+            "artifact_roles": ["canonical"],
+        },
+    }
+    return {**common, **stage_stamps[stage], **model_output}
 
 
 def chapter_unit(
@@ -431,14 +455,14 @@ def test_prompt_and_schema_are_exactly_the_selected_row_pair() -> None:
     schema = call["options"]["schema"]
     assert schema["type"] == "object"
     assert schema["additionalProperties"] is False
-    assert schema["properties"]["schema_version"]["const"] == (
-        "quasi.stage.receipt/0.2"
-    )
-    assert schema["properties"]["operation"]["const"] == "paper.prepare"
-    assert schema["properties"]["material_key"]["const"] == (
-        "paper:example-paper"
-    )
-    assert "terminal" in schema["required"]
+    assert set(schema["properties"]) == {
+        "selected_input",
+        "artifacts",
+        "steps",
+        "diagnostics",
+        "terminal",
+    }
+    assert set(schema["required"]) == set(schema["properties"])
 
 
 @pytest.mark.parametrize(
@@ -560,15 +584,56 @@ def test_acquire_write_outcome_lives_only_in_complete_terminal(kind: str) -> Non
         assert "source" not in branches[status]["properties"]
 
 
-def test_audit_echo_consts_carry_value_types() -> None:
+def test_model_schema_omits_host_stamps_and_requires_judgement_fields() -> None:
     report = run_stage(
         {"kind": "paper", "slug": "example", "stage": "audit", "context": {}}
     )
-    properties = report["direct"]["schema"]["properties"]
-    assert properties["pass"] == {"const": 1, "type": "integer"}
-    assert properties["artifact_roles"]["type"] == "array"
-    assert properties["artifact_roles"]["const"] == ["canonical"]
-    assert properties["target_path"]["type"] == "string"
+    schema = report["direct"]["schema"]
+    assert schema["additionalProperties"] is False
+    assert set(schema["properties"]) == {
+        "remaining_violations",
+        "escalated",
+        "mutated_paths",
+        "terminal",
+    }
+    assert set(schema["required"]) == set(schema["properties"])
+    assert report["direct"]["stampedValues"] == {
+        "schema_version": "quasi.stage.receipt/0.3",
+        "operation": "paper.audit",
+        "stage": "Audit",
+        "material_key": "paper:example",
+        "effect": "writer",
+        "attempt": 1,
+        "target_path": "vault/papers/example.md",
+        "pass": 1,
+        "artifact_roles": ["canonical"],
+    }
+
+
+def test_host_stamps_bookkeeping_onto_validated_model_output() -> None:
+    model_output = {
+        "remaining_violations": 0,
+        "escalated": [],
+        "mutated_paths": [],
+        "terminal": {"status": "complete", "issue": None},
+    }
+    report = run_stage(
+        {"kind": "paper", "slug": "example", "stage": "audit", "context": {}},
+        stage_receipts={"audit": model_output},
+    )
+
+    assert report["result"] == {
+        "schema_version": "quasi.stage.receipt/0.3",
+        "operation": "paper.audit",
+        "stage": "Audit",
+        "material_key": "paper:example",
+        "effect": "writer",
+        "attempt": 1,
+        "target_path": "vault/papers/example.md",
+        "pass": 1,
+        "artifact_roles": ["canonical"],
+        **model_output,
+    }
 
 
 @pytest.mark.parametrize(
@@ -592,7 +657,7 @@ def test_unknown_selection_returns_typed_error(
 
 def test_paper_chain_dispatches_fixed_sequence_and_carries_prepare_input() -> None:
     slug = "example-paper"
-    receipts = paper_chain_receipts(slug)
+    model_outputs = paper_chain_model_outputs(slug)
     report = run_stage(
         {
             "kind": "paper",
@@ -601,7 +666,7 @@ def test_paper_chain_dispatches_fixed_sequence_and_carries_prepare_input() -> No
             "until": "audit",
             "context": stage_context("paper", "acquire"),
         },
-        stage_receipts=receipts,
+        stage_receipts=model_outputs,
     )
 
     assert [call["options"]["label"] for call in report["trace"]] == [
@@ -642,17 +707,17 @@ def test_paper_chain_dispatches_fixed_sequence_and_carries_prepare_input() -> No
         "audit",
     ]
     assert [item["receipt"] for item in result["receipts"]] == [
-        receipts["acquire"],
-        receipts["prepare"],
-        receipts["analyse"],
-        receipts["audit"],
+        expected_paper_chain_receipt("acquire", model_outputs["acquire"], slug),
+        expected_paper_chain_receipt("prepare", model_outputs["prepare"], slug),
+        expected_paper_chain_receipt("analyse", model_outputs["analyse"], slug),
+        expected_paper_chain_receipt("audit", model_outputs["audit"], slug),
     ]
 
 
 def test_paper_chain_stops_at_needs_input_gate() -> None:
-    receipts = paper_chain_receipts()
-    receipts["acquire"] = {
-        **receipts["acquire"],
+    model_outputs = paper_chain_model_outputs()
+    model_outputs["acquire"] = {
+        **model_outputs["acquire"],
         "write_state": "not_written",
         "identity_verified": False,
         "terminal": {
@@ -674,20 +739,28 @@ def test_paper_chain_stops_at_needs_input_gate() -> None:
             "until": "audit",
             "context": stage_context("paper", "acquire"),
         },
-        stage_receipts=receipts,
+        stage_receipts=model_outputs,
     )
 
     assert len(report["trace"]) == 1
     assert report["result"]["stop_reason"] == "needs_input"
     assert report["result"]["stopped_at"] == "acquire"
     assert report["result"]["receipts"] == [
-        {"stage": "acquire", "receipt": receipts["acquire"]}
+        {
+            "stage": "acquire",
+            "receipt": expected_paper_chain_receipt(
+                "acquire", model_outputs["acquire"]
+            ),
+        }
     ]
 
 
 def test_paper_chain_rejects_incoherent_complete_before_next_stage() -> None:
-    receipts = paper_chain_receipts()
-    receipts["prepare"] = {**receipts["prepare"], "selected_input": None}
+    model_outputs = paper_chain_model_outputs()
+    model_outputs["prepare"] = {
+        **model_outputs["prepare"],
+        "selected_input": None,
+    }
     report = run_stage(
         {
             "kind": "paper",
@@ -696,7 +769,7 @@ def test_paper_chain_rejects_incoherent_complete_before_next_stage() -> None:
             "until": "audit",
             "context": stage_context("paper", "acquire"),
         },
-        stage_receipts=receipts,
+        stage_receipts=model_outputs,
     )
 
     assert [call["options"]["phase"] for call in report["trace"]] == [
@@ -712,8 +785,8 @@ def test_paper_chain_rejects_incoherent_complete_before_next_stage() -> None:
 
 
 def test_paper_chain_records_dead_agent_as_null_receipt() -> None:
-    receipts = paper_chain_receipts()
-    receipts["prepare"] = None
+    model_outputs = paper_chain_model_outputs()
+    model_outputs["prepare"] = None
     report = run_stage(
         {
             "kind": "paper",
@@ -722,7 +795,7 @@ def test_paper_chain_records_dead_agent_as_null_receipt() -> None:
             "until": "audit",
             "context": stage_context("paper", "acquire"),
         },
-        stage_receipts=receipts,
+        stage_receipts=model_outputs,
     )
 
     assert [call["options"]["phase"] for call in report["trace"]] == [
@@ -815,9 +888,36 @@ def test_book_analyse_fans_out_units_and_preserves_receipt_order() -> None:
     assert result["stage"] == "analyse"
     assert result["count"] == 3
     assert [call["options"]["label"] for call in report["trace"]] == expected_labels
-    assert [receipt["unit_label"] for receipt in result["receipts"]] == (
-        expected_labels
-    )
+    expected_paths = [
+        (
+            "processing/chapters/example-book/ch01-introduction.md",
+            "vault/books/example-book/ch01-introduction.md",
+        ),
+        (
+            "processing/chapters/example-book/ch02-methods.md",
+            "vault/books/example-book/ch02-methods.md",
+        ),
+        (
+            "processing/chapters/example-book/ch03-conclusion.md",
+            "vault/books/example-book/ch03-conclusion.md",
+        ),
+    ]
+    assert len(result["receipts"]) == len(expected_labels)
+    for receipt, label, (input_path, output_path) in zip(
+        result["receipts"], expected_labels, expected_paths
+    ):
+        assert receipt == {
+            "schema_version": "quasi.stage.receipt/0.3",
+            "operation": "chapter.analyse",
+            "stage": "Analyse",
+            "material_key": "book:example-book",
+            "effect": "writer",
+            "attempt": 1,
+            "input_path": input_path,
+            "output_path": output_path,
+            "sentinel": "returned-verbatim",
+            "unit_label": label,
+        }
 
 
 def test_batch_invalid_context_is_per_unit_and_other_units_dispatch() -> None:
@@ -863,13 +963,22 @@ def test_batch_duplicate_units_fail_before_any_agent_dispatch() -> None:
     assert report["trace"] == []
 
 
-def test_single_mode_returns_verbatim_receipt_and_logs_narrative() -> None:
+def test_single_mode_returns_host_stamped_receipt_and_logs_narrative() -> None:
     slug = "s" * 61
     report = run_stage(
         {"kind": "paper", "slug": slug, "stage": "prepare", "context": {}}
     )
 
-    assert report["result"] == {"sentinel": "returned-verbatim"}
+    assert report["result"] == {
+        "schema_version": "quasi.stage.receipt/0.3",
+        "operation": "paper.prepare",
+        "stage": "Prepare",
+        "material_key": f"paper:{slug}",
+        "effect": "writer",
+        "attempt": 1,
+        "source_path": f"sources/{slug}.pdf",
+        "sentinel": "returned-verbatim",
+    }
     assert report["logs"] == [f"prepare — {slug[:60]}"]
 
 

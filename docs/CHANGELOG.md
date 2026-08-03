@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.64.0** (2026-08-04): **Stage receipt 0.3 把零信息 bookkeeping 从模型转交宿主，完整回执形状不变。**
+  - 实测约 74% 的 StructuredOutput 重试只是在修复 writer 对 operation、stage、exact path 等 bookkeeping 字段的抄写。`quasi.stage.receipt/0.3` 的 model-facing schema 现在删去所有顶层 single-value `const`；模型完成 judgement fields 与整个 terminal 后，`run-stage` 才把这些确定值盖入返回回执。single、batch 与 chain 共用同一盖章边界，chain 的 terminal、carry 与 `complete()` 谓词都消费已经盖章的回执。
+  - 分区规则只有一条机械判据：经 `annotateConstTypes` 后含单值 `const` 的顶层 property 必须 host-stamped，其余 enum、boolean、自由字符串和只有 item constraints 的数组必须由模型产生；27 条 kind/stage probe 逐条证明 model keys 与 stamp keys 不相交、并集严格等于 0.2 的完整字段集，且每个 stamp key 在旧 schema 中确为单值 const，因此不存在按语义误分类的判断面。
+  - `terminal` 本轮完全不动，连 issue 内嵌的 operation const 也继续由模型产生，留待后续协议处理。Skill、chain、日志与其它下游仍看到与此前逐字段相同的完整回执；只改变字段由谁生产，不改变 terminal union、row envelope、specialist 方法或 artifact 合同。
+
 - **0.63.0** (2026-08-04): **流水线最后一份“三处、两种语言”编码消失：状态观察与 Workflow 现在读取同一份 manifest。**
   - 0.60.0 已把 Stage 顺序收进 `scripts/schemas/pipeline.py`，0.61.0 又把 artifact path template 收进去，但 `scripts/status/status.py` 仍以 Python 字面量各自抄写顺序与路径，形成 manifest、Workflow 投影、status 三处知识。本轮让 status 直接 import 同一个 `PIPELINE`，按各 kind 当前公开的观察 Stage 过滤其顺序，并从 manifest role 展开所有 exact path；Translation 补齐 source 与 derivative wildcard 两个此前缺失的 role。今后改一个 Stage 或路径只需一处编辑。
   - 这不是把观察器改造成 rule DSL 或 generic walker：损坏 manifest 的保守解析、frontmatter 可读性、Book chapter join、Talk media/transcript 枚举、Translation derivative glob 与 scan 去歧义仍是手写且经事故淬炼的 Python 逻辑。六种代表性磁盘状态加一次 `--scan` 的 before/after 原始 JSON byte diff 为空，新增 live-manifest guard 证明改动 template 会真实改变 status evidence 与 refs。

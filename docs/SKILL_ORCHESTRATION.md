@@ -77,8 +77,11 @@ Evidence      Facts already established by earlier stages.
 Receipt       One StructuredOutput schema and its terminal meanings.
 ```
 
-The shared receipt is `quasi.stage.receipt/0.2`. Its required `terminal` is a
-closed status union, so a success receipt cannot also carry a failure issue:
+The shared receipt is `quasi.stage.receipt/0.3`. Its model-facing schema omits
+top-level single-value `const` fields; after validation, run-stage stamps those
+bookkeeping values into the full receipt. The model still produces all judgement
+fields and the required closed `terminal`, so a success receipt cannot also carry
+a failure issue:
 
 - `complete`: the specialist established the exact postcondition consumed by
   the next stage.
@@ -89,8 +92,9 @@ closed status union, so a success receipt cannot also carry a failure issue:
 - `failed`: the specialist exhausted useful approaches and reached a known
   failure.
 
-StructuredOutput and Graph validation use the same schema. Graph-side checks
-may re-prove exact path ownership and joins between artifacts, but should not
+StructuredOutput validates the model-facing schema; skills and Graph consume the
+complete stamped receipt. Graph-side checks may re-prove exact path ownership and
+joins between artifacts, but should not
 reinterpret a schema-valid failure as malformed because of a hidden policy.
 
 An Agent chooses its own useful number of queries, comparisons, or diagnostic

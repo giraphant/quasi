@@ -27,7 +27,7 @@
 
 ## 状态
 
-Talk 的每个 specialist 使用 `quasi.stage.receipt/0.2`，terminal 为
+Talk 的每个 specialist 使用 `quasi.stage.receipt/0.3`，terminal 为
 `complete|needs_input|blocked|failed`。`needs_input` 的 issue 必须携带一个具体
 `user_question`；主线程原样展示。
 

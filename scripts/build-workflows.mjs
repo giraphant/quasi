@@ -39,6 +39,7 @@ const WORKFLOW_EXPORTS = [
   "resolveStage",
   "resolveStageContext",
   "run",
+  "stageReceiptPartition",
   "stageReceiptSchema",
 ];
 const CLAUDE_WORKFLOW_MAX_BYTES = 512 * 1024;
