@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.58.4** (2026-08-04): **Workflow 顶部两行让位给运行时叙述行。**
+  - `meta.name` / `meta.description` 都是编译期字面量，`slug` 只有运行时才知道，永远进不了这两个槽；能进的只有 stage，而 0.58.3 的 `log()` 叙述行已经在说 stage 了。原 description（"Runs one schema-enforced quasi stage and returns its receipt verbatim"）既重复又冗长，还在跟真正有信息量的那行抢注意力。改为 `Quasi` / `Pipeline`，三行各司其职：是谁 / 是什么 / 正在干什么（`Analyse × 30 — allison-nightwork-1994`）。
+  - 考虑过 description 留空，否决：宿主要求 `name` 与 `description` 均必填，空串是否算"有"无法在不真跑一次 workflow 的前提下确认，且该串也是非 bypassPermissions 用户看到的权限对话框那行，空着显示为空行。也考虑过按 stage 拆七个 bundle 让名字带上 stage，同样否决：那只是把叙述行已有的词搬到第一行，是重复而非新信息，代价是七倍构建。`workflowMeta` 是纯展示，无测试或调用路径依赖（bundle 文件名来自 `build-workflows.mjs` 的 `WORKFLOWS` 常量，skill 用显式 scriptPath 调用）。
+
 - **0.58.3** (2026-08-03): **Workflow 显示名改回插件本名；`run-stage` 支持同阶段扇出，30 章的书从 30 次调用变成 1 次。**
   - UI 顶行一直显示 `run-stage`——那是内部调度器的名字，用户看不出正在跑的是哪个插件。`workflowMeta.name` 改为 `quasi`。文件名来自 `scripts/build-workflows.mjs` 的 `WORKFLOWS` 常量而非 meta，故路径与既有引用不变；`description` 本轮不动。
   - 一本 30 章的书此前要发 30 次 `Workflow()`：UI 刷 30 行、主线程被 30 轮工具往返撑满，而这 30 个 specialist 之间本来就没有顺序依赖。`run-stage` 新增可选 `args.units`（1–64 项，每项 `{slug?,label?,context?}`），一次调用解析**同一条** descriptor row，为每个单元各组装 prompt/schema、各派一个 specialist，返回 `quasi.run-stage.batch/0.1` 信封，`receipts` 与输入同下标同顺序、逐字不改。`units` 缺席时行为与此前逐字节等价。

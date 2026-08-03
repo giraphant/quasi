@@ -47,8 +47,8 @@ export const RUN_STAGE_REGISTRY = {
 RUN_STAGE_REGISTRY.translate = RUN_STAGE_REGISTRY.translation;
 
 export const workflowMeta = {
-  name: "quasi",
-  description: "Runs one schema-enforced quasi stage and returns its receipt verbatim",
+  name: "Quasi",
+  description: "Pipeline",
   phases: [
     { title: "Recall" }, { title: "Search" }, { title: "Acquire" },
     { title: "Prepare" }, { title: "Analyse" }, { title: "Synthesise" },
