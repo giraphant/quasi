@@ -1,53 +1,12 @@
 import { PAPER_ARTIFACT_CONTRACT } from "../../artifact-contracts/generated.mjs";
-import { posixSingleQuote } from "../shared.mjs";
-
-const ATTEMPT_SCHEMA = {
-  type: "array",
-  maxItems: 64,
-  items: {
-    type: "object",
-    additionalProperties: false,
-    required: ["source", "status", "error"],
-    properties: {
-      source: { type: "string", minLength: 1, maxLength: 200 },
-      status: { type: "string", minLength: 1, maxLength: 100 },
-      error: { type: ["string", "null"], maxLength: 4000 },
-    },
-  },
-};
-
-const issueSchema = (operation, code) => ({
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "code",
-    "operation",
-    "summary",
-    "user_question",
-    "retryable",
-  ],
-  properties: {
-    code: { const: code },
-    operation: { const: operation },
-    summary: { type: "string", minLength: 1, maxLength: 4000 },
-    user_question: { type: ["string", "null"], maxLength: 4000 },
-    retryable: { type: "boolean" },
-  },
-});
-
-const PREPARE_STEP_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["capability", "outcome", "summary"],
-  properties: {
-    capability: { type: "string", minLength: 1, maxLength: 100 },
-    outcome: {
-      type: "string",
-      enum: ["observed", "created", "reused", "repaired", "failed"],
-    },
-    summary: { type: "string", minLength: 1, maxLength: 2000 },
-  },
-};
+import {
+  ATTEMPT_SCHEMA,
+  PREPARE_STEP_SCHEMA,
+  actionPayloads,
+  issueSchema,
+  makeAuditRow,
+  posixSingleQuote,
+} from "../shared.mjs";
 
 const preparedArtifactSchema = (paths) => ({
   type: "array",
@@ -67,40 +26,6 @@ const preparedArtifactSchema = (paths) => ({
     },
   },
 });
-
-const actionPayloads = ({ mode }) => ({
-  complete: {
-    required: ["action"],
-    properties: {
-      action: {
-        type: "string",
-        enum:
-          mode === "create"
-            ? ["create", "reconciled"]
-            : ["repair", "reconciled"],
-      },
-    },
-  },
-  failed: {
-    required: ["action"],
-    properties: { action: { const: mode } },
-  },
-  blocked: {
-    required: ["action"],
-    properties: { action: { const: mode } },
-  },
-});
-
-const AUDIT_DIAGNOSTIC_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["path", "kind", "reason"],
-  properties: {
-    path: { type: "string" },
-    kind: { type: "string" },
-    reason: { type: "string" },
-  },
-};
 
 const quoteOrNull = (value) =>
   value == null || value === "" ? null : posixSingleQuote(value);
@@ -339,50 +264,10 @@ export const paperOperationRows = [
 Do not reinterpret it as another operation and do not read project instruction files.
 ${JSON.stringify(request, null, 2)}`,
   },
-  {
+  makeAuditRow({
     operation: "paper.audit",
-    stage: "Audit",
-    effect: "writer",
-    agentType: "quasi:audit-agent",
     refs: ({ target, pass }) => ({ target, pass }),
-    payloadProperties: ({ target, pass }) => ({
-      required: [
-        "target_path",
-        "pass",
-        "artifact_roles",
-        "remaining_violations",
-        "escalated",
-        "mutated_paths",
-      ],
-      properties: {
-        target_path: { const: target },
-        pass: { const: pass },
-        artifact_roles: { const: ["canonical"] },
-        remaining_violations: { type: "integer", minimum: 0 },
-        escalated: {
-          type: "array",
-          items: AUDIT_DIAGNOSTIC_SCHEMA,
-        },
-        mutated_paths: {
-          type: "array",
-          uniqueItems: true,
-          items: { type: "string" },
-        },
-      },
-    }),
-    complete: (receipt) =>
-      receipt.remaining_violations === 0
-        ? receipt.escalated.length === 0
-        : receipt.remaining_violations === receipt.escalated.length,
-    envelope: ({ materialKey }, { target, pass }) => ({
-      schema_version: "quasi.stage.request/0.2",
-      operation: "paper.audit",
-      stage: "Audit",
-      material_key: materialKey,
-      effect: "writer",
-      pass,
-      mode: pass === 1 ? "audit" : "re-audit",
-      target: { role: "canonical", path: target },
-    }),
-  },
+    artifactRoles: ["canonical"],
+    targetRole: "canonical",
+  }),
 ];

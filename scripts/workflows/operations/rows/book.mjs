@@ -4,59 +4,14 @@ import {
 } from "../../artifact-contracts/generated.mjs";
 import { sameClosedValue, validText } from "../../runtime.mjs";
 import { BOOK_TEMP_PATH, validYearEvidence } from "../book-year-evidence.mjs";
-import { posixSingleQuote } from "../shared.mjs";
-
-const ATTEMPT_SCHEMA = {
-  type: "array",
-  maxItems: 64,
-  items: {
-    type: "object",
-    additionalProperties: false,
-    required: ["source", "status", "error"],
-    properties: {
-      source: { type: "string", minLength: 1, maxLength: 200 },
-      status: { type: "string", minLength: 1, maxLength: 100 },
-      error: { type: ["string", "null"], maxLength: 4000 },
-    },
-  },
-};
-
-const issueSchema = (codes, { questionRequired = false } = {}) => ({
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "code",
-    "operation",
-    "summary",
-    "user_question",
-    "retryable",
-  ],
-  properties: {
-    code: { type: "string", enum: codes },
-    operation: { const: "book.acquire" },
-    summary: { type: "string", minLength: 1, maxLength: 4000 },
-    user_question: {
-      type: questionRequired ? "string" : ["string", "null"],
-      ...(questionRequired ? { minLength: 1 } : {}),
-      maxLength: 4000,
-    },
-    retryable: { type: "boolean" },
-  },
-});
-
-const PREPARE_STEP_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["capability", "outcome", "summary"],
-  properties: {
-    capability: { type: "string", minLength: 1, maxLength: 100 },
-    outcome: {
-      type: "string",
-      enum: ["observed", "created", "reused", "repaired", "failed"],
-    },
-    summary: { type: "string", minLength: 1, maxLength: 2000 },
-  },
-};
+import {
+  ATTEMPT_SCHEMA,
+  PREPARE_STEP_SCHEMA,
+  actionPayloads,
+  issueSchema,
+  makeAuditRow,
+  posixSingleQuote,
+} from "../shared.mjs";
 
 const preparedArtifactSchema = {
   type: "array",
@@ -168,43 +123,6 @@ const uniqueChapters = (chapters) => {
   });
 };
 
-const actionPayloads = ({ mode, writeState = false }) => ({
-  complete: {
-    required: ["action", ...(writeState ? ["write_state"] : [])],
-    properties: {
-      action: {
-        type: "string",
-        enum:
-          mode === "create"
-            ? ["create", "reconciled"]
-            : ["repair", "reconciled"],
-      },
-      ...(writeState
-        ? {
-            write_state: {
-              type: "string",
-              enum: ["written", "not_written"],
-            },
-          }
-        : {}),
-    },
-  },
-  failed: {
-    required: ["action", ...(writeState ? ["write_state"] : [])],
-    properties: {
-      action: { const: mode },
-      ...(writeState ? { write_state: { const: "not_written" } } : {}),
-    },
-  },
-  blocked: {
-    required: ["action", ...(writeState ? ["write_state"] : [])],
-    properties: {
-      action: { const: mode },
-      ...(writeState ? { write_state: { const: "unknown" } } : {}),
-    },
-  },
-});
-
 const chapterActionPayloads = ({ mode, outputExists }) => {
   const payloads = actionPayloads({ mode, writeState: true });
   if (mode !== "create") return payloads;
@@ -215,17 +133,6 @@ const chapterActionPayloads = ({ mode, outputExists }) => {
     const: outputExists ? "not_written" : "written",
   };
   return payloads;
-};
-
-const AUDIT_DIAGNOSTIC_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["path", "kind", "reason"],
-  properties: {
-    path: { type: "string" },
-    kind: { type: "string" },
-    reason: { type: "string" },
-  },
 };
 
 const quoteOrNull = (value) =>
@@ -285,17 +192,20 @@ export const bookOperationRows = [
       },
       failed: {
         properties: {
-          issue: issueSchema(["book.download_failed"]),
+          issue: issueSchema("book.acquire", ["book.download_failed"]),
           attempts: { ...ATTEMPT_SCHEMA, minItems: 1 },
         },
       },
       blocked: {
-        properties: { issue: issueSchema(["book.acquire_blocked"]) },
+        properties: {
+          issue: issueSchema("book.acquire", ["book.acquire_blocked"]),
+        },
       },
       needs_input: {
         required: ["year_evidence", "tmp_path", "proposed_actions"],
         properties: {
           issue: issueSchema(
+            "book.acquire",
             ["book.year_mismatch", "book.year_ambiguous"],
             { questionRequired: true },
           ),
@@ -700,52 +610,9 @@ export const bookOperationRows = [
       repair_diagnostics: refs.mode === "repair" ? diagnostics : [],
     }),
   },
-  {
+  makeAuditRow({
     operation: "book.audit",
-    stage: "Audit",
-    effect: "writer",
-    agentType: "quasi:audit-agent",
     refs: ({ target, pass }) => ({ target, pass }),
-    payloadProperties: ({ target, pass }) => ({
-      required: [
-        "target_path",
-        "pass",
-        "remaining_violations",
-        "escalated",
-        "mutated_paths",
-      ],
-      properties: {
-        target_path: { const: target },
-        pass: { const: pass },
-        remaining_violations: { type: "integer", minimum: 0 },
-        escalated: { type: "array", items: AUDIT_DIAGNOSTIC_SCHEMA },
-        mutated_paths: {
-          type: "array",
-          uniqueItems: true,
-          items: { type: "string" },
-        },
-      },
-    }),
-    complete: (receipt) =>
-      receipt.mutated_paths.every((path) => validText(path, 1, 2048)) &&
-      receipt.escalated.every(
-        (diagnostic) =>
-          validText(diagnostic.path, 1, 2048) &&
-          validText(diagnostic.kind, 1, 200) &&
-          validText(diagnostic.reason, 1, 4000),
-      ) &&
-      (receipt.remaining_violations === 0
-        ? receipt.escalated.length === 0
-        : receipt.remaining_violations === receipt.escalated.length),
-    envelope: ({ materialKey }, { target, pass }) => ({
-      schema_version: "quasi.stage.request/0.2",
-      operation: "book.audit",
-      stage: "Audit",
-      material_key: materialKey,
-      effect: "writer",
-      pass,
-      mode: pass === 1 ? "audit" : "re-audit",
-      target: { role: "canonical_scope", path: target },
-    }),
-  },
+    targetRole: "canonical_scope",
+  }),
 ];

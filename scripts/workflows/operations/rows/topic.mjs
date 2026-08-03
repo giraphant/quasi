@@ -1,4 +1,5 @@
 import { cardPath, validCardSlug } from "../steer.mjs";
+import { makeAuditRow } from "../shared.mjs";
 
 const SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
 const SUBQUESTION_PATTERN = "^sq-[a-z0-9][a-z0-9-]{0,76}$";
@@ -554,45 +555,6 @@ const auditRefs = ({ materialKey, target, pass }) => ({
   pass,
 });
 
-const auditPayload = ({ target, pass }) => ({
-  required: [
-    "target_path",
-    "pass",
-    "remaining_violations",
-    "escalated",
-    "mutated_paths",
-  ],
-  properties: {
-    target_path: { const: target },
-    pass: { const: pass },
-    remaining_violations: { type: "integer", minimum: 0 },
-    escalated: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path", "kind", "reason"],
-        properties: {
-          path: { const: target },
-          kind: { type: "string", minLength: 1, maxLength: 200 },
-          reason: { type: "string", minLength: 1, maxLength: 4000 },
-        },
-      },
-    },
-    mutated_paths: {
-      type: "array",
-      uniqueItems: true,
-      items: { const: target },
-    },
-  },
-});
-
-const completeAudit = (receipt, context) =>
-  receipt.target_path === context.target &&
-  (receipt.remaining_violations === 0
-    ? receipt.escalated.length === 0
-    : receipt.remaining_violations === receipt.escalated.length);
-
 export const topicOperationRows = [
   {
     operation: "topic.recall",
@@ -699,29 +661,21 @@ export const topicOperationRows = [
     envelope: (_context, refs) =>
       synthesisEnvelope(`topic.synthesise.${outputRole}`, refs),
   })),
-  {
+  makeAuditRow({
     operation: "topic.audit",
-    stage: "Audit",
-    effect: "writer",
-    agentType: "quasi:audit-agent",
     refs: auditRefs,
-    payloadProperties: auditPayload,
-    terminalPayloads: () => ({}),
-    complete: completeAudit,
-    envelope: (_context, refs) => ({
-      schema_version: "quasi.stage.request/0.2",
-      operation: "topic.audit",
-      stage: "Audit",
-      material_key: refs.materialKey,
-      effect: "writer",
-      objective:
-        "Audit the exact Topic artifact and apply only local mechanical fixes before returning one terminal judgement.",
-      pass: refs.pass,
-      mode: refs.pass === 1 ? "audit" : "re-audit",
-      target: { role: "topic_product", path: refs.target },
-      exact_output: refs.target,
-      scope:
-        "Read and mechanically repair only exact_output; never mutate or report another path.",
+    targetRole: "topic_product",
+    exactPaths: true,
+    envelopeExtras: (_context, { target }) => ({
+      beforePass: {
+        objective:
+          "Audit the exact Topic artifact and apply only local mechanical fixes before returning one terminal judgement.",
+      },
+      afterTarget: {
+        exact_output: target,
+        scope:
+          "Read and mechanically repair only exact_output; never mutate or report another path.",
+      },
     }),
-  },
+  }),
 ];

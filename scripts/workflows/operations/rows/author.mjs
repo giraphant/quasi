@@ -3,7 +3,7 @@ import {
   BOOK_ARTIFACT_CONTRACT,
   PAPER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
-import { validText } from "../../runtime.mjs";
+import { actionPayloads, makeAuditRow } from "../shared.mjs";
 
 const SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
 
@@ -118,40 +118,6 @@ const resolvedMemberSchema = {
       type: ["string", "null"],
       enum: ["slug", "isbn", "doi", "title", null],
     },
-  },
-};
-
-const actionPayloads = ({ mode }) => ({
-  complete: {
-    required: ["action"],
-    properties: {
-      action: {
-        type: "string",
-        enum:
-          mode === "create"
-            ? ["create", "reconciled"]
-            : ["repair", "reconciled"],
-      },
-    },
-  },
-  failed: {
-    required: ["action"],
-    properties: { action: { const: mode } },
-  },
-  blocked: {
-    required: ["action"],
-    properties: { action: { const: mode } },
-  },
-});
-
-const AUDIT_DIAGNOSTIC_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["path", "kind", "reason"],
-  properties: {
-    path: { type: "string" },
-    kind: { type: "string" },
-    reason: { type: "string" },
   },
 };
 
@@ -410,57 +376,14 @@ ${JSON.stringify(request, null, 2)}
       repair_diagnostics: mode === "repair" ? diagnostics : [],
     }),
   },
-  {
+  makeAuditRow({
     operation: "author.audit",
-    stage: "Audit",
-    effect: "writer",
-    agentType: "quasi:audit-agent",
     refs: ({ materialKey, target, pass }) => ({ materialKey, target, pass }),
-    payloadProperties: ({ target, pass }) => ({
-      required: [
-        "target_path",
-        "pass",
-        "artifact_roles",
-        "remaining_violations",
-        "escalated",
-        "mutated_paths",
-      ],
-      properties: {
-        target_path: { const: target },
-        pass: { const: pass },
-        artifact_roles: { const: ["canonical"] },
-        remaining_violations: { type: "integer", minimum: 0 },
-        escalated: { type: "array", items: AUDIT_DIAGNOSTIC_SCHEMA },
-        mutated_paths: {
-          type: "array",
-          uniqueItems: true,
-          items: { type: "string" },
-        },
-      },
+    artifactRoles: ["canonical"],
+    targetRole: "canonical",
+    envelopeExtras: ({ materialKey }, { target }) => ({
+      beforeEffect: { collection_key: materialKey },
+      afterTarget: { exact_output: target, composite_debt: true },
     }),
-    complete: (receipt) =>
-      receipt.escalated.every(
-        (item) =>
-          validText(item.path, 1, 2048) &&
-          validText(item.kind, 1, 200) &&
-          validText(item.reason, 1, 4000),
-      ) &&
-      receipt.mutated_paths.every((path) => validText(path, 1, 2048)) &&
-      (receipt.remaining_violations === 0
-        ? receipt.escalated.length === 0
-        : receipt.remaining_violations === receipt.escalated.length),
-    envelope: ({ materialKey }, { target, pass }) => ({
-      schema_version: "quasi.stage.request/0.2",
-      operation: "author.audit",
-      stage: "Audit",
-      material_key: materialKey,
-      collection_key: materialKey,
-      effect: "writer",
-      pass,
-      mode: pass === 1 ? "audit" : "re-audit",
-      target: { role: "canonical", path: target },
-      exact_output: target,
-      composite_debt: true,
-    }),
-  },
+  }),
 ];

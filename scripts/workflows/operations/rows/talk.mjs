@@ -1,5 +1,5 @@
 import { TALK_ARTIFACT_CONTRACT } from "../../artifact-contracts/generated.mjs";
-import { validText } from "../../runtime.mjs";
+import { actionPayloads, makeAuditRow } from "../shared.mjs";
 
 const HASH_PATTERN = "^[a-f0-9]{64}$";
 
@@ -55,40 +55,6 @@ const PREPARE_STEP_SCHEMA = {
       enum: ["observed", "created", "reused", "replaced", "failed"],
     },
     summary: { type: "string", minLength: 1, maxLength: 2000 },
-  },
-};
-
-const actionPayloads = ({ mode }) => ({
-  complete: {
-    required: ["action"],
-    properties: {
-      action: {
-        type: "string",
-        enum:
-          mode === "create"
-            ? ["create", "reconciled"]
-            : ["repair", "reconciled"],
-      },
-    },
-  },
-  failed: {
-    required: ["action"],
-    properties: { action: { const: mode } },
-  },
-  blocked: {
-    required: ["action"],
-    properties: { action: { const: mode } },
-  },
-});
-
-const AUDIT_DIAGNOSTIC_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["path", "kind", "reason"],
-  properties: {
-    path: { type: "string" },
-    kind: { type: "string" },
-    reason: { type: "string" },
   },
 };
 
@@ -307,56 +273,13 @@ export const talkOperationRows = [
     promptText: (request) =>
       `Execute exactly one talk.analyse operation from this self-contained JSON request.\nDo not reinterpret it as another operation or read project instruction files.\n${JSON.stringify(request, null, 2)}`,
   },
-  {
+  makeAuditRow({
     operation: "talk.audit",
-    stage: "Audit",
-    effect: "writer",
-    agentType: "quasi:audit-agent",
     refs: ({ target, pass }) => ({ target, pass }),
-    payloadProperties: ({ target, pass }) => ({
-      required: [
-        "target_path",
-        "pass",
-        "artifact_roles",
-        "remaining_violations",
-        "escalated",
-        "mutated_paths",
-      ],
-      properties: {
-        target_path: { const: target },
-        pass: { const: pass },
-        artifact_roles: { const: ["canonical"] },
-        remaining_violations: { type: "integer", minimum: 0 },
-        escalated: { type: "array", items: AUDIT_DIAGNOSTIC_SCHEMA },
-        mutated_paths: {
-          type: "array",
-          uniqueItems: true,
-          items: { type: "string" },
-        },
-      },
+    artifactRoles: ["canonical"],
+    targetRole: "canonical",
+    envelopeExtras: (_context, { target }) => ({
+      afterTarget: { exact_output: target, composite_debt: true },
     }),
-    complete: (receipt) =>
-      receipt.escalated.every(
-        (item) =>
-          validText(item.path, 1, 2048) &&
-          validText(item.kind, 1, 200) &&
-          validText(item.reason, 1, 4000),
-      ) &&
-      receipt.mutated_paths.every((path) => validText(path, 1, 2048)) &&
-      (receipt.remaining_violations === 0
-        ? receipt.escalated.length === 0
-        : receipt.remaining_violations === receipt.escalated.length),
-    envelope: ({ materialKey }, { target, pass }) => ({
-      schema_version: "quasi.stage.request/0.2",
-      operation: "talk.audit",
-      stage: "Audit",
-      material_key: materialKey,
-      effect: "writer",
-      pass,
-      mode: pass === 1 ? "audit" : "re-audit",
-      target: { role: "canonical", path: target },
-      exact_output: target,
-      composite_debt: true,
-    }),
-  },
+  }),
 ];

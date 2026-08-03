@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.59.3** (2026-08-04): **Descriptor row 的共享片段与五条 Audit 合同收口为单一实现。**
+  - Row 层已经长出四份私有的同形 schema fragment，以及五份逐渐漂移的 Audit row；同一个边界因复制而分别落在 schema 与 `complete()` 的 JavaScript 复查里，导致某些 kind 会拒绝过长诊断，另一些 kind 却根本没有对应约束。本轮把真正同义的 issue、attempt、prepare-step、action payload 与 audit diagnostic 定义移入 `operations/shared.mjs`，保留角色、路径与 outcome vocabulary 确实不同的 kind-specific artifact/step schema。
+  - 五个 `paper|book|talk|topic|author.audit` 现在都由一个 factory 生成，原有 refs、artifact roles、request envelope、target scope 与 prompt 原样保留；完成判据统一只数 `remaining_violations` 与 `escalated`，不再让某个 kind 在 schema 之外私自追加文本复查。
+  - Audit diagnostic 的 `path` / `kind` / `reason` 统一为 2048 / 200 / 4000 上限且全部非空，`mutated_paths` 统一在 schema 中限制 2048 字符。验证因此只住在一处，过去「一个 kind 用 JS enforce、另一个完全不 enforce」的漂移面被删除。
+
 - **0.59.2** (2026-08-04): **删除无调用方的迁移脚本，并让 Agent 合同回到方法本身。**
   - 0.52 以来的仓库增长测量显示，新增行集中在真实 capability code 与 workflow contract machinery；维护痛点却集中在同一概念同时寄居多处。本轮据此坚持净删除，不压缩仍承重的方法与恢复知识。
   - `scripts/migrations/` 的两支脚本经全仓引用审计确认没有调用方，连同缓存目录整体删除，不再为可从 git 历史恢复的旧迁移承担活跃维护面。仍由 `scripts/core/core.py` 读取的 `QUA_PROJECT_ROOT` 只保留为 legacy compatibility override。
