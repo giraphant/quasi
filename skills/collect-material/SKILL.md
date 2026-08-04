@@ -4,208 +4,195 @@ description: Use when the user wants to process or collect one or more papers, a
 ---
 # Collect Material
 
+<!-- quasi:leaf-driver:start -->
+
 ## 任务
 
-由主线程判断材料进度，用磁盘观察选择下一步，并把每个专业阶段交给 `run-stage` 执行。
+为每个 Paper、Book、Talk 或 Translation 做一次精确状态观察，并交给对应的固定 Workflow 从当前事实运行到完成或 typed gate。
 
 ## 输入
 
-只保留用户实际提供的事实；不要在 intake 时补写书目事实。
+只保留用户实际提供的事实，不补写书目身份：
 
-- Paper：`title|doi` 至少一个；可带 `authors/year/journal/oa_url/url`。如果用户提供的是某书中的章节，处理整本书。
-- Book：`title|isbn` 至少一个；可带 `authors/year/publisher/category/format`。
-- Batch：同一请求中的 2–32 个 Book/Paper，可混合两种 kind。
-- Author：`name` 与 `meta{full_name,topic,maxBooks,maxPapers}`。
-- Talk：`media/title/date`，可带 `slug/engines/lang/prepare_media`；Talk 从 Prepare 开始。
-- Translation：`slug`，可带 `source_file/target_language/toc_json/toc_page_side`；默认
-target 为 `zh-CN`。
+- Paper：`title|doi` 至少一个；可带 `authors/year/journal/oa_url/url`。
+- Book：`title|isbn` 至少一个；identity hints 可带 `authors/year/publisher/category`；`format`
+  只作为下载偏好，不属于 identity hints。
+- Talk：一个已经接受到 `sources/{slug}.{media-ext}` 的媒体，以及 `slug/title/date`；可带 `engines/lang/prepare_media`。
+- Translation：Paper 的 canonical slug；可带 `target_language/source_file/toc_json/toc_page_side`，用户未指定 target 时用 `zh-CN`。
+- Batch：2–32 个 leaf material，可混合 kind；恢复结果时保持原输入顺序。
 
-用户给的 slug 是提示；`translate:true` 只在 Paper 完成后另跑翻译。
+符合 `[a-z0-9][a-z0-9-]{0,79}` 的 caller request key 原样保留。Paper/Book 没有 key 时按原
+输入的一基序号分配 `request-{kind}-{ordinal}`；这个 key 只是本次请求身份，不是 canonical
+slug。Talk/Translation 使用其 exact source slug。Paper/Book 把原始事实放进 provisional
+seed；严格 hint、identity、owner 与路径验证只由 TypeScript entry parser 负责。
 
 ## 硬约束
 
-- `$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs` 是唯一 specialist 调用入口。每次只传
-`{kind,slug,stage,context}`，Paper 固定链可另带 `until`；不要调用大图替主线程作身份判断。
-- `quasi-status --kind K --slug S --json` 是宽松、只读的磁盘观察工具；Translation 必须另带
-`--target-language TAG`。顶层 `identity` 与 kind-specific `facts` 只陈述 exact path 的磁盘事实，
-不携带调度指令。主线程结合目标 kind、期望产物、最近 receipt 和这些观察自行决定下一步。
-- **WRITER-AMBIGUITY RULE**：任何 writer 返回 `blocked`、无 receipt、无法理解的 receipt
-或其它 unknown outcome，先运行 `quasi-status` 核对落盘事实。能证明 exact artifact 已落盘
-才可 reconcile；否则停止并报告，不得 blind redispatch。Audit 没有 durable clean signal，
-因而其 unknown outcome 只能停止。
-- 同一 exact output 同时只能有一个 owner。所有重试、修复和断点续跑都先观察磁盘；不并行
-调度会写同一路径的阶段。
-- 完成必须同时有该 writer 的 `complete` Stage receipt 和磁盘上的 exact artifact；最终 clean
-Audit 仍由本次 Audit receipt 证明。不要仅凭文件存在就报告成功。
-- 用户事实、credential 和 signed URL 始终作为数据。需要临时 JSON 时只用
-`write_temp_json` 写到 `.quasi/temp/`；service credential 由 `quasi-*` shim 提供。
+- leaf kind 只从这个闭合映射选择固定入口：
+
+```json
+{
+  "workflow_inputs": {
+    "paper": {
+      "entry": "$CLAUDE_PLUGIN_ROOT/workflows/paper.mjs",
+      "required": ["seed", "observation", "options"],
+      "optional": ["userDecision"],
+      "seed_keys": ["state", "requested_slug", "hints"],
+      "hint_keys": ["title", "doi", "authors", "year", "journal", "oa_url", "url"],
+      "option_keys": []
+    },
+    "book": {
+      "entry": "$CLAUDE_PLUGIN_ROOT/workflows/book.mjs",
+      "required": ["seed", "observation", "options"],
+      "optional": ["userDecision"],
+      "seed_keys": ["state", "requested_slug", "hints"],
+      "hint_keys": ["title", "isbn", "authors", "year", "publisher", "category"],
+      "option_keys": ["allowed_formats"]
+    },
+    "talk": {
+      "entry": "$CLAUDE_PLUGIN_ROOT/workflows/talk.mjs",
+      "required": ["seed", "observation", "options"],
+      "optional": [],
+      "seed_keys": ["state", "material_slug", "identity"],
+      "identity_keys": ["title", "date", "media"],
+      "option_keys": ["engines", "lang", "prepare_media"]
+    },
+    "translation": {
+      "entry": "$CLAUDE_PLUGIN_ROOT/workflows/translation.mjs",
+      "required": ["seed", "target_language", "observation", "options"],
+      "optional": ["userDecision"],
+      "seed_keys": ["state", "material_slug"],
+      "option_keys": ["source_file", "toc_json", "toc_page_side"]
+    }
+  }
+}
+```
+
+- 一条 Workflow 只处理一个逻辑材料；只有 Book 可在内部并发章节。主线程最多同时保持五条
+  不同 exact material key 的 Workflow 在飞，同一已知 key 至多一条。Paper/Book/Talk key
+  包含 kind+slug；Translation key 还包含完整 target tag。
+- 启动前只合并字节完全相同的已知 material key。不要做 title/DOI/ISBN 语义合并、canonical
+  reservation、锁、碰撞清洁或补偿；Search 后极少数 owner 重合保持可见，交给用户处理。
+- 每次调用只带一个与 seed slug 精确匹配的 `quasi-status` observation。Workflow 自己不访问
+  文件系统；Skill 不解释内部流程、章节清单、repair 或 retry。
+- 用户事实、credential 与 signed URL 始终作为数据。临时 JSON 放 `.quasi/temp/`；service
+  credential 仍由 `quasi-*` shim 提供。
 
 ## 状态
 
-主线程拥有本次请求的 flow judgment；它不另存 cursor 或材料数据库。
+磁盘事实只来自 `quasi.status/0.2`；一次调用的判断只来自
+`quasi.material.result/0.1`。Skill 不保存 cursor、内部结果列表或第二份材料状态。
 
-- `quasi-status` 是可重复调用的 disk oracle；顶层 nullable `identity` 只从可用的 canonical
-frontmatter 投影。
-- 单阶段返回 `quasi.stage.receipt/0.3`；Paper 链返回 `quasi.run-stage.chain/0.1`，内含原样
-Stage receipts。唯一 terminal union 是
-`complete|needs_input|blocked|failed`，非 complete terminal 带一个 typed `issue`。
-- Search 的 `identity`、`local_owner` 与用户决定构成本次 canonical context；随后每次 status
-观察与 Stage receipt 构成短期运行记录。
-- 多材料时主线程是唯一的判断者：每个材料的进度由磁盘记账，主线程受理落地的 receipt 后
-重新 `quasi-status` 观察该材料，再决定它的下一步；不存在中间层代理。
+- `complete`：`issue:null`，带 canonical material、exact artifacts、以及 nullable typed `next`。
+- `needs_input`：带一个 typed gate 与 leaf-owned `resume_seed{route,seed,options}`；展示后停止这条材料。
+- `blocked|failed`：展示 typed issue 后停止；不自动重放 writer。
+- malformed intake 仍可进入固定 wrapper，但必须得到 `material.invalid_input` 且零 Agent dispatch。
 
 ## Agent / Helper 合同
 
-用 Claude Code Workflow 工具运行插件 workflow `run-stage`：
+先运行 exact status，再把闭合输入交给映射中的入口：
 
 ```python
-Workflow(
-    scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs",
-    args={"kind": kind, "slug": slug, "stage": stage, "context": context},
-)
+result = Workflow(scriptPath=entry, args=workflow_input)
 ```
 
-Book chapter inventory 只从 status `facts.manifest.valid:true` 时返回的完整 `facts.chapters` 读取。
-不得用 Glob、rg 或猜测文件名发现输入。Author membership 先用
-`author/resolve-membership` row 观察 owner，成员完成后直接运行 `quasi-status` admission。
+Paper/Book 输入：
 
-Batch 和 Author 不派中间层 Agent：主线程自己驱动每个去重后的 canonical material。
-`run-stage` 是后台 workflow，主线程可同时保持至多五个在飞（不同材料各一，同一 identity
-同时至多一个），每个 receipt 落地即受理：重新 status 观察该材料、判断并派它的下一步。
-`needs_input` 当场向用户集中提问，回答后先重新 status，再继续该材料。
+```python
+workflow_input = {
+    "seed": {"state": "provisional", "requested_slug": request_key,
+             "hints": identity_hints},
+    "observation": exact_status,
+    "options": ({"allowed_formats": [requested_format]} if kind == "book"
+                and requested_format else {}),
+}
+if copied_decision is not None:  # omit the key on an ordinary call
+    workflow_input["userDecision"] = copied_decision
+```
+
+`identity_hints` 只含 invocation manifest 对应的 keys；尤其 Book 的 `format` 必须先取出并只映射
+到 `options.allowed_formats`，不能同时进入 closed Book seed。
+
+Talk 输入使用 canonical seed
+`{state:"canonical",material_slug:slug,identity:{title,date,media}}`；options 只传用户明确提供的
+`engines/lang/prepare_media`。Translation 的 literal envelope 是：
+
+```python
+workflow_input = {
+    "seed": {"state": "canonical", "material_slug": source_slug},
+    "target_language": normalized_target,
+    "observation": exact_target_status,
+    "options": translation_options,
+}
+if copied_decision is not None:  # source-selection resume only
+    workflow_input["userDecision"] = copied_decision
+```
+
+Translation seed 不能带 `identity`。`translation_options` 只含
+`source_file/toc_json/toc_page_side`。省略的 Talk/Translation option defaults 由 entry parser
+统一处理。
 
 ## 工作流
 
 ```text
-Paper  Intake → Search → identity coalescing → one chain（Acquire → Prepare → Analyse → Audit）
-Book   Intake → Search → identity coalescing → status ⇄ one run-stage Stage → clean Audit
+intake → exact pre-status → fixed material Workflow
+       → complete → exact post-status
+       → typed gate / blocked / failed → present and stop
 
-Talk
-  Intake → Prepare → Analyse（仅 live）→ Audit
-
-Translation
-  Intake → 观察 source 与已有 derivative → Prepare
-
-Batch
-  所有 Search → same-identity coalescing → 主线程逐材料推进
-             （至多五个 run-stage 在飞）→ 按原输入顺序聚合
-
-Author
-  discover-books + discover-papers → resolve-membership → identity coalescing
-  → 主线程逐成员推进 → quasi-status admission
-  → author.synthesise → author.audit
+Paper complete + next(Book) → exact Book status → fixed Book Workflow
 ```
-
-这些箭头是主线程的专业判断范围，不是 status facts 的机械解释器。
 
 ## 执行流程
 
-1. 从请求抽取 kind 和 hints。没有材料就请用户补充；超过 32 个 Book/Paper 时请用户拆批。
-2. 每个 Paper/Book 先运行：
-
-```json
-{
-  "kind": "paper|book",
-  "slug": "provisional-slug",
-  "stage": "search",
-  "context": {"query": {"user_hints": "保留原始结构"}}
-}
-```
-
-- `complete`：保存 `identity`，后续 slug 取 `local_owner.vault_slug || identity.slug`。
-- `needs_input`：展示 `issue.user_question`、`candidates`、`conflicts`；把答案加入
-`context.query.user_decision` 后重跑 readonly Search；未知或可重试失败只允许一次实质改写。
-- `publication_type` 改收容器时，以 gate 书目信息新建 Book 并 Search；记录请求映射，原 Paper
-以 redirected 结束而非 failed。
-- `blocked|failed`：说明 observation 与 issue；没有新证据就停止该项。
-
-3. Search 完成后按 DOI、ISBN、Search identity slug，以及必要时规范化
- title+第一作者+year 合并同一 identity。保留 batch 原输入到 canonical item 的映射；去重必须
- 发生在派出任何材料的第一个 Stage 之前。
-4. Paper Search 和 gate 核定 identity 后，先 status，再只发
- `{kind:"paper",slug,stage:"acquire",until:"audit",context:{meta:<identity>,...decisions}}`；链把
- Prepare `selected_input` 传给 Analyse。按 `stop_reason` 处理：
-
-  - `end`：以最后一个 Audit receipt 证明本次调用；有 escalation 再按第 6 步。
-  - `needs_input`：展示 gate；决定并入 context 后从 `stopped_at` 以同一 `until` 重发。
-  - `blocked|failed`：按 stopping receipt 的 issue 与 observation 处理。
-  - `no_receipt|incoherent_complete`：停止、先 status；resume 前不得 redispatch 未知 writer。
-  - `invalid_context`：停止并报告 caller 错误。
-
- 其它单材料 loop 每轮仍先运行 `quasi-status --kind K --slug S --json`；Translation 使用
- `quasi-status --kind translation --slug S --target-language TAG --json`。主线程从 exact `facts`
- 选择一个 single-stage 调用；Talk 的媒体 intake 属于 Prepare，Audit clean 也没有 durable
- status fact 可证明。
-
-  常用 caller-side context：
-  - Acquire：Book 使用 `meta|identity`、`allowed_formats`，有 gate 时带 `year_decision`。
-  - Prepare：Book 从 observation 选 exact source 与 `format`；Talk 保留 intake meta；Translation
-  带 `source_file/target_language/toc_json/toc_page_side` 和用户的 `source_decision`。
-  - Book Analyse：只使用 status 在 `facts.manifest.valid:true` 时投影的完整 `facts.chapters`，
-  按每章 `output.present` 判定 `output_exists`。然后只做一次
-  `run-stage` 调用，传入全部章节：
-  `units=[{label:<chapter.slug>,context:{chapter:<exact row>,output_exists:true|false}}, ...]`，
-  不得逐章各调用一次。返回的 `receipts` 数组与 `units` 下标一一对应，逐项按原有 terminal
-  规则受理：`output_exists:false` 的 Create receipt 只允许 `create/written`，
-  `output_exists:true` 只允许 `reconciled/not_written`。某项是 `null` 或 error 信封就是
-  unknown outcome：按 WRITER-AMBIGUITY RULE 重新观察磁盘，只有证明 exact artifact
-  已落盘才可 reconcile，否则停止并报告，不得 blind redispatch。批量内并发由宿主控制；
-  需要分波时由主线程自行把 `chapters` 切块后分次调用。
-  - Talk Analyse：仅当 Prepare receipt 的 `classification=="live"`；`inputs` 取该 receipt 中
-  primary transcript 与同 generation engine artifacts 的 `{role,path,sha256,size}`。`dead|empty`
-  canonical 由 Prepare 拥有，不再调用 Analyse。
-  - Book Synthesise：`input_paths` 只取 status `facts.chapters[].output` 中已落盘且可用的完整
-  chapter canonical 列表。
-  - Audit：Book/Talk 使用 exact canonical target 与 `pass:1`；Author 同理。Translation
-  没有独立 Audit stage。
-5. Paper 链以外的每个 Stage receipt 都按 terminal 处理：
-  - `complete`：立刻再 status；只有 expected exact artifact 已出现才进入下一判断。
-  - `needs_input`：原样展示 `issue.user_question` 及 receipt 中的 candidates/conflicts/evidence。
-  Book year gate 只接受 receipt 给出的 verbatim action：`accept-current` 或
-  `use-recommended-year`。构造
-  `year_decision={action,tmp_path,year_evidence}`；后者还要把 identity year 和 slug 的末尾年份
-  改成 `recommended_year`，然后以该 canonical identity 重新进入 Acquire context。
-  - `failed`：先看 issue、attempts、retryable/write_state，再 status。只有已证明
-  `not_written`、磁盘仍未完成且有实质不同的 context/method 时，才可选择一次不同方式的尝试；
-  否则向用户展示或停止。
-  - `blocked`、receipt 缺失或不 intelligible：执行 WRITER-AMBIGUITY RULE。
-6. Audit `complete` 且 `escalated` 非空时，只做一次 owner-correct repair：把 exact diagnostics
- 交回拥有该 path 的 producer，使用 `mode:"repair"`。Paper canonical 以
- `stage:"analyse",until:"audit",pass:2` 回到链；Talk canonical 回到 Analyse；Book
- chapter 回到该 chapter Analyse，Book overview 回到 Synthesise；Author page 回到
- `author.synthesise`。任何 foreign path 都停止为 owner ambiguity。修复后以 `pass:2` re-audit
- 一次；仍有 escalation 就停止并完整展示，不再修复。
-7. Batch 在主线程完成所有 Search 与 coalescing 后，由主线程逐材料推进各自的 Paper chain 或单材料 loop：
- 同时在飞的 run-stage 至多五个（不同材料各一，同一 identity 至多一个），receipt 落地即受理。
- 汇总时恢复用户原顺序，同一 identity 的所有输入指向同一结果；集中展示 gates、failed 和
- blocked 项，不让一个失败取消其它独立材料。
-8. Author 的 `discover-books` 与 `discover-papers` 可并行运行（count 分别来自 maxBooks、
- maxPapers），然后以全部 candidates 调用 `resolve-membership`。按 identity 去重后由主线程
- 逐成员推进其单材料 loop；admission 一律以
- `quasi-status --kind K --slug S --json` 的 disk identity 与 canonical fact 为准。
- 本轮处理过的成员另需其 loop 的 clean Audit receipt；本轮之前已完成的成员直接视为已 audit
- （审计漂移由维护者的周期性全库 audit 兜底）。把 admitted members 作为
- `{material_key,kind,id,path,title}` 传给 `stage:"synthesise"`；随后 Audit，必要时按第 6 步
- repair。Author page 始终是 `vault/authors/{slug}.md`。
+1. 解析 leaf items、保存原序号并分配/复用 request key。
+2. 每项做一次 exact pre-status：Paper/Book/Talk 用
+   `quasi-status --kind KIND --slug SLUG --json`；Translation 另带
+   `--target-language USER_TARGET`，并只接受返回的完整 `facts.target_language` 作为
+   `normalized_target`（例如 `zh-cn` → `zh-CN`）。
+3. 用 kind、slug 和 Translation 的 `normalized_target` 构造 exact material key；此时再合并
+   完全相同的已知 key，然后才启动 Workflow。
+4. 构造该 entry 的闭合 seed/options/observation；调用固定 Workflow。不要在 Skill 里先做
+   Search、规范化 identity、改 slug/year、挑章节、选 producer 或解释 Audit。
+5. 按 MaterialResult 处理一次：
+   - `complete` 且 `next:null`：在 `material.canonical.slug` 做一次 exact post-status；只有返回
+     artifact 与该 observation 一致、存在且 usable 才报告完成。Translation 的 post-status
+     必须继续带同一个 `normalized_target`。
+   - Paper `complete` 且 `next.kind=="book"`：只按 `next.kind` 选 Book entry。先观察
+     `next.identity.slug`，构造
+     `{state:"canonical",material_slug:next.identity.slug,identity:next.identity}`，传 Book
+     observation；绝不复用 Paper observation，也不重写 publication-type 规则。
+   - `needs_input`：原样展示 gate 的 question、candidates/conflicts/evidence，并保存本次返回的
+     `resume_seed`。收到答案后只按 `resume_seed.route` 做 fresh exact status，再以
+     `resume_seed.seed`、`resume_seed.options` 和这份 observation 调用 route 对应的同一 entry；
+     Translation 的 `target_language` 逐字取自 route。不要复用原 seed 或自行重建 canonical identity。
+   - `blocked|failed`：展示 issue 与 observation request（若有）并停止；不自动改写或重发。
+6. 恢复 `identity_conflict|book_year|book_structure|translation_source` 时，`UserDecision` 的
+   `material_key` 与 `operation` 必须逐字复制 gate。用户只提供选择或 action；Skill 把 gate
+   testimony 原样带回 owner parser 要求的完整 value：
+   - identity：`candidates + conflicts + selected_candidate`；
+   - Book year：`current_identity + tmp_path + year_evidence + action`；
+   - Book structure：`source_path + candidates + conflicts + selected_candidate`；
+   - Translation source：`candidates_fingerprint + source_path`。
+   不从 canonical identity、route 或 diagnostics 推导 binding，也不在 Skill 硬编码 action token。
+7. `translation_configuration` 没有 acknowledgement decision。展示缺少的 Configure 字段；
+   配置改变后按返回的 `resume_seed` 与 fresh target-aware status 重新调用，不添加
+   `userDecision`。如果它发生在一次 source selection 之后，Workflow 已把选中的 exact source
+   提升进 `resume_seed.options.source_file`，Skill 不另存或重新推导这个选择。
+8. Batch 最多并发五个不同 key。一个 sibling gate/失败不取消其它 sibling；最后按原输入顺序
+   汇总。同 key 的所有原输入指向同一结果。
 
 ## 断点续跑
 
-对任意已知 slug 重新运行 `quasi-status --kind K --slug S --json`，读取实际 facts，再结合
-用户目标选择下一次 `run-stage`；不需要 JS cursor 或旧 graph receipt。
-
-- Paper 用顶层 `identity` 核对 owner，从 facts 证明的首个缺口以 `stage+until:"audit"` 入链；
-Analyse 的 normalized text 必须由 `facts.prepared` 唯一指向，否则请用户选择。
-- Book/Talk 用顶层 `identity` 与 canonical/overview fact 核对已存在 canonical owner。
-- Translation 只调用带完整 target tag 的 status，并读取该 target 的 exact `facts.output` 与
-`facts.manifest`；必要时用 Prepare reconcile。
-- unknown writer 若 status 不能证明 exact output，保持 stopped；新会话也不能自动 replay。
-- Audit unknown 不能靠 status 恢复 clean 证明；向用户说明需要一次新的明确 Audit 请求。
+普通重跑从用户输入重新构造初始 seed；gate 重跑则只消费该次 `needs_input` 返回的
+`resume_seed`。先按其中的 exact route 做 fresh status，再把 capsule 的 seed/options 原样放回
+同一 named Workflow，并且只附本次 gate 的一个新 decision。它是 caller-owned one-shot
+continuation，不是 JS cursor、旧 receipt、specialist trace、decision log 或第二份材料状态。
+未知 writer/Audit outcome 保持 stopped；不要把文件存在重新解释成 clean success。
 
 ## 输出
 
-报告每项 canonical identity、完成到的阶段、已证明的 exact artifacts、仍需回答的 gate，以及
-blocked/failed issue。Batch 保持原输入顺序并标出 coalesced items；Author 同时报告 admitted 与
-未完成 members。
+报告每项 canonical owner、post-status 证明的 exact artifacts、typed gate 或 blocked/failed
+issue。Batch 恢复原输入顺序并标出 exact-key coalescing。
 
 常见成功产物：
 
@@ -216,6 +203,26 @@ processing/chapters/{slug}/{manifest.json,*.txt}
 vault/papers/{slug}.md
 vault/books/{slug}/{00-overview.md,ch{slot}-*.md}
 vault/talks/{slug}/talk.md
-vault/authors/{author}.md
 processing/translations/{slug}-{target-tag-lower}.pdf
 ```
+
+<!-- quasi:leaf-driver:end -->
+
+## Author compatibility（Task 11 前）
+
+Author 暂时保留自己的兼容控制器；不要把它的规则用于四个 leaf kinds。输入为
+`name` 与 `meta{full_name,topic,maxBooks,maxPapers}`，先观察 exact Author status，然后按顺序调用
+Author-owned `discover-books`、`discover-papers`、`resolve-membership`。成员处理复用上面的固定
+Paper/Book Workflow 与 exact status admission；Author 自己的合成与审计暂时仍通过：
+
+```python
+Workflow(
+    scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs",
+    args={"kind": "author", "slug": author_slug,
+          "stage": author_operation, "context": author_context},
+)
+```
+
+只按 resolver 返回的稳定成员顺序推进，不扫描 vault、不建 cursor、不让同一路径有两个 writer。
+成功后以 `quasi-status --kind author --slug AUTHOR --json` 验证
+`vault/authors/{author}.md`。Task 11 会把这一小节整体替换为 `workflows/author.mjs`。

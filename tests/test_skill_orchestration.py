@@ -13,6 +13,7 @@ import shutil
 import subprocess
 
 import pytest
+import yaml
 
 from scripts.status import status as status_module
 from workflow_test_support import run_workflow_export
@@ -29,11 +30,36 @@ def active_agent_files() -> list[Path]:
     return sorted((ROOT / "agents").glob("*-agent.md"))
 
 
-def description(path: Path) -> str:
+def frontmatter(path: Path) -> dict[str, object]:
     text = path.read_text(encoding="utf-8")
-    match = re.search(r"^description:\s*(.+)$", text, re.MULTILINE)
+    match = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
     assert match, path
-    return match.group(1).strip()
+    value = yaml.safe_load(match.group(1))
+    assert isinstance(value, dict), path
+    return value
+
+
+def description(path: Path) -> str:
+    value = frontmatter(path).get("description")
+    assert isinstance(value, str), path
+    return value.strip()
+
+
+def collect_material_leaf_workflow_manifest() -> dict[str, dict[str, object]]:
+    path = ROOT / "skills" / "collect-material" / "SKILL.md"
+    text = path.read_text(encoding="utf-8")
+    for source in re.findall(r"```json\n(.*?)\n```", text, re.DOTALL):
+        try:
+            value = json.loads(source)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(value, dict)
+            and set(value) == {"workflow_inputs"}
+            and isinstance(value["workflow_inputs"], dict)
+        ):
+            return value["workflow_inputs"]
+    raise AssertionError("collect-material has no closed leaf invocation manifest")
 
 
 def generated_pipeline_registry() -> dict[str, dict[str, str]]:
@@ -126,6 +152,8 @@ def test_active_skills_keep_the_runtime_landmarks() -> None:
 
 def test_frontmatter_descriptions_are_short_routing_hints() -> None:
     for path in active_skill_files():
+        metadata = frontmatter(path)
+        assert isinstance(metadata.get("name"), str), path
         value = description(path)
         assert value.startswith("Use when the user wants to "), path
         assert len(value) <= 220, path
@@ -152,8 +180,57 @@ def test_every_skill_dispatched_stage_resolves_in_the_registry() -> None:
             )
 
 
-def test_dispatching_skills_use_only_the_public_workflow_entry() -> None:
+def test_collect_material_routes_leaf_kinds_to_generated_named_entries() -> None:
+    manifest = collect_material_leaf_workflow_manifest()
+    assert manifest == {
+        "paper": {
+            "entry": "$CLAUDE_PLUGIN_ROOT/workflows/paper.mjs",
+            "required": ["seed", "observation", "options"],
+            "optional": ["userDecision"],
+            "seed_keys": ["state", "requested_slug", "hints"],
+            "hint_keys": [
+                "title", "doi", "authors", "year", "journal", "oa_url", "url"
+            ],
+            "option_keys": [],
+        },
+        "book": {
+            "entry": "$CLAUDE_PLUGIN_ROOT/workflows/book.mjs",
+            "required": ["seed", "observation", "options"],
+            "optional": ["userDecision"],
+            "seed_keys": ["state", "requested_slug", "hints"],
+            "hint_keys": [
+                "title", "isbn", "authors", "year", "publisher", "category"
+            ],
+            "option_keys": ["allowed_formats"],
+        },
+        "talk": {
+            "entry": "$CLAUDE_PLUGIN_ROOT/workflows/talk.mjs",
+            "required": ["seed", "observation", "options"],
+            "optional": [],
+            "seed_keys": ["state", "material_slug", "identity"],
+            "identity_keys": ["title", "date", "media"],
+            "option_keys": ["engines", "lang", "prepare_media"],
+        },
+        "translation": {
+            "entry": "$CLAUDE_PLUGIN_ROOT/workflows/translation.mjs",
+            "required": ["seed", "target_language", "observation", "options"],
+            "optional": ["userDecision"],
+            "seed_keys": ["state", "material_slug"],
+            "option_keys": ["source_file", "toc_json", "toc_page_side"],
+        },
+    }
+    for contract in manifest.values():
+        entry = contract["entry"]
+        assert isinstance(entry, str)
+        relative = entry.removeprefix("$CLAUDE_PLUGIN_ROOT/")
+        assert relative != entry
+        assert (ROOT / relative).is_file(), entry
+
+
+def test_unmigrated_dispatching_skills_keep_the_compatibility_entry() -> None:
     for path in active_skill_files():
+        if path.parent.name == "collect-material":
+            continue
         text = path.read_text(encoding="utf-8")
         if "Workflow(" not in text:
             continue
@@ -178,18 +255,6 @@ def test_skills_never_invoke_agent_owned_capabilities() -> None:
         text = path.read_text(encoding="utf-8")
         referenced = [capability for capability in capabilities if capability in text]
         assert referenced == [], path
-
-
-def test_gate_decision_tokens_shared_between_row_and_skill() -> None:
-    row = (
-        ROOT / "scripts" / "workflows" / "operations" / "rows" / "book.mts"
-    ).read_text(encoding="utf-8")
-    skill = (ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    for token in ("accept-current", "use-recommended-year"):
-        assert token in row
-        assert token in skill
 
 
 def test_removed_legacy_bins_do_not_reappear_in_active_prompts() -> None:
