@@ -43,7 +43,12 @@ paper-vs-book/container 身份冲突时，也可给出 typed BookIdentity 作为
 的候选始终只能是 BookIdentity。`issue.summary` 记录容器证据；
 `issue.user_question` 给出可执行的容器方案，包括容器题名、主编、出版社、年份、查到的
 ISBN，以及用户需要其中哪一章或哪一节，让用户在“改为收整本文集”和“仍按单篇继续”
-之间选择。`complete` 的 identity 始终与 request 同 kind；本阶段不得越过用户直接改按容器调查。
+之间选择。这个分支使用 `material.identity_conflict` issue。`complete` 的 identity 始终与
+request 同 kind；本阶段不得越过用户直接改按容器调查。
+
+Request 若带有 `identity_decision`，它是 caller 已校验并回显过完整候选/冲突集的同 kind
+选择。本次调用只为该 selected identity 重新观察 local owner；`complete.identity` 必须逐字段
+等于选择值，不能再次改选另一个身份。
 
 选定身份后，用 vault resolver 查询该完整身份，只消费对应的唯一 helper row
 `{kind,slug,vault_slug,path,match,error?}`。先检查 `error`：row 只要含有该字段就返回
@@ -60,7 +65,8 @@ ISBN，以及用户需要其中哪一章或哪一节，让用户在“改为收�
   观察。题名规范化、副标题补全、姓名缩写展开和 canonical slug 改进都可以属于同一作品的
   正常校正。
 - `needs_input`：最强证据指向一个或数个具体候选，但它们改变了作者、作品、年份、identifier、
-  edition 或 publication type 等身份事实。返回候选、冲突字段和一个用户可以回答的问题。
+  edition 或 publication type 等身份事实。以 `material.identity_conflict` 返回完整候选、闭合
+  冲突字段和一个用户可以回答的问题。
 - `blocked`：命令结果或本地 owner 无法被安全观察。
 - `failed`：已经走完你认为仍有价值的调查路径，现有能力仍不能建立可辩护身份。说明调查
   过什么，以及未来重跑是否可能因 provider 恢复或新证据而受益。若权威记录证明材料类型

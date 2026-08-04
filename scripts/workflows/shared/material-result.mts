@@ -9,6 +9,8 @@ import type {
   QuasiStatusObservation,
   TranslationCandidate,
 } from "./material-input.mts";
+import type { IdentityConflictGate } from "../contracts/search.mts";
+import type { BookStructureGate } from "../contracts/book.mts";
 
 export const MATERIAL_RESULT_VERSION = "quasi.material.result/0.1" as const;
 
@@ -82,19 +84,11 @@ export interface MaterialIssue {
 }
 
 export type DirectGate =
-  | {
-      kind: "identity_conflict";
-      operation: "material.search";
-      question: string;
-      conflicts: string[];
-      candidates: Array<
-        | { kind: "paper"; identity: PaperIdentity }
-        | { kind: "book"; identity: BookIdentity }
-      >;
-    }
+  | IdentityConflictGate
   | {
       kind: "book_year";
       operation: "book.acquire";
+      material_key: string;
       question: string;
       tmp_path: string;
       year_evidence: WorkflowContext;
@@ -102,9 +96,11 @@ export type DirectGate =
         "accept-current" | "use-recommended-year"
       >;
     }
+  | BookStructureGate
   | {
       kind: "translation_source" | "translation_configuration";
       operation: "translation.prepare";
+      material_key: string;
       question: string;
       missing_fields: string[];
       candidates: TranslationCandidate[];

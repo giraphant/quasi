@@ -2,21 +2,21 @@ import {
   BOOK_ARTIFACT_CONTRACT,
   PAPER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
-import { contextValue } from "../../context-base.mts";
+import {
+  InputContractError,
+  contextValue,
+} from "../../context-base.mts";
+import { sameClosedValue } from "../../runtime.mts";
+import {
+  IDENTITY_CONFLICTS,
+  parseIdentityConflictDecisionValue,
+} from "../../contracts/search.mts";
+import { issueSchema } from "../shared.mts";
 import type { OperationRow } from "../../artifact-contracts/generated.mjs";
 
 type AnyFunction = (...args: any[]) => any;
 
 const MATERIAL_SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
-const MATERIAL_IDENTITY_CONFLICTS = [
-  "title",
-  "authors",
-  "year",
-  "identifier",
-  "edition",
-  "publication_type",
-];
-
 const identitySchema: AnyFunction = (kind) => ({
   type: "object",
   additionalProperties: false,
@@ -94,18 +94,50 @@ const validLocalOwner: AnyFunction = (owner, kind, identitySlug) => {
 export const materialSearchOperationRows: OperationRow[] = [
   {
     operation: "material.search",
-    context: (rawContext, base) => ({
-      ...base,
-      requestedSlug: base.slug,
-      query: rawContext.query || rawContext.request || base.meta,
-      yearDecision:
-        contextValue(rawContext, "yearDecision", "year_decision") || null,
-    }),
-    refs: ({ materialKey, kind, requestedSlug, query, yearDecision }) => ({
+    context: (rawContext, base) => {
+      const rawIdentityDecision = contextValue(
+        rawContext,
+        "identityDecision",
+        "identity_decision",
+      );
+      const identityDecision =
+        rawIdentityDecision == null
+          ? null
+          : parseIdentityConflictDecisionValue(
+              rawIdentityDecision,
+              undefined,
+              base.kind,
+            );
+      if (
+        rawIdentityDecision != null &&
+        (identityDecision === null ||
+          identityDecision.selected_candidate.kind !== base.kind)
+      )
+        throw new InputContractError(
+          "material.search requires one same-kind identity decision",
+        );
+      return {
+        ...base,
+        requestedSlug: base.slug,
+        query: rawContext.query || rawContext.request || base.meta,
+        identityDecision,
+        yearDecision:
+          contextValue(rawContext, "yearDecision", "year_decision") || null,
+      };
+    },
+    refs: ({
       materialKey,
       kind,
       requestedSlug,
       query,
+      identityDecision,
+      yearDecision,
+    }) => ({
+      materialKey,
+      kind,
+      requestedSlug,
+      query,
+      identityDecision,
       yearDecision: yearDecision || null,
     }),
     payloadProperties: ({ kind }) => ({
@@ -135,6 +167,11 @@ export const materialSearchOperationRows: OperationRow[] = [
       needs_input: {
         required: ["candidates", "conflicts"],
         properties: {
+          issue: issueSchema(
+            "material.search",
+            "material.identity_conflict",
+            { questionRequired: true },
+          ),
           candidates: {
             type: "array",
             minItems: 1,
@@ -145,17 +182,22 @@ export const materialSearchOperationRows: OperationRow[] = [
           conflicts: {
             type: "array",
             minItems: 1,
-            maxItems: MATERIAL_IDENTITY_CONFLICTS.length,
+            maxItems: IDENTITY_CONFLICTS.length,
             uniqueItems: true,
-            items: { type: "string", enum: MATERIAL_IDENTITY_CONFLICTS },
+            items: { type: "string", enum: IDENTITY_CONFLICTS },
           },
         },
       },
     }),
-    complete: (receipt) =>
+    complete: (receipt, context) =>
       !!receipt.identity &&
       ["high", "medium"].includes(receipt.confidence) &&
       receipt.identity.confidence === receipt.confidence &&
+      (context.identityDecision === null ||
+        sameClosedValue(
+          receipt.identity,
+          context.identityDecision.selected_candidate.identity,
+        )) &&
       validLocalOwner(
         receipt.local_owner,
         receipt.kind,
@@ -172,6 +214,7 @@ export const materialSearchOperationRows: OperationRow[] = [
       kind: refs.kind,
       requested_slug: refs.requestedSlug,
       query: refs.query,
+      identity_decision: refs.identityDecision,
       year_decision: refs.yearDecision,
       identity_contract:
         refs.kind === "book"

@@ -41,5 +41,6 @@ Create 通过入口核验后生成完整产物；`output_observation.exists:fals
 ## 输出
 
 最后返回 caller StructuredOutput schema 的 receipt，逐字回显 operation、inputs、output 和
-mode。写前可知的问题是 known failure；Write 的 durable outcome 无法确认时为 blocked/unknown。
+mode。本阶段没有用户选择分支。exact input/output ownership 或 Write durable outcome 无法确认
+时返回 `blocked`；在 bounded input 与能力下无法完成合格分析时返回 `failed`。
 作用范围仅是这份分析产物。

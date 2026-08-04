@@ -45,9 +45,11 @@ schema-conforming 的最小 Talk；有 repair diagnostics 时必须实际 repair
 
 - `complete`：exact transcript generation 已 committed，至少有 primary transcript，且
   classification 已通过阅读与机器信号确认；`dead|empty` 还必须证明 exact silent canonical。
-- `needs_input`：只有一个用户可回答的问题能够继续，例如媒体语言或指定录音段的歧义。
 - `blocked`：writer generation 或 manifest ownership 无法确认。
 - `failed`：source 无效，或可用 engines 无法形成可判断 transcript；说明实际证据。
+
+Talk Prepare 当前没有 typed 用户 gate；语言或录音范围若不能由 request 与 exact evidence
+确认，按可观察性返回 `blocked`，能力已穷尽且结论明确时返回 `failed`。
 
 ## 输出
 

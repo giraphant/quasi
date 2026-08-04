@@ -10,6 +10,8 @@ from workflow_test_support import run_workflow_export
 
 INPUT_MODULE = "scripts/workflows/shared/material-input.mts"
 RESULT_MODULE = "scripts/workflows/shared/material-result.mts"
+SEARCH_CONTRACT_MODULE = "scripts/workflows/contracts/search.mts"
+BOOK_CONTRACT_MODULE = "scripts/workflows/contracts/book.mts"
 
 PAPER_IDENTITY = {
     "slug": "exact-paper",
@@ -20,6 +22,17 @@ PAPER_IDENTITY = {
     "oa_url": "https://example.test/exact.pdf",
     "url": "https://example.test/exact",
     "journal": "Exact Joins",
+    "confidence": "high",
+}
+
+BOOK_IDENTITY = {
+    "slug": "exact-book",
+    "title": "Exact Book",
+    "authors": ["Ada Example"],
+    "year": 2024,
+    "isbn": "9780000000000",
+    "publisher": "Exact Press",
+    "category": "monograph",
     "confidence": "high",
 }
 
@@ -550,6 +563,223 @@ def test_gate_decision_values_keep_their_evidence_bindings():
         "parseTranslationSourceDecisionValue",
         translation_value,
     ) == translation_value
+
+
+def identity_conflict_receipt() -> dict[str, Any]:
+    candidates = [
+        {"kind": "paper", "identity": deepcopy(PAPER_IDENTITY)},
+        {"kind": "book", "identity": deepcopy(BOOK_IDENTITY)},
+    ]
+    return {
+        "operation": "material.search",
+        "material_key": "paper:request-paper-1",
+        "kind": "paper",
+        "terminal": {
+            "status": "needs_input",
+            "issue": {
+                "code": "material.identity_conflict",
+                "operation": "material.search",
+                "summary": "The evidence supports two work types.",
+                "user_question": "Is this the article or the book?",
+                "retryable": False,
+            },
+            "candidates": candidates,
+            "conflicts": ["publication_type"],
+        },
+    }
+
+
+def test_identity_conflict_gate_binds_the_stamped_owner_and_closed_evidence():
+    receipt = identity_conflict_receipt()
+
+    gate = run_workflow_export(
+        SEARCH_CONTRACT_MODULE,
+        "parseIdentityConflictGate",
+        receipt,
+        "paper",
+    )
+
+    assert gate == {
+        "kind": "identity_conflict",
+        "operation": "material.search",
+        "material_key": "paper:request-paper-1",
+        "question": "Is this the article or the book?",
+        "candidates": receipt["terminal"]["candidates"],
+        "conflicts": ["publication_type"],
+    }
+
+
+def test_book_search_gate_rejects_a_paper_candidate():
+    receipt = identity_conflict_receipt()
+    receipt["kind"] = "book"
+    receipt["material_key"] = "book:request-book-1"
+
+    assert run_workflow_export(
+        SEARCH_CONTRACT_MODULE,
+        "parseIdentityConflictGate",
+        receipt,
+        "book",
+    ) is None
+
+
+def test_identity_conflict_decision_echoes_gate_and_selects_a_member():
+    receipt = identity_conflict_receipt()
+    gate = run_workflow_export(
+        SEARCH_CONTRACT_MODULE,
+        "parseIdentityConflictGate",
+        receipt,
+        "paper",
+    )
+    value = {
+        "candidates": deepcopy(gate["candidates"]),
+        "conflicts": deepcopy(gate["conflicts"]),
+        "selected_candidate": deepcopy(gate["candidates"][1]),
+    }
+
+    assert run_workflow_export(
+        SEARCH_CONTRACT_MODULE,
+        "parseIdentityConflictDecisionValue",
+        value,
+        gate,
+    ) == value
+
+    changed_echo = deepcopy(value)
+    changed_echo["conflicts"] = ["title"]
+    assert run_workflow_export(
+        SEARCH_CONTRACT_MODULE,
+        "parseIdentityConflictDecisionValue",
+        changed_echo,
+        gate,
+    ) is None
+
+    foreign_selection = deepcopy(value)
+    foreign_selection["selected_candidate"]["identity"]["slug"] = "other-book"
+    assert run_workflow_export(
+        SEARCH_CONTRACT_MODULE,
+        "parseIdentityConflictDecisionValue",
+        foreign_selection,
+        gate,
+    ) is None
+
+
+def book_structure_candidates() -> list[dict[str, Any]]:
+    return [
+        {
+            "key": "frontmatter-separate",
+            "label": "Keep front matter separate",
+            "summary": "The introduction starts after the preface.",
+            "chapter_count": 3,
+            "chapters": [
+                {"title": "Preface", "start": 1, "end": 8},
+                {"title": "Introduction", "start": 9, "end": 30},
+                {"title": "Argument", "start": 31, "end": 70},
+            ],
+        },
+        {
+            "key": "frontmatter-combined",
+            "label": "Combine front matter",
+            "summary": "The preface belongs with the introduction.",
+            "chapter_count": 2,
+            "chapters": [
+                {"title": "Preface and Introduction", "start": 1, "end": 30},
+                {"title": "Argument", "start": 31, "end": 70},
+            ],
+        },
+    ]
+
+
+def book_structure_receipt() -> dict[str, Any]:
+    return {
+        "operation": "book.prepare",
+        "material_key": "book:exact-book",
+        "format": "pdf",
+        "selected_source": "sources/exact-book.pdf",
+        "terminal": {
+            "status": "needs_input",
+            "issue": {
+                "code": "book.chapter_structure_ambiguous",
+                "operation": "book.prepare",
+                "summary": "Two coherent chapter structures remain.",
+                "user_question": "Which chapter structure should be used?",
+                "retryable": False,
+            },
+            "source_path": "sources/exact-book.pdf",
+            "candidates": book_structure_candidates(),
+            "conflicts": ["chapter_boundaries", "included_material"],
+        },
+    }
+
+
+def test_book_structure_gate_is_a_complete_manual_split_choice():
+    receipt = book_structure_receipt()
+
+    gate = run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookStructureGate",
+        receipt,
+    )
+
+    assert gate == {
+        "kind": "book_structure",
+        "operation": "book.prepare",
+        "material_key": "book:exact-book",
+        "question": "Which chapter structure should be used?",
+        "source_path": "sources/exact-book.pdf",
+        "candidates": receipt["terminal"]["candidates"],
+        "conflicts": ["chapter_boundaries", "included_material"],
+    }
+
+
+@pytest.mark.parametrize("mutation", ["duplicate_key", "count", "overlap", "conflict"])
+def test_book_structure_gate_rejects_incoherent_cross_field_evidence(
+    mutation: str,
+):
+    receipt = book_structure_receipt()
+    terminal = receipt["terminal"]
+    if mutation == "duplicate_key":
+        terminal["candidates"][1]["key"] = terminal["candidates"][0]["key"]
+    elif mutation == "count":
+        terminal["candidates"][0]["chapter_count"] = 2
+    elif mutation == "overlap":
+        terminal["candidates"][0]["chapters"][1]["start"] = 8
+    else:
+        terminal["conflicts"] = ["chapter_boundaries", "chapter_boundaries"]
+
+    assert run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookStructureGate",
+        receipt,
+    ) is None
+
+
+def test_book_structure_decision_echoes_gate_and_selects_a_member():
+    receipt = book_structure_receipt()
+    gate = run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookStructureGate",
+        receipt,
+    )
+    value = {
+        "source_path": gate["source_path"],
+        "candidates": deepcopy(gate["candidates"]),
+        "conflicts": deepcopy(gate["conflicts"]),
+        "selected_candidate": deepcopy(gate["candidates"][0]),
+    }
+
+    assert run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookStructureDecisionValue",
+        value,
+        gate,
+    ) == value
+
+    value["source_path"] = "sources/another-book.pdf"
+    assert run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookStructureDecisionValue",
+        value,
+        gate,
+    ) is None
 
 
 def test_complete_material_result_preserves_closed_host_envelope():

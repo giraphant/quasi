@@ -88,9 +88,9 @@ than derive or guess it.
 
 Return only a closed quasi.stage.receipt/0.3 receipt with schema_version,operation,stage,
 material_key,effect,attempt,research_key,query,max_items,items,terminal. Echo
-research_key/query/max_items exactly. terminal is one of complete|needs_input|blocked|failed:
-complete proves the recalled rows needed by membership and has issue:null; needs_input carries
-one concrete user question; blocked records an unconfirmed outcome; failed records a known
+research_key/query/max_items exactly. terminal is one of complete|blocked|failed:
+complete proves the recalled rows needed by membership and has issue:null; blocked records an
+unconfirmed outcome; failed records a known
 search/read/validation failure. Every non-complete terminal carries exactly one typed issue for
 topic.recall. Never call the operation again from this invocation.
 

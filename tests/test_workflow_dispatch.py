@@ -235,6 +235,14 @@ def _prepare(operation: str, **overrides: Any) -> dict[str, Any]:
     )
 
 
+def _terminal_statuses(prepared: dict[str, Any]) -> set[str]:
+    terminal = prepared["options"]["schema"]["properties"]["terminal"]
+    return {
+        branch["properties"]["status"]["const"]
+        for branch in terminal["anyOf"]
+    }
+
+
 def _export_failure(source: str, export_name: str, *args: Any) -> str:
     node = shutil.which("node")
     if not node:
@@ -276,25 +284,12 @@ def _audit_invocation(*, slug: Any = "exact-material") -> dict[str, Any]:
     }
 
 
-def _audit_output(status: str, *, coherent: bool = True) -> dict[str, Any]:
-    issue = None
-    if status != "complete":
-        issue = {
-            "code": f"paper.audit.{status}",
-            "operation": "paper.audit",
-            "summary": f"Paper audit returned {status}.",
-            "user_question": (
-                "Which audit finding should be resolved?"
-                if status == "needs_input"
-                else None
-            ),
-            "retryable": status != "failed",
-        }
+def _audit_output(*, coherent: bool = True) -> dict[str, Any]:
     return {
         "remaining_violations": 0 if coherent else 1,
         "escalated": [],
         "mutated_paths": [],
-        "terminal": {"status": status, "issue": issue},
+        "terminal": {"status": "complete", "issue": None},
     }
 
 
@@ -334,6 +329,51 @@ def _search_output(
         "confidence": "high",
         "observations": [],
         "terminal": {"status": "complete", "issue": None},
+    }
+
+
+def _search_status_output(status: str) -> dict[str, Any]:
+    if status == "complete":
+        return _search_output(
+            "paper",
+            identity_slug="selected-paper",
+            local_owner=None,
+        )
+    issue = {
+        "code": (
+            "material.identity_conflict"
+            if status == "needs_input"
+            else f"material.search.{status}"
+        ),
+        "operation": "material.search",
+        "summary": f"Search returned {status}.",
+        "user_question": (
+            "Which identity should be used?" if status == "needs_input" else None
+        ),
+        "retryable": status != "failed",
+    }
+    terminal: dict[str, Any] = {"status": status, "issue": issue}
+    if status == "needs_input":
+        terminal.update(
+            {
+                "candidates": [
+                    {
+                        "kind": "paper",
+                        "identity": _search_identity(
+                            "paper",
+                            slug="selected-paper",
+                        ),
+                    }
+                ],
+                "conflicts": ["title"],
+            }
+        )
+    return {
+        "identity": None,
+        "local_owner": None,
+        "confidence": "low",
+        "observations": [],
+        "terminal": terminal,
     }
 
 
@@ -423,9 +463,12 @@ def test_search_complete_accepts_identity_bound_to_a_different_vault_slug(
 def test_dispatch_preserves_each_validated_terminal_and_stamps_host_fields(
     status: str,
 ) -> None:
-    model_output = _audit_output(status)
+    model_output = _search_status_output(status)
     report = _dispatch(
-        {"invocation": _audit_invocation(), "model_output": model_output}
+        {
+            "invocation": _invocation("material.search", kind="paper"),
+            "model_output": model_output,
+        }
     )
 
     assert report["agentCalls"] == 1
@@ -433,14 +476,12 @@ def test_dispatch_preserves_each_validated_terminal_and_stamps_host_fields(
         "kind": "receipt",
         "receipt": {
             "schema_version": "quasi.stage.receipt/0.3",
-            "operation": "paper.audit",
-            "stage": "Audit",
+            "operation": "material.search",
+            "stage": "Search",
             "material_key": "paper:exact-material",
-            "effect": "writer",
+            "effect": "readonly",
             "attempt": 1,
-            "target_path": "vault/papers/exact-material.md",
-            "pass": 1,
-            "artifact_roles": ["canonical"],
+            "kind": "paper",
             **model_output,
         },
     }
@@ -494,7 +535,7 @@ def test_unknown_agent_outcome_blocks_without_replay(agent_result: str) -> None:
 
 
 def test_schema_valid_incoherent_complete_retains_receipt() -> None:
-    model_output = _audit_output("complete", coherent=False)
+    model_output = _audit_output(coherent=False)
     report = _dispatch(
         {"invocation": _audit_invocation(), "model_output": model_output}
     )
@@ -511,7 +552,7 @@ def test_completion_predicate_error_propagates_unchanged() -> None:
         {
             "mode": "throwing_predicate",
             "invocation": _audit_invocation(),
-            "model_output": _audit_output("complete"),
+            "model_output": _audit_output(),
         }
     )
 
@@ -570,6 +611,27 @@ def test_catalog_prepares_each_operation_with_its_own_schema_and_refs():
         )
         if request is not None:
             assert request["operation"] == operation
+
+
+def test_only_operations_with_typed_gates_expose_needs_input() -> None:
+    actual = set()
+    for operation, (kind, _) in _registered_operations().items():
+        overrides: dict[str, Any] = {"kind": kind}
+        if operation == "book.prepare":
+            overrides["context"] = _context(
+                format="pdf",
+                source="sources/exact-material.pdf",
+            )
+        if "needs_input" in _terminal_statuses(_prepare(operation, **overrides)):
+            actual.add(operation)
+
+    assert actual == {
+        "material.search",
+        "book.acquire",
+        "book.prepare",
+        "translation.prepare",
+    }
+    assert "needs_input" not in _terminal_statuses(_prepare("book.prepare"))
 
 
 def test_every_writer_has_normalized_project_relative_targets():
@@ -739,3 +801,148 @@ def test_book_search_does_not_gain_a_cross_kind_alias():
     assert [variant["properties"]["kind"]["const"] for variant in variants] == [
         "book"
     ]
+
+
+def test_search_owner_reconcile_requires_the_selected_identity() -> None:
+    selected = {
+        "kind": "paper",
+        "identity": _search_identity("paper", slug="selected-paper"),
+    }
+    decision = {
+        "candidates": [selected],
+        "conflicts": ["title"],
+        "selected_candidate": selected,
+    }
+    invocation = _invocation(
+        "material.search",
+        kind="paper",
+        context=_context(identity_decision=decision),
+    )
+
+    accepted = _dispatch(
+        {
+            "invocation": invocation,
+            "model_output": _search_output(
+                "paper",
+                identity_slug="selected-paper",
+                local_owner=None,
+            ),
+        }
+    )
+    changed = _dispatch(
+        {
+            "invocation": invocation,
+            "model_output": _search_output(
+                "paper",
+                identity_slug="different-paper",
+                local_owner=None,
+            ),
+        }
+    )
+
+    assert accepted["result"]["kind"] == "receipt"
+    assert changed["result"]["kind"] == "incoherent_complete"
+
+
+def test_search_rejects_a_cross_kind_owner_decision_before_agent_dispatch() -> None:
+    selected = {
+        "kind": "book",
+        "identity": _search_identity("book", slug="selected-book"),
+    }
+    decision = {
+        "candidates": [selected],
+        "conflicts": ["publication_type"],
+        "selected_candidate": selected,
+    }
+
+    report = _dispatch(
+        {
+            "invocation": _invocation(
+                "material.search",
+                kind="paper",
+                context=_context(identity_decision=decision),
+            ),
+            "model_output": None,
+        }
+    )
+
+    assert report["agentCalls"] == 0
+    assert report["result"]["kind"] == "invalid_context"
+
+
+def test_book_search_rejects_a_paper_in_the_echoed_candidate_set() -> None:
+    paper = {
+        "kind": "paper",
+        "identity": _search_identity("paper", slug="selected-paper"),
+    }
+    book = {
+        "kind": "book",
+        "identity": _search_identity("book", slug="selected-book"),
+    }
+    decision = {
+        "candidates": [paper, book],
+        "conflicts": ["publication_type"],
+        "selected_candidate": book,
+    }
+
+    report = _dispatch(
+        {
+            "invocation": _invocation(
+                "material.search",
+                kind="book",
+                context=_context(identity_decision=decision),
+            ),
+            "model_output": None,
+        }
+    )
+
+    assert report["agentCalls"] == 0
+    assert report["result"]["kind"] == "invalid_context"
+
+
+def test_pdf_book_structure_gate_uses_direct_manual_split_specs() -> None:
+    prepared = _prepare(
+        "book.prepare",
+        context=_context(
+            format="pdf",
+            source="sources/exact-material.pdf",
+        ),
+    )
+    terminal = prepared["options"]["schema"]["properties"]["terminal"]
+    branch = next(
+        item
+        for item in terminal["anyOf"]
+        if item["properties"]["status"]["const"] == "needs_input"
+    )
+    properties = branch["properties"]
+    chapter = properties["candidates"]["items"]["properties"]["chapters"][
+        "items"
+    ]
+
+    assert properties["issue"]["properties"]["code"]["const"] == (
+        "book.chapter_structure_ambiguous"
+    )
+    assert properties["source_path"]["enum"] == [
+        "sources/exact-material.pdf",
+        "processing/chapters/exact-material/ocr.pdf",
+    ]
+    assert chapter["required"] == ["title", "start", "end"]
+    assert chapter["additionalProperties"] is False
+
+
+def test_translation_gate_is_required_only_inside_needs_input_terminal() -> None:
+    schema = _prepare("translation.prepare")["options"]["schema"]
+    assert "gate" not in schema["properties"]
+
+    terminal = schema["properties"]["terminal"]
+    branch = next(
+        item
+        for item in terminal["anyOf"]
+        if item["properties"]["status"]["const"] == "needs_input"
+    )
+    assert "gate" in branch["required"]
+    gate_variants = branch["properties"]["gate"]["anyOf"]
+    assert {
+        variant["properties"]["kind"]["const"] for variant in gate_variants
+    } == {"source_selection", "configuration_required"}
+    assert all(variant["type"] == "object" for variant in gate_variants)

@@ -34,6 +34,9 @@ source 做 OCR，再提取和复核 recovery text。已有 recovery artifact 应
 writer outcome 不以再次写入来猜测。成功 receipt 的 `selected_input` 必须是已实际阅读且标记
 usable 的 exact normalized artifact。
 
+Paper Prepare 没有用户选择分支：exact source 或 writer ownership 不能确认时返回 `blocked`；
+在现有 bounded capabilities 下不能形成可读文本时返回 `failed`。
+
 ## Book Prepare
 
 目标是得到一个 manifest 明列、顺序稳定、边界语义可靠的章节集合。
@@ -58,6 +61,13 @@ usable 的 exact normalized artifact。
 - 阅读顺序破损：前言/导言类排在正文章节之后，或注释文件次序与实际章节阅读顺序
   不符。
 
+只有 PDF 的两个到四个完整章节方案都同样可信时，Book Prepare 才可返回
+`book.chapter_structure_ambiguous`。`terminal.needs_input` 必须携带 exact `source_path`、
+闭合的冲突字段，以及每个候选的 `key/label/summary/chapter_count/chapters`；其中 chapters 是
+有序、无重叠的完整 `{title,start,end}` manual split JSON。EPUB 不产生这个 gate。Request
+若已有 `structure_decision`，逐字采用其 selected candidate 作为 `quasi-extract split --chapters`
+数据，不再重问同一问题。
+
 最终 `chapters` 逐字采用最新 committed manifest 的完整有序表；filename、slot、slug、页码
 和 fingerprint 不手抄改写。可交付 manifest 的每个 slug 都必须匹配
 `^[a-z0-9][a-z0-9-]{0,79}$`；若旧 manifest 不符合，使用 exact source 和当前 CLI 发布
@@ -67,7 +77,7 @@ usable 的 exact normalized artifact。
 ## 阶段判断
 
 - `complete`：下一阶段所需的 normalized Paper text 或 Book chapter set 已存在且通过实际阅读。
-- `needs_input`：只有一个用户选择能够继续，例如两个同样可信但互斥的章节结构。
+- `needs_input`：仅限上述 Book PDF 章节结构 gate；Paper 与 EPUB 不使用此分支。
 - `blocked`：某次 writer 的 durable outcome、generation ownership 或 exact path 无法确认。
 - `failed`：source 确实无效，或在现有能力下无法形成可读文本/可靠章节；说明证据和未来可行
   的新输入。

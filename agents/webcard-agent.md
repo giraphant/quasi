@@ -27,7 +27,9 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 
 只返回 caller schema 的 closed `quasi.stage.receipt/0.3`，逐字回显 `card_path=exact_output` 与 `subq=web_task.subq`，并返回 `card_status,wrote_card,card_available,title,objects,sources,evidence,note`：
 
-- 具体用户选择不可替代：`needs_input` 和明确问题；
 - 已知检索/读取/验证失败：`failed`；writer outcome 不可观察：`blocked`。
+
+Webcard 当前没有 typed 用户 gate；bounded query 没有可核验结果时使用 complete 的 empty
+形态，而不是向用户提问。
 
 任何非 complete terminal 只携带 `topic.webcard` 的一个 typed issue；不得在同一 invocation 重放 writer。

@@ -185,19 +185,6 @@ def test_gate_decision_tokens_shared_between_row_and_skill() -> None:
         assert token in skill
 
 
-def test_collection_container_route_exists_in_search_contract() -> None:
-    row = (ROOT / "scripts" / "workflows" / "operations" / "rows" / "search.mts").read_text(
-        encoding="utf-8"
-    )
-    agent = (ROOT / "agents" / "metadata-agent.md").read_text(encoding="utf-8")
-    skill = (ROOT / "skills" / "collect-material" / "SKILL.md").read_text(encoding="utf-8")
-    # The conflict vocabulary lives in the row; the method and the routing must
-    # both be able to name it, or a container-only work has no honest exit.
-    assert '"publication_type"' in row
-    assert "publication_type" in agent
-    assert "publication_type" in skill
-
-
 def test_removed_legacy_bins_do_not_reappear_in_active_prompts() -> None:
     active = "\n".join(
         path.read_text(encoding="utf-8")

@@ -8,6 +8,7 @@ import {
 } from "../../context-base.mts";
 import { sameClosedValue, validText } from "../../runtime.mts";
 import { BOOK_TEMP_PATH, validYearEvidence } from "../book-year-evidence.mts";
+import { parseBookStructureDecisionValue } from "../../contracts/book.mts";
 import {
   ATTEMPT_SCHEMA,
   PREPARE_STEP_SCHEMA,
@@ -49,6 +50,33 @@ const CHAPTER_SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
 const CHAPTER_TITLE_PATTERN = "^[^\\u0000-\\u001f\\u007f-\\u009f]+$";
 const CHAPTER_SLOT = new RegExp(CHAPTER_SLOT_PATTERN);
 const CHAPTER_SLUG = new RegExp(CHAPTER_SLUG_PATTERN);
+
+const bookStructureCandidateSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["key", "label", "summary", "chapter_count", "chapters"],
+  properties: {
+    key: { type: "string", minLength: 1, maxLength: 80 },
+    label: { type: "string", minLength: 1, maxLength: 500 },
+    summary: { type: "string", minLength: 1, maxLength: 2000 },
+    chapter_count: { type: "integer", minimum: 1, maximum: 150 },
+    chapters: {
+      type: "array",
+      minItems: 1,
+      maxItems: 150,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "start", "end"],
+        properties: {
+          title: { type: "string", minLength: 1, maxLength: 500 },
+          start: { type: "integer", minimum: 1 },
+          end: { type: "integer", minimum: 1 },
+        },
+      },
+    },
+  },
+};
 
 const chapterRefSchema = {
   type: "object",
@@ -344,12 +372,28 @@ export const bookOperationRows: OperationRow[] = [
   },
   {
     operation: "book.prepare",
-    context: (rawContext, base) => ({
-      ...base,
-      identity: base.meta,
-      format: rawContext.format || base.meta.format,
-      ...(rawContext.source ? { source: rawContext.source } : {}),
-    }),
+    context: (rawContext, base) => {
+      const rawStructureDecision = contextValue(
+        rawContext,
+        "structureDecision",
+        "structure_decision",
+      );
+      const structureDecision =
+        rawStructureDecision == null
+          ? null
+          : parseBookStructureDecisionValue(rawStructureDecision);
+      if (rawStructureDecision != null && structureDecision === null)
+        throw new InputContractError(
+          "book.prepare requires one coherent structure decision",
+        );
+      return {
+        ...base,
+        identity: base.meta,
+        format: rawContext.format || base.meta.format,
+        structureDecision,
+        ...(rawContext.source ? { source: rawContext.source } : {}),
+      };
+    },
     refs: (
       {
         source,
@@ -359,16 +403,28 @@ export const bookOperationRows: OperationRow[] = [
         recoveryText,
         outputDir,
         manifest,
+        structureDecision,
       },
-    ) => ({
-      source,
-      format,
-      normalized,
-      recoverySource,
-      recoveryText,
-      outputDir,
-      manifest,
-    }),
+    ) => {
+      if (
+        structureDecision !== null &&
+        (format !== "pdf" ||
+          ![source, recoverySource].includes(structureDecision.source_path))
+      )
+        throw new InputContractError(
+          "book.prepare structure decision does not bind the current PDF source",
+        );
+      return {
+        source,
+        format,
+        normalized,
+        recoverySource,
+        recoveryText,
+        outputDir,
+        manifest,
+        structureDecision,
+      };
+    },
     writeTargets: ({ outputDir }) => [
       { scope: "subtree", path: outputDir },
     ],
@@ -423,6 +479,45 @@ export const bookOperationRows: OperationRow[] = [
         },
       },
     }),
+    terminalPayloads: ({ format, source, recoverySource }) =>
+      format === "pdf"
+        ? {
+            needs_input: {
+              required: ["source_path", "candidates", "conflicts"],
+              properties: {
+                issue: issueSchema(
+                  "book.prepare",
+                  "book.chapter_structure_ambiguous",
+                  { questionRequired: true },
+                ),
+                source_path: {
+                  type: "string",
+                  enum: [source, recoverySource],
+                },
+                candidates: {
+                  type: "array",
+                  minItems: 2,
+                  maxItems: 4,
+                  items: bookStructureCandidateSchema,
+                },
+                conflicts: {
+                  type: "array",
+                  minItems: 1,
+                  maxItems: 3,
+                  uniqueItems: true,
+                  items: {
+                    type: "string",
+                    enum: [
+                      "chapter_boundaries",
+                      "reading_order",
+                      "included_material",
+                    ],
+                  },
+                },
+              },
+            },
+          }
+        : {},
     complete: (receipt, context) => {
       const chapterPaths = receipt.chapters.map(
         (chapter: any) =>
@@ -485,6 +580,7 @@ export const bookOperationRows: OperationRow[] = [
         output_dir: refs.outputDir,
         manifest: refs.manifest,
       },
+      structure_decision: refs.structureDecision,
       capabilities: [
         "quasi-extract text INPUT OUTPUT --json",
         "quasi-extract ocr INPUT OUTPUT --no-clobber --json",

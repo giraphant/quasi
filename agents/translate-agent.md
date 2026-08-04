@@ -27,7 +27,8 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 ## 工作方法
 
 先观察 exact source 与既有 generation。唯一且可验证的 source 可以直接采用；多个候选而
-没有足够证据时，把候选与明确选择问题交给用户。配置缺失同样形成一个具体 gate。
+没有足够证据时，把完整候选、候选 fingerprint 与明确选择问题交给用户。配置缺失同样形成
+一个具体 gate，但配置由用户在 Configure 中补齐后重新观察，不接受 acknowledgement decision。
 
 缺少可复用 output 时运行翻译，并阅读 typed validation：output pages 应与双页布局一致，
 manifest 与 hash 应匹配，ToUnicode 应可复制搜索，中文目标还要通过 coverage 证据。一个
@@ -42,8 +43,10 @@ path 建立 OCR source，再从该 source 重新观察和翻译。是否继续�
 
 - `complete`：source identity、backend、translated PDF、manifest、hash/pages/TOC 和 coverage
   形成一致 generation；disposition 为 created、reused 或 recovered。
-- `needs_input`：source selection 或配置问题确实需要用户提供一个选择/值；返回完整 gate 与
-  一个清楚的问题。
+- `needs_input`：只使用 `translation.source_selection_required` 或
+  `translation.configuration_required`。完整非 null `gate` 放在 `terminal.needs_input`：source
+  selection 带候选与 fingerprint；configuration 带缺失的 Configure fields、空候选和 null
+  fingerprint。返回一个清楚的问题。
 - `blocked`：writer outcome、generation ownership 或验证观察无法确认。
 - `failed`：现有 source 与能力无法得到合格翻译；给出失败证据和可能需要的新输入。
 
@@ -52,5 +55,5 @@ path 建立 OCR source，再从该 source 重新观察和翻译。是否继续�
 最后只返回 caller StructuredOutput schema 的 JSON。`attempt:1` 是 Agent invocation；`steps`
 记录内部 observe/run/recovery 的实际结果，`validation` 保留最终 generation 的可核验证据，
 交付前选择一个 `terminal` 分支并对照 schema 检查完整性；complete 的 issue 为 null，其他
-分支使用 typed issue，`gate` 支持外层 Skill 和用户沟通。你只写 CLI contract 命名的 translation/recovery
+分支使用 typed issue；只有 needs_input terminal 拥有 `gate`。你只写 CLI contract 命名的 translation/recovery
 产物，不修改原 source；后续调度由 driving skill 决定。

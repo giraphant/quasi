@@ -112,7 +112,12 @@ export const stageTerminalSchema = (
   operation: string,
   payloads: WorkflowContext = {},
 ): JsonSchema => ({
-  anyOf: STAGE_STATUSES.map((status) =>
+  anyOf: STAGE_STATUSES.filter(
+    (status) =>
+      status !== "needs_input" ||
+      (Object.prototype.hasOwnProperty.call(payloads, status) &&
+        payloads[status] != null),
+  ).map((status) =>
     stageTerminalBranch(operation, status, payloads),
   ),
 });

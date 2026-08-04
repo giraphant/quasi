@@ -2,6 +2,7 @@ import {
   InputContractError,
   contextValue,
 } from "../../context-base.mts";
+import { issueSchema } from "../shared.mts";
 import type { OperationRow } from "../../artifact-contracts/generated.mjs";
 
 type AnyFunction = (...args: any[]) => any;
@@ -119,24 +120,54 @@ const candidateSchema = {
 };
 
 const gateSchema = {
-  type: ["object", "null"],
-  additionalProperties: false,
-  required: ["kind", "missing_fields", "candidates", "candidates_fingerprint"],
-  properties: {
-    kind: {
-      type: "string",
-      enum: ["source_selection", "configuration_required"],
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "kind",
+        "missing_fields",
+        "candidates",
+        "candidates_fingerprint",
+      ],
+      properties: {
+        kind: { const: "source_selection" },
+        missing_fields: { const: [] },
+        candidates: {
+          type: "array",
+          minItems: 2,
+          maxItems: 32,
+          items: candidateSchema,
+        },
+        candidates_fingerprint: {
+          type: "string",
+          pattern: "^[0-9a-f]{64}$",
+        },
+      },
     },
-    missing_fields: {
-      type: "array",
-      maxItems: 8,
-      items: { type: "string" },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "kind",
+        "missing_fields",
+        "candidates",
+        "candidates_fingerprint",
+      ],
+      properties: {
+        kind: { const: "configuration_required" },
+        missing_fields: {
+          type: "array",
+          minItems: 1,
+          maxItems: 8,
+          uniqueItems: true,
+          items: { type: "string", minLength: 1 },
+        },
+        candidates: { const: [] },
+        candidates_fingerprint: { type: "null" },
+      },
     },
-    candidates: { type: "array", maxItems: 32, items: candidateSchema },
-    candidates_fingerprint: nullableStringSchema({
-      pattern: "^[0-9a-f]{64}$",
-    }),
-  },
+  ],
 };
 
 const validCoverage: AnyFunction = (value) => {
@@ -278,7 +309,6 @@ export const translationOperationRows: OperationRow[] = [
         "disposition",
         "recovered",
         "validation",
-        "gate",
         "steps",
         "diagnostics",
       ],
@@ -298,7 +328,6 @@ export const translationOperationRows: OperationRow[] = [
         },
         recovered: { type: "boolean" },
         validation: VALIDATION_SCHEMA,
-        gate: gateSchema,
         steps: { type: "array", maxItems: 48, items: STEP_SCHEMA },
         diagnostics: {
           type: "array",
@@ -307,12 +336,27 @@ export const translationOperationRows: OperationRow[] = [
         },
       },
     }),
+    terminalPayloads: () => ({
+      needs_input: {
+        required: ["gate"],
+        properties: {
+          issue: issueSchema(
+            "translation.prepare",
+            [
+              "translation.source_selection_required",
+              "translation.configuration_required",
+            ],
+            { questionRequired: true },
+          ),
+          gate: gateSchema,
+        },
+      },
+    }),
     complete: (receipt, context) =>
       !!receipt.source &&
       !!receipt.validation &&
       receipt.backend !== null &&
       ["created", "reused", "recovered"].includes(receipt.disposition) &&
-      receipt.gate === null &&
       validRequestedSource(
         receipt.source.path,
         context.slug,

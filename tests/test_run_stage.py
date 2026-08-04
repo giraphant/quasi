@@ -62,6 +62,7 @@ if (config.args?.inspectProtocol) {
     stage: "Analyse",
     materialKey: "paper:example",
     effect: "writer",
+    terminalPayloads: { needs_input: {} },
   })
   process.stdout.write(JSON.stringify({ registry, statuses: STAGE_STATUSES, stageSchema }))
   process.exit(0)
@@ -696,7 +697,12 @@ def test_acquire_write_outcome_lives_only_in_complete_terminal(kind: str) -> Non
     assert {"disposition", "source"}.issubset(set(complete["required"]))
     assert complete["properties"]["disposition"]["enum"] == ["created", "reused"]
     assert complete["properties"]["source"]["type"] == "string"
-    for status in ("needs_input", "blocked", "failed"):
+    non_complete = (
+        ("needs_input", "blocked", "failed")
+        if kind == "book"
+        else ("blocked", "failed")
+    )
+    for status in non_complete:
         assert branches[status]["additionalProperties"] is False
         assert "disposition" not in branches[status]["properties"]
         assert "source" not in branches[status]["properties"]
@@ -832,20 +838,20 @@ def test_paper_chain_dispatches_fixed_sequence_and_carries_prepare_input() -> No
     ]
 
 
-def test_paper_chain_stops_at_needs_input_gate() -> None:
+def test_paper_chain_stops_at_a_typed_blocked_receipt() -> None:
     model_outputs = paper_chain_model_outputs()
     model_outputs["acquire"] = {
         **model_outputs["acquire"],
         "write_state": "not_written",
         "identity_verified": False,
         "terminal": {
-            "status": "needs_input",
+            "status": "blocked",
             "issue": {
-                "code": "paper.acquire_choice_required",
+                "code": "paper.acquire_blocked",
                 "operation": "paper.acquire",
-                "summary": "The accepted source needs a user decision.",
-                "user_question": "Which accepted source should be used?",
-                "retryable": True,
+                "summary": "The accepted source outcome is unknown.",
+                "user_question": None,
+                "retryable": False,
             },
         },
     }
@@ -861,7 +867,7 @@ def test_paper_chain_stops_at_needs_input_gate() -> None:
     )
 
     assert len(report["trace"]) == 1
-    assert report["result"]["stop_reason"] == "needs_input"
+    assert report["result"]["stop_reason"] == "blocked"
     assert report["result"]["stopped_at"] == "acquire"
     assert report["result"]["receipts"] == [
         {
@@ -871,6 +877,56 @@ def test_paper_chain_stops_at_needs_input_gate() -> None:
             ),
         }
     ]
+
+
+def test_compatibility_entry_preserves_a_typed_search_gate() -> None:
+    model_output = {
+        "identity": None,
+        "local_owner": None,
+        "confidence": "low",
+        "observations": [],
+        "terminal": {
+            "status": "needs_input",
+            "issue": {
+                "code": "material.identity_conflict",
+                "operation": "material.search",
+                "summary": "Two identities remain plausible.",
+                "user_question": "Which identity should be used?",
+                "retryable": False,
+            },
+            "candidates": [
+                {
+                    "kind": "paper",
+                    "identity": {
+                        "slug": "example-paper",
+                        "title": "Example Paper",
+                        "authors": ["Example Author"],
+                        "year": 1991,
+                        "doi": None,
+                        "oa_url": None,
+                        "url": None,
+                        "journal": "Example Journal",
+                        "confidence": "medium",
+                    },
+                }
+            ],
+            "conflicts": ["title"],
+        },
+    }
+
+    report = run_stage(
+        {
+            "kind": "paper",
+            "slug": "example-paper",
+            "stage": "search",
+            "context": {"query": "Example Paper"},
+        },
+        stage_receipts={"search": model_output},
+    )
+
+    assert report["result"]["terminal"]["status"] == "needs_input"
+    assert report["result"]["terminal"]["conflicts"] == ["title"]
+    assert report["result"]["material_key"] == "paper:example-paper"
 
 
 def test_paper_chain_rejects_incoherent_complete_before_next_stage() -> None:
