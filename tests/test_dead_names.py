@@ -140,7 +140,12 @@ def test_active_agents_and_skills_do_not_reference_dead_names():
 
 
 def test_retired_dokobot_names_do_not_appear_in_active_runtime():
-    retired_names = ("dokobot", "_normalise_doko")
+    retired_names = (
+        "dokobot",
+        "_doko_read",
+        "_fetch_subject_via_doko",
+        "_normalise_doko",
+    )
     runtime_files = (
         "scripts/search/sources/douban_cn.py",
         "scripts/search/sources/googlebooks.py",
