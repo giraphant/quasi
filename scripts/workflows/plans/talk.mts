@@ -149,8 +149,8 @@ const auditTalk = async (
     meta: {
       ...input.seed.identity,
       engines: input.options.engines,
-      lang: input.options.lang,
-      prepare_media: input.options.prepare_media,
+      language: input.options.lang,
+      prepareMedia: input.options.prepare_media,
     },
     materialKey: `talk:${state.slug}`,
   };
@@ -241,8 +241,8 @@ export async function runTalkPlan(
     meta: {
       ...input.seed.identity,
       engines: input.options.engines,
-      lang: input.options.lang,
-      prepare_media: input.options.prepare_media,
+      language: input.options.lang,
+      prepareMedia: input.options.prepare_media,
     },
     materialKey: `talk:${slug}`,
   };

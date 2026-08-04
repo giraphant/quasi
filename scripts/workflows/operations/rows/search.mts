@@ -2,10 +2,7 @@ import {
   BOOK_ARTIFACT_CONTRACT,
   PAPER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
-import {
-  InputContractError,
-  contextValue,
-} from "../../context-base.mts";
+import { InputContractError } from "../../context-base.mts";
 import { sameClosedValue } from "../../runtime.mts";
 import {
   IDENTITY_CONFLICTS,
@@ -96,11 +93,7 @@ export const materialSearchOperationRows: OperationRow[] = [
   {
     operation: "material.search",
     context: (rawContext, base) => {
-      const rawIdentityDecision = contextValue(
-        rawContext,
-        "identityDecision",
-        "identity_decision",
-      );
+      const rawIdentityDecision = rawContext.identityDecision;
       const identityDecision =
         rawIdentityDecision == null
           ? null
@@ -117,11 +110,7 @@ export const materialSearchOperationRows: OperationRow[] = [
         throw new InputContractError(
           "material.search requires one same-kind identity decision",
         );
-      const rawYearDecision = contextValue(
-        rawContext,
-        "yearDecision",
-        "year_decision",
-      );
+      const rawYearDecision = rawContext.yearDecision;
       const yearDecision =
         rawYearDecision == null
           ? null
@@ -138,7 +127,7 @@ export const materialSearchOperationRows: OperationRow[] = [
       return {
         ...base,
         requestedSlug: base.slug,
-        query: rawContext.query || rawContext.request || base.meta,
+        query: rawContext.query,
         identityDecision,
         yearDecision,
       };

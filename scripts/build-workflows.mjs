@@ -7,35 +7,17 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
 
-/** @typedef {import("./workflows/artifact-contracts/generated.mjs").KindDefinition} KindDefinition */
-/** @typedef {import("./workflows/artifact-contracts/generated.mjs").KindName} KindName */
-/** @typedef {import("./workflows/artifact-contracts/generated.mjs").OperationName} OperationName */
-/** @typedef {import("./workflows/artifact-contracts/generated.mjs").OperationRow} OperationRow */
-/** @typedef {import("./workflows/artifact-contracts/generated.mjs").StageName} StageName */
-/** @typedef {import("./workflows/artifact-contracts/generated.mjs").WorkflowContext} WorkflowContext */
 /** @typedef {{name: string, kind: string, entry: string, output: string, validate: (entryModule: WorkflowEntryModule, workflow: WorkflowBuild) => void}} WorkflowBuild */
-/** @typedef {{sequence: StageName[], carries: Array<{from: StageName, apply: (receipt: any, context: WorkflowContext) => WorkflowContext}>}} StageChain */
 /** @typedef {{
- *   PIPELINE: Readonly<Record<KindName, KindDefinition>>,
- *   OPERATION_ROWS: OperationRow[],
- *   RUN_STAGE_REGISTRY: Record<string, Record<string, OperationName>>,
- *   STAGE_CHAINS: Record<string, StageChain>,
- *   resolveStage: (kind: unknown, stage: unknown) => any,
- *   resolveStageContext: (resolved: any, slug: string, context: unknown) => WorkflowContext,
  *   workflowMeta: Record<string, unknown>,
  *   run: (...args: any[]) => any,
- *   materialKind?: string,
+ *   materialKind: string,
  * }} WorkflowEntryModule */
 
 const execFileAsync = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW_SOURCE_ROOT = join(ROOT, "scripts", "workflows");
 const WORKFLOWS = [
-  {
-    name: "run-stage",
-    kind: "compatibility",
-    validate: validateCompatibilityEntry,
-  },
   {
     name: "paper",
     kind: "paper",
@@ -86,8 +68,6 @@ const ARTIFACT_CONTRACT_TYPES = join(
   "generated.d.mts",
 );
 const CHECK = process.argv.slice(2).includes("--check");
-/** @type {Partial<Record<OperationName, WorkflowContext>>} */
-const CHAIN_PROBE_CONTEXT_OVERRIDES = {};
 
 const ARTIFACT_CONTRACTS = [
   { type: "author", exportName: "AUTHOR_ARTIFACT_CONTRACT" },
@@ -187,15 +167,6 @@ return await __quasiWorkflow.run({ agent, pipeline }, args)
  * @param {WorkflowEntryModule} entryModule
  * @param {WorkflowBuild} workflow
  */
-function validateCompatibilityEntry(entryModule, workflow) {
-  validateEntryContract(entryModule, workflow.name);
-  validatePipelineStructure(entryModule);
-}
-
-/**
- * @param {WorkflowEntryModule} entryModule
- * @param {WorkflowBuild} workflow
- */
 function validateMaterialEntry(entryModule, workflow) {
   validateEntryContract(entryModule, workflow.name);
   if (entryModule.materialKind !== workflow.kind)
@@ -214,163 +185,6 @@ function validateEntryContract(entryModule, name) {
     throw new Error(`${name} workflow source entry must export workflowMeta`);
   if (typeof entryModule.run !== "function")
     throw new Error(`${name} workflow source entry must export run`);
-}
-
-/** @param {WorkflowEntryModule} entryModule */
-function validatePipelineStructure({
-  PIPELINE,
-  OPERATION_ROWS,
-  RUN_STAGE_REGISTRY,
-  STAGE_CHAINS,
-  resolveStage,
-  resolveStageContext,
-}) {
-  if (!PIPELINE || typeof PIPELINE !== "object" || Array.isArray(PIPELINE))
-    throw new Error("pipeline manifest must be an object keyed by kind");
-  if (!Array.isArray(OPERATION_ROWS))
-    throw new Error("pipeline rows must be an array");
-
-  const rowCounts = new Map();
-  for (const row of OPERATION_ROWS) {
-    rowCounts.set(row.operation, (rowCounts.get(row.operation) || 0) + 1);
-  }
-
-  const manifestOperations = new Set();
-  const effects = new Set(["readonly", "writer"]);
-  for (const [kind, definition] of Object.entries(PIPELINE)) {
-    if (!definition || !Array.isArray(definition.stages))
-      throw new Error(`pipeline manifest kind=${kind} must declare stages`);
-    const registeredStages = RUN_STAGE_REGISTRY?.[kind];
-    if (!registeredStages)
-      throw new Error(
-        `pipeline manifest kind=${kind} is missing from RUN_STAGE_REGISTRY`,
-      );
-    const seenStages = new Set();
-
-    for (const identity of definition.stages) {
-      if (!identity || typeof identity !== "object")
-        throw new Error(`pipeline manifest kind=${kind} has an invalid stage entry`);
-      const { stage, operation, phase, effect, agent } = identity;
-      if (
-        typeof stage !== "string" ||
-        !stage ||
-        stage !== stage.trim().toLowerCase()
-      )
-        throw new Error(`pipeline manifest kind=${kind} has an invalid stage key`);
-      if (seenStages.has(stage))
-        throw new Error(
-          `pipeline manifest duplicates kind=${kind} stage=${stage}`,
-        );
-      seenStages.add(stage);
-      if (typeof operation !== "string" || !operation)
-        throw new Error(
-          `pipeline manifest kind=${kind} stage=${stage} has no operation`,
-        );
-      if (typeof phase !== "string" || !phase)
-        throw new Error(
-          `pipeline manifest operation=${operation} has no phase`,
-        );
-      if (!effects.has(effect))
-        throw new Error(
-          `pipeline manifest operation=${operation} has unknown effect=${String(effect)}`,
-        );
-      if (typeof agent !== "string" || !agent)
-        throw new Error(
-          `pipeline manifest operation=${operation} has no agent`,
-        );
-      if (rowCounts.get(operation) !== 1)
-        throw new Error(
-          `pipeline manifest operation=${operation} must resolve to exactly one row; found ${rowCounts.get(operation) || 0}`,
-        );
-      manifestOperations.add(operation);
-      if (registeredStages[stage] !== operation)
-        throw new Error(
-          `pipeline registry mismatch: kind=${kind} stage=${stage} operation=${operation}`,
-        );
-      const resolved = resolveStage(kind, stage);
-      if (
-        !resolved ||
-        resolved.operation !== operation ||
-        resolved.descriptor.stage !== phase ||
-        resolved.descriptor.effect !== effect ||
-        resolved.descriptor.agentType !== agent
-      )
-        throw new Error(
-          `pipeline identity mismatch: kind=${kind} stage=${stage} operation=${operation}`,
-        );
-    }
-    if (Object.keys(registeredStages).length !== seenStages.size)
-      throw new Error(
-        `pipeline registry has extra stages for kind=${kind}`,
-      );
-
-    const chain = definition.chain;
-    if (!chain) {
-      if (Object.hasOwn(STAGE_CHAINS, kind))
-        throw new Error(`pipeline runtime has an undeclared chain for kind=${kind}`);
-      continue;
-    }
-    if (!Array.isArray(chain.sequence) || !Array.isArray(chain.carries))
-      throw new Error(`pipeline chain kind=${kind} must declare sequence and carries`);
-    if (!STAGE_CHAINS[kind])
-      throw new Error(`pipeline chain kind=${kind} was not projected to runtime`);
-
-    for (const stage of chain.sequence) {
-      if (!Object.hasOwn(registeredStages, stage))
-        throw new Error(
-          `pipeline chain kind=${kind} stage=${stage} is not registered`,
-        );
-    }
-
-    for (const carry of chain.carries) {
-      if (!chain.sequence.includes(carry.from))
-        throw new Error(
-          `pipeline chain kind=${kind} carry.from=${carry.from} is not in the sequence`,
-        );
-      const operation = registeredStages[carry.from];
-      const resolved = resolveStage(kind, carry.from);
-      if (!resolved)
-        throw new Error(
-          `pipeline chain kind=${kind} stage=${carry.from} does not resolve`,
-        );
-      const rawContext = CHAIN_PROBE_CONTEXT_OVERRIDES[operation] || {};
-      let schema;
-      try {
-        const context = resolveStageContext(
-          resolved,
-          "probe",
-          rawContext,
-        );
-        schema = resolved.row.schema(context);
-      } catch (error) {
-        throw new Error(
-          `pipeline chain cannot build receipt schema for operation=${operation}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-      const required = Array.isArray(schema?.required) ? schema.required : [];
-      if (typeof carry.field !== "string" || !required.includes(carry.field))
-        throw new Error(
-          `pipeline chain carry ${kind}.${carry.from} reads non-required receipt field=${String(carry.field)}`,
-        );
-      if (typeof carry.to !== "string" || !carry.to)
-        throw new Error(
-          `pipeline chain carry ${kind}.${carry.from} has an invalid context target`,
-        );
-    }
-  }
-
-  for (const [operation, count] of rowCounts) {
-    if (count !== 1)
-      throw new Error(
-        `pipeline operation=${operation} has ${count} behavior rows`,
-      );
-    if (!manifestOperations.has(operation))
-      throw new Error(
-        `pipeline row operation=${operation} has no manifest entry`,
-      );
-  }
 }
 
 /** @returns {Promise<string>} */
@@ -404,17 +218,21 @@ async function renderArtifactContractModule() {
     },
   );
   const topicOutlineSubquestions = JSON.parse(topicOutlineStdout);
-  const { stdout: pipelineStdout } = await execFileAsync(
+  const { stdout: operationsStdout } = await execFileAsync(
     python,
-    [exporter, "--pipeline"],
+    [exporter, "--operations"],
     {
       cwd: ROOT,
       maxBuffer: 10 * 1024 * 1024,
     },
   );
-  const pipeline = JSON.parse(pipelineStdout);
-  if (!pipeline || typeof pipeline !== "object" || Array.isArray(pipeline))
-    throw new Error("pipeline schema exporter omitted PIPELINE");
+  const operationCatalog = JSON.parse(operationsStdout);
+  if (
+    !operationCatalog ||
+    typeof operationCatalog !== "object" ||
+    Array.isArray(operationCatalog)
+  )
+    throw new Error("schema exporter omitted OPERATION_CATALOG");
   const declarations = ARTIFACT_CONTRACTS.map((contract) => {
     const value = contracts[contract.type];
     if (
@@ -438,44 +256,15 @@ async function renderArtifactContractModule() {
       2,
     )};`,
   );
-  const identityNames = Object.fromEntries(
-    Object.keys(pipeline).map((kind) => [
-      kind,
-      `${kind.toUpperCase()}_OPERATION_IDENTITIES`,
-    ]),
-  );
-  for (const [kind, definition] of Object.entries(pipeline)) {
-    declarations.push(
-      `export const ${identityNames[kind]} = ${JSON.stringify(
-        definition.stages,
-        null,
-        2,
-      )};`,
-    );
-  }
-  const pipelineEntries = Object.entries(pipeline).map(
-    ([kind, definition]) => {
-      const fields = [
-        `"stages": ${identityNames[kind]}`,
-        ...(definition.chain
-          ? [`"chain": ${JSON.stringify(definition.chain, null, 2)}`]
-          : []),
-      ];
-      return `  ${JSON.stringify(kind)}: {\n${fields
-        .map((field) =>
-          field
-            .split("\n")
-            .map((line) => `    ${line}`)
-            .join("\n"),
-        )
-        .join(",\n")}\n  }`;
-    },
-  );
   declarations.push(
-    `export const PIPELINE = {\n${pipelineEntries.join(",\n")}\n};`,
+    `export const OPERATION_CATALOG = ${JSON.stringify(
+      operationCatalog,
+      null,
+      2,
+    )};`,
   );
   return `// GENERATED by scripts/build-workflows.mjs. DO NOT EDIT.
-// Source of truth: scripts/schemas/ frontmatter models, BodySchema, and pipeline.py.
+// Source of truth: scripts/schemas/ frontmatter models, BodySchema, and operations.py.
 
 ${declarations.join("\n\n")}
 `;

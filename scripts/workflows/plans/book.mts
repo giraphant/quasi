@@ -344,7 +344,7 @@ const auditBook = async (
       ...common,
       chapter,
       mode: "repair",
-      output_exists: true,
+      outputExists: true,
       diagnostics,
     });
     const repairStop = stopForOutcome(state, repaired);
@@ -572,7 +572,7 @@ async function runBookPlanResult(
     const acquired = await dispatch(runtime, "book.acquire", slug, {
       meta: state.identity,
       materialKey: `book:${slug}`,
-      allowed_formats: formats,
+      allowedFormats: formats,
       ...(appliedYearDecision === null
         ? {}
         : { yearDecision: appliedYearDecision }),
@@ -688,7 +688,7 @@ async function runBookPlanResult(
       context: {
         ...common,
         chapter,
-        output_exists: observedOutputs.has(
+        outputExists: observedOutputs.has(
           bookChapterOutputPath(slug, chapter),
         ),
       },

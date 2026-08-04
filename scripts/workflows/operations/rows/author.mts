@@ -3,7 +3,6 @@ import {
   BOOK_ARTIFACT_CONTRACT,
   PAPER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
-import { contextValue } from "../../context-base.mts";
 import { actionPayloads, makeAuditRow } from "../shared.mts";
 import type { OperationRow } from "../../artifact-contracts/generated.mjs";
 
@@ -135,7 +134,7 @@ const discoveryRow = (kind: "book" | "paper"): OperationRow => {
     operation,
     context: (rawContext, base) => ({
       ...base,
-      fullName: contextValue(rawContext, "fullName", "full_name"),
+      fullName: rawContext.fullName,
       topic: rawContext.topic,
       count: rawContext.count,
     }),
@@ -334,11 +333,8 @@ ${JSON.stringify(request, null, 2)}
     context: (rawContext, base) => ({
       ...base,
       name: base.slug,
-      fullName:
-        contextValue(rawContext, "fullName", "full_name") ||
-        contextValue(base.meta, "fullName", "full_name") ||
-        base.slug,
-      topic: rawContext.topic || base.meta.topic || "",
+      fullName: rawContext.fullName,
+      topic: rawContext.topic,
       inputs: rawContext.inputs || [],
     }),
     refs: ({ materialKey, inputs, output, mode }) => ({

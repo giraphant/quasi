@@ -2,10 +2,7 @@ import {
   BOOK_ARTIFACT_CONTRACT,
   CHAPTER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
-import {
-  InputContractError,
-  contextValue,
-} from "../../context-base.mts";
+import { InputContractError } from "../../context-base.mts";
 import { sameClosedValue, validText } from "../../runtime.mts";
 import {
   BOOK_TEMP_PATH,
@@ -187,13 +184,8 @@ export const bookOperationRows: OperationRow[] = [
     operation: "book.acquire",
     context: (rawContext, base) => {
       const formats =
-        rawContext.allowed_formats ||
-        (base.meta.format ? [base.meta.format] : ["epub", "pdf"]);
-      const rawYearDecision = contextValue(
-        rawContext,
-        "yearDecision",
-        "year_decision",
-      );
+        rawContext.allowedFormats || ["epub", "pdf"];
+      const rawYearDecision = rawContext.yearDecision;
       const yearDecision =
         rawYearDecision == null
           ? null
@@ -410,11 +402,7 @@ export const bookOperationRows: OperationRow[] = [
   {
     operation: "book.prepare",
     context: (rawContext, base) => {
-      const rawStructureDecision = contextValue(
-        rawContext,
-        "structureDecision",
-        "structure_decision",
-      );
+      const rawStructureDecision = rawContext.structureDecision;
       const structureDecision =
         rawStructureDecision == null
           ? null
@@ -426,7 +414,7 @@ export const bookOperationRows: OperationRow[] = [
       return {
         ...base,
         identity: base.meta,
-        format: rawContext.format || base.meta.format,
+        format: rawContext.format,
         structureDecision,
         ...(rawContext.source ? { source: rawContext.source } : {}),
       };
@@ -650,14 +638,10 @@ export const bookOperationRows: OperationRow[] = [
         throw new InputContractError(
           "chapter.analyse requires one exact chapter context",
         );
-      const outputExists = contextValue(
-        rawContext,
-        "outputExists",
-        "output_exists",
-      );
+      const outputExists = rawContext.outputExists;
       if (typeof outputExists !== "boolean")
         throw new InputContractError(
-          "chapter.analyse requires boolean context.output_exists",
+          "chapter.analyse requires boolean context.outputExists",
         );
       if (base.mode === "repair" && !outputExists)
         throw new InputContractError(
@@ -762,8 +746,7 @@ export const bookOperationRows: OperationRow[] = [
     operation: "book.synthesise",
     context: (rawContext, base) => ({
       ...base,
-      inputPaths:
-        contextValue(rawContext, "inputPaths", "input_paths") || [],
+      inputPaths: rawContext.inputPaths || [],
     }),
     refs: ({ inputPaths, output, mode }) => ({ inputPaths, output, mode }),
     writeTargets: ({ output }) => [{ scope: "exact", path: output }],

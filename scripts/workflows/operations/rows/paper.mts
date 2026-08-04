@@ -213,7 +213,7 @@ export const paperOperationRows: OperationRow[] = [
     operation: "paper.analyse",
     context: (rawContext, base) => ({
       ...base,
-      input: rawContext.input || rawContext.selected_input,
+      input: rawContext.input,
     }),
     refs: ({ input, output, mode }) => ({ input, output, mode }),
     writeTargets: ({ output }) => [{ scope: "exact", path: output }],

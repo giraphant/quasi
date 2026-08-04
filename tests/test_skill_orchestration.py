@@ -9,10 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
-import shutil
-import subprocess
 
-import pytest
 import yaml
 
 from scripts.status import status as status_module
@@ -75,31 +72,6 @@ def research_topic_workflow_manifest() -> dict[str, object]:
             if isinstance(contract, dict):
                 return contract
     raise AssertionError("research-topic has no closed invocation manifest")
-
-
-def generated_pipeline_registry() -> dict[str, dict[str, str]]:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node not on PATH")
-    entry = ROOT / "scripts" / "workflows" / "artifact-contracts" / "generated.mjs"
-    script = (
-        f"import {{ PIPELINE }} from {json.dumps(entry.as_uri())};"
-        "const registry = Object.fromEntries("
-        "Object.entries(PIPELINE).map(([kind, definition]) => ["
-        "kind, Object.fromEntries(definition.stages.map("
-        "({ stage, operation }) => [stage, operation]"
-        "))]));"
-        "process.stdout.write(JSON.stringify(registry));"
-    )
-    proc = subprocess.run(
-        [node, "--input-type=module", "-e", script],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr
-    return json.loads(proc.stdout)
 
 
 def test_mirrored_maintainer_guides_are_identical() -> None:
@@ -176,23 +148,6 @@ def test_frontmatter_descriptions_are_short_routing_hints() -> None:
         value = description(path)
         assert 20 <= len(value) <= 220, path
         assert "Phase" not in value and "→" not in value, path
-
-
-def test_every_skill_dispatched_stage_resolves_in_the_registry() -> None:
-    registry = generated_pipeline_registry()
-    registry_stages = {
-        stage for stages_by_kind in registry.values() for stage in stages_by_kind
-    }
-    for path in active_skill_files():
-        text = path.read_text(encoding="utf-8")
-        kinds = set(re.findall(r'"?kind"?\s*:\s*"([a-z]+)"', text))
-        stages = set(re.findall(r'"?stage"?\s*:\s*"([a-z-]+)"', text))
-        for kind in kinds:
-            assert kind in registry, f"{path.relative_to(ROOT)}: unknown kind {kind}"
-        for stage in stages:
-            assert stage in registry_stages, (
-                f"{path.relative_to(ROOT)}: unknown stage {stage}"
-            )
 
 
 def test_collect_material_routes_leaf_kinds_to_generated_named_entries() -> None:
@@ -274,24 +229,8 @@ def test_research_topic_routes_to_its_generated_named_entry() -> None:
         encoding="utf-8"
     )
     assert "quasi-status --kind topic" in text
-    assert "workflows/run-stage.mjs" not in text
     assert "--scan" not in text
     assert 'stage:"' not in text
-
-
-def test_unmigrated_dispatching_skills_keep_the_compatibility_entry() -> None:
-    for path in active_skill_files():
-        if path.parent.name in {"collect-material", "research-topic"}:
-            continue
-        text = path.read_text(encoding="utf-8")
-        if "Workflow(" not in text:
-            continue
-        assert (
-            'scriptPath="$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs"' in text
-        ), path
-        assert "quasi-status" in text, path
-        mjs_names = set(re.findall(r"[A-Za-z0-9_-]+\.mjs", text))
-        assert mjs_names == {"run-stage.mjs"}, path
 
 
 def test_skills_never_invoke_agent_owned_capabilities() -> None:

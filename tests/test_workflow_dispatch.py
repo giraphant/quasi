@@ -9,10 +9,15 @@ from typing import Any
 
 import pytest
 
-from workflow_test_support import HARNESS, ROOT, run_workflow_export
+from workflow_test_support import (
+    HARNESS,
+    ROOT,
+    read_workflow_export,
+    run_workflow_export,
+)
 
 
-CATALOG_MODULE = "scripts/workflows/operations/catalog.mts"
+GENERATED_CONTRACTS = "scripts/workflows/artifact-contracts/generated.mjs"
 CONTEXT_MODULE = "scripts/workflows/context-base.mts"
 INPUT_MODULE = "scripts/workflows/shared/material-input.mts"
 LANGUAGE_TAGS = json.loads(
@@ -49,11 +54,10 @@ async function load(source) {
   return import(url);
 }
 
-const dispatch = await load("scripts/workflows/shared/dispatch.mts");
 const preparedDispatch = await load(
   "scripts/workflows/shared/dispatch-prepared.mts",
 );
-const catalog = await load("scripts/workflows/operations/catalog.mts");
+const catalog = await load(config.catalog);
 let agentCalls = 0;
 const runtime = {
   agent: async () => {
@@ -69,9 +73,9 @@ const runtime = {
 };
 
 try {
+  const prepared = catalog.prepareOperation(config.invocation);
   let result;
   if (config.mode === "throwing_predicate") {
-    const prepared = catalog.prepareOperation(config.invocation);
     prepared.complete = () => {
       const error = new Error("predicate exploded");
       error.name = "PredicateExplosion";
@@ -79,7 +83,7 @@ try {
     };
     result = await preparedDispatch.dispatchPreparedOperation(runtime, prepared);
   } else {
-    result = await dispatch.dispatchOperation(runtime, config.invocation);
+    result = await preparedDispatch.dispatchPreparedOperation(runtime, prepared);
   }
   process.stdout.write(JSON.stringify({ result, agentCalls }));
 } catch (error) {
@@ -118,14 +122,14 @@ def _context(**overrides: Any) -> dict[str, Any]:
         "pass": 1,
         "query": "exact material",
         "topic": "exact material",
-        "full_name": "Ada Example",
+        "fullName": "Ada Example",
         "count": 3,
         "format": "epub",
         "source": "sources/exact-material.epub",
         "input": "processing/papers/exact-material/source.txt",
         "inputs": [],
-        "input_paths": [],
-        "output_exists": False,
+        "inputPaths": [],
+        "outputExists": False,
         "chapter": {
             "slot": "01",
             "slug": "opening",
@@ -136,9 +140,9 @@ def _context(**overrides: Any) -> dict[str, Any]:
             "start_page": 1,
             "end_page": 4,
         },
-        "member_refs": [],
-        "member_assignments": [],
-        "card_refs": [],
+        "memberRefs": [],
+        "memberAssignments": [],
+        "cardRefs": [],
         "subquestions": [],
         "task": {
             "subq": "sq-opening",
@@ -147,9 +151,9 @@ def _context(**overrides: Any) -> dict[str, Any]:
             "card_slug": "exact-card",
         },
         "target": "vault/topics/exact-material/00-overview.md",
-        "target_language": "zh-CN",
-        "max_items": 8,
-        "max_cards": 3,
+        "targetLanguage": "zh-CN",
+        "maxItems": 8,
+        "maxCards": 3,
         "candidates": [],
     }
     value.update(overrides)
@@ -188,30 +192,12 @@ OPERATION_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
 }
 
 
-def _pipeline() -> dict[str, Any]:
-    proc = subprocess.run(
-        ["python3", "scripts/schemas/export_contracts.py", "--pipeline"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr
-    return json.loads(proc.stdout)
+def _registered_operations() -> dict[str, dict[str, Any]]:
+    return read_workflow_export(GENERATED_CONTRACTS, "OPERATION_CATALOG")
 
 
-def _registered_operations() -> dict[str, tuple[str, str]]:
-    registered: dict[str, tuple[str, str]] = {}
-    for kind, definition in _pipeline().items():
-        for stage in definition["stages"]:
-            operation = stage["operation"]
-            prior = registered.get(operation)
-            identity = (kind, stage["effect"])
-            if prior is not None:
-                assert prior[1] == identity[1]
-                continue
-            registered[operation] = identity
-    return registered
+def _catalog_module(kind: str) -> str:
+    return f"scripts/workflows/operations/catalogs/{kind}.mts"
 
 
 def _invocation(
@@ -232,10 +218,12 @@ def _invocation(
 
 
 def _prepare(operation: str, **overrides: Any) -> dict[str, Any]:
+    invocation = _invocation(operation, **overrides)
+    kind = invocation.pop("kind")
     return run_workflow_export(
-        CATALOG_MODULE,
+        _catalog_module(kind),
         "prepareOperation",
-        _invocation(operation, **overrides),
+        invocation,
     )
 
 
@@ -245,6 +233,37 @@ def _terminal_statuses(prepared: dict[str, Any]) -> set[str]:
         branch["properties"]["status"]["const"]
         for branch in terminal["anyOf"]
     }
+
+
+def _terminal_branches(prepared: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    terminal = prepared["options"]["schema"]["properties"]["terminal"]
+    return {
+        branch["properties"]["status"]["const"]: branch
+        for branch in terminal["anyOf"]
+    }
+
+
+def _prompt_request(prompt: str) -> dict[str, Any]:
+    if prompt.startswith("{"):
+        return json.loads(prompt)
+    if "```json\n" in prompt:
+        payload = prompt.rsplit("```json\n", 1)[1].split("\n```", 1)[0]
+        return json.loads(payload)
+    return json.loads(prompt[prompt.index("\n{") + 1 :])
+
+
+def _bare_consts(node: Any, path: str = "$") -> list[str]:
+    found: list[str] = []
+    if isinstance(node, dict):
+        if "const" in node and "type" not in node:
+            found.append(path)
+        for key, value in node.items():
+            if key not in {"const", "enum", "default", "examples"}:
+                found.extend(_bare_consts(value, f"{path}/{key}"))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found.extend(_bare_consts(value, f"{path}/{index}"))
+    return found
 
 
 def _export_failure(source: str, export_name: str, *args: Any) -> str:
@@ -267,8 +286,18 @@ def _dispatch(config: dict[str, Any]) -> dict[str, Any]:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
+    local_config = deepcopy(config)
+    invocation = local_config["invocation"]
+    kind = invocation.pop("kind")
+    local_config["catalog"] = _catalog_module(kind)
     proc = subprocess.run(
-        [node, "--input-type=module", "-e", DISPATCH_HARNESS, json.dumps(config)],
+        [
+            node,
+            "--input-type=module",
+            "-e",
+            DISPATCH_HARNESS,
+            json.dumps(local_config),
+        ],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -564,24 +593,20 @@ def test_dispatch_preserves_each_validated_terminal_and_stamps_host_fields(
     }
 
 
-def test_invalid_context_returns_typed_outcome_before_agent_dispatch() -> None:
+def test_local_preparation_rejects_bad_context_before_agent_dispatch() -> None:
     report = _dispatch(
         {"invocation": _audit_invocation(slug=None), "model_output": None}
     )
 
     assert report["agentCalls"] == 0
-    assert report["result"]["kind"] == "invalid_context"
-    assert report["result"]["receipt"] is None
-    assert report["result"]["issue"]["operation"] == "paper.audit"
-    assert report["result"]["issue"]["retryable"] is False
-    assert report["result"]["issue"]["observation_request"] is None
-    assert "invalid material slug" in report["result"]["issue"]["summary"]
+    assert report["thrown"]["name"] == "InputContractError"
+    assert "invalid material slug" in report["thrown"]["message"]
 
 
 def test_unexpected_preparation_error_propagates_without_agent_dispatch() -> None:
     invocation = _invocation(
         "book.acquire",
-        context=_context(allowed_formats="epub"),
+        context=_context(allowedFormats="epub"),
     )
     report = _dispatch({"invocation": invocation, "model_output": None})
 
@@ -643,10 +668,12 @@ def test_completion_predicate_error_propagates_unchanged() -> None:
 
 
 def test_missing_slug_rejects_before_prompt_construction():
+    invocation = _invocation("paper.acquire", slug=None)
+    invocation.pop("kind")
     stderr = _export_failure(
-        CATALOG_MODULE,
+        _catalog_module("paper"),
         "prepareOperation",
-        _invocation("paper.acquire", slug=None),
+        invocation,
     )
 
     assert "invalid material slug" in stderr
@@ -666,33 +693,229 @@ def test_missing_artifact_variable_never_expands_to_undefined():
     assert "undefined" not in stderr
 
 
-def test_catalog_prepares_each_operation_with_its_own_schema_and_refs():
+def test_local_catalogs_preserve_each_operation_identity_and_schema_partition():
     registered = _registered_operations()
     assert set(OPERATION_FIXTURES) == set(registered)
 
-    for operation, (kind, effect) in registered.items():
-        prepared = _prepare(operation, kind=kind)
+    statuses: set[str] = set()
+    for operation, definition in registered.items():
+        for kind in definition["kinds"]:
+            prepared = _prepare(operation, kind=kind)
+            schema = prepared["options"]["schema"]
+            stamps = prepared["stampedValues"]
+            request = _prompt_request(prepared["prompt"])
 
-        assert prepared["invocation"]["operation"] == operation
-        assert prepared["invocation"]["kind"] == kind
-        assert prepared["options"]["agentType"]
-        assert prepared["options"]["phase"]
-        assert prepared["options"]["label"] == f"exact-material:{operation}"
-        assert prepared["options"]["schema"]["type"] == "object"
-        assert prepared["stampedValues"]["operation"] == operation
-        assert prepared["stampedValues"]["effect"] == effect
-        request = (
-            json.loads(prepared["prompt"])
-            if prepared["prompt"].startswith("{")
-            else None
-        )
-        if request is not None:
+            assert prepared["invocation"]["operation"] == operation
+            assert prepared["invocation"]["kind"] == kind
+            assert prepared["options"]["agentType"] == definition["agent"]
+            assert prepared["options"]["phase"] == definition["phase"]
+            assert prepared["options"]["label"] == f"exact-material:{operation}"
+            assert schema["type"] == "object"
+            assert schema["additionalProperties"] is False
+            assert set(schema["required"]) == set(schema["properties"])
+            assert set(schema["properties"]).isdisjoint(stamps)
+            assert _bare_consts(schema) == []
+            assert stamps["operation"] == operation
+            assert stamps["effect"] == definition["effect"]
+            assert stamps["stage"] == definition["phase"]
+            assert request["schema_version"] == "quasi.stage.request/0.2"
             assert request["operation"] == operation
+            assert request["stage"] == definition["phase"]
+            statuses.update(_terminal_statuses(prepared))
+
+    assert statuses == {"complete", "needs_input", "blocked", "failed"}
+
+
+def test_material_search_stage_terminal_union_has_four_closed_branches() -> None:
+    branches = _terminal_branches(_prepare("material.search"))
+
+    assert set(branches) == {"complete", "needs_input", "blocked", "failed"}
+    for branch in branches.values():
+        assert branch["additionalProperties"] is False
+        assert set(branch["required"]) == set(branch["properties"])
+
+    assert branches["complete"]["properties"]["issue"] == {"type": "null"}
+    issue_fields = {
+        "code",
+        "operation",
+        "summary",
+        "user_question",
+        "retryable",
+    }
+    for status in ("needs_input", "blocked", "failed"):
+        issue = branches[status]["properties"]["issue"]
+        assert issue["type"] == "object"
+        assert issue["additionalProperties"] is False
+        assert set(issue["required"]) == issue_fields
+        assert set(issue["properties"]) == issue_fields
+
+
+@pytest.mark.parametrize(
+    ("output_exists", "action", "write_state"),
+    [
+        (False, "create", "written"),
+        (True, "reconciled", "not_written"),
+    ],
+)
+def test_chapter_analyse_schema_binds_complete_to_output_testimony(
+    output_exists: bool,
+    action: str,
+    write_state: str,
+) -> None:
+    branches = _terminal_branches(
+        _prepare(
+            "chapter.analyse",
+            context=_context(outputExists=output_exists),
+        )
+    )
+
+    complete = branches["complete"]
+    assert complete["properties"]["action"] == {
+        "const": action,
+        "type": "string",
+    }
+    assert complete["properties"]["write_state"] == {
+        "const": write_state,
+        "type": "string",
+    }
+
+
+def test_chapter_analyse_requires_caller_output_testimony() -> None:
+    context = _context(
+        chapter={
+            "slot": "01",
+            "slug": "introduction",
+            "filename": "ch01-introduction.md",
+            "title": "Introduction",
+        }
+    )
+    context.pop("outputExists")
+    invocation = _invocation("chapter.analyse", context=context)
+    invocation.pop("kind")
+
+    stderr = _export_failure(
+        _catalog_module("book"),
+        "prepareOperation",
+        invocation,
+    )
+
+    assert "chapter.analyse requires boolean context.outputExists" in stderr
+
+
+@pytest.mark.parametrize(
+    ("title", "chapter_label", "expected_title"),
+    [
+        ("Introduction: Politics and Ethics", None, "Introduction: Politics and Ethics"),
+        (
+            "Introduction: Politics and Ethics",
+            "导论",
+            "导论 Introduction: Politics and Ethics",
+        ),
+        (
+            "导论 Introduction: Politics and Ethics",
+            "导论",
+            "导论 Introduction: Politics and Ethics",
+        ),
+    ],
+)
+def test_chapter_analyse_preserves_or_prefixes_the_manifest_title_once(
+    title: str,
+    chapter_label: str | None,
+    expected_title: str,
+) -> None:
+    chapter = {
+        "slot": "00a",
+        "slug": "introduction",
+        "filename": "ch00a-introduction.md",
+        "title": title,
+    }
+    if chapter_label is not None:
+        chapter["chapter_label"] = chapter_label
+    prepared = _prepare(
+        "chapter.analyse",
+        slug="example-book",
+        context=_context(chapter=chapter, outputExists=False),
+    )
+    request = _prompt_request(prepared["prompt"])
+
+    assert request["frontmatter_seed"]["title"] == expected_title
+    assert request["identity"]["chapter_label"] == chapter_label
+    assert request["output_observation"] == {
+        "path": "vault/books/example-book/ch00a-introduction.md",
+        "exists": False,
+        "authority": "caller",
+    }
+
+
+def test_paper_acquire_preserves_both_urls_and_real_diagnostic_capabilities() -> None:
+    prepared = _prepare(
+        "paper.acquire",
+        slug="example-paper",
+        context=_context(
+            meta={
+                "title": "Example Title",
+                "authors": ["Example Author"],
+                "year": 1991,
+                "doi": None,
+                "oa_url": "https://example.org/example.pdf",
+                "url": "https://www.jstor.org/stable/43154235",
+            }
+        ),
+    )
+    request = _prompt_request(prepared["prompt"])
+
+    assert request["identity"]["oa_url"] == "https://example.org/example.pdf"
+    assert request["identity"]["url"] == (
+        "https://www.jstor.org/stable/43154235"
+    )
+    assert request["capabilities"][0].startswith(
+        "quasi-download paper fetch --slug"
+    )
+    assert "--output" not in request["capabilities"][0]
+    assert request["capabilities"][1] == (
+        "quasi-download paper diagnose --url URL [--via-ezproxy] "
+        "[--timeout SECONDS] --json"
+    )
+
+
+def test_acquire_terminal_fields_remain_branch_local() -> None:
+    paper_schema = _prepare("paper.acquire")["options"]["schema"]
+    book_schema = _prepare("book.acquire")["options"]["schema"]
+
+    for schema in (paper_schema, book_schema):
+        assert "disposition" not in schema["properties"]
+        assert "source" not in schema["properties"]
+        branches = {
+            branch["properties"]["status"]["const"]: branch
+            for branch in schema["properties"]["terminal"]["anyOf"]
+        }
+        assert {"disposition", "source"}.issubset(
+            branches["complete"]["required"]
+        )
+        for status, branch in branches.items():
+            if status != "complete":
+                assert "disposition" not in branch["properties"]
+                assert "source" not in branch["properties"]
+
+    assert "tmp_path" not in book_schema["properties"]
+    assert "year_evidence" not in book_schema["properties"]
+    book_branches = {
+        branch["properties"]["status"]["const"]: branch
+        for branch in book_schema["properties"]["terminal"]["anyOf"]
+    }
+    assert {"tmp_path", "year_evidence"}.issubset(
+        book_branches["complete"]["required"]
+    )
+    assert {"tmp_path", "year_evidence", "proposed_actions"}.issubset(
+        book_branches["needs_input"]["required"]
+    )
+    assert "proposed_actions" not in book_branches["complete"]["properties"]
 
 
 def test_only_operations_with_typed_gates_expose_needs_input() -> None:
     actual = set()
-    for operation, (kind, _) in _registered_operations().items():
+    for operation, definition in _registered_operations().items():
+        kind = definition["kinds"][0]
         overrides: dict[str, Any] = {"kind": kind}
         if operation == "book.prepare":
             overrides["context"] = _context(
@@ -714,9 +937,9 @@ def test_only_operations_with_typed_gates_expose_needs_input() -> None:
 def test_every_writer_has_normalized_project_relative_targets():
     registered = _registered_operations()
 
-    for operation, (kind, effect) in registered.items():
-        targets = _prepare(operation, kind=kind)["writeTargets"]
-        if effect == "readonly":
+    for operation, definition in registered.items():
+        targets = _prepare(operation, kind=definition["kinds"][0])["writeTargets"]
+        if definition["effect"] == "readonly":
             assert targets == []
             continue
         assert targets, operation
@@ -967,15 +1190,17 @@ def test_workflow_language_normalizer_matches_the_python_contract_fixture(
     )
 
 
-def test_translation_row_requires_the_exact_snake_case_target_field():
+def test_translation_row_requires_the_internal_camel_case_target_field():
     context = _context()
-    del context["target_language"]
-    context["targetLanguage"] = "fr-FR"
+    del context["targetLanguage"]
+    context["target_language"] = "fr-FR"
 
+    invocation = _invocation("translation.prepare", context=context)
+    invocation.pop("kind")
     stderr = _export_failure(
-        CATALOG_MODULE,
+        _catalog_module("translation"),
         "prepareOperation",
-        _invocation("translation.prepare", context=context),
+        invocation,
     )
 
     assert "requires a valid target language" in stderr
@@ -995,7 +1220,7 @@ def test_book_acquire_rejects_a_truthy_malformed_year_decision_before_agent():
                 "book.acquire",
                 context=_context(
                     meta=_search_identity("book", slug="exact-book"),
-                    year_decision={"action": "accept-current"},
+                    yearDecision={"action": "accept-current"},
                 ),
             ),
             "model_output": None,
@@ -1003,7 +1228,7 @@ def test_book_acquire_rejects_a_truthy_malformed_year_decision_before_agent():
     )
 
     assert report["agentCalls"] == 0
-    assert report["result"]["kind"] == "invalid_context"
+    assert report["thrown"]["name"] == "InputContractError"
 
 
 def test_book_acquire_batch_flag_cannot_bypass_a_year_mismatch():
@@ -1037,7 +1262,7 @@ def test_book_acquire_accept_current_keeps_exact_identity_and_prior_evidence():
         "book.acquire",
         context=_context(
             meta=deepcopy(decision["current_identity"]),
-            year_decision=deepcopy(decision),
+            yearDecision=deepcopy(decision),
         ),
     )
     report = _dispatch(
@@ -1076,7 +1301,7 @@ def test_book_acquire_accept_current_keeps_exact_identity_and_prior_evidence():
     )
 
     assert rejected_identity["agentCalls"] == 0
-    assert rejected_identity["result"]["kind"] == "invalid_context"
+    assert rejected_identity["thrown"]["name"] == "InputContractError"
     assert rejected_evidence["result"]["kind"] == "incoherent_complete"
 
 
@@ -1092,7 +1317,7 @@ def test_book_acquire_use_recommended_accepts_search_identity_without_slug_rewri
         slug="existing-vault-owner",
         context=_context(
             meta=search_identity,
-            year_decision=deepcopy(decision),
+            yearDecision=deepcopy(decision),
         ),
     )
     output = _book_acquire_output(deepcopy(decision["year_evidence"]))
@@ -1129,42 +1354,6 @@ def test_book_acquire_use_recommended_accepts_search_identity_without_slug_rewri
 )
 def test_audit_rows_expose_their_real_target(operation: str, scope: str, path: str):
     assert _prepare(operation)["writeTargets"] == [{"scope": scope, "path": path}]
-
-
-@pytest.mark.parametrize(
-    ("left", "right", "expected"),
-    [
-        (
-            {"scope": "exact", "path": "vault/papers/a.md"},
-            {"scope": "exact", "path": "vault/papers/a.md"},
-            True,
-        ),
-        (
-            {"scope": "exact", "path": "vault/books/a/ch01.md"},
-            {"scope": "subtree", "path": "vault/books/a"},
-            True,
-        ),
-        (
-            {"scope": "exact", "path": "vault/papers/a.md"},
-            {"scope": "exact", "path": "vault/papers/b.md"},
-            False,
-        ),
-        (
-            {"scope": "subtree", "path": "vault/books/a"},
-            {"scope": "exact", "path": "vault/books/abc/ch01.md"},
-            False,
-        ),
-    ],
-)
-def test_write_target_overlap_uses_path_boundaries(
-    left: dict[str, str],
-    right: dict[str, str],
-    expected: bool,
-):
-    assert (
-        run_workflow_export(CATALOG_MODULE, "writeTargetsOverlap", left, right)
-        is expected
-    )
 
 
 def _needs_input_candidate_variants(prepared: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1213,7 +1402,7 @@ def test_search_owner_reconcile_requires_the_selected_identity() -> None:
     invocation = _invocation(
         "material.search",
         kind="paper",
-        context=_context(identity_decision=decision),
+        context=_context(identityDecision=decision),
     )
 
     accepted = _dispatch(
@@ -1248,14 +1437,14 @@ def test_search_rejects_accept_current_year_decision_before_agent_dispatch():
             "invocation": _invocation(
                 "material.search",
                 kind="book",
-                context=_context(year_decision=decision),
+                context=_context(yearDecision=decision),
             ),
             "model_output": None,
         }
     )
 
     assert report["agentCalls"] == 0
-    assert report["result"]["kind"] == "invalid_context"
+    assert report["thrown"]["name"] == "InputContractError"
 
 
 def test_book_year_search_requires_the_recommended_year_then_uses_owner_proof():
@@ -1264,7 +1453,7 @@ def test_book_year_search_requires_the_recommended_year_then_uses_owner_proof():
         "material.search",
         kind="book",
         slug="existing-vault-owner",
-        context=_context(year_decision=decision),
+        context=_context(yearDecision=decision),
     )
     old_year = _dispatch(
         {
@@ -1333,14 +1522,14 @@ def test_search_rejects_a_cross_kind_owner_decision_before_agent_dispatch() -> N
             "invocation": _invocation(
                 "material.search",
                 kind="paper",
-                context=_context(identity_decision=decision),
+                context=_context(identityDecision=decision),
             ),
             "model_output": None,
         }
     )
 
     assert report["agentCalls"] == 0
-    assert report["result"]["kind"] == "invalid_context"
+    assert report["thrown"]["name"] == "InputContractError"
 
 
 def test_book_search_rejects_a_paper_in_the_echoed_candidate_set() -> None:
@@ -1363,14 +1552,14 @@ def test_book_search_rejects_a_paper_in_the_echoed_candidate_set() -> None:
             "invocation": _invocation(
                 "material.search",
                 kind="book",
-                context=_context(identity_decision=decision),
+                context=_context(identityDecision=decision),
             ),
             "model_output": None,
         }
     )
 
     assert report["agentCalls"] == 0
-    assert report["result"]["kind"] == "invalid_context"
+    assert report["thrown"]["name"] == "InputContractError"
 
 
 def test_pdf_book_structure_gate_uses_direct_manual_split_specs() -> None:

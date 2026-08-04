@@ -584,19 +584,16 @@ def test_identity_mode_is_removed_because_identity_is_always_returned(tmp_path: 
     assert json.loads(result.stdout)["error"]["code"] == "invalid_invocation"
 
 
-def test_paper_status_uses_live_pipeline_artifact_template(
+def test_paper_status_uses_live_operation_catalog_artifact_template(
     tmp_path: Path, monkeypatch,
 ):
     project = tmp_path / "project"
     slug = "manifest-paper"
     source = write(project / "alternate-sources" / f"{slug}.pdf", b"%PDF")
-    acquire = next(
-        item
-        for item in status_module.PIPELINE["paper"]["stages"]
-        if item["stage"] == "acquire"
-    )
     monkeypatch.setitem(
-        acquire["artifacts"], "output", "alternate-sources/{slug}.pdf"
+        status_module.OPERATION_CATALOG["paper.acquire"]["artifacts"],
+        "output",
+        "alternate-sources/{slug}.pdf",
     )
 
     payload = status_module.paper_status(project, slug)

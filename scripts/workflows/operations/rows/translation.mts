@@ -1,7 +1,4 @@
-import {
-  InputContractError,
-  contextValue,
-} from "../../context-base.mts";
+import { InputContractError } from "../../context-base.mts";
 import {
   validRequestedTranslationSource,
 } from "../../contracts/translation.mts";
@@ -197,7 +194,7 @@ export const translationOperationRows: OperationRow[] = [
   {
     operation: "translation.prepare",
     context: (rawContext, base) => {
-      const targetLanguage = normalizeLanguage(rawContext.target_language);
+      const targetLanguage = normalizeLanguage(rawContext.targetLanguage);
       if (targetLanguage === null)
         throw new InputContractError(
           "translation.prepare requires a valid target language",
@@ -207,30 +204,15 @@ export const translationOperationRows: OperationRow[] = [
       return {
         ...base,
         materialKey:
-          contextValue(rawContext, "materialKey", "material_key") ||
+          rawContext.materialKey ||
           `translation:paper:${base.slug}:${targetLanguage}`,
         targetLanguage,
         target,
         stem,
-        requestedSource:
-          contextValue(
-            rawContext,
-            "requestedSource",
-            "requested_source",
-          ) ||
-          rawContext.source_file ||
-          null,
-        sourceDecision:
-          contextValue(
-            rawContext,
-            "sourceDecision",
-            "source_decision",
-          ) || null,
-        tocJson:
-          contextValue(rawContext, "tocJson", "toc_json") || null,
-        tocPageSide:
-          contextValue(rawContext, "tocPageSide", "toc_page_side") ||
-          "original",
+        requestedSource: rawContext.requestedSource || null,
+        sourceDecision: rawContext.sourceDecision || null,
+        tocJson: rawContext.tocJson || null,
+        tocPageSide: rawContext.tocPageSide || "original",
       };
     },
     refs: (

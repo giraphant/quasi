@@ -1,3 +1,4 @@
+import { OPERATION_CATALOG } from "../artifact-contracts/generated.mjs";
 import {
   InputContractError,
   expandArtifactTemplates,
@@ -9,14 +10,13 @@ import type {
   OperationDescriptor,
   OperationName,
   OperationRow,
-  PipelineStage,
   StageReceipt,
   WorkflowContext,
   WriteTarget,
 } from "../artifact-contracts/generated.mjs";
 import type { AgentOptions } from "../shared/host-runtime.mts";
 
-export interface CatalogOperation {
+interface CatalogOperation {
   kind: KindName;
   operation: OperationName;
   descriptor: OperationDescriptor;
@@ -43,14 +43,12 @@ export interface PreparedOperation {
   writeTargets: readonly WriteTarget[];
 }
 
-export interface OperationPreparer {
-  resolveCatalogOperation(operation: OperationName): CatalogOperation | null;
+interface OperationPreparer {
   prepareOperation(invocation: FixedKindOperationInvocation): PreparedOperation;
 }
 
 export function operationPreparer(
   kind: KindName,
-  identities: readonly PipelineStage[],
   operationRows: readonly OperationRow[],
 ): OperationPreparer {
   const rowsByOperation = Object.fromEntries(
@@ -60,10 +58,10 @@ export function operationPreparer(
   const resolveCatalogOperation = (
     operation: OperationName,
   ): CatalogOperation | null => {
-    const identity =
-      identities.find((item) => item.operation === operation) || null;
+    const identity = OPERATION_CATALOG[operation];
     const operationRow = rowsByOperation[operation];
-    if (!identity || !operationRow) return null;
+    if (!identity || !identity.kinds.includes(kind) || !operationRow)
+      return null;
     const descriptor = {
       ...operationRow,
       stage: identity.phase,
@@ -88,7 +86,7 @@ export function operationPreparer(
     return prepareResolvedOperation(resolved, fullInvocation);
   };
 
-  return { resolveCatalogOperation, prepareOperation };
+  return { prepareOperation };
 }
 
 const unregisteredOperation = (
@@ -98,7 +96,7 @@ const unregisteredOperation = (
     `operation is not registered for material kind: ${String(invocation?.kind)}:${String(invocation?.operation)}`,
   );
 
-export function resolveOperationContext(
+function resolveOperationContext(
   resolved: CatalogOperation,
   slug: string,
   rawContext: unknown,
@@ -200,25 +198,7 @@ function prepareResolvedOperation(
     stampedValues,
     complete: (receipt: StageReceipt): boolean =>
       receipt.terminal.status === "complete" &&
-      resolved.row.contract.statuses.complete(receipt, context) === true,
+      resolved.row.complete(receipt, context),
     writeTargets,
   };
 }
-
-const atOrBelow = (path: string, root: string): boolean =>
-  path === root || path.startsWith(`${root}/`);
-
-export function writeTargetsOverlap(
-  left: WriteTarget,
-  right: WriteTarget,
-): boolean {
-  if (left.scope === "exact" && right.scope === "exact")
-    return left.path === right.path;
-  if (left.scope === "subtree" && right.scope === "subtree")
-    return atOrBelow(left.path, right.path) || atOrBelow(right.path, left.path);
-  return left.scope === "subtree"
-    ? atOrBelow(right.path, left.path)
-    : atOrBelow(left.path, right.path);
-}
-
-export { unregisteredOperation };

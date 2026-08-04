@@ -13,13 +13,6 @@ export class InputContractError extends Error {
   }
 }
 
-export const contextValue = (
-  source: WorkflowContext,
-  camel: string,
-  snake: string = camel,
-): any =>
-  source[camel] === undefined ? source[snake] : source[camel];
-
 export function operationContextBase(
   kind: KindName,
   slug: string,
@@ -35,15 +28,13 @@ export function operationContextBase(
   const passthrough = Object.fromEntries(
     Object.entries(context).filter(([name]) => !artifactRoleSet.has(name)),
   );
-  const meta = context.meta || context.identity || context;
+  const meta = context.meta || {};
   return {
     ...passthrough,
     kind,
     slug,
     meta,
-    materialKey:
-      contextValue(context, "materialKey", "material_key") ||
-      `${kind}:${slug}`,
+    materialKey: context.materialKey || `${kind}:${slug}`,
     mode: context.mode || "create",
     diagnostics: context.diagnostics || [],
     pass: context.pass || 1,

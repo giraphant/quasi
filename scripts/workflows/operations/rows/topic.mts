@@ -1,7 +1,4 @@
-import {
-  InputContractError,
-  contextValue,
-} from "../../context-base.mts";
+import { InputContractError } from "../../context-base.mts";
 import { validCardSlug } from "../steer.mts";
 import { makeAuditRow } from "../shared.mts";
 import type {
@@ -152,11 +149,9 @@ const topicRecallContext = (
   base: WorkflowContext,
 ): WorkflowContext => ({
   ...base,
-  researchKey:
-    contextValue(rawContext, "researchKey", "research_key") ||
-    `topic:${base.slug}`,
-  query: rawContext.query || rawContext.topic || base.meta.description,
-  maxItems: contextValue(rawContext, "maxItems", "max_items") ?? 8,
+  researchKey: rawContext.researchKey || `topic:${base.slug}`,
+  query: rawContext.query,
+  maxItems: rawContext.maxItems ?? 8,
   subquestions: rawContext.subquestions || [],
 });
 
@@ -164,30 +159,20 @@ const topicContext = (
   rawContext: any,
   base: WorkflowContext,
 ): WorkflowContext => {
-  const task = rawContext.task || rawContext.web_task;
+  const task = rawContext.task;
   return {
     ...base,
-    researchKey:
-      contextValue(rawContext, "researchKey", "research_key") ||
-      `topic:${base.slug}`,
+    researchKey: rawContext.researchKey || `topic:${base.slug}`,
     topicSlug: base.slug,
-    topic: rawContext.topic || rawContext.query,
+    topic: rawContext.topic,
     query: rawContext.query,
-    memberRefs:
-      contextValue(rawContext, "memberRefs", "member_refs") || [],
-    memberAssignments:
-      contextValue(
-        rawContext,
-        "memberAssignments",
-        "member_assignments",
-      ) || [],
-    cardRefs:
-      contextValue(rawContext, "cardRefs", "card_refs") || [],
+    memberRefs: rawContext.memberRefs || [],
+    memberAssignments: rawContext.memberAssignments || [],
+    cardRefs: rawContext.cardRefs || [],
     task,
     target: task?.card_slug,
     subquestions: rawContext.subquestions || [],
-    maxCards:
-      contextValue(rawContext, "maxCards", "max_cards"),
+    maxCards: rawContext.maxCards,
   };
 };
 
@@ -207,13 +192,9 @@ const validRecalledItem: AnyFunction = (item) =>
   (item.path === null ||
     item.path === topicMemberPath(item.kind, item.slug));
 
-const recallContext: AnyFunction = (context) => context.state || context;
-
 const completeTopicRecall: AnyFunction = (receipt, context) => {
-  const expected = recallContext(context);
-  const maxItems = expected.maxItems || expected.max_items;
   return (
-    receipt.items.length <= maxItems &&
+    receipt.items.length <= context.maxItems &&
     receipt.items.every((item: any) =>
       validRecalledItem(item),
     ) &&

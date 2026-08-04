@@ -81,18 +81,6 @@ export type LeafGate =
   | TranslationSourceGate
   | TranslationConfigurationGate;
 
-export type DirectGate = LeafGate | TopicGate;
-
-export type HigherOrderGate =
-  | TopicGate
-  | {
-      kind: "child";
-      route: TopicChildRoute;
-      gate: LeafGate;
-    };
-
-export type TypedGate = LeafGate | HigherOrderGate;
-
 export type LeafResumeSeed =
   | {
       route: { kind: "paper"; slug: string };

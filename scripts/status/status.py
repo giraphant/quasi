@@ -18,7 +18,7 @@ import yaml
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
-from scripts.schemas.pipeline import PIPELINE  # noqa: E402
+from scripts.schemas.operations import OPERATION_CATALOG  # noqa: E402
 from scripts.schemas.topic import TopicSchema  # noqa: E402
 from scripts.translate.translate_commit import (  # noqa: E402
     TranslateContractError,
@@ -76,17 +76,14 @@ def project_root() -> Path:
 
 def artifact_path(
     root: Path,
-    kind: str,
-    stage_name: str,
+    operation: str,
     role: str,
     **values: str,
 ) -> Path:
-    """Expand one canonical pipeline artifact template under ``root``."""
+    """Expand one canonical operation artifact template under ``root``."""
 
-    stage_definition = next(
-        item for item in PIPELINE[kind]["stages"] if item["stage"] == stage_name
-    )
-    return root / stage_definition["artifacts"][role].format(**values)
+    template = OPERATION_CATALOG[operation]["artifacts"][role]
+    return root / template.format(**values)
 
 
 def relative(root: Path, path: Path) -> str:
@@ -199,12 +196,12 @@ def status_payload(
 
 
 def paper_status(root: Path, slug: str) -> dict[str, Any]:
-    source = artifact_path(root, "paper", "acquire", "output", slug=slug)
+    source = artifact_path(root, "paper.acquire", "output", slug=slug)
     prepared = [
-        artifact_path(root, "paper", "prepare", "normalized", slug=slug),
-        artifact_path(root, "paper", "prepare", "recoveryText", slug=slug),
+        artifact_path(root, "paper.prepare", "normalized", slug=slug),
+        artifact_path(root, "paper.prepare", "recoveryText", slug=slug),
     ]
-    canonical = artifact_path(root, "paper", "analyse", "output", slug=slug)
+    canonical = artifact_path(root, "paper.analyse", "output", slug=slug)
     canonical_fact, frontmatter = canonical_observation(root, canonical)
     return status_payload(
         "paper",
@@ -248,7 +245,7 @@ def chapter_page_pair(start: object, end: object) -> bool:
 def chapter_inventory(
     root: Path, slug: str
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    manifest = artifact_path(root, "book", "prepare", "manifest", slug=slug)
+    manifest = artifact_path(root, "book.prepare", "manifest", slug=slug)
     manifest_fact = artifact_observation(root, manifest)
     manifest_fact["valid"] = False
     if not manifest_fact["usable"]:
@@ -314,8 +311,7 @@ def book_status(root: Path, slug: str) -> dict[str, Any]:
             format_name,
             artifact_path(
                 root,
-                "book",
-                "prepare",
+                "book.prepare",
                 "source",
                 slug=slug,
                 format=format_name,
@@ -324,9 +320,9 @@ def book_status(root: Path, slug: str) -> dict[str, Any]:
         for format_name in ("epub", "pdf")
     ]
     manifest_fact, inventory = chapter_inventory(root, slug)
-    chapter_root = artifact_path(root, "book", "prepare", "outputDir", slug=slug)
+    chapter_root = artifact_path(root, "book.prepare", "outputDir", slug=slug)
     book_root = artifact_path(
-        root, "book", "synthesise", "output", slug=slug
+        root, "book.synthesise", "output", slug=slug
     ).parent
     chapters = [
         {
@@ -341,7 +337,7 @@ def book_status(root: Path, slug: str) -> dict[str, Any]:
         }
         for chapter in inventory
     ]
-    overview = artifact_path(root, "book", "synthesise", "output", slug=slug)
+    overview = artifact_path(root, "book.synthesise", "output", slug=slug)
     overview_fact, frontmatter = canonical_observation(root, overview)
     return status_payload(
         "book",
@@ -364,7 +360,7 @@ def book_status(root: Path, slug: str) -> dict[str, Any]:
 
 
 def talk_transcripts(root: Path, slug: str) -> list[Path]:
-    directory = artifact_path(root, "talk", "prepare", "processingDir", slug=slug)
+    directory = artifact_path(root, "talk.prepare", "processingDir", slug=slug)
     try:
         entries = sorted(directory.iterdir(), key=lambda item: item.name)
     except OSError:
@@ -379,7 +375,7 @@ def talk_transcripts(root: Path, slug: str) -> list[Path]:
 def talk_status(root: Path, slug: str) -> dict[str, Any]:
     media = [root / "sources" / f"{slug}.{extension}" for extension in MEDIA_EXTENSIONS]
     transcripts = talk_transcripts(root, slug)
-    canonical = artifact_path(root, "talk", "analyse", "output", slug=slug)
+    canonical = artifact_path(root, "talk.analyse", "output", slug=slug)
     canonical_fact, frontmatter = canonical_observation(root, canonical)
     return status_payload(
         "talk",
@@ -409,7 +405,7 @@ def translation_status(
     output = cast(Path, paths["output_path"])
     manifest = cast(Path, paths["manifest_path"])
     source = artifact_path(
-        resolved_root, "translation", "prepare", "source", slug=slug
+        resolved_root, "translation.prepare", "source", slug=slug
     )
     return status_payload(
         "translation",
@@ -426,7 +422,7 @@ def translation_status(
 
 
 def author_status(root: Path, slug: str) -> dict[str, Any]:
-    canonical = artifact_path(root, "author", "synthesise", "output", slug=slug)
+    canonical = artifact_path(root, "author.synthesise", "output", slug=slug)
     canonical_fact, frontmatter = canonical_observation(root, canonical)
     return status_payload(
         "author",
@@ -438,10 +434,10 @@ def author_status(root: Path, slug: str) -> dict[str, Any]:
 
 def member_path(root: Path, kind: str, slug: str) -> Path:
     if kind == "paper":
-        return artifact_path(root, "paper", "analyse", "output", slug=slug)
+        return artifact_path(root, "paper.analyse", "output", slug=slug)
     if kind == "book":
-        return artifact_path(root, "book", "synthesise", "output", slug=slug)
-    return artifact_path(root, "talk", "analyse", "output", slug=slug)
+        return artifact_path(root, "book.synthesise", "output", slug=slug)
+    return artifact_path(root, "talk.analyse", "output", slug=slug)
 
 
 def topic_projection(
@@ -507,12 +503,12 @@ def topic_projection(
 
 
 def topic_status(root: Path, slug: str) -> dict[str, Any]:
-    outline = artifact_path(root, "topic", "steer", "outputPath", slug=slug)
+    outline = artifact_path(root, "topic.steer", "outputPath", slug=slug)
     overview = artifact_path(
-        root, "topic", "synthesise-overview", "outputPath", slug=slug
+        root, "topic.synthesise.overview", "outputPath", slug=slug
     )
     resources = artifact_path(
-        root, "topic", "synthesise-resources", "outputPath", slug=slug
+        root, "topic.synthesise.resources", "outputPath", slug=slug
     )
     outline_fact = artifact_observation(root, outline)
     outline_frontmatter = parse_frontmatter(outline) if outline_fact["usable"] else None
@@ -561,42 +557,42 @@ def scan_status(root: Path) -> dict[str, Any]:
     scan_slug = "scan-root"
     for directory, kind, suffix in (
         (
-            artifact_path(root, "author", "synthesise", "output", slug=scan_slug).parent,
+            artifact_path(root, "author.synthesise", "output", slug=scan_slug).parent,
             "author",
             ".md",
         ),
         (
-            artifact_path(root, "paper", "analyse", "output", slug=scan_slug).parent,
+            artifact_path(root, "paper.analyse", "output", slug=scan_slug).parent,
             "paper",
             ".md",
         ),
         (
-            artifact_path(root, "paper", "prepare", "normalized", slug=scan_slug).parent.parent,
+            artifact_path(root, "paper.prepare", "normalized", slug=scan_slug).parent.parent,
             "paper",
             None,
         ),
         (
-            artifact_path(root, "book", "synthesise", "output", slug=scan_slug).parent.parent,
+            artifact_path(root, "book.synthesise", "output", slug=scan_slug).parent.parent,
             "book",
             None,
         ),
         (
-            artifact_path(root, "book", "prepare", "outputDir", slug=scan_slug).parent,
+            artifact_path(root, "book.prepare", "outputDir", slug=scan_slug).parent,
             "book",
             None,
         ),
         (
-            artifact_path(root, "talk", "analyse", "output", slug=scan_slug).parent.parent,
+            artifact_path(root, "talk.analyse", "output", slug=scan_slug).parent.parent,
             "talk",
             None,
         ),
         (
-            artifact_path(root, "talk", "prepare", "processingDir", slug=scan_slug).parent,
+            artifact_path(root, "talk.prepare", "processingDir", slug=scan_slug).parent,
             "talk",
             None,
         ),
         (
-            artifact_path(root, "topic", "steer", "outputPath", slug=scan_slug).parent.parent,
+            artifact_path(root, "topic.steer", "outputPath", slug=scan_slug).parent.parent,
             "topic",
             None,
         ),
@@ -609,7 +605,7 @@ def scan_status(root: Path) -> dict[str, Any]:
                 discovered[kind].add(name)
 
     source_directory = artifact_path(
-        root, "paper", "acquire", "output", slug=scan_slug
+        root, "paper.acquire", "output", slug=scan_slug
     ).parent
     for entry in children(source_directory):
         slug = entry.stem

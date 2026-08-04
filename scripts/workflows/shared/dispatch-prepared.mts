@@ -8,7 +8,6 @@ import type { MaterialIssue } from "./material-result.mts";
 
 export type DispatchOutcome =
   | { kind: "receipt"; receipt: StageReceipt }
-  | { kind: "invalid_context"; receipt: null; issue: MaterialIssue }
   | {
       kind: "incoherent_complete";
       receipt: StageReceipt;

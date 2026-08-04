@@ -1,5 +1,4 @@
 import { TALK_ARTIFACT_CONTRACT } from "../../artifact-contracts/generated.mjs";
-import { contextValue } from "../../context-base.mts";
 import { actionPayloads, makeAuditRow } from "../shared.mts";
 import type { OperationRow } from "../../artifact-contracts/generated.mjs";
 
@@ -76,12 +75,10 @@ export const talkOperationRows: OperationRow[] = [
       ...base,
       title: base.meta.title,
       date: base.meta.date,
-      language: base.meta.lang || base.meta.language || "auto",
+      language: base.meta.language || "auto",
       engines: base.meta.engines || ["soniox", "apple", "parakeet"],
       media: base.meta.media,
-      prepareMedia: Boolean(
-        contextValue(base.meta, "prepareMedia", "prepare_media"),
-      ),
+      prepareMedia: Boolean(base.meta.prepareMedia),
       repairDiagnostics: base.diagnostics,
       repair: base.mode === "repair",
     }),
