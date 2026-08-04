@@ -106,6 +106,20 @@ export const talkOperationRows: OperationRow[] = [
       subtitle,
       canonical,
     }),
+    writeTargets: (
+      { processingDir, manifest, prepared, transcript, subtitle, canonical },
+      { engines },
+    ) => [
+      { scope: "exact", path: manifest },
+      { scope: "exact", path: prepared },
+      { scope: "exact", path: transcript },
+      { scope: "exact", path: subtitle },
+      { scope: "exact", path: canonical },
+      ...engines.map((engine: any) => ({
+        scope: "exact" as const,
+        path: `${processingDir}/transcript.${engine}.srt`,
+      })),
+    ],
     payloadProperties: ({ slug, media, manifest, canonical }) => ({
       required: [
         "slug",
@@ -245,6 +259,7 @@ export const talkOperationRows: OperationRow[] = [
       inputs: rawContext.inputs || [],
     }),
     refs: ({ inputs, output, mode }) => ({ inputs, output, mode }),
+    writeTargets: ({ output }) => [{ scope: "exact", path: output }],
     payloadProperties: ({ inputs, output }) => ({
       required: [
         "input_paths",
@@ -305,6 +320,7 @@ export const talkOperationRows: OperationRow[] = [
     refs: ({ target, pass }) => ({ target, pass }),
     artifactRoles: ["canonical"],
     targetRole: "canonical",
+    targetScope: "exact",
     envelopeExtras: (_context, { target }) => ({
       afterTarget: { exact_output: target, composite_debt: true },
     }),

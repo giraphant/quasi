@@ -62,6 +62,10 @@ export interface StageReceipt extends Record<string, any> {
   terminal: StageTerminal;
 }
 
+export type WriteTarget =
+  | { scope: "exact"; path: string }
+  | { scope: "subtree"; path: string };
+
 export interface OperationRow {
   readonly operation: OperationName;
   readonly context?: (
@@ -80,6 +84,10 @@ export interface OperationRow {
     refs: any,
   ) => WorkflowContext;
   readonly promptText?: (request: any) => string;
+  readonly writeTargets?: (
+    refs: WorkflowContext,
+    context: WorkflowContext,
+  ) => readonly WriteTarget[];
 }
 export interface OperationDescriptor extends OperationRow {
   readonly stage: PhaseName;

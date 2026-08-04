@@ -148,6 +148,7 @@ interface AuditRowOptions {
   operation: OperationName;
   refs: (context: any) => WorkflowContext;
   targetRole: string;
+  targetScope: "exact" | "subtree";
   artifactRoles?: any;
   exactPaths?: boolean;
   envelopeExtras?: (context: any, refs: any) => WorkflowContext;
@@ -157,12 +158,14 @@ export const makeAuditRow = ({
   operation,
   refs,
   targetRole,
+  targetScope,
   artifactRoles,
   exactPaths = false,
   envelopeExtras = auditEnvelopeExtras,
 }: AuditRowOptions): OperationRow => ({
   operation,
   refs,
+  writeTargets: ({ target }) => [{ scope: targetScope, path: target }],
   payloadProperties: ({ target, pass }) => ({
     required: [
       "target_path",

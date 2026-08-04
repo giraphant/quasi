@@ -1,19 +1,11 @@
 import { PIPELINE } from "./artifact-contracts/generated.mjs";
+import { InputContractError } from "./context-base.mts";
 import {
-  expandArtifactTemplates,
-  operationContextBase,
-} from "./context-base.mts";
-import {
-  defineOperation,
-  type DefinedOperation,
-} from "./operations/define.mts";
-import { authorOperationRows } from "./operations/rows/author.mts";
-import { bookOperationRows } from "./operations/rows/book.mts";
-import { paperOperationRows } from "./operations/rows/paper.mts";
-import { materialSearchOperationRows } from "./operations/rows/search.mts";
-import { talkOperationRows } from "./operations/rows/talk.mts";
-import { topicOperationRows } from "./operations/rows/topic.mts";
-import { translationOperationRows } from "./operations/rows/translation.mts";
+  OPERATION_ROWS,
+  resolveCatalogOperation,
+  resolveOperationContext,
+  type CatalogOperation,
+} from "./operations/catalog.mts";
 import {
   STAGE_STATUSES,
   stageReceiptPartition,
@@ -25,28 +17,21 @@ import type {
 } from "./shared/host-runtime.mts";
 import type {
   KindName,
-  OperationDescriptor,
   OperationName,
-  OperationRow,
-  PipelineStage,
   StageName,
   StageReceipt,
   WorkflowContext,
 } from "./artifact-contracts/generated.mjs";
 
 export {
+  OPERATION_ROWS,
   PIPELINE,
   STAGE_STATUSES,
   stageReceiptPartition,
   stageReceiptSchema,
 };
 
-export interface ResolvedStage {
-  kind: KindName;
-  operation: OperationName;
-  descriptor: OperationDescriptor;
-  row: DefinedOperation;
-}
+export type ResolvedStage = CatalogOperation;
 
 interface StageChain {
   sequence: StageName[];
@@ -80,33 +65,6 @@ interface RunRuntime extends DispatchRuntime {
   ) => Promise<Array<StageReceipt | null>>;
   log?: (message: string) => void;
 }
-
-export const OPERATION_ROWS: OperationRow[] = [
-  ...materialSearchOperationRows,
-  ...paperOperationRows,
-  ...bookOperationRows,
-  ...talkOperationRows,
-  ...translationOperationRows,
-  ...topicOperationRows,
-  ...authorOperationRows,
-];
-
-const descriptors = (
-  Object.fromEntries(
-    OPERATION_ROWS.map((row) => [row.operation, row]),
-  )
-) as Record<OperationName, OperationRow>;
-
-const stageIdentities = (
-  Object.fromEntries(
-    Object.entries(PIPELINE).map(([kind, definition]) => [
-      kind,
-      Object.fromEntries(
-        definition.stages.map((identity) => [identity.stage, identity]),
-      ),
-    ]),
-  )
-) as Record<KindName, Partial<Record<StageName, PipelineStage>>>;
 
 export const RUN_STAGE_REGISTRY: Record<
   string,
@@ -205,17 +163,7 @@ export function resolveStage(
   const canonicalKind = (
     normalizedKind === "translate" ? "translation" : normalizedKind
   ) as KindName;
-  const identity = (
-    stageIdentities[canonicalKind][stageName]
-  ) as PipelineStage;
-  const descriptor = {
-    ...descriptors[operation],
-    stage: identity.phase,
-    effect: identity.effect,
-    agentType: identity.agent,
-    artifacts: identity.artifacts || {},
-  } as OperationDescriptor;
-  return { kind: canonicalKind, operation, descriptor, row: defineOperation(descriptor) };
+  return resolveCatalogOperation(canonicalKind, operation);
 }
 
 export function resolveStageContext(
@@ -223,21 +171,7 @@ export function resolveStageContext(
   slug: any,
   rawContext: unknown,
 ): WorkflowContext {
-  const templates = resolved.descriptor.artifacts;
-  const base = operationContextBase(
-    resolved.kind,
-    slug,
-    rawContext,
-    Object.keys(templates),
-  );
-  const context =
-    typeof resolved.descriptor.context === "function"
-      ? resolved.descriptor.context(
-          rawContext && typeof rawContext === "object" ? rawContext : {},
-          base,
-        )
-      : base;
-  return expandArtifactTemplates(templates, rawContext, context);
+  return resolveOperationContext(resolved, slug, rawContext);
 }
 
 async function runChain(
@@ -276,6 +210,7 @@ async function runChain(
       ({ modelSchema: schema, stampedValues } =
         current.row.receiptSchema(stageContext));
     } catch (error) {
+      if (!(error instanceof InputContractError)) throw error;
       receipts.push({
         stage: currentStage,
         receipt: errorResult(
@@ -417,6 +352,7 @@ export async function run(
         ({ modelSchema: schema, stampedValues } =
           resolved.row.receiptSchema(context));
       } catch (error) {
+        if (!(error instanceof InputContractError)) throw error;
         receipts[index] = errorResult(
           "run-stage.invalid_context",
           unitArgs,
@@ -487,6 +423,7 @@ export async function run(
     ({ modelSchema: schema, stampedValues } =
       resolved.row.receiptSchema(context));
   } catch (error) {
+    if (!(error instanceof InputContractError)) throw error;
     return errorResult("run-stage.invalid_context", args, error instanceof Error ? error.message : String(error));
   }
   if (typeof log === "function") {

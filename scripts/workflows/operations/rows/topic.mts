@@ -1,4 +1,7 @@
-import { contextValue } from "../../context-base.mts";
+import {
+  InputContractError,
+  contextValue,
+} from "../../context-base.mts";
 import { validCardSlug } from "../steer.mts";
 import { makeAuditRow } from "../shared.mts";
 import type {
@@ -96,7 +99,9 @@ ${JSON.stringify(request, null, 2)}`;
 
 const recallSubquestions: AnyFunction = (subquestions) => {
   if (!Array.isArray(subquestions) || subquestions.length > 6)
-    throw new Error("topic recall subquestions must be an array of at most 6 items");
+    throw new InputContractError(
+      "topic recall subquestions must be an array of at most 6 items",
+    );
   return subquestions.map((item) => {
     if (
       !item ||
@@ -104,7 +109,9 @@ const recallSubquestions: AnyFunction = (subquestions) => {
       typeof item.id !== "string" ||
       typeof item.question !== "string"
     )
-      throw new Error("topic recall subquestions require id and question");
+      throw new InputContractError(
+        "topic recall subquestions require id and question",
+      );
     return {
       id: item.id,
       question: item.question,
@@ -125,7 +132,9 @@ const recallRefs: AnyFunction = (context) => {
     context.maxItems < 1 ||
     context.maxItems > 16
   )
-    throw new Error("topic recall requires query and max_items from 1 through 16");
+    throw new InputContractError(
+      "topic recall requires query and max_items from 1 through 16",
+    );
   return {
     materialKey: context.materialKey,
     researchKey: context.researchKey,
@@ -630,6 +639,9 @@ const synthesisRow = (
     operation,
     context: topicContext,
     refs: (context) => synthesisRefs({ ...context, outputRole }),
+    writeTargets: ({ outputPath }) => [
+      { scope: "exact", path: outputPath },
+    ],
     payloadProperties: synthesisPayload,
     terminalPayloads: synthesisTerminalPayloads,
     complete: () => true,
@@ -651,6 +663,9 @@ export const topicOperationRows: OperationRow[] = [
     operation: "topic.steer",
     context: topicContext,
     refs: steerRefs,
+    writeTargets: ({ outputPath }) => [
+      { scope: "exact", path: outputPath },
+    ],
     payloadProperties: steerPayload,
     terminalPayloads: steerTerminalPayloads,
     complete: () => true,
@@ -682,6 +697,9 @@ export const topicOperationRows: OperationRow[] = [
     operation: "topic.webcard",
     context: topicContext,
     refs: webcardRefs,
+    writeTargets: ({ cardPath }) => [
+      { scope: "exact", path: cardPath },
+    ],
     payloadProperties: webcardPayload,
     complete: completeWebcard,
     envelope: (_context, refs) => ({
@@ -726,6 +744,7 @@ export const topicOperationRows: OperationRow[] = [
     operation: "topic.audit",
     refs: auditRefs,
     targetRole: "topic_product",
+    targetScope: "exact",
     exactPaths: true,
     envelopeExtras: (_context, { target }) => ({
       beforePass: {

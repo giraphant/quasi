@@ -347,6 +347,7 @@ ${JSON.stringify(request, null, 2)}
       output,
       mode,
     }),
+    writeTargets: ({ output }) => [{ scope: "exact", path: output }],
     payloadProperties: ({ inputs, output }) => ({
       required: [
         "input_material_keys",
@@ -406,6 +407,7 @@ ${JSON.stringify(request, null, 2)}
     refs: ({ materialKey, target, pass }) => ({ materialKey, target, pass }),
     artifactRoles: ["canonical"],
     targetRole: "canonical",
+    targetScope: "exact",
     envelopeExtras: ({ materialKey }, { target }) => ({
       beforeEffect: { collection_key: materialKey },
       afterTarget: { exact_output: target, composite_debt: true },

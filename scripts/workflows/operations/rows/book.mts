@@ -2,7 +2,10 @@ import {
   BOOK_ARTIFACT_CONTRACT,
   CHAPTER_ARTIFACT_CONTRACT,
 } from "../../artifact-contracts/generated.mjs";
-import { contextValue } from "../../context-base.mts";
+import {
+  InputContractError,
+  contextValue,
+} from "../../context-base.mts";
 import { sameClosedValue, validText } from "../../runtime.mts";
 import { BOOK_TEMP_PATH, validYearEvidence } from "../book-year-evidence.mts";
 import {
@@ -172,6 +175,8 @@ export const bookOperationRows: OperationRow[] = [
       allowedSources,
       yearDecision,
     }),
+    writeTargets: ({ allowedSources }) =>
+      allowedSources.map(({ path }: any) => ({ scope: "exact", path })),
     payloadProperties: ({ allowedSources }) => ({
       required: [
         "output_path",
@@ -364,6 +369,9 @@ export const bookOperationRows: OperationRow[] = [
       outputDir,
       manifest,
     }),
+    writeTargets: ({ outputDir }) => [
+      { scope: "subtree", path: outputDir },
+    ],
     payloadProperties: (refs) => ({
       required: [
         "format",
@@ -499,17 +507,27 @@ export const bookOperationRows: OperationRow[] = [
     operation: "chapter.analyse",
     context: (rawContext, base) => {
       const chapter = rawContext.chapter;
+      if (
+        !chapter ||
+        typeof chapter !== "object" ||
+        typeof chapter.filename !== "string" ||
+        typeof chapter.slot !== "string" ||
+        typeof chapter.slug !== "string"
+      )
+        throw new InputContractError(
+          "chapter.analyse requires one exact chapter context",
+        );
       const outputExists = contextValue(
         rawContext,
         "outputExists",
         "output_exists",
       );
       if (typeof outputExists !== "boolean")
-        throw new Error(
+        throw new InputContractError(
           "chapter.analyse requires boolean context.output_exists",
         );
       if (base.mode === "repair" && !outputExists)
-        throw new Error(
+        throw new InputContractError(
           "chapter.analyse repair requires an existing exact output",
         );
       return {
@@ -527,6 +545,7 @@ export const bookOperationRows: OperationRow[] = [
       outputExists,
       mode,
     }),
+    writeTargets: ({ output }) => [{ scope: "exact", path: output }],
     payloadProperties: ({ input, output }) => ({
       required: ["input_path", "output_path", "artifact_roles"],
       properties: {
@@ -614,6 +633,7 @@ export const bookOperationRows: OperationRow[] = [
         contextValue(rawContext, "inputPaths", "input_paths") || [],
     }),
     refs: ({ inputPaths, output, mode }) => ({ inputPaths, output, mode }),
+    writeTargets: ({ output }) => [{ scope: "exact", path: output }],
     payloadProperties: ({ inputPaths, output }) => ({
       required: [
         "input_paths",
@@ -677,5 +697,6 @@ export const bookOperationRows: OperationRow[] = [
     operation: "book.audit",
     refs: ({ target, pass }) => ({ target, pass }),
     targetRole: "canonical_scope",
+    targetScope: "subtree",
   }),
 ];

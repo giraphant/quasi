@@ -1,4 +1,7 @@
-import { contextValue } from "../../context-base.mts";
+import {
+  InputContractError,
+  contextValue,
+} from "../../context-base.mts";
 import type { OperationRow } from "../../artifact-contracts/generated.mjs";
 
 type AnyFunction = (...args: any[]) => any;
@@ -206,7 +209,11 @@ export const translationOperationRows: OperationRow[] = [
     context: (rawContext, base) => {
       const targetLanguage = normalizeLanguage(
         rawContext.target_language || rawContext.targetLanguage || "zh-CN",
-      ) as string;
+      );
+      if (targetLanguage === null)
+        throw new InputContractError(
+          "translation.prepare requires a valid target language",
+        );
       const target = targetLanguage.toLowerCase();
       const stem = `${base.slug}-${target}`;
       return {
@@ -257,6 +264,11 @@ export const translationOperationRows: OperationRow[] = [
       tocJson,
       tocPageSide,
     }),
+    writeTargets: ({ output, manifest, recoverySource }) => [
+      { scope: "exact", path: output },
+      { scope: "exact", path: manifest },
+      { scope: "exact", path: recoverySource },
+    ],
     payloadProperties: ({ slug, targetLanguage, output, manifest }) => ({
       required: [
         "slug",

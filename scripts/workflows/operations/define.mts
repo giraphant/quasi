@@ -10,6 +10,7 @@ import type {
 } from "../artifact-contracts/generated.mjs";
 
 export interface DefinedOperation {
+  refs: (context: WorkflowContext) => WorkflowContext;
   receiptSchema: (context: WorkflowContext) => StageReceiptPartition;
   schema: (context: WorkflowContext) => JsonSchema;
   contract: any;
@@ -33,7 +34,8 @@ export function defineOperation(
     envelope,
     promptText,
   } = descriptor;
-  const refs = (context: WorkflowContext) => makeRefs(context);
+  const refs = (context: WorkflowContext): WorkflowContext =>
+    makeRefs(context);
   const receiptSchema = (
     context: WorkflowContext,
   ): StageReceiptPartition => {
@@ -60,5 +62,5 @@ export function defineOperation(
       ? promptText(request)
       : JSON.stringify(request, null, 2);
   };
-  return { receiptSchema, schema, contract, prompt };
+  return { refs, receiptSchema, schema, contract, prompt };
 }

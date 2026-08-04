@@ -53,6 +53,23 @@ const identitySchema: AnyFunction = (kind) => ({
   },
 });
 
+const typedIdentitySchema: AnyFunction = (kind) => ({
+  type: "object",
+  additionalProperties: false,
+  required: ["kind", "identity"],
+  properties: {
+    kind: { const: kind },
+    identity: identitySchema(kind),
+  },
+});
+
+const candidateSchema: AnyFunction = (requestedKind) =>
+  requestedKind === "paper"
+    ? {
+        anyOf: [typedIdentitySchema("paper"), typedIdentitySchema("book")],
+      }
+    : typedIdentitySchema("book");
+
 const localOwnerSchema = {
   type: ["object", "null"],
   additionalProperties: false,
@@ -126,7 +143,7 @@ export const materialSearchOperationRows: OperationRow[] = [
             minItems: 1,
             maxItems: 4,
             uniqueItems: true,
-            items: identitySchema(kind),
+            items: candidateSchema(kind),
           },
           conflicts: {
             type: "array",

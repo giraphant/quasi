@@ -37,6 +37,7 @@ export const paperOperationRows: OperationRow[] = [
   {
     operation: "paper.acquire",
     refs: ({ output, meta }) => ({ output, doi: meta.doi || null }),
+    writeTargets: ({ output }) => [{ scope: "exact", path: output }],
     payloadProperties: ({ output, doi }) => ({
       required: [
         "output_path",
@@ -134,6 +135,11 @@ export const paperOperationRows: OperationRow[] = [
       recoverySource,
       recoveryText,
     }),
+    writeTargets: ({ normalized, recoverySource, recoveryText }) => [
+      { scope: "exact", path: normalized },
+      { scope: "exact", path: recoverySource },
+      { scope: "exact", path: recoveryText },
+    ],
     payloadProperties: (refs) => ({
       required: [
         "source_path",
@@ -210,6 +216,7 @@ export const paperOperationRows: OperationRow[] = [
       input: rawContext.input || rawContext.selected_input,
     }),
     refs: ({ input, output, mode }) => ({ input, output, mode }),
+    writeTargets: ({ output }) => [{ scope: "exact", path: output }],
     payloadProperties: ({ input, output }) => ({
       required: ["input_path", "output_path", "artifact_roles"],
       properties: {
@@ -269,5 +276,6 @@ ${JSON.stringify(request, null, 2)}`,
     refs: ({ target, pass }) => ({ target, pass }),
     artifactRoles: ["canonical"],
     targetRole: "canonical",
+    targetScope: "exact",
   }),
 ];
