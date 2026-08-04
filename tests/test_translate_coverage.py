@@ -8,6 +8,7 @@ half-translated without rejecting one that merely has a plate in it.
 
 from __future__ import annotations
 
+import ast
 import sys
 from pathlib import Path
 
@@ -17,10 +18,6 @@ sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 from translate import coverage  # noqa: E402
 
 FULL = "行动的形状是什么样的 " * 12
-
-
-def test_self_check():
-    coverage.demo()
 
 
 def test_a_single_dead_page_does_not_reject_the_book(tmp_path):
@@ -62,13 +59,50 @@ def test_too_few_measurable_pages_abstains(tmp_path):
     assert report["measured_pages"] == 2
 
 
-def test_both_backends_measure_after_repairing_tounicode():
+def _first_named_call(function: ast.FunctionDef, name: str) -> ast.Call:
+    calls: list[ast.Call] = []
+    pending = list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == name
+        ):
+            calls.append(node)
+        pending.extend(ast.iter_child_nodes(node))
+    assert calls, f"{function.name} must call {name}"
+    return min(calls, key=lambda call: (call.lineno, call.col_offset))
+
+
+def test_translation_paths_measure_after_repairing_the_same_candidate():
     """Order is load-bearing, and getting it wrong rejects healthy books.
 
     An unrepaired BabelDOC book extracts as mojibake in the CJK extension-A block,
     which the counter does not count: a real 368-page translation scored 0.17 before
     repair and 0.31 after.
     """
-    for name in ("pdf2zh_translate.py", "immersive_translate.py"):
-        source = (PLUGIN_ROOT / "scripts" / "translate" / name).read_text()
-        assert source.index("repair_tounicode(outputs") < source.index("check_coverage(outputs"), name
+    targets = (
+        ("scripts/translate/pdf2zh_translate.py", "translate_slug"),
+        ("scripts/translate/immersive_translate.py", "translate_slug"),
+        ("scripts/translate/translate_commit.py", "run_transaction"),
+    )
+    for relative, function_name in targets:
+        tree = ast.parse((PLUGIN_ROOT / relative).read_text(encoding="utf-8"))
+        function = next(
+            (
+                node
+                for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == function_name
+            ),
+            None,
+        )
+        assert function is not None, f"{relative}: missing {function_name}"
+        repair = _first_named_call(function, "repair_tounicode")
+        coverage_call = _first_named_call(function, "check_coverage")
+
+        assert repair.lineno < coverage_call.lineno, relative
+        assert repair.args and coverage_call.args, relative
+        assert ast.dump(repair.args[0]) == ast.dump(coverage_call.args[0]), relative

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -634,10 +635,68 @@ def test_dsocr2_runner_does_not_trust_remote_code():
     mlx-vlm swallows that ImportError and reports "Unrecognized processing class",
     so passing trust_remote_code sends every run silently to the tesseract fallback.
     """
-    runner = (EXTRACT_DIR / "ocr_dsocr2.py").read_text()
+    source = (EXTRACT_DIR / "ocr_dsocr2.py").read_text(encoding="utf-8")
+    outer = ast.parse(source)
+    runner_assignments = [
+        node
+        for node in outer.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "_RUNNER"
+            for target in node.targets
+        )
+    ]
+    assert len(runner_assignments) == 1
+    runner = ast.literal_eval(runner_assignments[0].value)
+    assert isinstance(runner, str)
+    nested = ast.parse(runner)
 
-    assert "trust_remote_code=True" not in runner
-    assert "HF_HUB_TRUST_REMOTE_CODE" not in runner
+    load_calls = [
+        node
+        for node in ast.walk(nested)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "load"
+    ]
+    assert len(load_calls) == 1
+    load_call = load_calls[0]
+    assert len(load_call.args) >= 2
+    assert isinstance(load_call.args[0], ast.Name)
+    assert load_call.args[0].id == "model_id"
+    assert isinstance(load_call.args[1], ast.Constant)
+    assert load_call.args[1].value is None
+
+    trust_env = "HF_HUB_TRUST_REMOTE_CODE"
+    for tree in (outer, nested):
+        assert not any(
+            isinstance(node, ast.keyword)
+            and node.arg == "trust_remote_code"
+            and isinstance(node.value, ast.Constant)
+            and node.value.value is True
+            for node in ast.walk(tree)
+        )
+        assert not any(
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Store)
+            and node.id == trust_env
+            for node in ast.walk(tree)
+        )
+        assert not any(
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Store)
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value == trust_env
+            for node in ast.walk(tree)
+        )
+        assert not any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"setdefault", "__setitem__", "putenv"}
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == trust_env
+            for node in ast.walk(tree)
+        )
 
 
 def test_parse_grounding_maps_boxes_onto_the_page():

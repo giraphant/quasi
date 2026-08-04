@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
+import pkgutil
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 from typing import Any
 
@@ -252,15 +255,46 @@ def test_numeric_effort_and_percentage_require_both_numeric_fields() -> None:
     ]
 
 
-def test_refresh_path_is_zero_dependency_and_does_no_external_work() -> None:
-    source = SCRIPT.read_text(encoding="utf-8")
-    for forbidden in (
-        "subprocess",
-        "urllib",
-        "requests",
-        "socket",
-        "pathlib",
-        "git ",
-        "open(",
-    ):
-        assert forbidden not in source
+def test_refresh_path_imports_only_stdlib_and_does_no_external_work() -> None:
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    aliases: dict[str, str] = {}
+    imported_roots: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for name in node.names:
+                aliases[name.asname or name.name.split(".")[0]] = name.name
+                imported_roots.add(name.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_roots.add(node.module.split(".")[0])
+            for name in node.names:
+                aliases[name.asname or name.name] = f"{node.module}.{name.name}"
+
+    stdlib_module_names = getattr(sys, "stdlib_module_names", None)
+    if stdlib_module_names is None:  # Python 3.9 compatibility
+        stdlib_path = sysconfig.get_path("stdlib")
+        assert stdlib_path
+        stdlib_paths = [stdlib_path]
+        dynamic_path = sysconfig.get_config_var("DESTSHARED")
+        if dynamic_path:
+            stdlib_paths.append(dynamic_path)
+        stdlib_module_names = {
+            module.name for module in pkgutil.iter_modules(stdlib_paths)
+        } | set(sys.builtin_module_names)
+    assert imported_roots <= set(stdlib_module_names) | {"__future__"}
+
+    def resolved_name(node: ast.expr) -> str | None:
+        if isinstance(node, ast.Name):
+            return aliases.get(node.id, node.id)
+        if isinstance(node, ast.Attribute):
+            base = resolved_name(node.value)
+            return f"{base}.{node.attr}" if base else None
+        return None
+
+    calls = {
+        name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        if (name := resolved_name(node.func)) is not None
+    }
+    external_roots = {"ftplib", "http", "smtplib", "socket", "subprocess", "urllib"}
+    assert not {call.split(".", 1)[0] for call in calls} & external_roots

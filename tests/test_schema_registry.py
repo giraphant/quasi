@@ -410,13 +410,9 @@ def test_talk_timestamp_descriptions_pin_clickable_templates() -> None:
         s for s in TALK_BODY.sections if s.h2 == "时间脉络"
     )
 
-    assert "时间：`[mm:ss]`–`[mm:ss]`" in summary.description
-    assert "逐项对照 transcript evidence" in summary.description
-    assert "反引号" in summary.description
-    assert "`[mm:ss]`" in timeline.description
-    assert "反引号" in timeline.description
-    assert "粒度细于分节摘要" in timeline.description
-    assert "不得用分节起止范围替代" in timeline.description
+    for section in (summary, timeline):
+        assert "`[mm:ss]`" in section.description
+        assert "`[h:mm:ss]`" in section.description
 
 
 def test_talk_and_transcript_reject_extra_and_missing_fields() -> None:

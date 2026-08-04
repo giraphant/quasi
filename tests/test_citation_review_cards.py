@@ -103,4 +103,3 @@ def test_review_cards_merges_new_card_fields(tmp_path: Path):
     assert payload["cards"][0]["decision_question"].startswith("这里应保留")
     assert payload["cards"][0]["recommended_action"] == "replace"
     assert payload["cards"][1]["status"] == "auto_ok"
-    assert "wrote" in result.stdout

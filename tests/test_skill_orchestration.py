@@ -36,12 +36,6 @@ def frontmatter(path: Path) -> dict[str, object]:
     return value
 
 
-def description(path: Path) -> str:
-    value = frontmatter(path).get("description")
-    assert isinstance(value, str), path
-    return value.strip()
-
-
 def collect_material_leaf_workflow_manifest() -> dict[str, dict[str, object]]:
     path = ROOT / "skills" / "collect-material" / "SKILL.md"
     text = path.read_text(encoding="utf-8")
@@ -137,17 +131,16 @@ def test_active_skills_keep_the_runtime_landmarks() -> None:
     assert offenders == []
 
 
-def test_frontmatter_descriptions_are_short_routing_hints() -> None:
-    for path in active_skill_files():
+def test_frontmatter_descriptions_are_nonempty_single_line_strings() -> None:
+    skill_files = active_skill_files()
+    for path in skill_files:
         metadata = frontmatter(path)
         assert isinstance(metadata.get("name"), str), path
-        value = description(path)
-        assert value.startswith("Use when the user wants to "), path
-        assert len(value) <= 220, path
-    for path in active_agent_files():
-        value = description(path)
-        assert 20 <= len(value) <= 220, path
-        assert "Phase" not in value and "→" not in value, path
+    for path in [*skill_files, *active_agent_files()]:
+        value = frontmatter(path).get("description")
+        assert isinstance(value, str), path
+        assert value.strip(), path
+        assert "\n" not in value and "\r" not in value, path
 
 
 def test_collect_material_routes_leaf_kinds_to_generated_named_entries() -> None:

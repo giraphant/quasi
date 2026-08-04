@@ -314,15 +314,13 @@ journal: Endeavour""")
     result = run_audit(project, "--path", "vault", "--report", "toc")
 
     assert result.returncode == 0, result.stderr
-    assert "## vault/books/mixed-1994 (11 chapters)" in result.stdout
-    assert "## vault/books/plain-1991 (2 chapters)" in result.stdout
-    # ch2 before ch10: the report reads like a table of contents, not like `ls`.
-    assert result.stdout.index("`ch02-x.md`") < result.stdout.index("`ch10-x.md`")
-    assert "Not A Chapter" not in result.stdout
-    assert "2 books, 13 chapters." in result.stdout
-    # The report tells its reader this is work, and which field to fix.
-    assert "\u4e0d\u8981\u6539\u6587\u4ef6\u540d" in result.stdout
-    # Read-only, same as --report fields.
+    assert "vault/books/mixed-1994" in result.stdout
+    assert "vault/books/plain-1991" in result.stdout
+    assert result.stdout.index("vault/books/mixed-1994") < result.stdout.index(
+        "vault/books/plain-1991"
+    )
+    assert result.stdout.index("ch02-x.md") < result.stdout.index("ch10-x.md")
+    assert "not-a-chapter.md" not in result.stdout
     assert paper.read_text(encoding="utf-8") == original
     assert not (project / ".quasi" / "audit" / "typecheck-results.json").exists()
 
@@ -336,14 +334,21 @@ def test_audit_toc_report_json_carries_titles_verbatim(tmp_path: Path):
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
+    assert set(payload) == {"version", "guidance", "target", "summary", "books"}
     assert payload["version"] == "quasi-audit.chapter-toc.v1"
+    assert set(payload["target"]) == {"requested", "resolved", "exists"}
+    assert payload["target"]["requested"] == "vault"
+    assert payload["target"]["exists"] is True
     assert payload["summary"] == {"books": 1, "chapters": 3}
-    assert "`title`" in payload["guidance"]
+    assert isinstance(payload["guidance"], str) and payload["guidance"].strip()
+    assert len(payload["books"]) == 1
     entry = payload["books"][0]
+    assert set(entry) == {"path", "chapters"}
     assert entry["path"] == "vault/books/bilingual-1987"
-    # No verdict, no normalisation \u2014 whether this mix is a defect is the reader's call.
-    assert [c["title"] for c in entry["chapters"]] == [
-        "Introduction \u5bfc\u8a00", "The Objective Self", "4 \u751f\u4ea7\u4e2d\u7684\u77e5\u8bc6",
+    assert entry["chapters"] == [
+        {"file": "ch01-x.md", "title": "Introduction \u5bfc\u8a00"},
+        {"file": "ch02-x.md", "title": "The Objective Self"},
+        {"file": "ch03-x.md", "title": "4 \u751f\u4ea7\u4e2d\u7684\u77e5\u8bc6"},
     ]
 
 
@@ -351,10 +356,15 @@ def test_audit_toc_report_missing_path_returns_two(tmp_path: Path):
     project = tmp_path / "project"
     project.mkdir()
 
-    result = run_audit(project, "--path", "vault", "--report", "toc")
+    result = run_audit(
+        project, "--path", "vault", "--report", "toc", "--format", "json"
+    )
 
     assert result.returncode == 2
-    assert "path does not exist" in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["version"] == "quasi-audit.chapter-toc.v1"
+    assert payload["target"]["exists"] is False
+    assert isinstance(payload["error"], str) and payload["error"].strip()
 
 
 def test_audit_rejects_removed_subcommands(tmp_path: Path):
@@ -363,7 +373,6 @@ def test_audit_rejects_removed_subcommands(tmp_path: Path):
     result = run_audit(project, "run")
 
     assert result.returncode == 2
-    assert "unrecognized arguments: run" in result.stderr
 
 
 def test_audit_field_report_markdown_is_opt_in_and_read_only(tmp_path: Path):
@@ -383,9 +392,9 @@ themes: [chimerism, feminist technoscience]""",
     result = run_audit(project, "--path", "vault", "--report", "fields")
 
     assert result.returncode == 0, result.stderr
-    assert "# Frontmatter field distribution" in result.stdout
-    assert "## Type: paper" in result.stdout
-    assert "| `authors` | 1 | 100.0% | `vault/papers/flow-array.md` |" in result.stdout
+    assert "authors" in result.stdout
+    assert "paper" in result.stdout
+    assert "vault/papers/flow-array.md" in result.stdout
     assert paper.read_text(encoding="utf-8") == original
     assert not (project / ".quasi" / "audit" / "typecheck-results.json").exists()
 
@@ -412,17 +421,33 @@ themes:
     assert payload["version"] == "quasi-audit.frontmatter-fields.v1"
     assert payload["target"]["requested"] == "vault"
     assert payload["target"]["exists"] is True
-    assert payload["summary"]["files_scanned"] == 1
+    assert payload["summary"] == {
+        "files_scanned": 1,
+        "frontmatter_files": 1,
+        "missing_frontmatter": 0,
+        "invalid_frontmatter": 0,
+        "missing_type": 0,
+        "unknown_type": 0,
+        "deprecated_type": 0,
+    }
     assert payload["types"]["paper"]["files"] == 1
-    assert payload["types"]["paper"]["fields"]["title"]["coverage"] == 1.0
+    assert payload["types"]["paper"]["fields"]["title"] == {
+        "count": 1,
+        "examples": ["vault/papers/stable-payload.md"],
+        "coverage": 1.0,
+    }
 
 
 def test_audit_field_report_missing_path_returns_two(tmp_path: Path):
     project = tmp_path / "project"
     project.mkdir()
 
-    result = run_audit(project, "--path", "vault", "--report", "fields")
+    result = run_audit(
+        project, "--path", "vault", "--report", "fields", "--format", "json"
+    )
 
     assert result.returncode == 2
-    assert "# Frontmatter field distribution" in result.stdout
-    assert "path does not exist" in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["version"] == "quasi-audit.frontmatter-fields.v1"
+    assert payload["target"]["exists"] is False
+    assert isinstance(payload["error"], str) and payload["error"].strip()

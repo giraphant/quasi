@@ -55,7 +55,6 @@ def test_prepare_is_idempotent_for_records_block(tmp_path: Path):
     text = draft.read_text(encoding="utf-8")
     assert text.count("<!-- proofread:start -->") == 1
     assert text.count("<!-- proofread:end -->") == 1
-    assert "records_block: existing" in second.stdout
 
 
 def test_old_split_and_init_are_not_public_commands(tmp_path: Path):

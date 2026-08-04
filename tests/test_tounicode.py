@@ -16,8 +16,16 @@ sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 from translate import tounicode  # noqa: E402
 
 
-def test_self_check():
-    tounicode.demo()
+def test_build_cmap_serializes_entries_and_chunks_large_maps():
+    cmap = tounicode.build_cmap({0x2248: 0x4E00, 0x264B: 0x5206})
+
+    assert b"2 beginbfchar" in cmap
+    assert b"<2248> <4E00>" in cmap
+    assert cmap.startswith(b"/CIDInit")
+    assert cmap.rstrip().endswith(b"end")
+    assert tounicode.build_cmap(
+        {gid: 0x4E00 + gid for gid in range(1, 151)}
+    ).count(b"beginbfchar") == 2
 
 
 def test_guard_rejects_renumbered_subset():
