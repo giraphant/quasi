@@ -41,20 +41,3 @@ def test_combined_title_author_uses_both():
     url = mock_get.call_args[0][0]
     assert "title=Cyborg" in url
     assert "author=Haraway" in url
-
-
-def main():
-    tests = [test_openlibrary_book_only, test_isbn_uses_isbn_param,
-             test_strict_author_uses_author_param, test_combined_title_author_uses_both]
-    failed = 0
-    for t in tests:
-        try:
-            t(); print(f"  PASS  {t.__name__}")
-        except Exception as e:
-            failed += 1; print(f"  FAIL  {t.__name__}: {e}")
-    print(f"\n{len(tests) - failed}/{len(tests)} tests passed")
-    sys.exit(1 if failed else 0)
-
-
-if __name__ == "__main__":
-    main()

@@ -54,21 +54,3 @@ def test_429_returns_rate_limit_failure():
 def test_no_dokobot_helpers_remain():
     assert not hasattr(googlebooks, "_dokobot_search")
     assert not hasattr(googlebooks, "_normalise_doko")
-
-
-def main():
-    tests = [test_supports_book_only, test_isbn_dsl, test_author_dsl,
-             test_title_dsl, test_429_returns_rate_limit_failure,
-             test_no_dokobot_helpers_remain]
-    failed = 0
-    for t in tests:
-        try:
-            t(); print(f"  PASS  {t.__name__}")
-        except Exception as e:
-            failed += 1; print(f"  FAIL  {t.__name__}: {e}")
-    print(f"\n{len(tests) - failed}/{len(tests)} tests passed")
-    sys.exit(1 if failed else 0)
-
-
-if __name__ == "__main__":
-    main()

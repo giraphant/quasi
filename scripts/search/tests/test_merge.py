@@ -115,29 +115,3 @@ def test_conflict_only_on_whitelist_fields():
     assert "year" not in fields  # agree
     assert "categories" not in fields  # not in whitelist
     assert "language" not in fields  # not in whitelist
-
-
-def main():
-    tests = [
-        test_isbn_exact_match_merges_records,
-        test_year_conflict_surfaces_in_diagnostics,
-        test_no_conflict_when_all_sources_agree,
-        test_fuzzy_title_year_merge_when_no_isbn,
-        test_paper_doi_exact_match,
-        test_paper_venue_prefers_crossref_regardless_of_completion_order,
-        test_conflict_only_on_whitelist_fields,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"  PASS  {t.__name__}")
-        except AssertionError as e:
-            failed += 1
-            print(f"  FAIL  {t.__name__}: {e}")
-    print(f"\n{len(tests) - failed}/{len(tests)} tests passed")
-    sys.exit(1 if failed else 0)
-
-
-if __name__ == "__main__":
-    main()

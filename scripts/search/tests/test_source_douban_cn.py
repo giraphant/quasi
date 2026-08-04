@@ -676,25 +676,3 @@ def test_zh_localisation_search_returns_warnings_on_kagi_failure():
         )
     assert out == []
     assert any("timeout" in w for w in warnings)
-
-
-def main():
-    import inspect
-    tests = [obj for name, obj in inspect.getmembers(sys.modules[__name__])
-             if name.startswith("test_") and callable(obj)]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"  PASS  {t.__name__}")
-        except Exception as e:
-            failed += 1
-            import traceback
-            print(f"  FAIL  {t.__name__}: {e}")
-            traceback.print_exc()
-    print(f"\n{len(tests) - failed}/{len(tests)} tests passed")
-    sys.exit(1 if failed else 0)
-
-
-if __name__ == "__main__":
-    main()

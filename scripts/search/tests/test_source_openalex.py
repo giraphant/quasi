@@ -46,26 +46,3 @@ def test_paper_search_by_doi_routes_to_lookup():
         result = openalex.search_paper(search.PaperQuery(doi="10.1/x"))
     assert result.success is True
     assert "works/doi:10.1/x" in mock_get.call_args[0][0] or "works/https" in mock_get.call_args[0][0]
-
-
-def main():
-    tests = [
-        test_openalex_supports_both,
-        test_book_search_by_isbn_routes_to_filter,
-        test_book_search_empty_query_returns_failure,
-        test_paper_search_by_doi_routes_to_lookup,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"  PASS  {t.__name__}")
-        except (AssertionError, Exception) as e:
-            failed += 1
-            print(f"  FAIL  {t.__name__}: {type(e).__name__}: {e}")
-    print(f"\n{len(tests) - failed}/{len(tests)} tests passed")
-    sys.exit(1 if failed else 0)
-
-
-if __name__ == "__main__":
-    main()

@@ -49,26 +49,3 @@ def test_author_filter_uses_query_author():
 def test_empty_query_returns_failure():
     r = crossref.search_paper(search.PaperQuery())
     assert r.success is False
-
-
-def main():
-    tests = [
-        test_crossref_paper_only,
-        test_doi_lookup_hits_works_endpoint,
-        test_author_filter_uses_query_author,
-        test_empty_query_returns_failure,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"  PASS  {t.__name__}")
-        except (AssertionError, Exception) as e:
-            failed += 1
-            print(f"  FAIL  {t.__name__}: {type(e).__name__}: {e}")
-    print(f"\n{len(tests) - failed}/{len(tests)} tests passed")
-    sys.exit(1 if failed else 0)
-
-
-if __name__ == "__main__":
-    main()

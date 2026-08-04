@@ -80,29 +80,3 @@ def test_adapter_result_shape():
     assert r.success is True
     assert r.entries == [{"title": "X"}]
     assert r.error is None
-
-
-def main():
-    """Run all tests as a script (matches existing repo convention)."""
-    tests = [
-        test_book_record_blank_has_all_keys,
-        test_paper_record_blank_has_all_keys,
-        test_search_response_envelope_shape,
-        test_book_query_optional_fields,
-        test_paper_query_optional_fields,
-        test_adapter_result_shape,
-    ]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"  PASS  {t.__name__}")
-        except AssertionError as e:
-            failed += 1
-            print(f"  FAIL  {t.__name__}: {e}")
-    print(f"\n{len(tests) - failed}/{len(tests)} tests passed")
-    sys.exit(1 if failed else 0)
-
-
-if __name__ == "__main__":
-    main()

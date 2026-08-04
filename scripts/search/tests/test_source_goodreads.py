@@ -31,18 +31,3 @@ def test_legacy_exception_caught():
         r = gr_adapter.search_book(search.BookQuery(title="X"))
     assert r.success is False
     assert "boom" in r.error
-
-
-def main():
-    tests = [test_supports, test_calls_legacy_with_concatenated_query,
-             test_legacy_exception_caught]
-    failed = 0
-    for t in tests:
-        try: t(); print(f"  PASS  {t.__name__}")
-        except Exception as e: failed += 1; print(f"  FAIL  {t.__name__}: {e}")
-    print(f"\n{len(tests) - failed}/{len(tests)} tests passed")
-    sys.exit(1 if failed else 0)
-
-
-if __name__ == "__main__":
-    main()

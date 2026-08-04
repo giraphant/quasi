@@ -100,20 +100,3 @@ def test_book_search_exposes_zh_localisations_sidecar():
     assert resp.localisations["zh"]["status"] == "found"
     assert resp.localisations["zh"]["candidates"][0]["douban_id"] == "1234567"
     assert resp.localisations["zh"]["candidates"][0]["translator"] == "译者甲"
-
-
-def main():
-    tests = [test_book_search_fan_out_and_merge,
-             test_paper_search_returns_paper_envelope,
-             test_failed_adapter_recorded_in_errors_not_raises,
-             test_book_search_exposes_zh_localisations_sidecar]
-    failed = 0
-    for t in tests:
-        try: t(); print(f"  PASS  {t.__name__}")
-        except Exception as e: failed += 1; print(f"  FAIL  {t.__name__}: {e}")
-    print(f"\n{len(tests) - failed}/{len(tests)} tests passed")
-    sys.exit(1 if failed else 0)
-
-
-if __name__ == "__main__":
-    main()
