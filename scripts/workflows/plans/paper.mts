@@ -23,6 +23,7 @@ import {
   completeMaterialResult,
   needsInputMaterialResult,
   stoppedMaterialResult,
+  type LeafResumeSeed,
   type MaterialIssue,
   type MaterialResult,
   type MaterialResultSeed,
@@ -48,6 +49,18 @@ const resultSeed = (state: PaperState): MaterialResultSeed => ({
         ? null
         : { kind: "paper", slug: state.runtimeSlug },
   },
+});
+
+const resumeSeed = (input: PaperRunInput): LeafResumeSeed => ({
+  route: {
+    kind: "paper",
+    slug:
+      input.seed.state === "provisional"
+        ? input.seed.requested_slug
+        : input.seed.material_slug,
+  },
+  seed: input.seed,
+  options: input.options,
 });
 
 const planIssue = (
@@ -311,6 +324,7 @@ export async function runPaperPlan(
         resultSeed(state),
         receiptIssue(searched.receipt),
         gate,
+        resumeSeed(input),
       );
     }
     const searchStop = stopForOutcome(state, searched);

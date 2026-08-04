@@ -377,6 +377,7 @@ def book_acquire_year_gate(
     year: int = 2024,
     verdict: str = "MISMATCH",
     recommended_year: int | None = 2023,
+    tmp_path: str = ".quasi/temp/downloads/exact-book.epub",
 ) -> dict[str, Any]:
     actions = ["accept-current"]
     if verdict == "MISMATCH":
@@ -401,7 +402,7 @@ def book_acquire_year_gate(
                 "user_question": "Which year should own this Book?",
                 "retryable": False,
             },
-            "tmp_path": ".quasi/temp/downloads/exact-book.epub",
+            "tmp_path": tmp_path,
             "year_evidence": book_year_evidence(
                 year,
                 verdict=verdict,
@@ -880,6 +881,15 @@ def test_paper_search_lifts_only_the_typed_identity_gate() -> None:
     report = run_paper(provisional_input(), [search_needs_input()])
 
     assert report["result"]["terminal"] == "needs_input"
+    assert report["result"]["resume_seed"] == {
+        "route": {"kind": "paper", "slug": "request-paper"},
+        "seed": {
+            "state": "provisional",
+            "requested_slug": "request-paper",
+            "hints": {"doi": "10.1000/exact"},
+        },
+        "options": {},
+    }
     assert report["result"]["gate"] == {
         "kind": "identity_conflict",
         "operation": "material.search",
@@ -891,6 +901,17 @@ def test_paper_search_lifts_only_the_typed_identity_gate() -> None:
         ],
         "conflicts": ["publication_type"],
     }
+
+
+def test_paper_unknown_option_blocks_before_dispatch() -> None:
+    value = provisional_input()
+    value["options"] = {"cursor": "hidden-state"}
+
+    report = run_paper(value, [search_needs_input()])
+
+    assert report["calls"] == []
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "material.invalid_input"
 
 
 def test_paper_same_kind_decision_runs_one_owner_reconcile_search_under_gate_key() -> None:
@@ -1138,6 +1159,15 @@ def test_book_search_lifts_only_its_closed_identity_gate() -> None:
             "candidates": book_search_needs_input()["terminal"]["candidates"],
             "conflicts": ["edition", "year"],
         },
+        "resume_seed": {
+            "route": {"kind": "book", "slug": "request-book"},
+            "seed": {
+                "state": "provisional",
+                "requested_slug": "request-book",
+                "hints": {"isbn": "9780000000000"},
+            },
+            "options": {},
+        },
     }
 
 
@@ -1169,6 +1199,146 @@ def test_book_identity_selection_runs_one_owner_reconcile_search() -> None:
     assert report["result"]["material"]["canonical"] == {
         "kind": "book",
         "slug": "request-book",
+    }
+
+
+def test_book_identity_selection_later_gate_returns_effective_canonical_resume_seed() -> None:
+    value = provisional_book_input()
+    value["userDecision"] = book_identity_decision()
+    tmp_path = ".quasi/temp/downloads/exact-book.pdf"
+
+    report = run_book(
+        value,
+        [book_search_complete(), book_acquire_year_gate(tmp_path=tmp_path)],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search",
+        "book.acquire",
+    ]
+    assert report["result"]["terminal"] == "needs_input"
+    resume_seed = report["result"]["resume_seed"]
+    assert resume_seed == {
+        "route": {"kind": "book", "slug": "exact-book"},
+        "seed": {
+            "state": "canonical",
+            "material_slug": "exact-book",
+            "identity": BOOK_IDENTITY,
+        },
+        "options": {},
+    }
+
+    year_gate = report["result"]["gate"]
+    year_decision = {
+        "current_identity": year_gate["current_identity"],
+        "tmp_path": year_gate["tmp_path"],
+        "year_evidence": year_gate["year_evidence"],
+        "action": "accept-current",
+    }
+    resumed = run_book(
+        {
+            "seed": resume_seed["seed"],
+            "observation": book_observation(resume_seed["route"]["slug"]),
+            "options": resume_seed["options"],
+            "userDecision": {
+                "material_key": year_gate["material_key"],
+                "operation": year_gate["operation"],
+                "value": year_decision,
+            },
+        },
+        [
+            book_search_complete(),
+            book_acquire_complete(
+                format_name="pdf",
+                evidence=year_decision["year_evidence"],
+                tmp_path=tmp_path,
+            ),
+            book_prepare_structure_gate(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in resumed["calls"]] == [
+        "material.search",
+        "book.acquire",
+        "book.prepare",
+    ]
+    assert resumed["calls"][1]["request"]["year_decision"] == year_decision
+    assert resumed["result"]["gate"]["kind"] == "book_structure"
+    assert resumed["result"]["resume_seed"] == resume_seed
+
+
+def test_book_recommended_year_inner_search_gate_keeps_canonical_resume_seed() -> None:
+    value = canonical_book_input()
+    value["userDecision"] = {
+        "material_key": "book:exact-book",
+        "operation": "book.acquire",
+        "value": book_year_decision("use-recommended-year"),
+    }
+
+    report = run_book(value, [book_search_needs_input()])
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search"
+    ]
+    identity_gate = report["result"]["gate"]
+    assert identity_gate["kind"] == "identity_conflict"
+    resume_seed = report["result"]["resume_seed"]
+    assert resume_seed == {
+        "route": {"kind": "book", "slug": "exact-book"},
+        "seed": {
+            "state": "canonical",
+            "material_slug": "exact-book",
+            "identity": BOOK_IDENTITY,
+        },
+        "options": {},
+    }
+
+    selected = identity_gate["candidates"][1]
+    resumed = run_book(
+        {
+            "seed": resume_seed["seed"],
+            "observation": canonical_book_input()["observation"],
+            "options": resume_seed["options"],
+            "userDecision": {
+                "material_key": identity_gate["material_key"],
+                "operation": identity_gate["operation"],
+                "value": {
+                    "candidates": identity_gate["candidates"],
+                    "conflicts": identity_gate["conflicts"],
+                    "selected_candidate": selected,
+                },
+            },
+        },
+        [
+            book_search_complete(selected["identity"]),
+            book_acquire_year_gate(
+                year=selected["identity"]["year"],
+                recommended_year=2022,
+                tmp_path=(
+                    ".quasi/temp/downloads/exact-book-revised.epub"
+                ),
+            ),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in resumed["calls"]] == [
+        "material.search",
+        "book.acquire",
+    ]
+    assert resumed["calls"][0]["request"]["identity_decision"] == {
+        "candidates": identity_gate["candidates"],
+        "conflicts": identity_gate["conflicts"],
+        "selected_candidate": selected,
+    }
+    acquire_request = resumed["calls"][1]["request"]
+    assert acquire_request["material_key"] == "book:exact-book-revised"
+    assert acquire_request["identity"]["year"] == selected["identity"]["year"]
+    assert acquire_request["identity"]["isbn"] == selected["identity"]["isbn"]
+    assert acquire_request["year_decision"] is None
+    assert resumed["result"]["resume_seed"]["seed"] == {
+        "state": "canonical",
+        "material_slug": selected["identity"]["slug"],
+        "identity": selected["identity"],
     }
 
 
@@ -2290,6 +2460,73 @@ def test_translation_source_gate_binds_its_fingerprint_and_selected_path() -> No
         resumed["calls"][0]["request"]["source_request"]["decision"]
         == decision
     )
+    assert resumed["result"]["terminal"] == "complete"
+
+
+def test_translation_source_selection_survives_a_later_configuration_gate() -> None:
+    initial = canonical_translation_input()
+    source_gated = run_translation(
+        initial,
+        [translation_gate("source_selection")],
+    )
+    source_gate = source_gated["result"]["gate"]
+    selected_source = source_gate["candidates"][1]["path"]
+    first_resume = source_gated["result"]["resume_seed"]
+    assert first_resume == {
+        "route": {
+            "kind": "translation",
+            "slug": "exact-paper",
+            "target_language": "zh-CN",
+        },
+        "seed": {"state": "canonical", "material_slug": "exact-paper"},
+        "options": {
+            "source_file": None,
+            "toc_json": None,
+            "toc_page_side": "original",
+        },
+    }
+
+    source_decision = {
+        "candidates_fingerprint": source_gate["candidates_fingerprint"],
+        "source_path": selected_source,
+    }
+    configuration_gated = run_translation(
+        {
+            "seed": first_resume["seed"],
+            "target_language": first_resume["route"]["target_language"],
+            "observation": translation_observation_for_plan(),
+            "options": first_resume["options"],
+            "userDecision": {
+                "material_key": source_gate["material_key"],
+                "operation": source_gate["operation"],
+                "value": source_decision,
+            },
+        },
+        [translation_gate("configuration_required")],
+    )
+    second_resume = configuration_gated["result"]["resume_seed"]
+    assert second_resume == {
+        **first_resume,
+        "options": {
+            **first_resume["options"],
+            "source_file": selected_source,
+        },
+    }
+
+    resumed = run_translation(
+        {
+            "seed": second_resume["seed"],
+            "target_language": second_resume["route"]["target_language"],
+            "observation": translation_observation_for_plan(),
+            "options": second_resume["options"],
+        },
+        [translation_complete(source_path=selected_source)],
+    )
+
+    assert resumed["calls"][0]["request"]["source_request"] == {
+        "path": selected_source,
+        "decision": None,
+    }
     assert resumed["result"]["terminal"] == "complete"
 
 

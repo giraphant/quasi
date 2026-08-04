@@ -10,6 +10,7 @@ import {
   type BookChapterObservation,
   type BookIdentity,
   type BookRunInput,
+  type BookSeed,
   type BookStatusObservation,
   type BookStructureDecisionValue,
   type BookYearDecisionValue,
@@ -33,6 +34,7 @@ import {
   completeMaterialResult,
   needsInputMaterialResult,
   stoppedMaterialResult,
+  type LeafResumeSeed,
   type MaterialIssue,
   type MaterialResult,
   type MaterialResultSeed,
@@ -71,6 +73,31 @@ const resultSeed = (state: BookState): MaterialResultSeed => ({
         : { kind: "book", slug: state.runtimeSlug },
   },
 });
+
+const resumeSeed = (
+  input: BookRunInput,
+  state: BookState,
+): LeafResumeSeed => {
+  const seed: BookSeed =
+    state.runtimeSlug !== null && state.identity !== null
+      ? {
+          state: "canonical",
+          material_slug: state.runtimeSlug,
+          identity: state.identity,
+        }
+      : input.seed;
+  return {
+    route: {
+      kind: "book",
+      slug:
+        seed.state === "provisional"
+          ? seed.requested_slug
+          : seed.material_slug,
+    },
+    seed,
+    options: input.options,
+  };
+};
 
 const planIssue = (
   code: string,
@@ -212,6 +239,7 @@ const completedBook = (
 };
 
 const liftSearchGate = (
+  input: BookRunInput,
   state: BookState,
   receipt: StageReceipt,
 ): MaterialResult => {
@@ -225,7 +253,12 @@ const liftSearchGate = (
           "The identity specialist returned an invalid Book conflict gate.",
         ),
       )
-    : needsInputMaterialResult(resultSeed(state), receiptIssue(receipt), gate);
+    : needsInputMaterialResult(
+        resultSeed(state),
+        receiptIssue(receipt),
+        gate,
+        resumeSeed(input, state),
+      );
 };
 
 const bindSearchReceipt = (
@@ -408,11 +441,15 @@ export async function runBookPlan(
   const admittedCanonical =
     input.seed.state === "canonical" &&
     bookObservationAdmitsIdentity(initialObservation, input.seed.identity);
-  if (!admittedCanonical) {
-    const searchKey = `book:${requestedSlug}`;
-    const matchedDecision =
-      input.userDecision?.material_key === searchKey &&
-      input.userDecision.operation === "material.search";
+  const searchKey = `book:${requestedSlug}`;
+  const matchedDecision =
+    input.userDecision?.material_key === searchKey &&
+    input.userDecision.operation === "material.search";
+  const pendingAcquireIdentityDecision =
+    matchedDecision &&
+    !fanoutReady(initialObservation) &&
+    sourceFromObservation(initialObservation, formats) === null;
+  if (!admittedCanonical || pendingAcquireIdentityDecision) {
     const rawDecision = decisionForOperation(
       input.userDecision,
       searchKey,
@@ -449,7 +486,7 @@ export async function runBookPlan(
       searched.kind === "receipt" &&
       searched.receipt.terminal.status === "needs_input"
     )
-      return liftSearchGate(state, searched.receipt);
+      return liftSearchGate(input, state, searched.receipt);
     const searchStop = stopForOutcome(state, searched);
     if (searchStop !== null) return searchStop;
     bindSearchReceipt(input, state, searched.receipt as StageReceipt);
@@ -513,7 +550,7 @@ export async function runBookPlan(
             searched.kind === "receipt" &&
             searched.receipt.terminal.status === "needs_input"
           )
-            return liftSearchGate(state, searched.receipt);
+            return liftSearchGate(input, state, searched.receipt);
           const searchStop = stopForOutcome(state, searched);
           if (searchStop !== null) return searchStop;
           bindSearchReceipt(input, state, searched.receipt as StageReceipt);
@@ -548,6 +585,7 @@ export async function runBookPlan(
             resultSeed(state),
             receiptIssue(acquired.receipt),
             gate,
+            resumeSeed(input, state),
           );
     }
     const acquireStop = stopForOutcome(state, acquired);
@@ -613,6 +651,7 @@ export async function runBookPlan(
             resultSeed(state),
             receiptIssue(prepared.receipt),
             gate,
+            resumeSeed(input, state),
           );
     }
     const prepareStop = stopForOutcome(state, prepared);

@@ -20,6 +20,7 @@ import {
   completeMaterialResult,
   needsInputMaterialResult,
   stoppedMaterialResult,
+  type LeafResumeSeed,
   type MaterialIssue,
   type MaterialResult,
   type MaterialResultSeed,
@@ -39,6 +40,23 @@ const resultSeed = (state: TranslationState): MaterialResultSeed => ({
     requested: { kind: "translation", slug: state.slug },
     canonical: { kind: "translation", slug: state.slug },
   },
+});
+
+const resumeSeed = (
+  input: TranslationRunInput,
+  state: TranslationState,
+  selectedSource: string | null,
+): LeafResumeSeed => ({
+  route: {
+    kind: "translation",
+    slug: state.slug,
+    target_language: input.target_language,
+  },
+  seed: input.seed,
+  options:
+    selectedSource === null
+      ? input.options
+      : { ...input.options, source_file: selectedSource },
 });
 
 const planIssue = (
@@ -173,6 +191,13 @@ export async function runTranslationPlan(
       resultSeed(state),
       receiptIssue(prepared.receipt),
       gate,
+      resumeSeed(
+        input,
+        state,
+        gate.kind === "translation_configuration"
+          ? (sourceDecision?.source_path ?? null)
+          : null,
+      ),
     );
   }
   if (

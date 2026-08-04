@@ -211,7 +211,7 @@ export const parsePaperRunInput = (
     }),
   });
   const envelope = parseLeafRunEnvelope(raw);
-  if (envelope === null) return invalid();
+  if (envelope === null || !exactKeys(envelope.options, [])) return invalid();
   const seed = parsePaperSeed(envelope.seed);
   const observation = parsePaperStatusObservation(envelope.observation);
   if (seed === null || observation === null) return invalid();

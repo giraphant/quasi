@@ -5,13 +5,17 @@ import type {
   ObservationRoute,
 } from "./material-input.mts";
 import type { IdentityConflictGate } from "../contracts/search.mts";
+import type { PaperSeed } from "../contracts/paper.mts";
 import type {
   BookIdentity,
+  BookSeed,
   BookStructureGate,
   BookYearGate,
 } from "../contracts/book.mts";
 import type {
   TranslationConfigurationGate,
+  TranslationOptions,
+  TranslationSeed,
   TranslationSourceGate,
 } from "../contracts/translation.mts";
 import type {
@@ -67,20 +71,44 @@ export interface MaterialIssue {
   observation_request: ObservationRoute | null;
 }
 
-export type DirectGate =
+export type LeafGate =
   | IdentityConflictGate
   | BookYearGate
   | BookStructureGate
   | TranslationSourceGate
-  | TranslationConfigurationGate
-  | TopicGate;
+  | TranslationConfigurationGate;
 
-export type TypedGate =
-  | DirectGate
+export type DirectGate = LeafGate | TopicGate;
+
+export type HigherOrderGate =
+  | TopicGate
   | {
       kind: "child";
       route: ObservationRoute;
       gate: DirectGate;
+    };
+
+export type TypedGate = LeafGate | HigherOrderGate;
+
+export type LeafResumeSeed =
+  | {
+      route: { kind: "paper"; slug: string };
+      seed: PaperSeed;
+      options: Readonly<Record<string, unknown>>;
+    }
+  | {
+      route: { kind: "book"; slug: string };
+      seed: BookSeed;
+      options: Readonly<Record<string, unknown>>;
+    }
+  | {
+      route: {
+        kind: "translation";
+        slug: string;
+        target_language: string;
+      };
+      seed: TranslationSeed;
+      options: TranslationOptions;
     };
 
 export interface MaterialResultBase {
@@ -101,7 +129,13 @@ export type MaterialResult =
   | (MaterialResultBase & {
       terminal: "needs_input";
       issue: MaterialIssue;
-      gate: TypedGate;
+      gate: LeafGate;
+      resume_seed: LeafResumeSeed;
+    })
+  | (MaterialResultBase & {
+      terminal: "needs_input";
+      issue: MaterialIssue;
+      gate: HigherOrderGate;
     })
   | (MaterialResultBase & {
       terminal: "incomplete";
@@ -144,12 +178,14 @@ export const completeMaterialResult = (
 export const needsInputMaterialResult = (
   seed: MaterialResultSeed,
   issue: MaterialIssue,
-  gate: TypedGate,
+  gate: LeafGate,
+  resumeSeed: LeafResumeSeed,
 ): MaterialResult => ({
   ...materialBase(seed),
   terminal: "needs_input",
   issue,
   gate,
+  resume_seed: resumeSeed,
 });
 
 export const incompleteTopicMaterialResult = (
