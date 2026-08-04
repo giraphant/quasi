@@ -123,6 +123,13 @@ def test_generated_paper_executes_with_the_documented_host_abi() -> None:
     assert source.rstrip().endswith(
         "return await __quasiWorkflow.run({ agent, pipeline }, args)"
     )
+    for foreign_operation in (
+        "author.audit",
+        "topic.recall",
+        "talk.prepare",
+        "book.acquire",
+    ):
+        assert foreign_operation not in source
     script = r"""
 import { readFile } from "node:fs/promises";
 const config = JSON.parse(process.argv[2]);

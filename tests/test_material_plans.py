@@ -353,7 +353,7 @@ def test_paper_admitted_canonical_starts_at_audit_and_ignores_stale_search_decis
     value = canonical_input(canonical=True, admitted=True)
     value["userDecision"] = {
         "material_key": "paper:exact-paper",
-        "operation": "material.search",
+        "operation": "retired.workflow.operation",
         "value": {"stale": True},
     }
 

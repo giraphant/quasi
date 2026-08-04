@@ -1,18 +1,10 @@
-import {
-  PIPELINE,
-  type KindDefinition,
-  type OperationName,
-  type WorkflowContext,
+import type {
+  OperationName,
+  WorkflowContext,
 } from "../artifact-contracts/generated.mjs";
 
 const MATERIAL_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const LANGUAGE_TAG = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,8}){0,3}$/;
-
-const MATERIAL_OPERATIONS = new Set<OperationName>(
-  Object.values(PIPELINE).flatMap((definition: KindDefinition) =>
-    definition.stages.map((stage) => stage.operation),
-  ),
-);
 
 export type LeafSeed<TIntake, TIdentity> =
   | { state: "provisional"; requested_slug: string; hints: TIntake }
@@ -66,7 +58,7 @@ export interface SparseObservationInput<
 
 export interface UserDecision {
   material_key: string;
-  operation: OperationName;
+  operation: string;
   value: unknown;
 }
 
@@ -248,8 +240,7 @@ export const parseUserDecision = (
     !isRecord(value) ||
     !exactKeys(value, ["material_key", "operation", "value"]) ||
     !validString(value.material_key, 1, 512) ||
-    typeof value.operation !== "string" ||
-    !MATERIAL_OPERATIONS.has(value.operation as OperationName)
+    !validString(value.operation, 1, 200)
   )
     return null;
   return value as unknown as UserDecision;
