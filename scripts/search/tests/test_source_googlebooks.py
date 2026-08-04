@@ -49,8 +49,3 @@ def test_429_returns_rate_limit_failure():
     assert r.success is False
     assert r.entries == []
     assert r.error == "Google Books API rate-limited"
-
-
-def test_no_dokobot_helpers_remain():
-    assert not hasattr(googlebooks, "_dokobot_search")
-    assert not hasattr(googlebooks, "_normalise_doko")

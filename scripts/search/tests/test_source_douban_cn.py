@@ -11,6 +11,187 @@ import search
 from sources import douban_cn
 
 
+SUBJECT_PAGE_ZH_TRANSLATION = """
+<html><head><title>与麻烦同在 (豆瓣)</title></head><body>
+<div id="wrapper">
+  <h1><span property="v:itemreviewed">与麻烦同在</span></h1>
+  <div id="info">
+    <span class="pl">作者</span>
+    <a href="/author/4567/">[美] 唐娜·哈拉维</a>
+    <br/>
+    <span class="pl">出版社</span>
+    华东师范大学出版社
+    <br/>
+    <span class="pl">原作名:</span> Staying with the Trouble: Making Kin in the Chthulucene
+    <br/>
+    <span class="pl">译者</span>
+    <a href="/search/赵文">赵文</a>
+    <br/>
+    <span class="pl">出版年:</span> 2024
+    <br/>
+    <span class="pl">页数:</span> 320
+    <br/>
+    <span class="pl">ISBN:</span> 9787576048971
+    <br/>
+    <span class="pl">丛书:</span> 薄荷实验
+    <br/>
+  </div>
+  <div>
+    <strong property="v:average">8.6</strong>
+    <span property="v:votes">1523</span>
+  </div>
+  <div id="link-report">
+    <div class="intro">
+      <p>本书是唐娜·哈拉维最重要的近作之一。哈拉维在本书中提出了"与麻烦同在"的理念。</p>
+    </div>
+  </div>
+</div>
+<a class="nbg" href="https://img9.doubanio.com/view/subject/l/public/s34567890.jpg">cover</a>
+<script>criteria = '7:哲学|7:女性主义|7:科技研究';</script>
+</body></html>
+"""
+
+SUBJECT_PAGE_EN_ORIGINAL = """
+<html><head><title>Staying with the Trouble (豆瓣)</title></head><body>
+<div id="wrapper">
+  <h1><span property="v:itemreviewed">Staying with the Trouble</span></h1>
+  <div id="info">
+    <span class="pl">作者</span>
+    <a href="/author/1234/">Donna J. Haraway</a>
+    <br/>
+    <span class="pl">出版社</span>
+    Duke University Press
+    <br/>
+    <span class="pl">出版年:</span> 2016
+    <br/>
+    <span class="pl">ISBN:</span> 9780822373780
+    <br/>
+  </div>
+  <div>
+    <strong property="v:average">9.1</strong>
+    <span property="v:votes">856</span>
+  </div>
+</div>
+</body></html>
+"""
+
+
+def test_parse_subject_page_zh_translation_fields():
+    url = "https://book.douban.com/subject/3512345/"
+    with patch("sources.douban_cn._dd_fetch", return_value=(True, SUBJECT_PAGE_ZH_TRANSLATION)):
+        result = douban_cn._fetch_subject_via_bs4(url)
+    assert result is not None
+    assert result["title"] == "与麻烦同在"
+    assert result["original_title"] == "Staying with the Trouble: Making Kin in the Chthulucene"
+    assert "赵文" in result["translators"]
+    assert "华东师范大学出版社" in result["publisher"]
+    assert result["year"] == 2024
+    assert result["isbn_13"] == "9787576048971"
+    assert result["douban_rating"] == 8.6
+    assert result["ratings_count"] == 1523
+    assert result["series"] == "薄荷实验"
+
+
+def test_parse_subject_page_en_original():
+    url = "https://book.douban.com/subject/36512345/"
+    with patch("sources.douban_cn._dd_fetch", return_value=(True, SUBJECT_PAGE_EN_ORIGINAL)):
+        result = douban_cn._fetch_subject_via_bs4(url)
+    assert result is not None
+    assert result["title"] == "Staying with the Trouble"
+    assert "Donna J. Haraway" in result["authors"]
+    assert result["translators"] == []
+    assert result["publisher"] == "Duke University Press"
+    assert result["year"] == 2016
+    assert result["original_title"] == ""
+
+
+def test_normalise_zh_translation_to_book_record():
+    raw = {
+        "title": "与麻烦同在",
+        "authors": ["[美] 唐娜·哈拉维"],
+        "translators": ["赵文"],
+        "original_title": "Staying with the Trouble",
+        "year": 2024,
+        "publisher": "华东师范大学出版社",
+        "isbn_13": "9787576048971",
+        "douban_url": "https://book.douban.com/subject/35erta123/",
+        "douban_subject_id": "35erta123",
+        "ratings_count": 1523,
+        "douban_rating": 8.6,
+    }
+    norm = douban_cn._normalise(raw)
+    assert norm["title"] == "与麻烦同在"
+    assert norm["language"] == "zh"
+    assert norm["original_title"] == "Staying with the Trouble"
+    assert norm["translators"] == ["赵文"]
+    assert norm["authors"] == ["[美] 唐娜·哈拉维"]
+    assert norm["isbn_13"] == "9787576048971"
+    assert norm["publisher"] == "华东师范大学出版社"
+    assert norm["source_ids"]["douban_cn"] == "35erta123"
+    assert norm["ratings"]["count"] == 1523
+    assert norm["ratings"]["average"] == 8.6
+    assert "douban_cn" in norm["_sources"]
+
+
+def test_normalise_handles_missing_fields():
+    raw = {"title": "测试书", "douban_subject_id": "999"}
+    norm = douban_cn._normalise(raw)
+    assert norm["title"] == "测试书"
+    assert norm["translators"] == []
+    assert norm["authors"] == []
+    assert norm["isbn_13"] is None
+    assert norm["language"] == "zh"
+
+
+def test_search_book_english_title_kagi_path_returns_results():
+    """Non-zh search uses Kagi subject discovery and fetches returned subjects."""
+
+    def mock_dd_fetch(url, cookie=None, timeout=20):
+        if "subject/3512345" in url:
+            return True, SUBJECT_PAGE_ZH_TRANSLATION
+        if "subject/36512345" in url:
+            return True, SUBJECT_PAGE_EN_ORIGINAL
+        return False, "not found"
+
+    with patch("sources.douban_cn._kagi_subject_urls", return_value=([
+            ("https://book.douban.com/subject/3512345/", "与麻烦同在 (豆瓣)", ""),
+            ("https://book.douban.com/subject/36512345/", "Staying with the Trouble (豆瓣)", ""),
+         ], [])), \
+         patch("sources.douban_cn._dd_fetch", side_effect=mock_dd_fetch), \
+         patch("sources.douban_cn.time.sleep"):
+        q = search.BookQuery(
+            title="Staying with the Trouble",
+            author="Donna Haraway",
+            limit=5,
+        )
+        result = douban_cn.search_book(q)
+
+    assert result.success is True
+    assert len(result.entries) >= 1
+    zh_entries = [e for e in result.entries if e.get("language") == "zh"]
+    assert len(zh_entries) >= 1
+    zh = zh_entries[0]
+    assert "与麻烦同在" in zh["title"]
+    assert zh["isbn_13"] == "9787576048971"
+
+
+def test_search_book_blocked_returns_error():
+    blocked_html = "<html><head><title>禁止访问</title></head><body>检测到有异常请求</body></html>"
+
+    def mock_dd_fetch(url, cookie=None, timeout=20):
+        return True, blocked_html
+
+    with patch("sources.douban_cn._kagi_subject_urls",
+               return_value=([("https://book.douban.com/subject/9999/", "Some Book (豆瓣)", "")], [])), \
+         patch("sources.douban_cn._dd_fetch", side_effect=mock_dd_fetch):
+        q = search.BookQuery(title="Some Book", limit=5)
+        result = douban_cn.search_book(q)
+
+    assert result.success is False
+    assert "subject-fetch failed" in (result.error or "")
+    assert result.entries == []
+
+
 # ── Module surface ──
 
 def test_supports():
@@ -229,22 +410,6 @@ def test_kagi_subject_urls_nonzero_rc_returns_warning():
     assert urls == []
     assert any("rc=2" in w for w in warnings)
     assert all("\x1b" not in w for w in warnings)
-
-
-def test_douban_cn_source_and_tests_have_no_doko_fallback_references():
-    forbidden = ("_doko" "_read", "_fetch_subject_via_" "doko", "doko" "bot")
-    paths = [
-        Path(douban_cn.__file__),
-        Path(__file__),
-        Path(__file__).with_name("test_douban_cn_en2zh.py"),
-    ]
-    offenders = []
-    for path in paths:
-        text = path.read_text(encoding="utf-8")
-        for token in forbidden:
-            if token in text:
-                offenders.append(f"{path.name}: {token}")
-    assert offenders == []
 
 
 # ── _compact_external_book_query ──

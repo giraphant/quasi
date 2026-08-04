@@ -139,6 +139,23 @@ def test_active_agents_and_skills_do_not_reference_dead_names():
     assert offenders == []
 
 
+def test_retired_dokobot_names_do_not_appear_in_active_runtime():
+    retired_names = ("dokobot", "_normalise_doko")
+    runtime_files = (
+        "scripts/search/sources/douban_cn.py",
+        "scripts/search/sources/googlebooks.py",
+        "scripts/doctor/doctor.py",
+        "scripts/requirements.txt",
+    )
+    offenders = []
+    for relative in runtime_files:
+        text = (PLUGIN_ROOT / relative).read_text(encoding="utf-8").casefold()
+        if any(name.casefold() in text for name in retired_names):
+            offenders.append(relative)
+
+    assert offenders == []
+
+
 def test_removed_legacy_bins_are_not_present():
     for name in (
         "quasi-citation",
