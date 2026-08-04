@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from test_material_plans import audit_complete, canonical_input
+from test_material_plans import audit_complete, canonical_book_input, canonical_input
 from workflow_test_support import ROOT
 
 
@@ -21,7 +21,7 @@ const config = JSON.parse(process.argv[1]);
 const built = await build({
   absWorkingDir: root,
   bundle: true,
-  entryPoints: [resolve(root, "scripts/workflows/paper.entry.mts")],
+  entryPoints: [resolve(root, `scripts/workflows/${config.entry}.entry.mts`)],
   format: "esm",
   legalComments: "none",
   logLevel: "silent",
@@ -47,7 +47,7 @@ process.stdout.write(JSON.stringify({ result, agentCalls }));
 """
 
 
-def _run_entry(value: dict[str, Any]) -> dict[str, Any]:
+def _run_entry(value: dict[str, Any], entry: str = "paper") -> dict[str, Any]:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
@@ -57,7 +57,7 @@ def _run_entry(value: dict[str, Any]) -> dict[str, Any]:
             "--input-type=module",
             "-e",
             ENTRY_HARNESS,
-            json.dumps({"input": value}),
+            json.dumps({"input": value, "entry": entry}),
         ],
         cwd=ROOT,
         text=True,
@@ -195,3 +195,106 @@ def test_paper_entry_uses_only_its_local_operation_dependencies() -> None:
             "scripts/workflows/contracts/translation.mts",
         }
     )
+
+
+def test_book_entry_rejects_unknown_input_key_before_agent_dispatch() -> None:
+    value = canonical_book_input(
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(True, True),
+    )
+    value["cursor"] = "hidden-state"
+
+    report = _run_entry(value, "book")
+
+    assert report["agentCalls"] == 0
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "material.invalid_input"
+
+
+def test_book_entry_uses_only_its_local_operation_dependencies() -> None:
+    inputs = _bundle_inputs("scripts/workflows/book.entry.mts")
+
+    assert "scripts/workflows/operations/catalog.mts" not in inputs
+    assert "scripts/workflows/shared/dispatch.mts" not in inputs
+    assert "scripts/workflows/operations/catalogs/book.mts" in inputs
+    assert "scripts/workflows/shared/dispatch-prepared.mts" in inputs
+    row_inputs = {
+        item.removeprefix("scripts/workflows/operations/rows/").removesuffix(".mts")
+        for item in inputs
+        if item.startswith("scripts/workflows/operations/rows/")
+    }
+    assert row_inputs == {"book", "search"}
+    assert inputs.isdisjoint(
+        {
+            "scripts/workflows/contracts/talk.mts",
+            "scripts/workflows/contracts/topic.mts",
+            "scripts/workflows/contracts/translation.mts",
+        }
+    )
+
+
+def test_generated_book_executes_with_the_documented_host_abi() -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+    bundle = ROOT / "workflows" / "book.mjs"
+    source = bundle.read_text(encoding="utf-8")
+    assert source.count("export const meta =") == 1
+    assert source.rstrip().endswith(
+        "return await __quasiWorkflow.run({ agent, pipeline }, args)"
+    )
+    for foreign_operation in (
+        "author.audit",
+        "topic.recall",
+        "talk.prepare",
+        "translation.prepare",
+    ):
+        assert foreign_operation not in source
+    script = r"""
+import { readFile } from "node:fs/promises";
+const config = JSON.parse(process.argv[2]);
+const source = await readFile(process.argv[1], "utf8");
+const body = source.replace(/^export const meta =/m, "const meta =");
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const execute = new AsyncFunction("agent", "pipeline", "args", body);
+let agentCalls = 0;
+let pipelineCalls = 0;
+const result = await execute(
+  async () => {
+    agentCalls += 1;
+    return config.output;
+  },
+  async (items, worker) => {
+    pipelineCalls += 1;
+    return Promise.all(items.map(worker));
+  },
+  config.input,
+);
+process.stdout.write(JSON.stringify({ result, agentCalls, pipelineCalls }));
+"""
+    value = canonical_book_input(
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(True, True),
+    )
+    proc = subprocess.run(
+        [
+            node,
+            "--input-type=module",
+            "-e",
+            script,
+            str(bundle),
+            json.dumps({"input": value, "output": audit_complete()}),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    report = json.loads(proc.stdout)
+    assert report["agentCalls"] == 1
+    assert report["pipelineCalls"] == 0
+    assert report["result"]["terminal"] == "complete"

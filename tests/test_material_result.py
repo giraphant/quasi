@@ -78,7 +78,24 @@ BOOK_OBSERVATION = {
     "identity": None,
     "facts": {
         "kind": "book",
-        "sources": [],
+        "sources": [
+            {
+                "format": "epub",
+                "artifact": {
+                    "path": "sources/request-book-1.epub",
+                    "present": False,
+                    "usable": False,
+                },
+            },
+            {
+                "format": "pdf",
+                "artifact": {
+                    "path": "sources/request-book-1.pdf",
+                    "present": False,
+                    "usable": False,
+                },
+            },
+        ],
         "manifest": {
             "path": "processing/chapters/request-book-1/manifest.json",
             "present": False,
@@ -87,12 +104,117 @@ BOOK_OBSERVATION = {
         },
         "chapters": [],
         "overview": {
-            "path": "vault/books/request-book-1/overview.md",
+            "path": "vault/books/request-book-1/00-overview.md",
             "present": False,
             "usable": False,
         },
     },
 }
+
+
+def test_book_status_parser_matches_only_the_status_producer_projection():
+    producer_value = deepcopy(BOOK_OBSERVATION)
+    producer_value["facts"]["manifest"] = {
+        **producer_value["facts"]["manifest"],
+        "present": True,
+        "usable": True,
+        "valid": True,
+    }
+    producer_value["facts"]["chapters"] = [
+        {
+            "slot": "01",
+            "title": "Opening",
+            "filename": "01_Opening.txt",
+            "slug": "opening",
+            "word_count": 20,
+            "start_page": None,
+            "end_page": None,
+            "input": {
+                "path": "processing/chapters/request-book-1/01_Opening.txt",
+                "present": True,
+                "usable": True,
+            },
+            "output": {
+                "path": "vault/books/request-book-1/ch01-opening.md",
+                "present": False,
+                "usable": False,
+            },
+        }
+    ]
+    assert run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookStatusObservation",
+        producer_value,
+    ) == producer_value
+
+    foreign_value = deepcopy(producer_value)
+    foreign_value["facts"]["sources"] = [
+        {
+            "format": "pdf",
+            "artifact": {
+                "path": "sources/elsewhere.pdf",
+                "present": True,
+                "usable": True,
+            },
+        },
+        deepcopy(producer_value["facts"]["sources"][1]),
+    ]
+    foreign_value["facts"]["manifest"] = {
+        **foreign_value["facts"]["manifest"],
+        "path": "processing/chapters/elsewhere/manifest.json",
+        "valid": True,
+        "present": True,
+        "usable": True,
+    }
+    foreign_value["facts"]["chapters"] = [
+        {
+            "slot": "01",
+            "title": "Opening",
+            "filename": "01_Opening.txt",
+            "slug": "opening",
+            "word_count": 20,
+            "start_page": None,
+            "end_page": None,
+            "input": {
+                "path": "processing/chapters/elsewhere/01_Opening.txt",
+                "present": True,
+                "usable": True,
+            },
+            "output": {
+                "path": "vault/books/elsewhere/ch01-opening.md",
+                "present": False,
+                "usable": False,
+            },
+        },
+        {
+            "slot": "01",
+            "title": "Duplicate",
+            "filename": "01_Duplicate.txt",
+            "slug": "opening",
+            "word_count": 10,
+            "start_page": None,
+            "end_page": None,
+            "input": {
+                "path": "processing/chapters/elsewhere/01_Duplicate.txt",
+                "present": True,
+                "usable": True,
+            },
+            "output": {
+                "path": "vault/books/elsewhere/ch01-opening.md",
+                "present": False,
+                "usable": False,
+            },
+        },
+    ]
+    foreign_value["facts"]["overview"]["path"] = (
+        "vault/books/elsewhere/overview.md"
+    )
+
+    assert run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookStatusObservation",
+        foreign_value,
+    ) is None
 
 
 def translation_observation(target_language: str) -> dict[str, Any]:

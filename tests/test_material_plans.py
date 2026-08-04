@@ -35,34 +35,49 @@ async function load(source) {
   return import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
 }
 
-const plan = await load("scripts/workflows/plans/paper.mts");
-const contract = await load("scripts/workflows/contracts/paper.mts");
-const parsed = contract.parsePaperRunInput(config.input);
+const kind = config.kind || "paper";
+const title = kind[0].toUpperCase() + kind.slice(1);
+const plan = await load(`scripts/workflows/plans/${kind}.mts`);
+const contract = await load(`scripts/workflows/contracts/${kind}.mts`);
+const parsed = contract[`parse${title}RunInput`](config.input);
 if (!parsed.ok) throw new Error("test input did not parse");
 
 const calls = [];
+const settled = [];
 const outputs = [...config.outputs];
 let pipelineCalls = 0;
+const pipelineLabels = [];
 const runtime = {
   agent: async (prompt, options) => {
     const start = prompt.indexOf("{");
     const request = JSON.parse(prompt.slice(start));
     calls.push({ request, options });
-    const output = outputs.shift();
+    const spec = outputs.shift();
+    const delay = spec && typeof spec === "object" && "__delay__" in spec
+      ? spec.__delay__
+      : 0;
+    const output = spec && typeof spec === "object" && "__value__" in spec
+      ? spec.__value__
+      : spec;
+    if (delay) await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
+    settled.push(options.label);
     if (output === "__throw__") throw new Error("agent disappeared");
     return output === "__null__" ? null : output;
   },
   pipeline: async (items, worker) => {
     pipelineCalls += 1;
+    pipelineLabels.push(items.map((item) => item.options.label));
     return Promise.all(items.map(worker));
   },
 };
 
-const result = await plan.runPaperPlan(runtime, parsed.value);
+const result = await plan[`run${title}Plan`](runtime, parsed.value);
 process.stdout.write(JSON.stringify({
   result,
   calls,
+  settled,
   pipelineCalls,
+  pipelineLabels,
   remaining: outputs.length,
 }));
 """
@@ -90,6 +105,492 @@ BOOK_IDENTITY = {
     "category": "monograph",
     "confidence": "high",
 }
+
+BOOK_CHAPTERS = [
+    {
+        "slot": "01",
+        "title": "Opening",
+        "filename": "01_Opening.txt",
+        "slug": "opening",
+        "word_count": 120,
+        "start_page": None,
+        "end_page": None,
+    },
+    {
+        "slot": "02",
+        "title": "Closing",
+        "filename": "02_Closing.txt",
+        "slug": "closing",
+        "word_count": 80,
+        "start_page": 4,
+        "end_page": 7,
+    },
+]
+
+
+def book_observation(
+    slug: str,
+    *,
+    source_format: str | None = None,
+    manifest: bool = False,
+    inventory: list[dict[str, Any]] | None = None,
+    chapter_inputs: tuple[bool, ...] = (False, False),
+    chapter_outputs: tuple[bool, ...] = (False, False),
+    overview: bool = False,
+    admitted: bool = False,
+) -> dict[str, Any]:
+    rows = inventory or BOOK_CHAPTERS
+    chapters = []
+    if manifest:
+        for index, chapter in enumerate(rows):
+            chapters.append(
+                {
+                    **deepcopy(chapter),
+                    "input": {
+                        "path": (
+                            f"processing/chapters/{slug}/{chapter['filename']}"
+                        ),
+                        "present": chapter_inputs[index],
+                        "usable": chapter_inputs[index],
+                    },
+                    "output": {
+                        "path": (
+                            f"vault/books/{slug}/"
+                            f"ch{chapter['slot']}-{chapter['slug']}.md"
+                        ),
+                        "present": chapter_outputs[index],
+                        "usable": chapter_outputs[index],
+                    },
+                }
+            )
+    return {
+        "schema_version": "quasi.status/0.2",
+        "kind": "book",
+        "slug": slug,
+        "identity": (
+            {
+                "title": BOOK_IDENTITY["title"],
+                "authors": BOOK_IDENTITY["authors"],
+                "year": BOOK_IDENTITY["year"],
+            }
+            if admitted
+            else None
+        ),
+        "facts": {
+            "kind": "book",
+            "sources": [
+                {
+                    "format": format_name,
+                    "artifact": {
+                        "path": f"sources/{slug}.{format_name}",
+                        "present": source_format == format_name,
+                        "usable": source_format == format_name,
+                    },
+                }
+                for format_name in ("epub", "pdf")
+            ],
+            "manifest": {
+                "path": f"processing/chapters/{slug}/manifest.json",
+                "present": manifest,
+                "usable": manifest,
+                "valid": manifest,
+            },
+            "chapters": chapters,
+            "overview": {
+                "path": f"vault/books/{slug}/00-overview.md",
+                "present": overview,
+                "usable": overview,
+            },
+        },
+    }
+
+
+def provisional_book_input(
+    requested_slug: str = "request-book",
+) -> dict[str, Any]:
+    return {
+        "seed": {
+            "state": "provisional",
+            "requested_slug": requested_slug,
+            "hints": {"isbn": "9780000000000"},
+        },
+        "observation": book_observation(requested_slug),
+        "options": {},
+    }
+
+
+def canonical_book_input(
+    *,
+    material_slug: str = "exact-book",
+    source_format: str | None = None,
+    manifest: bool = False,
+    inventory: list[dict[str, Any]] | None = None,
+    chapter_inputs: tuple[bool, ...] = (False, False),
+    chapter_outputs: tuple[bool, ...] = (False, False),
+    overview: bool = True,
+    admitted: bool = True,
+) -> dict[str, Any]:
+    return {
+        "seed": {
+            "state": "canonical",
+            "material_slug": material_slug,
+            "identity": deepcopy(BOOK_IDENTITY),
+        },
+        "observation": book_observation(
+            material_slug,
+            source_format=source_format,
+            manifest=manifest,
+            inventory=inventory,
+            chapter_inputs=chapter_inputs,
+            chapter_outputs=chapter_outputs,
+            overview=overview,
+            admitted=admitted,
+        ),
+        "options": {},
+    }
+
+
+def book_search_complete(
+    identity: dict[str, Any] = BOOK_IDENTITY,
+    *,
+    owner_slug: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "identity": deepcopy(identity),
+        "local_owner": (
+            {
+                "identity_slug": identity["slug"],
+                "vault_slug": owner_slug,
+                "path": f"vault/books/{owner_slug}/00-overview.md",
+                "match": "isbn",
+            }
+            if owner_slug is not None
+            else None
+        ),
+        "confidence": identity["confidence"],
+        "observations": [],
+        "terminal": {"status": "complete", "issue": None},
+    }
+
+
+def book_search_needs_input() -> dict[str, Any]:
+    alternate = {
+        **deepcopy(BOOK_IDENTITY),
+        "slug": "exact-book-revised",
+        "year": 2023,
+        "isbn": "9780000000001",
+    }
+    return {
+        "identity": None,
+        "local_owner": None,
+        "confidence": "low",
+        "observations": [],
+        "terminal": {
+            "status": "needs_input",
+            "issue": {
+                "code": "material.identity_conflict",
+                "operation": "material.search",
+                "summary": "Two editions remain plausible.",
+                "user_question": "Which edition is this?",
+                "retryable": False,
+            },
+            "candidates": [
+                {"kind": "book", "identity": deepcopy(BOOK_IDENTITY)},
+                {"kind": "book", "identity": alternate},
+            ],
+            "conflicts": ["edition", "year"],
+        },
+    }
+
+
+def book_identity_decision() -> dict[str, Any]:
+    gate = book_search_needs_input()["terminal"]
+    return {
+        "material_key": "book:request-book",
+        "operation": "material.search",
+        "value": {
+            "candidates": deepcopy(gate["candidates"]),
+            "conflicts": deepcopy(gate["conflicts"]),
+            "selected_candidate": deepcopy(gate["candidates"][0]),
+        },
+    }
+
+
+def book_year_evidence(
+    year: int = 2024,
+    *,
+    verdict: str = "MATCH",
+    recommended_year: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "slug_year": year,
+        "source_years": {"publisher": recommended_year or year},
+        "pdf_signals": {
+            "first_published": recommended_year or year,
+            "copyright_year": year,
+            "original_year": None,
+            "other_years": [],
+        },
+        "recommended_year": year if verdict == "MATCH" else recommended_year,
+        "recommendation_reason": "Publisher evidence is decisive.",
+        "verdict": verdict,
+    }
+
+
+def book_acquire_complete(
+    slug: str = "exact-book",
+    *,
+    format_name: str = "epub",
+    evidence: dict[str, Any] | None = None,
+    tmp_path: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "output_path": f"sources/{slug}.{format_name}",
+        "format": format_name,
+        "write_state": "written",
+        "identity_verified": True,
+        "isbn": BOOK_IDENTITY["isbn"],
+        "attempts": [],
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "disposition": "created",
+            "source": "publisher",
+            "tmp_path": tmp_path,
+            "year_evidence": evidence or book_year_evidence(),
+        },
+    }
+
+
+def book_acquire_year_gate(
+    *,
+    year: int = 2024,
+    verdict: str = "MISMATCH",
+    recommended_year: int | None = 2023,
+) -> dict[str, Any]:
+    actions = ["accept-current"]
+    if verdict == "MISMATCH":
+        actions.append("use-recommended-year")
+    return {
+        "output_path": None,
+        "format": None,
+        "write_state": "unknown",
+        "identity_verified": False,
+        "isbn": BOOK_IDENTITY["isbn"],
+        "attempts": [],
+        "terminal": {
+            "status": "needs_input",
+            "issue": {
+                "code": (
+                    "book.year_mismatch"
+                    if verdict == "MISMATCH"
+                    else "book.year_ambiguous"
+                ),
+                "operation": "book.acquire",
+                "summary": "The downloaded source carries a different year.",
+                "user_question": "Which year should own this Book?",
+                "retryable": False,
+            },
+            "tmp_path": ".quasi/temp/downloads/exact-book.epub",
+            "year_evidence": book_year_evidence(
+                year,
+                verdict=verdict,
+                recommended_year=recommended_year,
+            ),
+            "proposed_actions": actions,
+        },
+    }
+
+
+def book_year_decision(
+    action: str,
+    *,
+    identity: dict[str, Any] = BOOK_IDENTITY,
+) -> dict[str, Any]:
+    gate = book_acquire_year_gate(year=identity["year"])["terminal"]
+    return {
+        "current_identity": deepcopy(identity),
+        "tmp_path": gate["tmp_path"],
+        "year_evidence": deepcopy(gate["year_evidence"]),
+        "action": action,
+    }
+
+
+def book_prepare_complete(
+    slug: str = "exact-book",
+    *,
+    format_name: str = "epub",
+    chapters: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    inventory = deepcopy(chapters or BOOK_CHAPTERS)
+    chapter_root = f"processing/chapters/{slug}"
+    return {
+        "selected_source": f"sources/{slug}.{format_name}",
+        "normalized_path": f"{chapter_root}/source.txt",
+        "manifest_fingerprint": "a" * 64,
+        "mode": "epub" if format_name == "epub" else "toc",
+        "disposition": "created",
+        "chapter_count": len(inventory),
+        "chapters": inventory,
+        "artifacts": [
+            {
+                "role": "chapter_manifest",
+                "path": f"{chapter_root}/manifest.json",
+                "exists": True,
+                "usable": True,
+            },
+            *[
+                {
+                    "role": "normalized_chapter",
+                    "path": f"{chapter_root}/{chapter['filename']}",
+                    "exists": True,
+                    "usable": True,
+                }
+                for chapter in inventory
+            ],
+        ],
+        "steps": [],
+        "diagnostics": [],
+        "terminal": {"status": "complete", "issue": None},
+    }
+
+
+def book_structure_candidates() -> list[dict[str, Any]]:
+    return [
+        {
+            "key": "short",
+            "label": "Two chapters",
+            "summary": "Treat the two main divisions as chapters.",
+            "chapter_count": 2,
+            "chapters": [
+                {"title": "Opening", "start": 1, "end": 3},
+                {"title": "Closing", "start": 4, "end": 7},
+            ],
+        },
+        {
+            "key": "long",
+            "label": "Three chapters",
+            "summary": "Keep the middle transition separate.",
+            "chapter_count": 3,
+            "chapters": [
+                {"title": "Opening", "start": 1, "end": 2},
+                {"title": "Transition", "start": 3, "end": 4},
+                {"title": "Closing", "start": 5, "end": 7},
+            ],
+        },
+    ]
+
+
+def book_prepare_structure_gate(
+    slug: str = "exact-book",
+    *,
+    source_path: str | None = None,
+) -> dict[str, Any]:
+    source = source_path or f"sources/{slug}.pdf"
+    return {
+        "selected_source": source,
+        "normalized_path": None,
+        "manifest_fingerprint": None,
+        "mode": None,
+        "disposition": None,
+        "chapter_count": 0,
+        "chapters": [],
+        "artifacts": [],
+        "steps": [],
+        "diagnostics": [],
+        "terminal": {
+            "status": "needs_input",
+            "issue": {
+                "code": "book.chapter_structure_ambiguous",
+                "operation": "book.prepare",
+                "summary": "Two chapter structures are defensible.",
+                "user_question": "Which chapter structure should be used?",
+                "retryable": False,
+            },
+            "source_path": source,
+            "candidates": book_structure_candidates(),
+            "conflicts": ["chapter_boundaries", "included_material"],
+        },
+    }
+
+
+def book_structure_decision(
+    *,
+    source_path: str = "sources/exact-book.pdf",
+) -> dict[str, Any]:
+    candidates = book_structure_candidates()
+    return {
+        "source_path": source_path,
+        "candidates": candidates,
+        "conflicts": ["chapter_boundaries", "included_material"],
+        "selected_candidate": deepcopy(candidates[0]),
+    }
+
+
+def chapter_complete(*, reconciled: bool = False) -> dict[str, Any]:
+    return {
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "action": "reconciled" if reconciled else "create",
+            "write_state": "not_written" if reconciled else "written",
+        }
+    }
+
+
+def chapter_repair_complete() -> dict[str, Any]:
+    return {
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "action": "repair",
+            "write_state": "written",
+        }
+    }
+
+
+def chapter_blocked() -> dict[str, Any]:
+    return {
+        "terminal": {
+            "status": "blocked",
+            "issue": {
+                "code": "chapter.input_missing",
+                "operation": "chapter.analyse",
+                "summary": "The exact chapter input is unavailable.",
+                "user_question": None,
+                "retryable": False,
+            },
+            "action": "create",
+            "write_state": "unknown",
+        }
+    }
+
+
+def book_synthesise_complete(action: str = "create") -> dict[str, Any]:
+    return {
+        "terminal": {"status": "complete", "issue": None, "action": action}
+    }
+
+
+def run_book(value: dict[str, Any], outputs: list[Any]) -> dict[str, Any]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+    proc = subprocess.run(
+        [
+            node,
+            "--input-type=module",
+            "-e",
+            PLAN_HARNESS,
+            json.dumps({"kind": "book", "input": value, "outputs": outputs}),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
 
 
 def paper_observation(
@@ -547,3 +1048,625 @@ def test_paper_foreign_audit_path_stops_without_repair_dispatch() -> None:
     ]
     assert report["result"]["terminal"] == "blocked"
     assert report["result"]["issue"]["code"] == "workflow.owner_ambiguity"
+
+
+def test_book_provisional_happy_path_runs_one_stable_two_chapter_pipeline() -> None:
+    report = run_book(
+        provisional_book_input(),
+        [
+            book_search_complete(),
+            book_acquire_complete(),
+            book_prepare_complete(),
+            {"__delay__": 30, "__value__": chapter_complete()},
+            {"__delay__": 0, "__value__": chapter_complete()},
+            book_synthesise_complete(),
+            audit_complete(),
+        ],
+    )
+
+    operations = [call["request"]["operation"] for call in report["calls"]]
+    assert operations == [
+        "material.search",
+        "book.acquire",
+        "book.prepare",
+        "chapter.analyse",
+        "chapter.analyse",
+        "book.synthesise",
+        "book.audit",
+    ]
+    chapter_requests = [
+        call["request"] for call in report["calls"]
+        if call["request"]["operation"] == "chapter.analyse"
+    ]
+    assert [request["identity"]["chapter_slot"] for request in chapter_requests] == [
+        "01",
+        "02",
+    ]
+    assert report["pipelineCalls"] == 1
+    assert report["pipelineLabels"] == [
+        ["exact-book:analyse:opening", "exact-book:analyse:closing"]
+    ]
+    assert [
+        label for label in report["settled"] if ":analyse:" in label
+    ] == ["exact-book:analyse:closing", "exact-book:analyse:opening"]
+    assert report["result"]["terminal"] == "complete"
+    assert report["result"]["artifacts"] == [
+        {
+            "role": "manifest",
+            "path": "processing/chapters/exact-book/manifest.json",
+        },
+        {"role": "chapter", "path": "vault/books/exact-book/ch01-opening.md"},
+        {"role": "chapter", "path": "vault/books/exact-book/ch02-closing.md"},
+        {"role": "overview", "path": "vault/books/exact-book/00-overview.md"},
+    ]
+    assert "receipts" not in report["result"]
+
+
+def test_book_search_lifts_only_its_closed_identity_gate() -> None:
+    report = run_book(provisional_book_input(), [book_search_needs_input()])
+
+    assert report["calls"][0]["request"]["operation"] == "material.search"
+    assert report["result"] == {
+        "schema_version": "quasi.material.result/0.1",
+        "material": {
+            "requested": {"kind": "book", "slug": "request-book"},
+            "canonical": None,
+        },
+        "terminal": "needs_input",
+        "issue": {
+            "code": "material.identity_conflict",
+            "operation": "material.search",
+            "summary": "Two editions remain plausible.",
+            "retryable": False,
+            "observation_request": None,
+        },
+        "gate": {
+            "kind": "identity_conflict",
+            "operation": "material.search",
+            "material_key": "book:request-book",
+            "question": "Which edition is this?",
+            "candidates": book_search_needs_input()["terminal"]["candidates"],
+            "conflicts": ["edition", "year"],
+        },
+    }
+
+
+def test_book_identity_selection_runs_one_owner_reconcile_search() -> None:
+    value = provisional_book_input()
+    value["observation"] = book_observation(
+        "request-book",
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(True, True),
+        overview=True,
+        admitted=True,
+    )
+    value["userDecision"] = book_identity_decision()
+
+    report = run_book(
+        value,
+        [book_search_complete(owner_slug="request-book"), audit_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search",
+        "book.audit",
+    ]
+    search_request = report["calls"][0]["request"]
+    assert search_request["material_key"] == "book:request-book"
+    assert search_request["requested_slug"] == "exact-book"
+    assert search_request["identity_decision"] == value["userDecision"]["value"]
+    assert report["result"]["material"]["canonical"] == {
+        "kind": "book",
+        "slug": "request-book",
+    }
+
+
+def test_book_acquire_lifts_the_exact_year_gate_before_prepare() -> None:
+    value = canonical_book_input()
+    report = run_book(value, [book_acquire_year_gate()])
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.acquire"
+    ]
+    terminal = book_acquire_year_gate()["terminal"]
+    assert report["result"]["terminal"] == "needs_input"
+    assert report["result"]["gate"] == {
+        "kind": "book_year",
+        "operation": "book.acquire",
+        "material_key": "book:exact-book",
+        "current_identity": BOOK_IDENTITY,
+        "question": "Which year should own this Book?",
+        "tmp_path": terminal["tmp_path"],
+        "year_evidence": terminal["year_evidence"],
+        "proposed_actions": ["accept-current", "use-recommended-year"],
+    }
+    assert report["pipelineCalls"] == 0
+
+    decision = book_year_decision("accept-current")
+    value["userDecision"] = {
+        "material_key": "book:exact-book",
+        "operation": "book.acquire",
+        "value": decision,
+    }
+    resumed = run_book(
+        value,
+        [
+            book_acquire_complete(
+                evidence=decision["year_evidence"],
+                tmp_path=decision["tmp_path"],
+            ),
+            book_prepare_complete(),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    assert resumed["calls"][0]["request"]["year_decision"] == decision
+    assert resumed["result"]["terminal"] == "complete"
+
+
+def test_book_accept_current_year_binds_owner_identity_once() -> None:
+    value = provisional_book_input("owned-book")
+    decision = book_year_decision("accept-current")
+    value["userDecision"] = {
+        "material_key": "book:owned-book",
+        "operation": "book.acquire",
+        "value": decision,
+    }
+
+    report = run_book(
+        value,
+        [
+            book_search_complete(owner_slug="owned-book"),
+            book_acquire_complete(
+                "owned-book",
+                evidence=decision["year_evidence"],
+                tmp_path=decision["tmp_path"],
+            ),
+            book_prepare_complete("owned-book"),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete(),
+            audit_complete(),
+        ],
+    )
+
+    operations = [call["request"]["operation"] for call in report["calls"]]
+    assert operations[:2] == ["material.search", "book.acquire"]
+    request = report["calls"][1]["request"]
+    assert request["material_key"] == "book:owned-book"
+    assert request["identity"] == BOOK_IDENTITY
+    assert request["current_identity"] == BOOK_IDENTITY
+    assert request["year_decision"] == decision
+    assert report["result"]["material"]["canonical"]["slug"] == "owned-book"
+
+
+def test_book_recommended_year_search_recanonicalizes_before_one_acquire() -> None:
+    value = canonical_book_input(overview=False, admitted=False)
+    decision = book_year_decision("use-recommended-year")
+    value["userDecision"] = {
+        "material_key": "book:exact-book",
+        "operation": "book.acquire",
+        "value": decision,
+    }
+    revised = {
+        **deepcopy(BOOK_IDENTITY),
+        "slug": "exact-book-2023",
+        "year": 2023,
+    }
+
+    report = run_book(
+        value,
+        [
+            book_search_complete(),
+            book_search_complete(revised),
+            book_acquire_complete(
+                "exact-book-2023",
+                evidence=decision["year_evidence"],
+                tmp_path=decision["tmp_path"],
+            ),
+            book_prepare_complete("exact-book-2023"),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete(),
+            audit_complete(),
+        ],
+    )
+
+    operations = [call["request"]["operation"] for call in report["calls"]]
+    assert operations.count("material.search") == 2
+    assert operations.count("book.acquire") == 1
+    search_requests = [
+        call for call in report["calls"]
+        if call["request"]["operation"] == "material.search"
+    ]
+    assert [
+        request["request"].get("year_decision") for request in search_requests
+    ] == [None, decision]
+    search_request = search_requests[1]
+    acquire_request = next(
+        call for call in report["calls"]
+        if call["request"]["operation"] == "book.acquire"
+    )
+    assert search_request["request"]["material_key"] == "book:exact-book"
+    assert search_request["request"]["year_decision"] == decision
+    assert acquire_request["request"]["material_key"] == "book:exact-book-2023"
+    assert acquire_request["request"]["identity"] == revised
+    assert acquire_request["request"]["year_decision"] == decision
+    assert report["result"]["material"]["canonical"]["slug"] == (
+        "exact-book-2023"
+    )
+
+
+def test_book_unknown_recanonicalization_search_never_starts_acquire() -> None:
+    value = canonical_book_input(overview=False, admitted=False)
+    value["userDecision"] = {
+        "material_key": "book:exact-book",
+        "operation": "book.acquire",
+        "value": book_year_decision("use-recommended-year"),
+    }
+
+    report = run_book(value, [book_search_complete(), "__throw__"])
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search",
+        "material.search"
+    ]
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"
+
+
+def test_book_fresh_post_acquire_facts_make_an_old_year_decision_stale() -> None:
+    value = canonical_book_input()
+    value["observation"]["facts"]["sources"][0]["artifact"].update(
+        {"present": True, "usable": True}
+    )
+    value["userDecision"] = {
+        "material_key": "book:exact-book",
+        "operation": "book.acquire",
+        "value": book_year_decision("use-recommended-year"),
+    }
+
+    report = run_book(
+        value,
+        [
+            book_prepare_complete(),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    operations = [call["request"]["operation"] for call in report["calls"]]
+    assert operations[0] == "book.prepare"
+    assert "material.search" not in operations
+    assert "book.acquire" not in operations
+
+
+def test_book_valid_manifest_resumes_fanout_without_source_or_prepare() -> None:
+    value = canonical_book_input(
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(False, False),
+    )
+    value["userDecision"] = {
+        "material_key": "book:exact-book",
+        "operation": "book.prepare",
+        "value": book_structure_decision(),
+    }
+
+    report = run_book(
+        value,
+        [
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "chapter.analyse",
+        "chapter.analyse",
+        "book.synthesise",
+        "book.audit",
+    ]
+    assert report["pipelineCalls"] == 1
+
+
+def test_book_manifest_with_a_missing_input_reconciles_prepare() -> None:
+    value = canonical_book_input(
+        source_format="epub",
+        manifest=True,
+        chapter_inputs=(True, False),
+    )
+
+    report = run_book(
+        value,
+        [
+            book_prepare_complete(),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    assert report["calls"][0]["request"]["operation"] == "book.prepare"
+    assert report["calls"][0]["request"]["refs"]["source"] == (
+        "sources/exact-book.epub"
+    )
+
+
+def test_book_missing_source_reconciles_acquire_before_prepare() -> None:
+    value = canonical_book_input()
+    value["options"] = {"allowed_formats": ["pdf", "epub"]}
+    report = run_book(
+        value,
+        [
+            book_acquire_complete(),
+            book_prepare_complete(),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"][:2]] == [
+        "book.acquire",
+        "book.prepare",
+    ]
+    assert report["calls"][0]["request"]["allowed_formats"] == ["pdf", "epub"]
+
+
+def test_book_pdf_prepare_lifts_structure_gate_before_any_fanout() -> None:
+    report = run_book(
+        canonical_book_input(source_format="pdf"),
+        [book_prepare_structure_gate()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.prepare"
+    ]
+    terminal = book_prepare_structure_gate()["terminal"]
+    assert report["result"]["gate"] == {
+        "kind": "book_structure",
+        "operation": "book.prepare",
+        "material_key": "book:exact-book",
+        "question": "Which chapter structure should be used?",
+        "source_path": "sources/exact-book.pdf",
+        "candidates": terminal["candidates"],
+        "conflicts": terminal["conflicts"],
+    }
+    assert report["pipelineCalls"] == 0
+
+
+def test_book_structure_decision_binds_the_current_pdf_prepare_once() -> None:
+    value = canonical_book_input(source_format="pdf")
+    decision = book_structure_decision()
+    value["userDecision"] = {
+        "material_key": "book:exact-book",
+        "operation": "book.prepare",
+        "value": decision,
+    }
+
+    report = run_book(
+        value,
+        [
+            book_prepare_complete(format_name="pdf"),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    prepare_request = report["calls"][0]["request"]
+    assert prepare_request["operation"] == "book.prepare"
+    assert prepare_request["structure_decision"] == decision
+    assert report["pipelineCalls"] == 1
+
+
+def test_book_structure_decision_for_another_pdf_is_not_applied() -> None:
+    value = canonical_book_input(source_format="pdf")
+    value["userDecision"] = {
+        "material_key": "book:exact-book",
+        "operation": "book.prepare",
+        "value": book_structure_decision(source_path="sources/other-book.pdf"),
+    }
+
+    report = run_book(value, [book_prepare_structure_gate()])
+
+    assert report["calls"][0]["request"]["structure_decision"] is None
+    assert report["result"]["terminal"] == "needs_input"
+
+
+def test_book_binds_create_and_reconcile_only_from_initial_disk_outputs() -> None:
+    value = canonical_book_input(
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(True, False),
+    )
+    value["observation"]["facts"]["chapters"][0]["output"]["usable"] = False
+
+    report = run_book(
+        value,
+        [
+            chapter_complete(reconciled=True),
+            chapter_complete(),
+            book_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    chapter_requests = [
+        call["request"] for call in report["calls"]
+        if call["request"]["operation"] == "chapter.analyse"
+    ]
+    assert [request["output_observation"]["exists"] for request in chapter_requests] == [
+        True,
+        False,
+    ]
+    assert [request["mode"] for request in chapter_requests] == ["create", "create"]
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_book_incoherent_prepare_inventory_stops_before_fanout() -> None:
+    duplicate = [deepcopy(BOOK_CHAPTERS[0]), deepcopy(BOOK_CHAPTERS[0])]
+    start_only = deepcopy(BOOK_CHAPTERS)
+    start_only[0].update({"start_page": 1, "end_page": None})
+    reports = [
+        run_book(
+            canonical_book_input(source_format="epub"),
+            [book_prepare_complete(chapters=inventory)],
+        )
+        for inventory in (duplicate, start_only)
+    ]
+
+    for report in reports:
+        assert [call["request"]["operation"] for call in report["calls"]] == [
+            "book.prepare"
+        ]
+        assert report["pipelineCalls"] == 0
+        assert report["result"]["terminal"] == "blocked"
+        assert report["result"]["issue"]["code"] == "workflow.incoherent_complete"
+
+
+def test_book_chapter_join_settles_all_and_unknown_dominates() -> None:
+    inventory = [
+        *deepcopy(BOOK_CHAPTERS),
+        {
+            "slot": "03",
+            "title": "Afterword",
+            "filename": "03_Afterword.txt",
+            "slug": "afterword",
+            "word_count": 40,
+            "start_page": 8,
+            "end_page": 9,
+        },
+    ]
+    value = canonical_book_input(
+        manifest=True,
+        inventory=inventory,
+        chapter_inputs=(True, True, True),
+        chapter_outputs=(False, False, False),
+    )
+
+    report = run_book(
+        value,
+        [
+            {"__delay__": 10, "__value__": chapter_blocked()},
+            {"__delay__": 25, "__value__": "__throw__"},
+            {"__delay__": 0, "__value__": chapter_complete()},
+        ],
+    )
+
+    assert len(report["calls"]) == 3
+    assert len(report["settled"]) == 3
+    assert all(
+        call["request"]["operation"] == "chapter.analyse"
+        for call in report["calls"]
+    )
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"
+    assert report["remaining"] == 0
+
+    first_blocked = chapter_blocked()
+    first_blocked["terminal"]["issue"]["code"] = "chapter.first"
+    second_blocked = chapter_blocked()
+    second_blocked["terminal"]["issue"]["code"] = "chapter.second"
+    ordered = run_book(
+        value,
+        [
+            {"__delay__": 20, "__value__": first_blocked},
+            {"__delay__": 0, "__value__": second_blocked},
+            chapter_complete(),
+        ],
+    )
+
+    assert len(ordered["settled"]) == 3
+    assert ordered["result"]["issue"]["code"] == "chapter.first"
+    assert all(
+        call["request"]["operation"] == "chapter.analyse"
+        for call in ordered["calls"]
+    )
+
+
+def test_book_repairs_a_newly_written_chapter_once_then_reaudits() -> None:
+    diagnostic = {
+        "path": "vault/books/exact-book/ch01-opening.md",
+        "kind": "missing-section",
+        "reason": "The chapter analysis is incomplete.",
+    }
+    value = canonical_book_input(
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(False, False),
+    )
+
+    report = run_book(
+        value,
+        [
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete("repair"),
+            audit_complete(escalated=[diagnostic]),
+            chapter_repair_complete(),
+            audit_complete(),
+        ],
+    )
+
+    chapter_requests = [
+        call["request"] for call in report["calls"]
+        if call["request"]["operation"] == "chapter.analyse"
+    ]
+    assert len(chapter_requests) == 3
+    repair = chapter_requests[-1]
+    assert repair["identity"]["chapter_slot"] == "01"
+    assert repair["mode"] == "repair"
+    assert repair["output_observation"]["exists"] is True
+    assert repair["repair_diagnostics"] == [diagnostic]
+    audits = [
+        call["request"] for call in report["calls"]
+        if call["request"]["operation"] == "book.audit"
+    ]
+    assert [request["pass"] for request in audits] == [1, 2]
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_book_repairs_the_owned_overview_once_then_reaudits() -> None:
+    diagnostic = {
+        "path": "vault/books/exact-book/00-overview.md",
+        "kind": "frontmatter",
+        "reason": "The overview metadata is incomplete.",
+    }
+    value = canonical_book_input(
+        manifest=True,
+        chapter_inputs=(False, False),
+        chapter_outputs=(True, True),
+    )
+
+    report = run_book(
+        value,
+        [
+            audit_complete(escalated=[diagnostic]),
+            book_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.audit",
+        "book.synthesise",
+        "book.audit",
+    ]
+    repair = report["calls"][1]["request"]
+    assert repair["mode"] == "repair"
+    assert repair["repair_diagnostics"] == [diagnostic]
+    assert report["calls"][2]["request"]["pass"] == 2
+    assert report["result"]["terminal"] == "complete"

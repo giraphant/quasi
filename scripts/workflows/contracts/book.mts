@@ -66,6 +66,17 @@ export interface BookChapterObservation {
   output: ArtifactObservation;
 }
 
+export const bookChapterOutputPath = (
+  slug: string,
+  chapter: Pick<BookChapterObservation, "slot" | "slug">,
+): string => `vault/books/${slug}/ch${chapter.slot}-${chapter.slug}.md`;
+
+export const bookManifestPath = (slug: string): string =>
+  `processing/chapters/${slug}/manifest.json`;
+
+export const bookOverviewPath = (slug: string): string =>
+  `vault/books/${slug}/00-overview.md`;
+
 export interface BookStatusFacts {
   kind: "book";
   sources: Array<{
@@ -92,6 +103,29 @@ export interface BookRunInput {
 export type BookRunInputResult =
   | { ok: true; value: BookRunInput }
   | { ok: false; result: MaterialResult };
+
+const BOOK_CHAPTER_SLOT = /^\d{2,3}[a-z]{0,2}$/;
+const BOOK_CHAPTER_TITLE = /^[^\u0000-\u001f\u007f-\u009f]+$/;
+
+const validChapterFilename = (
+  value: unknown,
+  slot: string,
+): value is string =>
+  typeof value === "string" &&
+  value.length >= 1 &&
+  value.length <= 128 &&
+  value.startsWith(`${slot}_`) &&
+  value.endsWith(".txt") &&
+  !value.includes("/") &&
+  !value.includes("\\") &&
+  !value.includes("..");
+
+const validChapterPages = (start: unknown, end: unknown): boolean =>
+  (start === null && end === null) ||
+  (Number.isInteger(start) &&
+    Number.isInteger(end) &&
+    (start as number) >= 1 &&
+    (end as number) >= (start as number));
 
 export const parseBookIdentity = (
   value: unknown,
@@ -195,6 +229,14 @@ export const parseBookStatusObservation = (
   if (observation === null) return null;
   const facts = observation.facts;
   const manifest = facts.manifest;
+  const slug = observation.slug;
+  const expectedSources = [
+    { format: "epub", path: `sources/${slug}.epub` },
+    { format: "pdf", path: `sources/${slug}.pdf` },
+  ];
+  const chapters = Array.isArray(facts.chapters)
+    ? facts.chapters
+    : null;
   if (
     !exactEnvelopeKeys(facts, [
       "kind",
@@ -205,12 +247,14 @@ export const parseBookStatusObservation = (
     ]) ||
     facts.kind !== "book" ||
     !Array.isArray(facts.sources) ||
+    facts.sources.length !== expectedSources.length ||
     !facts.sources.every(
-      (item) =>
+      (item, index) =>
         isRecord(item) &&
         exactEnvelopeKeys(item, ["format", "artifact"]) &&
-        ["epub", "pdf"].includes(item.format as string) &&
-        isArtifactObservation(item.artifact),
+        item.format === expectedSources[index]!.format &&
+        isArtifactObservation(item.artifact) &&
+        item.artifact.path === expectedSources[index]!.path,
     ) ||
     !isRecord(manifest) ||
     !exactEnvelopeKeys(manifest, ["path", "present", "usable", "valid"]) ||
@@ -220,8 +264,9 @@ export const parseBookStatusObservation = (
       usable: manifest.usable,
     }) ||
     typeof manifest.valid !== "boolean" ||
-    !Array.isArray(facts.chapters) ||
-    !facts.chapters.every(
+    manifest.path !== bookManifestPath(slug) ||
+    chapters === null ||
+    !chapters.every(
       (chapter) =>
         isRecord(chapter) &&
         exactEnvelopeKeys(chapter, [
@@ -236,16 +281,35 @@ export const parseBookStatusObservation = (
           "output",
         ]) &&
         typeof chapter.slot === "string" &&
-        typeof chapter.title === "string" &&
-        typeof chapter.filename === "string" &&
+        BOOK_CHAPTER_SLOT.test(chapter.slot) &&
+        validString(chapter.title, 1, 500) &&
+        BOOK_CHAPTER_TITLE.test(chapter.title) &&
+        validChapterFilename(chapter.filename, chapter.slot) &&
         validMaterialSlug(chapter.slug) &&
         Number.isInteger(chapter.word_count) &&
-        (chapter.start_page === null || Number.isInteger(chapter.start_page)) &&
-        (chapter.end_page === null || Number.isInteger(chapter.end_page)) &&
+        (chapter.word_count as number) >= 0 &&
+        validChapterPages(chapter.start_page, chapter.end_page) &&
         isArtifactObservation(chapter.input) &&
-        isArtifactObservation(chapter.output),
+        chapter.input.path ===
+          `processing/chapters/${slug}/${chapter.filename}` &&
+        isArtifactObservation(chapter.output) &&
+        chapter.output.path ===
+          bookChapterOutputPath(slug, {
+            slot: chapter.slot as string,
+            slug: chapter.slug as string,
+          }),
     ) ||
-    !isArtifactObservation(facts.overview)
+    new Set(chapters.map((chapter) => chapter.slot)).size !==
+      chapters.length ||
+    new Set(chapters.map((chapter) => chapter.filename)).size !==
+      chapters.length ||
+    new Set(chapters.map((chapter) => chapter.slug)).size !==
+      chapters.length ||
+    (manifest.valid
+      ? !manifest.present || !manifest.usable || chapters.length === 0
+      : chapters.length !== 0) ||
+    !isArtifactObservation(facts.overview) ||
+    facts.overview.path !== bookOverviewPath(slug)
   )
     return null;
   return observation as unknown as BookStatusObservation;
