@@ -811,9 +811,9 @@ git commit -m "refactor: make leaf material skill a thin workflow driver"
 
 - Create: `docs/superpowers/specs/2026-08-04-author-workflow-composition.md`
 
-- [ ] Write the focused spec before implementation. Resolve these decisions explicitly: Author has its own exact `quasi-status --kind author` pre/post observation; input carries a sparse map of exact child observations accumulated only after a concrete route is known; `author.resolve-membership` is the only dynamic membership observer; a discovered child absent from that map is treated as new for this run and relies on leaf writer reconciliation; if continuation actually requires disk testimony, Author returns `blocked` with one typed `observation_request`; the Skill observes only that child and restarts Author; user-facing child gates are lifted unchanged with the exact child route; a child decision is forwarded only when its material key matches that route; there is no whole-vault inventory or Author cursor; child plans run sequentially in stable membership order.
+- [ ] Write the focused spec before implementation. Resolve these decisions explicitly: Author has its own exact `quasi-status --kind author` pre/post observation; `author.resolve-membership` is the only dynamic membership observer; the first pass freezes a bounded, deduplicated membership and returns one automatic `needs_observation` result for all exact child routes; the Skill obtains those statuses directly and the second pass composes the frozen members without rerunning discovery. Every stable member carries only its current effective leaf `{route,seed,options}`; a nullable `decision_member` delivers one child answer once. User-facing child gates are lifted unchanged, real `blocked|failed` outcomes stop, and there is no synthetic absence, model-relayed status, whole-vault inventory, completed-prefix cursor, or writer-reconciliation probe.
 
-- [ ] Specify generic child routing: if a Paper child returns the typed Book `next`, Author calls `runBookPlan` with the returned identity and matching sparse observation. It does not reproduce the publication-type test. Completed children are keyed/coalesced by `result.material.canonical.slug`, the runtime owner slug, never by a stale bibliographic slug. Specify Author synthesis/Audit ownership and the one bounded owner-correct repair/re-Audit.
+- [ ] Specify generic child routing: if a Paper child returns the typed Book `next`, replace that member's current leaf with the returned Book identity and request its exact status when needed. It does not reproduce the publication-type test. Paper/Book expose a narrow internal composition outcome containing their final effective continuation while their named public result stays unchanged. Completed children are keyed/coalesced by `result.material.canonical.slug`, the runtime owner slug. Specify Author synthesis/Audit ownership, exact Audit paths, and the one bounded owner-correct repair/re-Audit.
 
 - [ ] Obtain a fresh design review of this focused spec and resolve every blocking finding before implementation. Commit the reviewed contract separately.
 
@@ -828,14 +828,20 @@ git commit -m "docs: specify author workflow composition"
 
 - Create: `scripts/workflows/plans/author.mts`
 - Create: `scripts/workflows/author.entry.mts`
+- Create: `scripts/workflows/contracts/author.mts`
 - Create: `scripts/workflows/operations/catalogs/author.mts`
+- Modify: `scripts/workflows/shared/material-result.mts`
+- Modify: `scripts/workflows/contracts/paper.mts`
+- Modify: `scripts/workflows/plans/paper.mts`
+- Modify: `scripts/workflows/plans/book.mts`
+- Modify: `scripts/workflows/operations/rows/author.mts`
 - Modify: `scripts/build-workflows.mjs`
 - Modify: `skills/collect-material/SKILL.md`
 - Modify: `tests/test_material_plans.py`
 - Modify: `tests/test_workflow_entries.py`
 - Modify: `tests/test_skill_orchestration.py`
 
-- [ ] Add failing Author tests for exact pre-run facts, discovery/membership order, one Book and one Paper composed through their public plan APIs, Paper→Book child routing, existing admitted child reuse, decision delivery only to the matching child, lifted child gate, one exact observation-request/resume, Synthesise/Audit, one Author synthesis repair, no child dispatch after unknown outcome, and exact Author post-complete status evidence.
+- [ ] Add failing Author tests for exact pre-run facts, discovery/membership order, the automatic batch observation result, one Book and one Paper composed through their narrow internal plan APIs, decision delivery only to the matching child, lifted child gates, generic Paper→Book routing, Synthesise/Audit, one Author synthesis repair, no child dispatch after unknown outcome, and exact Author post-complete status evidence. Include the load-bearing restart regression: P1 routes to and completes B1, later P2 gates, and the next call runs B1 directly before delivering P2's answer once.
 
 - [ ] Implement:
 
@@ -846,13 +852,13 @@ export async function runAuthorPlan(
 ): Promise<MaterialResult>;
 ```
 
-Run `author.discover-books`, `author.discover-papers`, and `author.resolve-membership` in explicit sequence. Coalesce the returned membership by canonical material key. For each member, call `runBookPlan` or `runPaperPlan` with its matching sparse observation or the explicit empty observation constructor. Admit only leaf completions with `next:null`, and record their `material.canonical.slug` as the owner-correct child route; follow a typed Book route through `runBookPlan`. A lifted gate includes the child route; it does not expose Stage ordering to the Skill. A child stop that needs disk testimony carries exactly that child's observation request; it does not trigger a vault scan.
+Run `author.discover-books`, `author.discover-papers`, and `author.resolve-membership` in explicit sequence, then return all frozen member routes through `needs_observation`. The compose envelope requires the exact full route map and never reruns discovery. Process each member's current leaf sequentially; update that leaf from the Paper/Book composition outcome, follow a typed Book route generically, and preserve the updated member array in every later gate/observation continuation. Admit only leaf completions with `next:null` and owner-correct exact artifacts.
 
 - [ ] After all children complete, call `author.synthesise` then `author.audit`; allow one owner-correct synthesis repair and re-Audit. Paper/Book plans must not import Author code.
 
 - [ ] Prepare Author-owned operations through its material-local catalog and the pure prepared-dispatch boundary. The Author bundle composes Paper/Book plan APIs but never imports the universal compatibility catalog.
 
-- [ ] Switch Author routing in `collect-material` to `workflows/author.mjs`. Start with the exact Author observation and an empty sparse child-observation map; on an `observation_request`, run the exact leaf status command, add its result, and restart. User gates require an answer plus a fresh exact child observation. After `complete`, verify the exact Author canonical fact once.
+- [ ] Switch Author routing in `collect-material` to `workflows/author.mjs`. Start with the exact Author observation; on `needs_observation`, run exactly the returned routes and reinvoke with the opaque resume seed. User gates return the complete refresh route set; refresh all of it, copy the typed answer, and reinvoke. Do not turn real `blocked|failed` into automatic replay. After `complete`, verify the exact Author canonical fact once.
 
 - [ ] Add `author` to the build table only when its plan and parser are complete.
 
@@ -872,11 +878,11 @@ git commit -m "feat: compose leaf workflows for authors"
 
 - Create: `docs/superpowers/specs/2026-08-04-topic-workflow-composition.md`
 
-- [ ] Write the focused spec before implementation. Resolve these decisions explicitly: Topic receives query/options, exact Topic status facts, `seed_materials`, and a sparse map of already-requested exact child observations; it owns one Recall, outline create/refresh, bounded rounds, sequential child leaf plans and webcards, overview/resources synthesis, three exact audits, and one owner-correct repair/re-Audit; user-editable outline is the durable research state; `topic.steer` rereads it on every run; there is no whole-vault inventory or hidden cursor; child observation requests and gates are lifted with the exact route and the whole Topic restarts after the requested exact status call.
+- [ ] Write the focused spec before implementation. Resolve these decisions explicitly: Topic receives query/options, exact Topic status facts, `seed_materials`, exact child observations, and at most one closed continuation; it owns one Recall, outline create/refresh, bounded sequential rounds, per-admission outline checkpoints, overview/resources synthesis, three exact audits, and one owner-correct repair/re-Audit. User-editable outline is the durable research state; `topic.steer` rereads it on every run. Dynamic Recall/material status requests use the shared automatic `needs_observation` branch, human gates keep their effective leaf continuation, and a one-item checkpoint-admission capsule may reconcile an unknown outline checkpoint without replaying the completed leaf/webcard. There is no whole-vault inventory, queue cursor, completed-prefix sidecar, or synthetic absence.
 
 - [ ] Preserve the current real stopping behavior: noncanonical seeds at `maxRounds==0` produce one typed seed gate; `signal:"needs_seeds"` is a typed gate; no admitted member or available card cannot silently complete; `signal:"saturated"` is the only saturation claim; hitting `maxRounds` with unseen work returns an incomplete report carrying that work, not saturation. `seed_materials` remain part of the public input.
 
-- [ ] Define resume data without a sidecar: the exact Topic status projection supplies the current validated outline's subquestions plus observed member/card refs; `topic.steer` receives those refs and returns its newly written subquestions in the current receipt. Every candidate demand carries a validated deterministic `requested_slug`; the plan never fabricates a slug from the query. A Paper child `next` is followed generically through the Book plan. Completed children are admitted under `result.material.canonical.slug`, the runtime owner slug. A child decision is forwarded only to the exact matching route.
+- [ ] Define resume data without a sidecar: the exact Topic status projection supplies validated subquestions plus observed member/card refs; every dynamic work/Recall capsule preserves its exact row, assignment, fingerprint, member route, and leaf-owned effective continuation. Every candidate demand carries a validated deterministic `requested_slug`; the plan never fabricates one. A Paper child `next` is followed generically through the Book plan. A checkpoint occurs after every admitted ref before another risky writer; coherent empty web evidence writes nothing and needs no checkpoint. Steer's request-bound `max_cards` caps web work, and the most recent coherent steer receipt closes a round even when its tail is empty evidence.
 
 - [ ] Close the existing Talk path: a canonical Talk seed/recalled member is admitted from exact Talk status; an incomplete Talk with usable media is passed to `runTalkPlan`; an explicit Talk seed with neither canonical output nor usable media is included in the typed `topic_seed` gate. Topic never invents media identity for a recalled slug.
 
@@ -892,6 +898,13 @@ git commit -m "docs: specify topic workflow composition"
 **Files:**
 
 - Modify: `scripts/workflows/operations/rows/topic.mts`
+- Modify: `scripts/schemas/topic.py`
+- Modify: `scripts/schemas/export_contracts.py`
+- Modify: `scripts/workflows/shared/material-input.mts`
+- Modify: `scripts/workflows/shared/material-result.mts`
+- Modify: `scripts/workflows/contracts/paper.mts`
+- Modify: `scripts/workflows/contracts/book.mts`
+- Modify: `scripts/workflows/contracts/talk.mts`
 - Create: `scripts/workflows/operations/catalogs/topic.mts`
 - Create: `scripts/workflows/plans/topic.mts`
 - Create: `scripts/workflows/topic.entry.mts`
@@ -905,7 +918,7 @@ git commit -m "docs: specify topic workflow composition"
 
 - [ ] First add failing row tests that make `requested_slug` required on each `candidate_demands` row and include it in the closed receipt. The plan uses that exact slug for the child route; no query-to-slug helper exists.
 
-- [ ] Add failing Topic plan tests for exact Topic pre-run facts, ordinary bounded path, `seed_materials`, `maxRounds==0` noncanonical-seed gate, `needs_seeds`, no-evidence seed gate, hard-bound-with-unseen-work `terminal:"incomplete"` plus exact pending rows, one Paper child, one Book child, Paper→Book routing, canonical Talk admission, incomplete Talk with media, Talk-without-media seed gate, one webcard, resume reconstruction from the Topic status projection, decision delivery only to the matching child, lifted child gate, overview/resources synthesis, three exact audit targets, owner-correct repair, unknown outcome preventing later writes, and exact post-complete status evidence.
+- [ ] Add failing Topic plan tests for exact nested Topic facts, ordinary bounded work, seed/Recall admission, `maxRounds==0` provisional-seed gate but canonical incomplete leaf execution, `needs_seeds`, no-evidence gate, hard-bound `incomplete` pending order, generic Paper→Book and successive Book gates, Talk admission/media behavior, one webcard and coherent empty evidence, dynamic continuation reconstruction, per-item checkpointing, one checkpoint-unknown admission reconciliation without child replay, output-collision rejection before writing, final outline-Audit-before-synthesis order, three exact audit targets, owner repair, and exact post-complete status evidence.
 
 - [ ] Implement `runTopicPlan(runtime,input)` by reusing existing `topic.*` rows and leaf APIs. Keep configured `maxRounds` as the only loop bound. Process children and cards in stable order with ordinary `await`; do not add a Topic fan-out scheduler.
 
