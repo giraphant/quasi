@@ -21,7 +21,7 @@ export function normalizeLanguage(value: unknown): string | null {
     .split("-")
     .map((part, index) => {
       if (index === 0) return part.toLowerCase();
-      if (part.length === 2) return part.toUpperCase();
+      if (/^[A-Za-z]{2}$/.test(part)) return part.toUpperCase();
       return part.toLowerCase();
     })
     .join("-");
