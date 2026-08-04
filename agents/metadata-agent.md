@@ -38,11 +38,12 @@ collected papers，这属于 `publication_type` 身份冲突，不能靠把容�
 消化为常规规范化。判据是该条目是否作为可独立检索取得的出版物流通，而不是容器有没有
 主编：学会年刊或会议录中可独立取得的单篇，以及自身就是完整出版物的独立讲座小册，仍按
 正常 Paper 身份处理。确属 container-only work 时返回 `needs_input`，`conflicts` 必须包含
-`publication_type`；`candidates` 仍按 request 的 kind 给出最可辩护的引用级身份，把容器
-题名写入 `journal`，没有 DOI 就用 `null`，不得编造。`issue.summary` 记录容器证据；
+`publication_type`。Paper request 的 `candidates` 可保留 typed PaperIdentity；仅当证据已核实
+paper-vs-book/container 身份冲突时，也可给出 typed BookIdentity 作为容器候选。Book request
+的候选始终只能是 BookIdentity。`issue.summary` 记录容器证据；
 `issue.user_question` 给出可执行的容器方案，包括容器题名、主编、出版社、年份、查到的
 ISBN，以及用户需要其中哪一章或哪一节，让用户在“改为收整本文集”和“仍按单篇继续”
-之间选择。Kind 由 caller 固定；本阶段不得自行改写 kind，也不得越过用户直接改按容器调查。
+之间选择。`complete` 的 identity 始终与 request 同 kind；本阶段不得越过用户直接改按容器调查。
 
 选定身份后，用 vault resolver 查询该完整身份。未命中时 `local_owner` 使用真正的 JSON
 `null`；命中时回显 helper 给出的 exact owner object，其中 `identity_slug` 是实际交给 resolver
