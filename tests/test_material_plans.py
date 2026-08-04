@@ -40,7 +40,17 @@ const title = kind[0].toUpperCase() + kind.slice(1);
 const plan = await load(`scripts/workflows/plans/${kind}.mts`);
 const contract = await load(`scripts/workflows/contracts/${kind}.mts`);
 const parsed = contract[`parse${title}RunInput`](config.input);
-if (!parsed.ok) throw new Error("test input did not parse");
+if (!parsed.ok) {
+  process.stdout.write(JSON.stringify({
+    result: parsed.result,
+    calls: [],
+    settled: [],
+    pipelineCalls: 0,
+    pipelineLabels: [],
+    remaining: config.outputs.length,
+  }));
+  process.exit(0);
+}
 
 const calls = [];
 const settled = [];
@@ -1670,3 +1680,605 @@ def test_book_repairs_the_owned_overview_once_then_reaudits() -> None:
     assert repair["repair_diagnostics"] == [diagnostic]
     assert report["calls"][2]["request"]["pass"] == 2
     assert report["result"]["terminal"] == "complete"
+
+
+TALK_IDENTITY = {
+    "title": "Exact Talk",
+    "date": "2024-01-02",
+    "media": "sources/exact-talk.mp3",
+}
+TALK_MEDIA_EXTENSIONS = (
+    "mov", "mp4", "m4v", "mkv", "webm", "m4a", "wav", "mp3",
+    "aac", "flac", "aiff", "aif", "ogg", "opus",
+)
+
+
+def talk_observation(
+    *,
+    transcripts: tuple[str, ...] = (),
+    canonical: bool = False,
+) -> dict[str, Any]:
+    slug = "exact-talk"
+    return {
+        "schema_version": "quasi.status/0.2",
+        "kind": "talk",
+        "slug": slug,
+        "identity": {"title": TALK_IDENTITY["title"]} if canonical else None,
+        "facts": {
+            "kind": "talk",
+            "media": [
+                {
+                    "path": f"sources/{slug}.{extension}",
+                    "present": extension == "mp3",
+                    "usable": extension == "mp3",
+                }
+                for extension in TALK_MEDIA_EXTENSIONS
+            ],
+            "transcripts": [
+                {
+                    "path": f"processing/talks/{slug}/{name}",
+                    "present": True,
+                    "usable": True,
+                }
+                for name in transcripts
+            ],
+            "canonical": {
+                "path": f"vault/talks/{slug}/talk.md",
+                "present": canonical,
+                "usable": canonical,
+            },
+        },
+    }
+
+
+def canonical_talk_input(
+    *,
+    transcripts: tuple[str, ...] = (),
+    canonical: bool = False,
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "seed": {
+            "state": "canonical",
+            "material_slug": "exact-talk",
+            "identity": deepcopy(TALK_IDENTITY),
+        },
+        "observation": talk_observation(
+            transcripts=transcripts,
+            canonical=canonical,
+        ),
+        "options": options or {},
+    }
+
+
+def talk_prepare_complete(
+    classification: str,
+    *,
+    canonical_present: bool = False,
+    canonical_action: str | None = None,
+) -> dict[str, Any]:
+    slug = "exact-talk"
+    canonical_path = f"vault/talks/{slug}/talk.md"
+    artifacts = [
+        {
+            "role": "transcript",
+            "path": f"vault/talks/{slug}/transcript.md",
+            "sha256": "a" * 64,
+            "size": 100,
+        },
+        *[
+            {
+                "role": "engine_transcript",
+                "path": f"processing/talks/{slug}/transcript.{engine}.srt",
+                "sha256": hash_value * 64,
+                "size": 80,
+            }
+            for engine, hash_value in (
+                ("soniox", "b"),
+                ("apple", "c"),
+                ("parakeet", "d"),
+            )
+        ],
+    ]
+    if classification in {"dead", "empty"}:
+        canonical_present = True
+        canonical_action = canonical_action or "create"
+        artifacts.append(
+            {
+                "role": "canonical",
+                "path": canonical_path,
+                "sha256": "e" * 64,
+                "size": 120,
+            }
+        )
+    return {
+        "source_observation": {
+            "path": f"sources/{slug}.mp3",
+            "sha256": "f" * 64,
+        },
+        "generation_observation": {
+            "manifest_path": f"processing/talks/{slug}/manifest.json",
+            "request_fingerprint": "1" * 64,
+        },
+        "classification": classification,
+        "transcript_changed": False,
+        "canonical_observation": (
+            {"path": canonical_path, "sha256": "e" * 64}
+            if canonical_present
+            else None
+        ),
+        "canonical_action": canonical_action,
+        "artifacts": artifacts,
+        "steps": [],
+        "diagnostics": [],
+        "terminal": {"status": "complete", "issue": None},
+    }
+
+
+def talk_analyse_complete(action: str = "create") -> dict[str, Any]:
+    return {
+        "input_paths": [
+            "vault/talks/exact-talk/transcript.md",
+            "processing/talks/exact-talk/transcript.soniox.srt",
+            "processing/talks/exact-talk/transcript.apple.srt",
+            "processing/talks/exact-talk/transcript.parakeet.srt",
+        ],
+        "input_sha256s": ["a" * 64, "b" * 64, "c" * 64, "d" * 64],
+        "artifact_roles": ["canonical"],
+        "terminal": {"status": "complete", "issue": None, "action": action},
+    }
+
+
+def run_talk(value: dict[str, Any], outputs: list[Any]) -> dict[str, Any]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+    proc = subprocess.run(
+        [
+            node,
+            "--input-type=module",
+            "-e",
+            PLAN_HARNESS,
+            json.dumps({"kind": "talk", "input": value, "outputs": outputs}),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def test_talk_live_uses_current_prepare_generation_then_audits() -> None:
+    report = run_talk(
+        canonical_talk_input(),
+        [talk_prepare_complete("live"), talk_analyse_complete(), audit_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "talk.prepare",
+        "talk.analyse",
+        "talk.audit",
+    ]
+    prepare = report["calls"][0]["request"]
+    assert prepare["engines"] == ["soniox", "apple", "parakeet"]
+    assert prepare["identity"]["language"] == "auto"
+    assert prepare["prepare_media"] is False
+    assert [item["path"] for item in report["calls"][1]["request"]["inputs"]] == [
+        "vault/talks/exact-talk/transcript.md",
+        "processing/talks/exact-talk/transcript.soniox.srt",
+        "processing/talks/exact-talk/transcript.apple.srt",
+        "processing/talks/exact-talk/transcript.parakeet.srt",
+    ]
+    assert report["result"]["terminal"] == "complete"
+    assert report["result"]["artifacts"] == [
+        {"role": "canonical", "path": "vault/talks/exact-talk/talk.md"}
+    ]
+    assert report["pipelineCalls"] == 0
+
+
+@pytest.mark.parametrize("classification", ["dead", "empty"])
+def test_talk_silent_classification_uses_prepare_owned_canonical(
+    classification: str,
+) -> None:
+    report = run_talk(
+        canonical_talk_input(),
+        [talk_prepare_complete(classification), audit_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "talk.prepare",
+        "talk.audit",
+    ]
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_talk_transcript_status_reconciles_prepare_instead_of_rebuilding_carry() -> None:
+    report = run_talk(
+        canonical_talk_input(transcripts=("transcript.soniox.srt",)),
+        [talk_prepare_complete("live"), talk_analyse_complete(), audit_complete()],
+    )
+
+    assert report["calls"][0]["request"]["operation"] == "talk.prepare"
+    assert report["calls"][1]["request"]["inputs"][0]["path"] == (
+        "vault/talks/exact-talk/transcript.md"
+    )
+
+
+def test_talk_usable_canonical_starts_at_audit() -> None:
+    report = run_talk(canonical_talk_input(canonical=True), [audit_complete()])
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "talk.audit"
+    ]
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_talk_live_audit_reconciles_prepare_then_repairs_analyse_once() -> None:
+    diagnostic = {
+        "path": "vault/talks/exact-talk/talk.md",
+        "kind": "missing-section",
+        "reason": "The summary is incomplete.",
+    }
+    report = run_talk(
+        canonical_talk_input(canonical=True),
+        [
+            audit_complete(escalated=[diagnostic]),
+            talk_prepare_complete("live", canonical_present=True),
+            talk_analyse_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "talk.audit",
+        "talk.prepare",
+        "talk.analyse",
+        "talk.audit",
+    ]
+    assert report["calls"][1]["request"]["repair_diagnostics"] == [diagnostic]
+    assert report["calls"][2]["request"]["mode"] == "repair"
+    assert report["calls"][3]["request"]["pass"] == 2
+
+
+def test_talk_silent_audit_routes_repair_to_prepare_owner() -> None:
+    diagnostic = {
+        "path": "vault/talks/exact-talk/talk.md",
+        "kind": "frontmatter",
+        "reason": "Repair the silent canonical.",
+    }
+    report = run_talk(
+        canonical_talk_input(canonical=True),
+        [
+            audit_complete(escalated=[diagnostic]),
+            talk_prepare_complete("dead", canonical_action="repair"),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "talk.audit",
+        "talk.prepare",
+        "talk.audit",
+    ]
+    assert report["calls"][1]["request"]["repair_diagnostics"] == [diagnostic]
+    assert report["calls"][2]["request"]["pass"] == 2
+
+
+def test_talk_foreign_audit_target_stops_before_repair() -> None:
+    report = run_talk(
+        canonical_talk_input(canonical=True),
+        [
+            audit_complete(
+                escalated=[
+                    {
+                        "path": "vault/talks/another-talk/talk.md",
+                        "kind": "missing-section",
+                        "reason": "Foreign Talk.",
+                    }
+                ]
+            )
+        ],
+    )
+
+    assert len(report["calls"]) == 1
+    assert report["result"]["issue"]["code"] == "workflow.owner_ambiguity"
+
+
+def test_talk_second_audit_residual_stops_as_repair_exhausted() -> None:
+    diagnostic = {
+        "path": "vault/talks/exact-talk/talk.md",
+        "kind": "missing-section",
+        "reason": "The summary is incomplete.",
+    }
+    report = run_talk(
+        canonical_talk_input(canonical=True),
+        [
+            audit_complete(escalated=[diagnostic]),
+            talk_prepare_complete("live", canonical_present=True),
+            talk_analyse_complete("repair"),
+            audit_complete(escalated=[diagnostic]),
+        ],
+    )
+
+    assert len(report["calls"]) == 4
+    assert report["result"]["issue"]["code"] == "workflow.repair_exhausted"
+
+
+def test_talk_unknown_writer_stops_without_later_dispatch() -> None:
+    report = run_talk(canonical_talk_input(), ["__throw__"])
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "talk.prepare"
+    ]
+    assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"
+
+
+def translation_observation_for_plan(
+    target_language: str = "zh-CN",
+    *,
+    source: bool = True,
+    output: bool = False,
+    manifest: bool = False,
+) -> dict[str, Any]:
+    target = target_language.lower()
+    return {
+        "schema_version": "quasi.status/0.2",
+        "kind": "translation",
+        "slug": "exact-paper",
+        "identity": None,
+        "facts": {
+            "kind": "translation",
+            "target_language": target_language,
+            "source": {
+                "path": "sources/exact-paper.pdf",
+                "present": source,
+                "usable": source,
+            },
+            "output": {
+                "path": f"processing/translations/exact-paper-{target}.pdf",
+                "present": output,
+                "usable": output,
+            },
+            "manifest": {
+                "path": (
+                    f"processing/translations/exact-paper-{target}.manifest.json"
+                ),
+                "present": manifest,
+                "usable": manifest,
+            },
+        },
+    }
+
+
+def canonical_translation_input(
+    *,
+    requested_target: str = "zh-cn",
+    observed_target: str = "zh-CN",
+    output: bool = False,
+    manifest: bool = False,
+) -> dict[str, Any]:
+    return {
+        "seed": {"state": "canonical", "material_slug": "exact-paper"},
+        "target_language": requested_target,
+        "observation": translation_observation_for_plan(
+            observed_target,
+            output=output,
+            manifest=manifest,
+        ),
+        "options": {},
+    }
+
+
+def translation_complete() -> dict[str, Any]:
+    return {
+        "backend": "immersive",
+        "source": {
+            "path": "sources/exact-paper.pdf",
+            "sha256": "a" * 64,
+            "size": 1000,
+            "pages": 10,
+        },
+        "disposition": "created",
+        "recovered": False,
+        "validation": {
+            "output_sha256": "b" * 64,
+            "manifest_sha256": "c" * 64,
+            "output_size": 2000,
+            "source_pages": 10,
+            "output_pages": 20,
+            "toc_entries": 0,
+            "coverage": {
+                "signal": "pass",
+                "median": 0.8,
+                "measured_pages": 10,
+                "minimum_median": 0.5,
+                "weakest": [],
+                "detail": None,
+            },
+        },
+        "steps": [],
+        "diagnostics": [],
+        "terminal": {"status": "complete", "issue": None},
+    }
+
+
+def translation_gate(kind: str) -> dict[str, Any]:
+    candidates = [
+        {
+            "path": "sources/exact-paper.pdf",
+            "sha256": "a" * 64,
+            "size": 1000,
+            "pages": 10,
+        },
+        {
+            "path": "processing/papers/exact-paper/ocr.pdf",
+            "sha256": "b" * 64,
+            "size": 1100,
+            "pages": 10,
+        },
+    ]
+    source_gate = kind == "source_selection"
+    return {
+        "backend": None,
+        "source": None,
+        "disposition": None,
+        "recovered": False,
+        "validation": None,
+        "steps": [],
+        "diagnostics": [],
+        "terminal": {
+            "status": "needs_input",
+            "issue": {
+                "code": (
+                    "translation.source_selection_required"
+                    if source_gate
+                    else "translation.configuration_required"
+                ),
+                "operation": "translation.prepare",
+                "summary": "Translation cannot continue yet.",
+                "user_question": (
+                    "Which source should be translated?"
+                    if source_gate
+                    else "Configure the translation provider."
+                ),
+                "retryable": False,
+            },
+            "gate": {
+                "kind": kind,
+                "missing_fields": [] if source_gate else ["translate_api_key"],
+                "candidates": candidates if source_gate else [],
+                "candidates_fingerprint": "f" * 64 if source_gate else None,
+            },
+        },
+    }
+
+
+def run_translation(value: dict[str, Any], outputs: list[Any]) -> dict[str, Any]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+    proc = subprocess.run(
+        [
+            node,
+            "--input-type=module",
+            "-e",
+            PLAN_HARNESS,
+            json.dumps(
+                {"kind": "translation", "input": value, "outputs": outputs}
+            ),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def test_translation_normalises_target_and_dispatches_exactly_once() -> None:
+    report = run_translation(
+        canonical_translation_input(output=True),
+        [translation_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "translation.prepare"
+    ]
+    request = report["calls"][0]["request"]
+    assert request["material_key"] == "translation:paper:exact-paper:zh-CN"
+    assert request["identity"]["target_language"] == "zh-CN"
+    assert report["result"]["terminal"] == "complete"
+    assert report["pipelineCalls"] == 0
+
+
+def test_translation_rejects_a_different_target_observation_without_dispatch() -> None:
+    report = run_translation(
+        canonical_translation_input(
+            requested_target="fr",
+            observed_target="zh-CN",
+        ),
+        [],
+    )
+
+    assert report["calls"] == []
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "material.invalid_input"
+
+
+def test_translation_exact_output_and_manifest_reconcile_without_dispatch() -> None:
+    value = canonical_translation_input(output=True, manifest=True)
+    value["userDecision"] = {
+        "material_key": "translation:paper:exact-paper:zh-CN",
+        "operation": "translation.prepare",
+        "value": {"acknowledged": True},
+    }
+    report = run_translation(value, [])
+
+    assert report["calls"] == []
+    assert report["result"]["terminal"] == "complete"
+    assert report["result"]["material"]["canonical"] == {
+        "kind": "translation",
+        "slug": "exact-paper",
+    }
+    assert report["result"]["artifacts"] == [
+        {
+            "role": "translation",
+            "path": "processing/translations/exact-paper-zh-cn.pdf",
+        },
+        {
+            "role": "manifest",
+            "path": "processing/translations/exact-paper-zh-cn.manifest.json",
+        },
+    ]
+
+
+def test_translation_source_gate_binds_its_fingerprint_and_selected_path() -> None:
+    value = canonical_translation_input()
+    gated = run_translation(value, [translation_gate("source_selection")])
+    gate = gated["result"]["gate"]
+    decision = {
+        "candidates_fingerprint": gate["candidates_fingerprint"],
+        "source_path": gate["candidates"][1]["path"],
+    }
+
+    assert gated["result"]["terminal"] == "needs_input"
+    assert gate["material_key"] == "translation:paper:exact-paper:zh-CN"
+
+    value["userDecision"] = {
+        "material_key": gate["material_key"],
+        "operation": gate["operation"],
+        "value": decision,
+    }
+    resumed = run_translation(value, [translation_complete()])
+
+    assert resumed["calls"][0]["request"]["source_request"]["decision"] == decision
+    assert resumed["result"]["terminal"] == "complete"
+
+
+def test_translation_configuration_gate_rejects_acknowledgement_decision() -> None:
+    value = canonical_translation_input()
+    gated = run_translation(value, [translation_gate("configuration_required")])
+    gate = gated["result"]["gate"]
+    assert gate["kind"] == "translation_configuration"
+
+    value["userDecision"] = {
+        "material_key": gate["material_key"],
+        "operation": gate["operation"],
+        "value": {"acknowledged": True},
+    }
+    rejected = run_translation(value, [])
+
+    assert rejected["calls"] == []
+    assert rejected["result"]["issue"]["code"] == "workflow.incoherent_gate"
+
+
+def test_translation_unknown_writer_stops_without_retry_or_audit() -> None:
+    report = run_translation(canonical_translation_input(), ["__throw__"])
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "translation.prepare"
+    ]
+    assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"

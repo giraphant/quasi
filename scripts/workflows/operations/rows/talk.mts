@@ -77,7 +77,7 @@ export const talkOperationRows: OperationRow[] = [
       title: base.meta.title,
       date: base.meta.date,
       language: base.meta.lang || base.meta.language || "auto",
-      engines: base.meta.engines || [],
+      engines: base.meta.engines || ["soniox", "apple", "parakeet"],
       media: base.meta.media,
       prepareMedia: Boolean(
         contextValue(base.meta, "prepareMedia", "prepare_media"),
@@ -198,7 +198,10 @@ export const talkOperationRows: OperationRow[] = [
                 row.path === context.canonical &&
                 row.sha256 === receipt.canonical_observation.sha256,
             )) &&
-        (!context.repair || receipt.canonical_action === "repair")
+        (!context.repair ||
+          (receipt.classification === "live"
+            ? receipt.canonical_action === null
+            : receipt.canonical_action === "repair"))
       );
     },
     envelope: (

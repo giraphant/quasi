@@ -3,11 +3,23 @@ import {
   isArtifactObservation,
   isRecord,
   normalizeLanguage,
+  observationKey,
+  parseUserDecision,
   parseStatusEnvelope,
+  requestedLeafSlug,
+  sparseObservations,
+  validMaterialSlug,
+  validString,
   type ArtifactObservation,
   type QuasiStatusObservation,
+  type SparseObservationMap,
+  type UserDecision,
 } from "../shared/material-input.mts";
 import { exactKeys, validText } from "../runtime.mts";
+import {
+  invalidMaterialInputResult,
+  type MaterialResult,
+} from "../shared/material-result.mts";
 
 const SHA256 = /^[0-9a-f]{64}$/;
 
@@ -23,6 +35,29 @@ export interface TranslationSourceDecisionValue {
   source_path: string;
 }
 
+export interface TranslationSeed {
+  state: "canonical";
+  material_slug: string;
+}
+
+export interface TranslationOptions {
+  source_file: string | null;
+  toc_json: string | null;
+  toc_page_side: "original" | "translated";
+}
+
+export interface TranslationRunInput {
+  seed: TranslationSeed;
+  target_language: string;
+  observations: SparseObservationMap<TranslationStatusObservation>;
+  options: TranslationOptions;
+  userDecision: UserDecision | null;
+}
+
+export type TranslationRunInputResult =
+  | { ok: true; value: TranslationRunInput }
+  | { ok: false; result: MaterialResult };
+
 export interface TranslationStatusFacts {
   kind: "translation";
   target_language: string;
@@ -35,6 +70,39 @@ export type TranslationStatusObservation = QuasiStatusObservation<
   "translation",
   TranslationStatusFacts
 >;
+
+export function translationSourceRoles(
+  slug: string,
+  targetLanguage: string,
+) {
+  const target = targetLanguage.toLowerCase();
+  return {
+    canonical: `sources/${slug}.pdf`,
+    paperOcr: `processing/papers/${slug}/ocr.pdf`,
+    derivativeRecovery:
+      `processing/translations/${slug}-${target}-reocr.pdf`,
+  };
+}
+
+export function validRequestedTranslationSource(
+  path: string,
+  slug: string,
+  targetLanguage: string,
+): boolean {
+  const roles = translationSourceRoles(slug, targetLanguage);
+  return [roles.canonical, roles.paperOcr, roles.derivativeRecovery].includes(
+    path,
+  );
+}
+
+export function validSelectableTranslationSource(
+  path: string,
+  slug: string,
+  targetLanguage: string,
+): boolean {
+  const roles = translationSourceRoles(slug, targetLanguage);
+  return [roles.canonical, roles.paperOcr].includes(path);
+}
 
 export const parseTranslationCandidate = (
   value: unknown,
@@ -75,6 +143,10 @@ export const parseTranslationStatusObservation = (
   const observation = parseStatusEnvelope(value, "translation");
   if (observation === null) return null;
   const facts = observation.facts;
+  const target =
+    typeof facts.target_language === "string"
+      ? facts.target_language.toLowerCase()
+      : "";
   if (
     !exactEnvelopeKeys(facts, [
       "kind",
@@ -84,13 +156,135 @@ export const parseTranslationStatusObservation = (
       "manifest",
     ]) ||
     facts.kind !== "translation" ||
+    observation.identity !== null ||
     normalizeLanguage(facts.target_language) !== facts.target_language ||
     !isArtifactObservation(facts.source) ||
+    facts.source.path !== `sources/${observation.slug}.pdf` ||
     !isArtifactObservation(facts.output) ||
-    !isArtifactObservation(facts.manifest)
+    facts.output.path !==
+      `processing/translations/${observation.slug}-${target}.pdf` ||
+    !isArtifactObservation(facts.manifest) ||
+    facts.manifest.path !==
+      `processing/translations/${observation.slug}-${target}.manifest.json`
   )
     return null;
   return observation as unknown as TranslationStatusObservation;
+};
+
+const parseTranslationSeed = (value: unknown): TranslationSeed | null => {
+  if (
+    !isRecord(value) ||
+    !exactEnvelopeKeys(value, ["state", "material_slug"]) ||
+    value.state !== "canonical" ||
+    !validMaterialSlug(value.material_slug)
+  )
+    return null;
+  return value as unknown as TranslationSeed;
+};
+
+const parseTranslationOptions = (
+  value: unknown,
+  slug: string,
+  targetLanguage: string,
+): TranslationOptions | null => {
+  if (
+    !isRecord(value) ||
+    !exactEnvelopeKeys(
+      value,
+      [],
+      ["source_file", "toc_json", "toc_page_side"],
+    )
+  )
+    return null;
+  const sourceFile = Object.hasOwn(value, "source_file")
+    ? value.source_file
+    : null;
+  const tocJson = Object.hasOwn(value, "toc_json") ? value.toc_json : null;
+  const tocPageSide = Object.hasOwn(value, "toc_page_side")
+    ? value.toc_page_side
+    : "original";
+  if (
+    (sourceFile !== null &&
+      (typeof sourceFile !== "string" ||
+        !validRequestedTranslationSource(
+          sourceFile,
+          slug,
+          targetLanguage,
+        ))) ||
+    (tocJson !== null && !validString(tocJson, 1, 2048)) ||
+    !["original", "translated"].includes(tocPageSide as string)
+  )
+    return null;
+  return {
+    source_file: sourceFile as string | null,
+    toc_json: tocJson as string | null,
+    toc_page_side: tocPageSide as "original" | "translated",
+  };
+};
+
+export const parseTranslationRunInput = (
+  raw: unknown,
+): TranslationRunInputResult => {
+  const invalid = (): TranslationRunInputResult => ({
+    ok: false,
+    result: invalidMaterialInputResult({
+      kind: "translation",
+      slug: requestedLeafSlug(raw),
+    }),
+  });
+  if (
+    !isRecord(raw) ||
+    !exactEnvelopeKeys(
+      raw,
+      ["seed", "target_language", "observation", "options"],
+      ["userDecision"],
+    )
+  )
+    return invalid();
+  const seed = parseTranslationSeed(raw.seed);
+  const targetLanguage = normalizeLanguage(raw.target_language);
+  const observation = parseTranslationStatusObservation(raw.observation);
+  const userDecision = Object.hasOwn(raw, "userDecision")
+    ? parseUserDecision(raw.userDecision)
+    : null;
+  if (
+    seed === null ||
+    targetLanguage === null ||
+    observation === null ||
+    observation.slug !== seed.material_slug ||
+    observation.facts.target_language !== targetLanguage ||
+    (Object.hasOwn(raw, "userDecision") && userDecision === null)
+  )
+    return invalid();
+  const options = parseTranslationOptions(
+    raw.options,
+    seed.material_slug,
+    targetLanguage,
+  );
+  if (options === null) return invalid();
+  const route = {
+    kind: "translation" as const,
+    slug: seed.material_slug,
+    target_language: targetLanguage,
+  };
+  const observations = sparseObservations<TranslationStatusObservation>([
+    { route, observation },
+  ]);
+  if (
+    observations === null ||
+    !observations.has(observationKey(route))
+  )
+    return invalid();
+  return {
+    ok: true,
+    value: {
+      seed,
+      target_language: targetLanguage,
+      observations,
+      options,
+      userDecision,
+    },
+  };
 };
 
 interface TranslationGateBase {

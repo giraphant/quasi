@@ -129,7 +129,8 @@ export const isArtifactObservation = (
   exactKeys(value, ["path", "present", "usable"]) &&
   typeof value.path === "string" &&
   typeof value.present === "boolean" &&
-  typeof value.usable === "boolean";
+  typeof value.usable === "boolean" &&
+  (!value.usable || value.present);
 
 export const isArtifactList = (
   value: unknown,

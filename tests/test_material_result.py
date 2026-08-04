@@ -13,6 +13,7 @@ RESULT_MODULE = "scripts/workflows/shared/material-result.mts"
 PAPER_CONTRACT_MODULE = "scripts/workflows/contracts/paper.mts"
 SEARCH_CONTRACT_MODULE = "scripts/workflows/contracts/search.mts"
 BOOK_CONTRACT_MODULE = "scripts/workflows/contracts/book.mts"
+TALK_CONTRACT_MODULE = "scripts/workflows/contracts/talk.mts"
 TRANSLATION_CONTRACT_MODULE = "scripts/workflows/contracts/translation.mts"
 
 PAPER_IDENTITY = {
@@ -246,6 +247,98 @@ def translation_observation(target_language: str) -> dict[str, Any]:
             },
         },
     }
+
+
+def test_artifact_observation_never_marks_an_absent_path_usable():
+    assert run_workflow_export(
+        INPUT_MODULE,
+        "isArtifactObservation",
+        {"path": "sources/missing.pdf", "present": False, "usable": True},
+    ) is False
+
+
+def test_talk_status_parser_matches_the_exact_status_producer_projection():
+    slug = "exact-talk"
+    extensions = (
+        "mov", "mp4", "m4v", "mkv", "webm", "m4a", "wav", "mp3",
+        "aac", "flac", "aiff", "aif", "ogg", "opus",
+    )
+    producer_value = {
+        "schema_version": "quasi.status/0.2",
+        "kind": "talk",
+        "slug": slug,
+        "identity": None,
+        "facts": {
+            "kind": "talk",
+            "media": [
+                {
+                    "path": f"sources/{slug}.{extension}",
+                    "present": extension == "mp3",
+                    "usable": extension == "mp3",
+                }
+                for extension in extensions
+            ],
+            "transcripts": [
+                {
+                    "path": f"processing/talks/{slug}/transcript.apple.srt",
+                    "present": True,
+                    "usable": True,
+                },
+                {
+                    "path": f"processing/talks/{slug}/transcript.soniox.srt",
+                    "present": True,
+                    "usable": True,
+                },
+            ],
+            "canonical": {
+                "path": f"vault/talks/{slug}/talk.md",
+                "present": False,
+                "usable": False,
+            },
+        },
+    }
+
+    assert run_workflow_export(
+        TALK_CONTRACT_MODULE,
+        "parseTalkStatusObservation",
+        producer_value,
+    ) == producer_value
+
+    foreign = deepcopy(producer_value)
+    foreign["facts"]["media"][7]["path"] = "sources/another-talk.mp3"
+    foreign["facts"]["transcripts"].append(
+        deepcopy(foreign["facts"]["transcripts"][0])
+    )
+    foreign["facts"]["canonical"]["path"] = "vault/talks/elsewhere/talk.md"
+    assert run_workflow_export(
+        TALK_CONTRACT_MODULE,
+        "parseTalkStatusObservation",
+        foreign,
+    ) is None
+
+
+def test_translation_status_parser_binds_null_identity_and_exact_target_paths():
+    producer_value = translation_observation("zh-CN")
+    assert run_workflow_export(
+        TRANSLATION_CONTRACT_MODULE,
+        "parseTranslationStatusObservation",
+        producer_value,
+    ) == producer_value
+
+    foreign = deepcopy(producer_value)
+    foreign["identity"] = {"title": "A source paper"}
+    foreign["facts"]["source"]["path"] = "sources/another-paper.pdf"
+    foreign["facts"]["output"]["path"] = (
+        "processing/translations/exact-paper-fr-fr.pdf"
+    )
+    foreign["facts"]["manifest"]["path"] = (
+        "processing/translations/exact-paper-fr-fr.manifest.json"
+    )
+    assert run_workflow_export(
+        TRANSLATION_CONTRACT_MODULE,
+        "parseTranslationStatusObservation",
+        foreign,
+    ) is None
 
 
 def valid_input() -> dict[str, Any]:

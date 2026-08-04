@@ -15,7 +15,6 @@ from workflow_test_support import HARNESS, ROOT, run_workflow_export
 CATALOG_MODULE = "scripts/workflows/operations/catalog.mts"
 CONTEXT_MODULE = "scripts/workflows/context-base.mts"
 INPUT_MODULE = "scripts/workflows/shared/material-input.mts"
-TRANSLATION_ROW_MODULE = "scripts/workflows/operations/rows/translation.mts"
 LANGUAGE_TAGS = json.loads(
     (ROOT / "tests" / "fixtures" / "translation_language_tags.json").read_text(
         encoding="utf-8"
@@ -754,24 +753,124 @@ def test_prepare_rows_expose_only_paths_they_can_publish():
     ]
 
 
+def test_talk_prepare_uses_the_cli_defaults_for_request_and_owned_outputs():
+    meta = {
+        "title": "Exact Talk",
+        "date": "2024-01-02",
+        "media": "sources/exact-talk.mp3",
+    }
+    prepared = _prepare(
+        "talk.prepare",
+        slug="exact-talk",
+        context=_context(meta=meta),
+    )
+    request = json.loads(prepared["prompt"])
+
+    assert request["engines"] == ["soniox", "apple", "parakeet"]
+    assert request["identity"]["language"] == "auto"
+    assert request["prepare_media"] is False
+    assert prepared["writeTargets"][-3:] == [
+        {
+            "scope": "exact",
+            "path": "processing/talks/exact-talk/transcript.soniox.srt",
+        },
+        {
+            "scope": "exact",
+            "path": "processing/talks/exact-talk/transcript.apple.srt",
+        },
+        {
+            "scope": "exact",
+            "path": "processing/talks/exact-talk/transcript.parakeet.srt",
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("classification", "canonical_action"),
+    [("live", None), ("dead", "repair")],
+)
+def test_talk_prepare_repair_accepts_only_the_current_classification_owner(
+    classification: str,
+    canonical_action: str | None,
+):
+    slug = "exact-talk"
+    canonical = f"vault/talks/{slug}/talk.md"
+    artifacts = [
+        {
+            "role": "transcript",
+            "path": f"vault/talks/{slug}/transcript.md",
+            "sha256": "a" * 64,
+            "size": 123,
+        }
+    ]
+    canonical_observation = None
+    if classification == "dead":
+        canonical_observation = {"path": canonical, "sha256": "b" * 64}
+        artifacts.append(
+            {
+                "role": "canonical",
+                "path": canonical,
+                "sha256": "b" * 64,
+                "size": 456,
+            }
+        )
+    output = {
+        "source_observation": {
+            "path": f"sources/{slug}.mp3",
+            "sha256": "c" * 64,
+        },
+        "generation_observation": {
+            "manifest_path": f"processing/talks/{slug}/manifest.json",
+            "request_fingerprint": "d" * 64,
+        },
+        "classification": classification,
+        "transcript_changed": False,
+        "canonical_observation": canonical_observation,
+        "canonical_action": canonical_action,
+        "artifacts": artifacts,
+        "steps": [],
+        "diagnostics": [],
+        "terminal": {"status": "complete", "issue": None},
+    }
+    report = _dispatch(
+        {
+            "invocation": _invocation(
+                "talk.prepare",
+                slug=slug,
+                context=_context(
+                    meta={
+                        "title": "Exact Talk",
+                        "date": "2024-01-02",
+                        "media": f"sources/{slug}.mp3",
+                        "engines": ["soniox"],
+                    },
+                    mode="repair",
+                    diagnostics=[
+                        {
+                            "path": canonical,
+                            "kind": "missing-section",
+                            "reason": "Repair the exact Talk.",
+                        }
+                    ],
+                ),
+            ),
+            "model_output": output,
+        }
+    )
+
+    assert report["result"]["kind"] == "receipt"
+
+
 @pytest.mark.parametrize(
     ("language", "normalized"),
     [(row["input"], row["normalized"]) for row in LANGUAGE_TAGS],
 )
-def test_bundled_language_normalizers_match_the_python_contract_fixture(
+def test_workflow_language_normalizer_matches_the_python_contract_fixture(
     language: str,
     normalized: str,
 ):
     assert (
         run_workflow_export(INPUT_MODULE, "normalizeLanguage", language)
-        == normalized
-    )
-    assert (
-        run_workflow_export(
-            TRANSLATION_ROW_MODULE,
-            "normalizeLanguage",
-            language,
-        )
         == normalized
     )
 

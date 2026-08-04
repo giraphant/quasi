@@ -2,6 +2,10 @@ import {
   InputContractError,
   contextValue,
 } from "../../context-base.mts";
+import {
+  validRequestedTranslationSource,
+} from "../../contracts/translation.mts";
+import { normalizeLanguage } from "../../shared/material-input.mts";
 import { issueSchema } from "../shared.mts";
 import type { OperationRow } from "../../artifact-contracts/generated.mjs";
 
@@ -11,51 +15,6 @@ const HASH = /^[0-9a-f]{64}$/;
 
 export const validTranslationHash = (value: unknown): value is string =>
   typeof value === "string" && HASH.test(value);
-
-export function normalizeLanguage(value: unknown): string | null {
-  if (
-    typeof value !== "string" ||
-    !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,8}){0,3}$/.test(value)
-  )
-    return null;
-  return value
-    .split("-")
-    .map((part, index) => {
-      if (index === 0) return part.toLowerCase();
-      if (/^[A-Za-z]{2}$/.test(part)) return part.toUpperCase();
-      return part.toLowerCase();
-    })
-    .join("-");
-}
-
-export function sourceRoles(slug: string, targetLanguage: string) {
-  const langTag = targetLanguage.toLowerCase();
-  return {
-    canonical: `sources/${slug}.pdf`,
-    paperOcr: `processing/papers/${slug}/ocr.pdf`,
-    derivativeRecovery: `processing/translations/${slug}-${langTag}-reocr.pdf`,
-  };
-}
-
-export function validRequestedSource(
-  path: string,
-  slug: string,
-  targetLanguage: string,
-) {
-  const roles = sourceRoles(slug, targetLanguage);
-  return [roles.canonical, roles.paperOcr, roles.derivativeRecovery].includes(
-    path,
-  );
-}
-
-export function validSelectableSource(
-  path: string,
-  slug: string,
-  targetLanguage: string,
-) {
-  const roles = sourceRoles(slug, targetLanguage);
-  return [roles.canonical, roles.paperOcr].includes(path);
-}
 
 const nullableStringSchema: AnyFunction = (properties = {}) => ({
   anyOf: [{ type: "null" }, { type: "string", ...properties }],
@@ -357,7 +316,7 @@ export const translationOperationRows: OperationRow[] = [
       !!receipt.validation &&
       receipt.backend !== null &&
       ["created", "reused", "recovered"].includes(receipt.disposition) &&
-      validRequestedSource(
+      validRequestedTranslationSource(
         receipt.source.path,
         context.slug,
         context.targetLanguage,
