@@ -13,6 +13,13 @@ from workflow_test_support import HARNESS, ROOT, run_workflow_export
 
 CATALOG_MODULE = "scripts/workflows/operations/catalog.mts"
 CONTEXT_MODULE = "scripts/workflows/context-base.mts"
+INPUT_MODULE = "scripts/workflows/shared/material-input.mts"
+TRANSLATION_ROW_MODULE = "scripts/workflows/operations/rows/translation.mts"
+LANGUAGE_TAGS = json.loads(
+    (ROOT / "tests" / "fixtures" / "translation_language_tags.json").read_text(
+        encoding="utf-8"
+    )
+)
 
 
 DISPATCH_HARNESS = r"""
@@ -487,6 +494,42 @@ def test_prepare_rows_expose_only_paths_they_can_publish():
             "path": "processing/translations/exact-material-zh-cn-reocr.pdf",
         },
     ]
+
+
+@pytest.mark.parametrize(
+    ("language", "normalized"),
+    [(row["input"], row["normalized"]) for row in LANGUAGE_TAGS],
+)
+def test_bundled_language_normalizers_match_the_python_contract_fixture(
+    language: str,
+    normalized: str,
+):
+    assert (
+        run_workflow_export(INPUT_MODULE, "normalizeLanguage", language)
+        == normalized
+    )
+    assert (
+        run_workflow_export(
+            TRANSLATION_ROW_MODULE,
+            "normalizeLanguage",
+            language,
+        )
+        == normalized
+    )
+
+
+def test_translation_row_requires_the_exact_snake_case_target_field():
+    context = _context()
+    del context["target_language"]
+    context["targetLanguage"] = "fr-FR"
+
+    stderr = _export_failure(
+        CATALOG_MODULE,
+        "prepareOperation",
+        _invocation("translation.prepare", context=context),
+    )
+
+    assert "requires a valid target language" in stderr
 
 
 def test_book_acquire_conservatively_owns_both_possible_sources():

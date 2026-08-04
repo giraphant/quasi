@@ -14,7 +14,7 @@ export const validTranslationHash = (value: unknown): value is string =>
 export function normalizeLanguage(value: unknown): string | null {
   if (
     typeof value !== "string" ||
-    !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(value)
+    !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,8}){0,3}$/.test(value)
   )
     return null;
   return value
@@ -207,9 +207,7 @@ export const translationOperationRows: OperationRow[] = [
   {
     operation: "translation.prepare",
     context: (rawContext, base) => {
-      const targetLanguage = normalizeLanguage(
-        rawContext.target_language || rawContext.targetLanguage || "zh-CN",
-      );
+      const targetLanguage = normalizeLanguage(rawContext.target_language);
       if (targetLanguage === null)
         throw new InputContractError(
           "translation.prepare requires a valid target language",

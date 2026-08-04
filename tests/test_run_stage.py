@@ -227,6 +227,8 @@ def paper_prepare_blocked_output() -> dict[str, Any]:
 
 def stage_context(kind: str, stage: str) -> dict[str, Any]:
     context: dict[str, Any] = {}
+    if kind in {"translation", "translate"} and stage == "prepare":
+        context["target_language"] = "zh-CN"
     if kind in {"paper", "book"} and stage == "acquire":
         context["meta"] = {
             "title": "Example Title",

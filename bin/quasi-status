@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# quasi-status — read-only on-disk material stage admission oracle.
+# quasi-status — read-only factual on-disk material observation.
 #
 # Usage:
-#   quasi-status --kind paper|book|talk --slug SLUG --json
+#   quasi-status --kind paper|book|talk|author|topic --slug SLUG --json
+#   quasi-status --kind translation --slug SLUG --target-language TAG --json
 #   quasi-status --scan --json
 
 set -e

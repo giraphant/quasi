@@ -13,7 +13,7 @@ import {
 } from "./material-result.mts";
 
 const MATERIAL_SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
-const LANGUAGE_TAG = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,8}){0,2}$/;
+const LANGUAGE_TAG = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,8}){0,3}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 
 const MATERIAL_OPERATIONS = new Set<OperationName>(
@@ -52,29 +52,111 @@ export interface TranslationCandidate {
   pages: number;
 }
 
-export interface QuasiStatusStageObservation {
-  stage: string;
-  complete: boolean | null;
-  evidence: string[];
+export interface ArtifactObservation {
+  path: string;
+  present: boolean;
+  usable: boolean;
+}
+
+export interface TopicOutlineProjection {
+  subquestions: Array<{
+    id: string;
+    question: string;
+    coverage: "gap" | "thin" | "covered" | "saturated";
+    channel: "academic" | "web" | "mixed";
+    theory_used: number;
+  }>;
+  members: Array<{
+    kind: "paper" | "book" | "talk";
+    slug: string;
+    subq: string;
+    role: "evidence" | "theory" | "method" | "context" | null;
+    artifact: ArtifactObservation;
+  }>;
+  cards: Array<{
+    slug: string;
+    subq: string;
+    title: string | null;
+    artifact: ArtifactObservation;
+  }>;
 }
 
 interface QuasiStatusObservationBase {
-  schema_version: "quasi.status/0.1";
+  schema_version: "quasi.status/0.2";
   slug: string;
-  stages: QuasiStatusStageObservation[];
-  next_stage: string | null;
-  refs: WorkflowContext;
-  identity?: WorkflowContext | null;
+  identity: WorkflowContext | null;
 }
 
 export type QuasiStatusObservation =
   | (QuasiStatusObservationBase & {
-      kind: "paper" | "book" | "talk";
-      target_language?: never;
+      kind: "paper";
+      facts: {
+        kind: "paper";
+        source: ArtifactObservation;
+        prepared: ArtifactObservation[];
+        canonical: ArtifactObservation;
+      };
+    })
+  | (QuasiStatusObservationBase & {
+      kind: "book";
+      facts: {
+        kind: "book";
+        sources: Array<{
+          format: "epub" | "pdf";
+          artifact: ArtifactObservation;
+        }>;
+        manifest: ArtifactObservation & { valid: boolean };
+        chapters: Array<{
+          slot: string;
+          title: string;
+          filename: string;
+          slug: string;
+          word_count: number;
+          start_page: number | null;
+          end_page: number | null;
+          input: ArtifactObservation;
+          output: ArtifactObservation;
+        }>;
+        overview: ArtifactObservation;
+      };
+    })
+  | (QuasiStatusObservationBase & {
+      kind: "talk";
+      facts: {
+        kind: "talk";
+        media: ArtifactObservation[];
+        transcripts: ArtifactObservation[];
+        canonical: ArtifactObservation;
+      };
     })
   | (QuasiStatusObservationBase & {
       kind: "translation";
-      target_language: string;
+      facts: {
+        kind: "translation";
+        target_language: string;
+        source: ArtifactObservation;
+        output: ArtifactObservation;
+        manifest: ArtifactObservation;
+      };
+    })
+  | (QuasiStatusObservationBase & {
+      kind: "author";
+      facts: {
+        kind: "author";
+        canonical: ArtifactObservation;
+      };
+    })
+  | (QuasiStatusObservationBase & {
+      kind: "topic";
+      facts: {
+        kind: "topic";
+        outline: ArtifactObservation & {
+          valid: boolean;
+          projection: TopicOutlineProjection | null;
+        };
+        overview: ArtifactObservation;
+        resources: ArtifactObservation;
+      };
     });
 
 export interface UserDecision {
@@ -243,39 +325,194 @@ export const parseTranslationCandidate = (
   return value as unknown as TranslationCandidate;
 };
 
+const isArtifactObservation = (
+  value: unknown,
+): value is ArtifactObservation =>
+  isRecord(value) &&
+  exactKeys(value, ["path", "present", "usable"]) &&
+  typeof value.path === "string" &&
+  typeof value.present === "boolean" &&
+  typeof value.usable === "boolean";
+
+const isArtifactList = (value: unknown): value is ArtifactObservation[] =>
+  Array.isArray(value) && value.every(isArtifactObservation);
+
+const isTopicProjection = (
+  value: unknown,
+): value is TopicOutlineProjection =>
+  isRecord(value) &&
+  exactKeys(value, ["subquestions", "members", "cards"]) &&
+  Array.isArray(value.subquestions) &&
+  value.subquestions.every(
+    (item) =>
+      isRecord(item) &&
+      exactKeys(item, [
+        "id",
+        "question",
+        "coverage",
+        "channel",
+        "theory_used",
+      ]) &&
+      typeof item.id === "string" &&
+      typeof item.question === "string" &&
+      ["gap", "thin", "covered", "saturated"].includes(
+        item.coverage as string,
+      ) &&
+      ["academic", "web", "mixed"].includes(item.channel as string) &&
+      Number.isInteger(item.theory_used),
+  ) &&
+  Array.isArray(value.members) &&
+  value.members.every(
+    (item) =>
+      isRecord(item) &&
+      exactKeys(item, ["kind", "slug", "subq", "role", "artifact"]) &&
+      ["paper", "book", "talk"].includes(item.kind as string) &&
+      validMaterialSlug(item.slug) &&
+      typeof item.subq === "string" &&
+      (item.role === null ||
+        ["evidence", "theory", "method", "context"].includes(
+          item.role as string,
+        )) &&
+      isArtifactObservation(item.artifact),
+  ) &&
+  Array.isArray(value.cards) &&
+  value.cards.every(
+    (item) =>
+      isRecord(item) &&
+      exactKeys(item, ["slug", "subq", "title", "artifact"]) &&
+      validMaterialSlug(item.slug) &&
+      typeof item.subq === "string" &&
+      (item.title === null || typeof item.title === "string") &&
+      isArtifactObservation(item.artifact),
+  );
+
+const isStatusFacts = (value: unknown, kind: string): boolean => {
+  if (!isRecord(value) || value.kind !== kind) return false;
+  if (kind === "paper")
+    return (
+      exactKeys(value, ["kind", "source", "prepared", "canonical"]) &&
+      isArtifactObservation(value.source) &&
+      isArtifactList(value.prepared) &&
+      isArtifactObservation(value.canonical)
+    );
+  if (kind === "book")
+    return (
+      exactKeys(value, [
+        "kind",
+        "sources",
+        "manifest",
+        "chapters",
+        "overview",
+      ]) &&
+      Array.isArray(value.sources) &&
+      value.sources.every(
+        (item) =>
+          isRecord(item) &&
+          exactKeys(item, ["format", "artifact"]) &&
+          ["epub", "pdf"].includes(item.format as string) &&
+          isArtifactObservation(item.artifact),
+      ) &&
+      isRecord(value.manifest) &&
+      exactKeys(value.manifest, ["path", "present", "usable", "valid"]) &&
+      isArtifactObservation({
+        path: value.manifest.path,
+        present: value.manifest.present,
+        usable: value.manifest.usable,
+      }) &&
+      typeof value.manifest.valid === "boolean" &&
+      Array.isArray(value.chapters) &&
+      value.chapters.every(
+        (chapter) =>
+          isRecord(chapter) &&
+          exactKeys(chapter, [
+            "slot",
+            "title",
+            "filename",
+            "slug",
+            "word_count",
+            "start_page",
+            "end_page",
+            "input",
+            "output",
+          ]) &&
+          typeof chapter.slot === "string" &&
+          typeof chapter.title === "string" &&
+          typeof chapter.filename === "string" &&
+          validMaterialSlug(chapter.slug) &&
+          Number.isInteger(chapter.word_count) &&
+          (chapter.start_page === null ||
+            Number.isInteger(chapter.start_page)) &&
+          (chapter.end_page === null || Number.isInteger(chapter.end_page)) &&
+          isArtifactObservation(chapter.input) &&
+          isArtifactObservation(chapter.output),
+      ) &&
+      isArtifactObservation(value.overview)
+    );
+  if (kind === "talk")
+    return (
+      exactKeys(value, ["kind", "media", "transcripts", "canonical"]) &&
+      isArtifactList(value.media) &&
+      isArtifactList(value.transcripts) &&
+      isArtifactObservation(value.canonical)
+    );
+  if (kind === "translation")
+    return (
+      exactKeys(value, [
+        "kind",
+        "target_language",
+        "source",
+        "output",
+        "manifest",
+      ]) &&
+      normalizeLanguage(value.target_language) === value.target_language &&
+      isArtifactObservation(value.source) &&
+      isArtifactObservation(value.output) &&
+      isArtifactObservation(value.manifest)
+    );
+  if (kind === "author")
+    return (
+      exactKeys(value, ["kind", "canonical"]) &&
+      isArtifactObservation(value.canonical)
+    );
+  if (kind === "topic")
+    return (
+      exactKeys(value, ["kind", "outline", "overview", "resources"]) &&
+      isRecord(value.outline) &&
+      exactKeys(value.outline, [
+        "path",
+        "present",
+        "usable",
+        "valid",
+        "projection",
+      ]) &&
+      isArtifactObservation({
+        path: value.outline.path,
+        present: value.outline.present,
+        usable: value.outline.usable,
+      }) &&
+      typeof value.outline.valid === "boolean" &&
+      (value.outline.projection === null ||
+        isTopicProjection(value.outline.projection)) &&
+      value.outline.valid === (value.outline.projection !== null) &&
+      isArtifactObservation(value.overview) &&
+      isArtifactObservation(value.resources)
+    );
+  return false;
+};
+
 const parseStatusObservation = (
   value: unknown,
 ): QuasiStatusObservation | null => {
-  const translation = isRecord(value) && value.kind === "translation";
   if (
     !isRecord(value) ||
-    !exactKeys(
-      value,
-      ["schema_version", "kind", "slug", "stages", "next_stage", "refs"],
-      translation ? ["identity", "target_language"] : ["identity"],
-    ) ||
-    value.schema_version !== "quasi.status/0.1" ||
-    !["paper", "book", "talk", "translation"].includes(
+    !exactKeys(value, ["schema_version", "kind", "slug", "identity", "facts"]) ||
+    value.schema_version !== "quasi.status/0.2" ||
+    !["paper", "book", "talk", "translation", "author", "topic"].includes(
       value.kind as string,
     ) ||
     !validMaterialSlug(value.slug) ||
-    !Array.isArray(value.stages) ||
-    !value.stages.every(
-      (item) =>
-        isRecord(item) &&
-        exactKeys(item, ["stage", "complete", "evidence"]) &&
-        validString(item.stage, 1, 64) &&
-        (typeof item.complete === "boolean" || item.complete === null) &&
-        Array.isArray(item.evidence) &&
-        item.evidence.every((path) => typeof path === "string"),
-    ) ||
-    !(value.next_stage === null || validString(value.next_stage, 1, 64)) ||
-    !isRecord(value.refs) ||
-    (Object.hasOwn(value, "identity") &&
-      value.identity !== null &&
-      !isRecord(value.identity)) ||
-    (translation &&
-      normalizeLanguage(value.target_language) !== value.target_language)
+    (value.identity !== null && !isRecord(value.identity)) ||
+    !isStatusFacts(value.facts, value.kind as string)
   )
     return null;
   return value as unknown as QuasiStatusObservation;
@@ -321,13 +558,17 @@ export const sparseObservations = (
       return null;
     const route = parseObservationRoute(rawEntry.route);
     const observation = parseStatusObservation(rawEntry.observation);
+    const observedTarget =
+      observation?.kind === "translation"
+        ? observation.facts.target_language
+        : null;
     if (
       route === null ||
       observation === null ||
       observation.kind !== route.kind ||
       observation.slug !== route.slug ||
       (route.kind === "translation" &&
-        observation.target_language !== route.target_language)
+        observedTarget !== route.target_language)
     )
       return null;
     const key = observationKey(route);

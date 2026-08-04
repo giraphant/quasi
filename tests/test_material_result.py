@@ -24,17 +24,67 @@ PAPER_IDENTITY = {
 }
 
 PAPER_OBSERVATION = {
-    "schema_version": "quasi.status/0.1",
+    "schema_version": "quasi.status/0.2",
     "kind": "paper",
     "slug": "exact-paper",
-    "stages": [
-        {"stage": "acquire", "complete": False, "evidence": []},
-        {"stage": "prepare", "complete": False, "evidence": []},
-        {"stage": "analyse", "complete": False, "evidence": []},
-    ],
-    "next_stage": "acquire",
-    "refs": {"outputs": ["sources/exact-paper.pdf"]},
+    "identity": None,
+    "facts": {
+        "kind": "paper",
+        "source": {
+            "path": "sources/exact-paper.pdf",
+            "present": False,
+            "usable": False,
+        },
+        "prepared": [
+            {
+                "path": "processing/papers/exact-paper/source.txt",
+                "present": False,
+                "usable": False,
+            },
+            {
+                "path": "processing/papers/exact-paper/ocr.txt",
+                "present": False,
+                "usable": False,
+            },
+        ],
+        "canonical": {
+            "path": "vault/papers/exact-paper.md",
+            "present": False,
+            "usable": False,
+        },
+    },
 }
+
+
+def translation_observation(target_language: str) -> dict[str, Any]:
+    target = target_language.lower()
+    return {
+        "schema_version": "quasi.status/0.2",
+        "kind": "translation",
+        "slug": "exact-paper",
+        "identity": None,
+        "facts": {
+            "kind": "translation",
+            "target_language": target_language,
+            "source": {
+                "path": "sources/exact-paper.pdf",
+                "present": True,
+                "usable": True,
+            },
+            "output": {
+                "path": f"processing/translations/exact-paper-{target}.pdf",
+                "present": False,
+                "usable": False,
+            },
+            "manifest": {
+                "path": (
+                    f"processing/translations/exact-paper-{target}.manifest.json"
+                ),
+                "present": False,
+                "usable": False,
+            },
+        },
+    }
 
 
 def valid_input() -> dict[str, Any]:
@@ -132,18 +182,7 @@ def test_observation_identity_mismatch_has_no_dispatchable_value(
 
 
 def test_translation_target_mismatch_has_no_dispatchable_value():
-    observation = {
-        "schema_version": "quasi.status/0.1",
-        "kind": "translation",
-        "slug": "exact-paper",
-        "target_language": "fr-FR",
-        "stages": [
-            {"stage": "acquire", "complete": True, "evidence": ["sources/exact-paper.pdf"]},
-            {"stage": "prepare", "complete": False, "evidence": []},
-        ],
-        "next_stage": "prepare",
-        "refs": {"source": "sources/exact-paper.pdf", "derivatives": []},
-    }
+    observation = translation_observation("fr-FR")
     result = run_workflow_export(
         INPUT_MODULE,
         "sparseObservations",
@@ -163,17 +202,8 @@ def test_translation_target_mismatch_has_no_dispatchable_value():
 
 
 def test_translation_observation_missing_target_has_no_dispatchable_value():
-    observation = {
-        "schema_version": "quasi.status/0.1",
-        "kind": "translation",
-        "slug": "exact-paper",
-        "stages": [
-            {"stage": "acquire", "complete": True, "evidence": ["sources/exact-paper.pdf"]},
-            {"stage": "prepare", "complete": False, "evidence": []},
-        ],
-        "next_stage": "prepare",
-        "refs": {"source": "sources/exact-paper.pdf", "derivatives": []},
-    }
+    observation = translation_observation("zh-CN")
+    del observation["facts"]["target_language"]
 
     result = run_workflow_export(
         INPUT_MODULE,
@@ -194,18 +224,7 @@ def test_translation_observation_missing_target_has_no_dispatchable_value():
 
 
 def test_translation_observation_rejects_noncanonical_target_tag():
-    observation = {
-        "schema_version": "quasi.status/0.1",
-        "kind": "translation",
-        "slug": "exact-paper",
-        "target_language": "zh-cn",
-        "stages": [
-            {"stage": "acquire", "complete": True, "evidence": ["sources/exact-paper.pdf"]},
-            {"stage": "prepare", "complete": False, "evidence": []},
-        ],
-        "next_stage": "prepare",
-        "refs": {"source": "sources/exact-paper.pdf", "derivatives": []},
-    }
+    observation = translation_observation("zh-cn")
 
     result = run_workflow_export(
         INPUT_MODULE,
@@ -244,18 +263,7 @@ def test_non_translation_observation_rejects_target_field():
 
 
 def test_translation_observation_key_uses_normalized_full_target_tag():
-    observation = {
-        "schema_version": "quasi.status/0.1",
-        "kind": "translation",
-        "slug": "exact-paper",
-        "target_language": "zh-CN",
-        "stages": [
-            {"stage": "acquire", "complete": True, "evidence": ["sources/exact-paper.pdf"]},
-            {"stage": "prepare", "complete": False, "evidence": []},
-        ],
-        "next_stage": "prepare",
-        "refs": {"source": "sources/exact-paper.pdf", "derivatives": []},
-    }
+    observation = translation_observation("zh-CN")
 
     result = run_workflow_export(
         INPUT_MODULE,

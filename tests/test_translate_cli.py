@@ -23,6 +23,13 @@ from translate import translate_commit as commit  # noqa: E402
 
 
 FULL = "行动的形状是什么样的 " * 12
+LANGUAGE_TAGS = json.loads(
+    (PLUGIN_ROOT / "tests" / "fixtures" / "translation_language_tags.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
 def make_pdf(path: Path, pages: int) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     document = pymupdf.open()
@@ -106,6 +113,29 @@ def observe_kwargs(
         "configuration_missing": configuration_missing or [],
         "mode": mode,
     }
+
+
+@pytest.mark.parametrize(
+    ("language", "normalized"),
+    [(row["input"], row["normalized"]) for row in LANGUAGE_TAGS],
+)
+def test_translation_language_fixture_matches_python_path_contract(
+    tmp_path: Path,
+    language: str,
+    normalized: str,
+):
+    assert commit.validate_language(language) == normalized
+    paths = commit.output_paths(
+        project_root=tmp_path,
+        slug="exact-paper",
+        target_language=language,
+    )
+    assert paths["output_path"] == (
+        tmp_path.resolve()
+        / "processing"
+        / "translations"
+        / f"exact-paper-{normalized.lower()}.pdf"
+    )
 
 
 def test_strict_observe_cli_emits_one_closed_relative_receipt(tmp_path):

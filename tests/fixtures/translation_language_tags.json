@@ -1,0 +1,5 @@
+[
+  {"input": "zh-cn", "normalized": "zh-CN"},
+  {"input": "fr-FR", "normalized": "fr-FR"},
+  {"input": "de-Latn-DE-1996", "normalized": "de-latn-DE-1996"}
+]

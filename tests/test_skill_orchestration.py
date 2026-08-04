@@ -14,6 +14,9 @@ import subprocess
 
 import pytest
 
+from scripts.status import status as status_module
+from workflow_test_support import run_workflow_export
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -60,6 +63,25 @@ def generated_pipeline_registry() -> dict[str, dict[str, str]]:
 
 def test_mirrored_maintainer_guides_are_identical() -> None:
     assert (ROOT / "AGENTS.md").read_bytes() == (ROOT / "CLAUDE.md").read_bytes()
+
+
+def test_status_producer_and_workflow_consumer_share_the_factual_envelope(
+    tmp_path: Path,
+) -> None:
+    payload = status_module.paper_status(tmp_path, "exact-paper")
+
+    parsed = run_workflow_export(
+        "scripts/workflows/shared/material-input.mts",
+        "sparseObservations",
+        [
+            {
+                "route": {"kind": "paper", "slug": "exact-paper"},
+                "observation": payload,
+            }
+        ],
+    )
+
+    assert parsed == {"__map_entries__": [["paper:exact-paper", payload]]}
 
 
 def test_receipt_version_is_synced_between_stage_module_and_guide() -> None:

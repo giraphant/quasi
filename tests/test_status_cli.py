@@ -34,97 +34,251 @@ def write(path: Path, content: str | bytes = "content") -> Path:
     return path
 
 
-def frontmatter(kind: str) -> str:
-    return f"---\ntype: {kind}\n---\n\n# Canonical artifact\n"
+def frontmatter(kind: str, fields: str = "") -> str:
+    return f"---\ntype: {kind}\n{fields}---\n\n# Canonical artifact\n"
 
 
-def complete_map(payload: dict) -> dict[str, bool | None]:
-    return {item["stage"]: item["complete"] for item in payload["stages"]}
+def observation(path: str, *, present: bool, usable: bool) -> dict[str, object]:
+    return {"path": path, "present": present, "usable": usable}
 
 
-def test_status_reports_material_layouts(tmp_path: Path):
+def test_empty_paper_status_is_one_closed_factual_observation(tmp_path: Path):
     project = tmp_path / "project"
     project.mkdir()
 
-    paper = "paper-status"
-    write(project / "sources" / f"{paper}.pdf", b"%PDF-paper")
-    write(project / "processing" / "papers" / paper / "source.txt", "paper source")
-    write(project / "vault" / "papers" / f"{paper}.md", frontmatter("paper"))
+    result = run_status(
+        project,
+        "--kind",
+        "paper",
+        "--slug",
+        "missing-paper",
+        "--json",
+    )
 
-    book = "book-status"
-    write(project / "sources" / f"{book}.epub", b"EPUB-book")
-    chapter_root = project / "processing" / "chapters" / book
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "schema_version": "quasi.status/0.2",
+        "kind": "paper",
+        "slug": "missing-paper",
+        "identity": None,
+        "facts": {
+            "kind": "paper",
+            "source": observation(
+                "sources/missing-paper.pdf", present=False, usable=False
+            ),
+            "prepared": [
+                observation(
+                    "processing/papers/missing-paper/source.txt",
+                    present=False,
+                    usable=False,
+                ),
+                observation(
+                    "processing/papers/missing-paper/ocr.txt",
+                    present=False,
+                    usable=False,
+                ),
+            ],
+            "canonical": observation(
+                "vault/papers/missing-paper.md", present=False, usable=False
+            ),
+        },
+    }
+
+
+def test_book_status_keeps_complete_manifest_rows_and_observes_each_output(
+    tmp_path: Path,
+):
+    project = tmp_path / "project"
+    slug = "exact-book"
+    write(project / "sources" / f"{slug}.epub", b"EPUB")
+    chapter_root = project / "processing" / "chapters" / slug
     chapters = [
         {
             "slot": "01",
-            "slug": "opening",
+            "title": "Opening",
             "filename": "01_Opening.txt",
+            "slug": "opening",
+            "word_count": 120,
+            "start_page": None,
+            "end_page": None,
         },
         {
             "slot": "02",
-            "slug": "closing",
+            "title": "Closing",
             "filename": "02_Closing.txt",
+            "slug": "closing",
+            "word_count": 80,
+            "start_page": 4,
+            "end_page": 7,
         },
     ]
     write(chapter_root / "manifest.json", json.dumps({"chapters": chapters}))
     for chapter in chapters:
-        write(chapter_root / chapter["filename"], "normalized chapter")
-        write(
-            project
-            / "vault"
-            / "books"
-            / book
-            / f"ch{chapter['slot']}-{chapter['slug']}.md",
-            frontmatter("chapter"),
-        )
-    write(project / "vault" / "books" / book / "00-overview.md", frontmatter("book"))
-
-    talk = "talk-status"
-    write(project / "sources" / f"{talk}.mp3", b"talk-audio")
+        write(chapter_root / chapter["filename"], "normalised chapter")
     write(
-        project / "processing" / "talks" / talk / "transcript.whisper.srt",
-        "1\n00:00:00,000 --> 00:00:01,000\nTranscript\n",
+        project / "vault" / "books" / slug / "ch01-opening.md",
+        frontmatter("chapter"),
     )
-    write(project / "vault" / "talks" / talk / "talk.md", frontmatter("talk"))
+    write(
+        project / "vault" / "books" / slug / "00-overview.md",
+        frontmatter(
+            "book",
+            "title: Exact Book\nauthors:\n  - Ada Example\nyear: 2024\n",
+        ),
+    )
 
-    paper_result = run_status(project, "--kind", "paper", "--slug", paper, "--json")
-    book_result = run_status(project, "--kind", "book", "--slug", book, "--json")
-    talk_result = run_status(project, "--kind", "talk", "--slug", talk, "--json")
+    result = run_status(project, "--kind", "book", "--slug", slug, "--json")
 
-    assert paper_result.returncode == book_result.returncode == talk_result.returncode == 0
-    paper_payload = json.loads(paper_result.stdout)
-    book_payload = json.loads(book_result.stdout)
-    talk_payload = json.loads(talk_result.stdout)
-    assert complete_map(paper_payload) == {
-        "acquire": True,
-        "prepare": True,
-        "analyse": True,
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert set(payload) == {"schema_version", "kind", "slug", "identity", "facts"}
+    assert payload["identity"] == {
+        "title": "Exact Book",
+        "authors": ["Ada Example"],
+        "year": 2024,
     }
-    assert complete_map(book_payload) == {
-        "acquire": True,
-        "prepare": True,
-        "analyse": True,
-        "synthesise": True,
+    assert payload["facts"]["manifest"] == {
+        **observation(
+            f"processing/chapters/{slug}/manifest.json",
+            present=True,
+            usable=True,
+        ),
+        "valid": True,
     }
-    assert complete_map(talk_payload) == {
-        "prepare": True,
-        "analyse": True,
-    }
-    assert paper_payload["next_stage"] is None
-    assert book_payload["next_stage"] is None
-    assert talk_payload["next_stage"] is None
-    # This mirrors book.mts::chapterOutputPath exactly.
-    assert book_payload["stages"][2]["evidence"] == [
-        f"vault/books/{book}/ch01-opening.md",
-        f"vault/books/{book}/ch02-closing.md",
+    assert payload["facts"]["chapters"] == [
+        {
+            **chapters[0],
+            "input": observation(
+                f"processing/chapters/{slug}/01_Opening.txt",
+                present=True,
+                usable=True,
+            ),
+            "output": observation(
+                f"vault/books/{slug}/ch01-opening.md",
+                present=True,
+                usable=True,
+            ),
+        },
+        {
+            **chapters[1],
+            "input": observation(
+                f"processing/chapters/{slug}/02_Closing.txt",
+                present=True,
+                usable=True,
+            ),
+            "output": observation(
+                f"vault/books/{slug}/ch02-closing.md",
+                present=False,
+                usable=False,
+            ),
+        },
     ]
 
 
-def test_translation_status_reports_all_existing_derivatives_as_observations(
-    tmp_path: Path,
-):
+def test_book_status_rejects_an_unpaired_manifest_page_range(tmp_path: Path):
     project = tmp_path / "project"
-    slug = "multi-translation"
+    slug = "bad-pages"
+    write(
+        project / "processing" / "chapters" / slug / "manifest.json",
+        json.dumps(
+            {
+                "chapters": [
+                    {
+                        "slot": "01",
+                        "title": "Opening",
+                        "filename": "01_Opening.txt",
+                        "slug": "opening",
+                        "word_count": 10,
+                        "start_page": 1,
+                        "end_page": None,
+                    }
+                ]
+            }
+        ),
+    )
+
+    result = run_status(project, "--kind", "book", "--slug", slug, "--json")
+
+    assert result.returncode == 0, result.stderr
+    facts = json.loads(result.stdout)["facts"]
+    assert facts["manifest"]["present"] is True
+    assert facts["manifest"]["usable"] is True
+    assert facts["manifest"]["valid"] is False
+    assert facts["chapters"] == []
+
+
+def test_book_status_rejects_duplicate_canonical_chapter_slugs(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "duplicate-chapters"
+    chapters = [
+        {
+            "slot": "01",
+            "title": "Opening",
+            "filename": "01_Opening.txt",
+            "slug": "same-chapter",
+            "word_count": 10,
+            "start_page": None,
+            "end_page": None,
+        },
+        {
+            "slot": "02",
+            "title": "Closing",
+            "filename": "02_Closing.txt",
+            "slug": "same-chapter",
+            "word_count": 20,
+            "start_page": None,
+            "end_page": None,
+        },
+    ]
+    write(
+        project / "processing" / "chapters" / slug / "manifest.json",
+        json.dumps({"chapters": chapters}),
+    )
+
+    result = run_status(project, "--kind", "book", "--slug", slug, "--json")
+
+    assert result.returncode == 0, result.stderr
+    facts = json.loads(result.stdout)["facts"]
+    assert facts["manifest"]["valid"] is False
+    assert facts["chapters"] == []
+
+
+def test_talk_status_reports_media_transcripts_and_canonical_identity(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "exact-talk"
+    write(project / "sources" / f"{slug}.mp3", b"audio")
+    write(
+        project / "processing" / "talks" / slug / "transcript.whisper.srt",
+        "transcript",
+    )
+    write(
+        project / "vault" / "talks" / slug / "talk.md",
+        frontmatter("talk", "title: Exact Talk\nyear: 2024\n"),
+    )
+
+    result = run_status(project, "--kind", "talk", "--slug", slug, "--json")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["identity"] == {"title": "Exact Talk", "year": 2024}
+    assert [item for item in payload["facts"]["media"] if item["present"]] == [
+        observation(f"sources/{slug}.mp3", present=True, usable=True)
+    ]
+    assert payload["facts"]["transcripts"] == [
+        observation(
+            f"processing/talks/{slug}/transcript.whisper.srt",
+            present=True,
+            usable=True,
+        )
+    ]
+    assert payload["facts"]["canonical"] == observation(
+        f"vault/talks/{slug}/talk.md", present=True, usable=True
+    )
+
+
+def test_translation_status_requires_and_normalises_one_exact_target(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "exact-translation"
     write(project / "sources" / f"{slug}.pdf", b"%PDF-source")
     for tag in ("zh-cn", "fr-fr"):
         write(
@@ -139,94 +293,295 @@ def test_translation_status_reports_all_existing_derivatives_as_observations(
             "{}",
         )
 
+    missing_target = run_status(
+        project, "--kind", "translation", "--slug", slug, "--json"
+    )
     result = run_status(
         project,
         "--kind",
         "translation",
         "--slug",
         slug,
+        "--target-language",
+        "zh-cn",
         "--json",
     )
 
+    assert missing_target.returncode == 2
+    assert json.loads(missing_target.stdout)["error"]["code"] == "invalid_invocation"
     assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    assert payload["next_stage"] is None
-    assert complete_map(payload) == {"acquire": True, "prepare": True}
-    assert payload["stages"][1]["evidence"] == [
-        f"processing/translations/{slug}-fr-fr.pdf",
-        f"processing/translations/{slug}-zh-cn.pdf",
-    ]
-    assert payload["refs"]["derivatives"] == [
-        f"processing/translations/{slug}-fr-fr.pdf",
-        f"processing/translations/{slug}-zh-cn.pdf",
-    ]
+    assert json.loads(result.stdout) == {
+        "schema_version": "quasi.status/0.2",
+        "kind": "translation",
+        "slug": slug,
+        "identity": None,
+        "facts": {
+            "kind": "translation",
+            "target_language": "zh-CN",
+            "source": observation(
+                f"sources/{slug}.pdf", present=True, usable=True
+            ),
+            "output": observation(
+                f"processing/translations/{slug}-zh-cn.pdf",
+                present=True,
+                usable=True,
+            ),
+            "manifest": observation(
+                f"processing/translations/{slug}-zh-cn.manifest.json",
+                present=True,
+                usable=True,
+            ),
+        },
+    }
 
 
-def test_translation_status_keeps_precondition_as_evidence_not_next_stage(
+def test_translation_status_does_not_complete_a_target_from_another_language(
     tmp_path: Path,
 ):
     project = tmp_path / "project"
-    project.mkdir()
+    slug = "isolated-translation"
+    write(project / "sources" / f"{slug}.pdf", b"%PDF-source")
+    write(
+        project / "processing" / "translations" / f"{slug}-fr-fr.pdf",
+        b"%PDF-translation",
+    )
+    write(
+        project / "processing" / "translations" / f"{slug}-fr-fr.manifest.json",
+        "{}",
+    )
 
     result = run_status(
         project,
         "--kind",
         "translation",
         "--slug",
-        "missing-source",
+        slug,
+        "--target-language",
+        "zh-CN",
+        "--json",
+    )
+
+    facts = json.loads(result.stdout)["facts"]
+    assert facts["output"]["present"] is False
+    assert facts["manifest"]["present"] is False
+
+
+def test_translation_source_keeps_the_shared_symlink_observation_semantics(
+    tmp_path: Path,
+):
+    project = tmp_path / "project"
+    source = write(tmp_path / "outside.pdf", b"%PDF-source")
+    link = project / "sources" / "linked-source.pdf"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(source)
+
+    result = run_status(
+        project,
+        "--kind",
+        "translation",
+        "--slug",
+        "linked-source",
+        "--target-language",
+        "zh-CN",
         "--json",
     )
 
     assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    assert complete_map(payload) == {"acquire": False, "prepare": False}
-    assert payload["next_stage"] == "acquire"
-    assert payload["refs"] == {
-        "source": "sources/missing-source.pdf",
-        "derivatives": [],
-    }
-
-
-def test_status_marks_a_corrupt_book_manifest_incomplete(tmp_path: Path):
-    project = tmp_path / "project"
-    book = "corrupt-book"
-    write(project / "sources" / f"{book}.pdf", b"%PDF-book")
-    manifest = write(
-        project / "processing" / "chapters" / book / "manifest.json", "{not json",
+    assert json.loads(result.stdout)["facts"]["source"] == observation(
+        "sources/linked-source.pdf", present=True, usable=True
     )
 
-    result = run_status(project, "--kind", "book", "--slug", book, "--json")
+
+def test_author_and_topic_status_use_exact_canonical_paths(tmp_path: Path):
+    project = tmp_path / "project"
+    author = "ada-example"
+    topic = "exact-topic"
+    write(
+        project / "vault" / "authors" / f"{author}.md",
+        frontmatter("author", "name: Ada Example\n"),
+    )
+    write(
+        project / "vault" / "papers" / "exact-paper.md",
+        frontmatter("paper", "title: Exact Paper\n"),
+    )
+    write(
+        project / "vault" / "topics" / topic / "cards" / "exact-card.md",
+        frontmatter(
+            "topic",
+            "title: Exact Card\nkind: card\ncreated: 2024-01-01\n",
+        ),
+    )
+    write(
+        project / "vault" / "topics" / topic / "02-outline.md",
+        frontmatter(
+            "topic",
+            "title: Exact Topic\n"
+            "kind: outline\n"
+            "subquestions:\n"
+            "  - id: sq-one\n"
+            "    question: What is the exact claim?\n"
+            "    coverage: thin\n"
+            "    channel: mixed\n"
+            "    theory_used: 1\n"
+            "    items:\n"
+            "      - kind: paper\n"
+            "        slug: exact-paper\n"
+            "        role: evidence\n"
+            "    cards:\n"
+            "      - exact-card\n",
+        ),
+    )
+    write(
+        project / "vault" / "topics" / topic / "00-overview.md",
+        frontmatter("topic", "title: Exact Topic\nkind: overview\n"),
+    )
+    write(
+        project / "vault" / "topics" / topic / "01-resources.md",
+        frontmatter("topic", "title: Exact Resources\nkind: resources\n"),
+    )
+
+    author_result = run_status(
+        project, "--kind", "author", "--slug", author, "--json"
+    )
+    topic_result = run_status(
+        project, "--kind", "topic", "--slug", topic, "--json"
+    )
+
+    assert author_result.returncode == topic_result.returncode == 0
+    assert json.loads(author_result.stdout) == {
+        "schema_version": "quasi.status/0.2",
+        "kind": "author",
+        "slug": author,
+        "identity": {"name": "Ada Example"},
+        "facts": {
+            "kind": "author",
+            "canonical": observation(
+                f"vault/authors/{author}.md", present=True, usable=True
+            ),
+        },
+    }
+    topic_payload = json.loads(topic_result.stdout)
+    assert topic_payload["identity"] == {"title": "Exact Topic"}
+    assert topic_payload["facts"]["outline"]["valid"] is True
+    assert topic_payload["facts"]["outline"]["projection"] == {
+        "subquestions": [
+            {
+                "id": "sq-one",
+                "question": "What is the exact claim?",
+                "coverage": "thin",
+                "channel": "mixed",
+                "theory_used": 1,
+            }
+        ],
+        "members": [
+            {
+                "kind": "paper",
+                "slug": "exact-paper",
+                "subq": "sq-one",
+                "role": "evidence",
+                "artifact": observation(
+                    "vault/papers/exact-paper.md", present=True, usable=True
+                ),
+            }
+        ],
+        "cards": [
+            {
+                "slug": "exact-card",
+                "subq": "sq-one",
+                "title": "Exact Card",
+                "artifact": observation(
+                    f"vault/topics/{topic}/cards/exact-card.md",
+                    present=True,
+                    usable=True,
+                ),
+            }
+        ],
+    }
+
+
+def test_topic_status_fails_the_whole_projection_for_an_unsafe_member_slug(
+    tmp_path: Path,
+):
+    project = tmp_path / "project"
+    topic = "unsafe-topic"
+    write(
+        project / "vault" / "topics" / topic / "02-outline.md",
+        frontmatter(
+            "topic",
+            "title: Unsafe Topic\n"
+            "kind: outline\n"
+            "subquestions:\n"
+            "  - id: sq-one\n"
+            "    question: What escapes the topic?\n"
+            "    coverage: gap\n"
+            "    items:\n"
+            "      - kind: paper\n"
+            "        slug: ../escape\n"
+            "    cards: []\n",
+        ),
+    )
+
+    result = run_status(
+        project, "--kind", "topic", "--slug", topic, "--json"
+    )
 
     assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    assert complete_map(payload)["prepare"] is False
-    assert payload["next_stage"] == "prepare"
-    assert payload["stages"][1]["evidence"] == [
-        "processing/chapters/corrupt-book/manifest.json"
-    ]
-    assert manifest.read_text(encoding="utf-8") == "{not json"
+    outline = json.loads(result.stdout)["facts"]["outline"]
+    assert outline["present"] is True
+    assert outline["usable"] is True
+    assert outline["valid"] is False
+    assert outline["projection"] is None
 
 
-def test_status_empty_project_reports_first_missing_stage_and_exact_refs(tmp_path: Path):
-    project = tmp_path / "empty"
+def test_status_scan_is_compact_sorted_and_deduplicated(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    write(project / "sources" / "paper-scan.pdf", b"%PDF")
+    write(project / "processing" / "papers" / "paper-scan" / "source.txt", "text")
+    write(project / "sources" / "book-scan.epub", b"EPUB")
+    write(project / "sources" / "talk-scan.wav", b"WAV")
+
+    result = run_status(project, "--scan", "--json")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "schema_version": "quasi.status-scan/0.2",
+        "items": [
+            {"kind": "book", "slug": "book-scan"},
+            {"kind": "paper", "slug": "paper-scan"},
+            {"kind": "talk", "slug": "talk-scan"},
+        ],
+    }
+
+
+def test_target_language_is_rejected_for_scan(tmp_path: Path):
+    project = tmp_path / "project"
     project.mkdir()
 
-    result = run_status(project, "--kind", "paper", "--slug", "missing-paper", "--json")
+    result = run_status(
+        project, "--scan", "--target-language", "zh-CN", "--json"
+    )
 
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    assert payload == {
-        "schema_version": "quasi.status/0.1",
-        "kind": "paper",
-        "slug": "missing-paper",
-        "stages": [
-            {"stage": "acquire", "complete": False, "evidence": []},
-            {"stage": "prepare", "complete": False, "evidence": []},
-            {"stage": "analyse", "complete": False, "evidence": []},
-        ],
-        "next_stage": "acquire",
-        "refs": {"outputs": ["sources/missing-paper.pdf"]},
-    }
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["error"]["code"] == "invalid_invocation"
+
+
+def test_identity_mode_is_removed_because_identity_is_always_returned(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = run_status(
+        project,
+        "--kind",
+        "paper",
+        "--slug",
+        "exact-paper",
+        "--identity",
+        "--json",
+    )
+
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["error"]["code"] == "invalid_invocation"
 
 
 def test_paper_status_uses_live_pipeline_artifact_template(
@@ -246,105 +601,6 @@ def test_paper_status_uses_live_pipeline_artifact_template(
 
     payload = status_module.paper_status(project, slug)
 
-    assert payload["stages"][0]["evidence"] == [
-        f"alternate-sources/{slug}.pdf"
-    ]
-    assert payload["refs"]["input"] == source.relative_to(project).as_posix()
-
-
-def test_status_scan_discovers_and_deduplicates_kind_specific_layouts(tmp_path: Path):
-    project = tmp_path / "project"
-    project.mkdir()
-    write(project / "sources" / "paper-scan.pdf", b"%PDF")
-    write(project / "processing" / "papers" / "paper-scan" / "source.txt", "text")
-    write(project / "sources" / "book-scan.epub", b"EPUB")
-    write(project / "sources" / "talk-scan.wav", b"WAV")
-
-    result = run_status(project, "--scan", "--json")
-
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {
-        "schema_version": "quasi.status-scan/0.1",
-        "items": [
-            {"kind": "book", "slug": "book-scan", "next_stage": "prepare"},
-            {"kind": "paper", "slug": "paper-scan", "next_stage": "analyse"},
-            {"kind": "talk", "slug": "talk-scan", "next_stage": "prepare"},
-        ],
-    }
-
-
-def test_status_invalid_invocation_returns_json_error(tmp_path: Path):
-    project = tmp_path / "project"
-    project.mkdir()
-
-    result = run_status(project, "--kind", "paper", "--json")
-
-    assert result.returncode == 2
-    assert json.loads(result.stdout)["error"]["code"] == "invalid_invocation"
-
-
-def test_status_identity_reads_only_canonical_frontmatter(tmp_path: Path):
-    project = tmp_path / "project"
-    paper = "identity-paper"
-    write(project / "sources" / f"{paper}.pdf", b"%PDF")
-    write(project / "processing" / "papers" / paper / "source.txt", "text")
-    write(
-        project / "vault" / "papers" / f"{paper}.md",
-        "---\n"
-        "type: paper\n"
-        "title: Disk Identity\n"
-        "authors:\n"
-        "  - Ada Example\n"
-        "year: 2024\n"
-        "journal: Exact Joins\n"
-        "themes:\n"
-        "  - admission\n"
-        "---\n\n# Disk Identity\n",
+    assert payload["facts"]["source"] == observation(
+        source.relative_to(project).as_posix(), present=True, usable=True
     )
-
-    result = run_status(
-        project,
-        "--kind",
-        "paper",
-        "--slug",
-        paper,
-        "--json",
-        "--identity",
-    )
-
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    assert payload["identity"] == {
-        "title": "Disk Identity",
-        "authors": ["Ada Example"],
-        "year": 2024,
-    }
-    without_identity = run_status(
-        project, "--kind", "paper", "--slug", paper, "--json"
-    )
-    assert "identity" not in json.loads(without_identity.stdout)
-
-
-def test_status_identity_is_null_until_canonical_frontmatter_is_parseable(
-    tmp_path: Path,
-):
-    project = tmp_path / "project"
-    paper = "broken-identity"
-    write(project / "sources" / f"{paper}.pdf", b"%PDF")
-    write(project / "processing" / "papers" / paper / "source.txt", "text")
-    write(project / "vault" / "papers" / f"{paper}.md", "not frontmatter")
-
-    result = run_status(
-        project,
-        "--kind",
-        "paper",
-        "--slug",
-        paper,
-        "--json",
-        "--identity",
-    )
-
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    assert payload["identity"] is None
-    assert complete_map(payload)["analyse"] is False

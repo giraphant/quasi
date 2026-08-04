@@ -34,7 +34,8 @@ description: Use when the user wants to define and research a precise topic thro
 - 任意时刻至多保持五个 `run-stage` 调用在飞。不同 exact output 可并行；同一 exact output
   同时只能有一个 owner。receipt 落地后逐个判断，不等待一个合并结果替代 terminal 处理。
 - `quasi-status --scan --json` 与
-  `quasi-status --kind K --slug S --json --identity` 是只读 disk oracle。它们只陈述现有材料事实；
+  `quasi-status --kind K --slug S --json` 是只读 disk oracle。后者用顶层 nullable `identity` 与
+  kind-specific `facts` 陈述现有材料事实；
   `--scan` 只用于观察布局与断点恢复，content relevance 由一次 `topic.recall` specialist 判断，
   主线程只受理其候选并决定下一步如何推进。
 - `vault/topics/{slug}/02-outline.md` 是 user-editable steering artifact。每次 create、refresh、repair
@@ -58,7 +59,7 @@ description: Use when the user wants to define and research a precise topic thro
   `[kind,query,subq,role,reason]` 的 exact JSON tuple 跨轮去重。
 - `seen_identities`：Search 后按 DOI、ISBN、canonical slug，以及必要时规范化
   title+第一作者+year 跨 seed、recall 和所有轮次合并。
-- `member_refs`：经 `quasi-status --identity` 证明的
+- `member_refs`：经 `quasi-status` 的 identity 与 canonical fact 证明的
   `{kind,slug,path}` canonical；`member_assignments` 另存 demand 的 `{member_key,subq,role}`。
 - `card_refs`：只有 `card_available:true` 的 `{slug,path,subq,title}`；`card_status:empty` 不产生 ref。
 - 当前 `subquestions`、未完成工作、用户回答与轮数只是会话内判断记录。
@@ -90,7 +91,7 @@ Topic 只使用这些 stage key：
 每个新 Book/Paper demand 与 seed material 按 `collect-material` 的单材料 loop 推进；直接遵守该 skill
 的 Search、identity coalescing、status、gate、writer ambiguity、repair 和 clean Audit 合同，不在这里
 复制材料方法。材料完成或断点恢复时，逐项运行
-`quasi-status --kind K --slug S --json --identity`，只把 disk identity、kind、canonical slug 与 exact
+`quasi-status --kind K --slug S --json`，只把 disk identity、kind、canonical slug 与 exact
 canonical path 一致的成员接入 Topic。Talk 只能从用户 seed 或磁盘 recall 接入，不由 steer demand
 新建。
 
@@ -101,7 +102,7 @@ canonical path 一致的成员接入 Topic。Talk 只能从用户 seed 或磁盘
 
 `topic.recall` 只运行一次，context 带主题 `query`、当前 outline 的 `subquestions`（若有）和
 `max_items`（默认 8，范围 1–16）。它返回的每个 `{kind,slug,path}` 仍须逐项通过
-`quasi-status --kind K --slug S --json --identity` admission；receipt 中的 path 不能替代 disk oracle。
+`quasi-status --kind K --slug S --json` admission；receipt 中的 path 不能替代 disk oracle。
 
 ## 工作流
 
@@ -121,15 +122,16 @@ Intake → status scan + current outline → content recall + seed admission
 
 ## 执行流程
 
-1. 校验 `slug`、`description` 和 bounds。读取现有
-   `vault/topics/{slug}/02-outline.md`；若存在，说明本次是增量研究。运行
+1. 校验 `slug`、`description` 和 bounds。运行
+   `quasi-status --kind topic --slug S --json`，只从 `facts.outline.projection` 恢复现有
+   subquestions、members 和 cards；outline 存在时说明本次是增量研究。再运行
    `quasi-status --scan --json` 只观察布局与断点状态。随后恰好一次运行 `stage:"recall"`，context
    包含主题 query、当前 outline 的 subquestions（若有）与 `max_items`；对 complete receipt 返回的
-   items 再逐项 `--identity` admission。主线程不要用 Glob、rg、slug 猜测或 `--scan` 候选判断建立
+   items 再逐项 status admission。主线程不要用 Glob、rg、slug 猜测或 `--scan` 候选判断建立
    另一份 content recall。
 
 2. 先观察 `seed_materials`。已在磁盘完成的 seed 或 recalled member 可直接由本次
-   `quasi-status --identity` admission。其它 seed 服从 `collect-material` 单材料合同；Search 后
+   `quasi-status` admission。其它 seed 服从 `collect-material` 单材料合同；Search 后
    立即按 resolved identity 合并，新完成成员既要满足该 loop 的 clean Audit，又要通过 status
    admission。`maxRounds==0` 遇到非 canonical seed 时不能静默忽略，也不能自行展开完整材料管线：
    把所有这类 seed 合并成一个用户问题，逐项列出，并说明 process-now 会运行完整
@@ -200,10 +202,10 @@ Intake → status scan + current outline → content recall + seed admission
 
 重新开始时只依赖 disk observation 与当前 outline，不要求旧 graph 或 Stage receipt：
 
-- 读取 `vault/topics/{slug}/02-outline.md`，把现有 subquestions、items、cards 和用户手改作为本轮
-  steer 指令。
+- 运行 exact Topic status，从有效 `facts.outline.projection` 重建 subquestions、items、cards；
+  `topic.steer` 仍在执行时读取 user-editable outline，把用户手改作为本轮指令。
 - 运行 `quasi-status --scan --json` 观察布局与断点状态，再恰好一次运行 `stage:"recall"`；对其
-  items 中拟接入的每个 Book/Paper/Talk 运行 `quasi-status --kind K --slug S --json --identity`，
+  items 中拟接入的每个 Book/Paper/Talk 运行 `quasi-status --kind K --slug S --json`，
   只使用它证明的 canonical identity 与 path。
 - 已存在 card 只在 outline 命名且 exact card path 可读时进入 `card_refs`；没有可读 card 的 slug
   仍是未完成 observation。

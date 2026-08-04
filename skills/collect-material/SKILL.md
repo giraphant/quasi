@@ -26,9 +26,9 @@ target 为 `zh-CN`。
 
 - `$CLAUDE_PLUGIN_ROOT/workflows/run-stage.mjs` 是唯一 specialist 调用入口。每次只传
 `{kind,slug,stage,context}`，Paper 固定链可另带 `until`；不要调用大图替主线程作身份判断。
-- `quasi-status --kind K --slug S --json` 是宽松、只读的磁盘观察工具。`stages`、
-`evidence`、`refs` 和可用的 `identity` 只陈述事实；`next_stage` 最多是提示，绝不能当作
-调度指令。主线程结合目标 kind、期望产物、最近 receipt 和这些观察自行决定下一步。
+- `quasi-status --kind K --slug S --json` 是宽松、只读的磁盘观察工具；Translation 必须另带
+`--target-language TAG`。顶层 `identity` 与 kind-specific `facts` 只陈述 exact path 的磁盘事实，
+不携带调度指令。主线程结合目标 kind、期望产物、最近 receipt 和这些观察自行决定下一步。
 - **WRITER-AMBIGUITY RULE**：任何 writer 返回 `blocked`、无 receipt、无法理解的 receipt
 或其它 unknown outcome，先运行 `quasi-status` 核对落盘事实。能证明 exact artifact 已落盘
 才可 reconcile；否则停止并报告，不得 blind redispatch。Audit 没有 durable clean signal，
@@ -44,8 +44,8 @@ Audit 仍由本次 Audit receipt 证明。不要仅凭文件存在就报告成�
 
 主线程拥有本次请求的 flow judgment；它不另存 cursor 或材料数据库。
 
-- `quasi-status` 是可重复调用的 disk oracle；`--identity` 只用于 Paper/Book/Talk 的 canonical
-frontmatter admission。
+- `quasi-status` 是可重复调用的 disk oracle；顶层 nullable `identity` 只从可用的 canonical
+frontmatter 投影。
 - 单阶段返回 `quasi.stage.receipt/0.3`；Paper 链返回 `quasi.run-stage.chain/0.1`，内含原样
 Stage receipts。唯一 terminal union 是
 `complete|needs_input|blocked|failed`，非 complete terminal 带一个 typed `issue`。
@@ -65,10 +65,9 @@ Workflow(
 )
 ```
 
-Book chapter inventory 只从 Prepare evidence 中已观察到的 exact
-`processing/chapters/{slug}/manifest.json` 用 `read_json` 读取。不得用 Glob、rg 或猜测文件名
-发现输入。Author membership 先用 `author/resolve-membership` row 观察 owner，成员完成后
-直接运行 `quasi-status --identity` admission。
+Book chapter inventory 只从 status `facts.manifest.valid:true` 时返回的完整 `facts.chapters` 读取。
+不得用 Glob、rg 或猜测文件名发现输入。Author membership 先用
+`author/resolve-membership` row 观察 owner，成员完成后直接运行 `quasi-status` admission。
 
 Batch 和 Author 不派中间层 Agent：主线程自己驱动每个去重后的 canonical material。
 `run-stage` 是后台 workflow，主线程可同时保持至多五个在飞（不同材料各一，同一 identity
@@ -93,11 +92,11 @@ Batch
 
 Author
   discover-books + discover-papers → resolve-membership → identity coalescing
-  → 主线程逐成员推进 → quasi-status --identity admission
+  → 主线程逐成员推进 → quasi-status admission
   → author.synthesise → author.audit
 ```
 
-这些箭头是主线程的专业判断范围，不是 `quasi-status.next_stage` 的解释器。
+这些箭头是主线程的专业判断范围，不是 status facts 的机械解释器。
 
 ## 执行流程
 
@@ -133,16 +132,17 @@ Author
   - `no_receipt|incoherent_complete`：停止、先 status；resume 前不得 redispatch 未知 writer。
   - `invalid_context`：停止并报告 caller 错误。
 
- 其它单材料 loop 每轮仍先运行 `quasi-status --kind K --slug S --json`，再由主线程选择一个
- single-stage 调用。不要机械采用 `next_stage`：例如 Translation observation 可能列出其它 target
- 的 derivative；Talk 的媒体 intake 属于 Prepare；Audit clean 也没有 status 行可证明。
+ 其它单材料 loop 每轮仍先运行 `quasi-status --kind K --slug S --json`；Translation 使用
+ `quasi-status --kind translation --slug S --target-language TAG --json`。主线程从 exact `facts`
+ 选择一个 single-stage 调用；Talk 的媒体 intake 属于 Prepare，Audit clean 也没有 durable
+ status fact 可证明。
 
   常用 caller-side context：
   - Acquire：Book 使用 `meta|identity`、`allowed_formats`，有 gate 时带 `year_decision`。
   - Prepare：Book 从 observation 选 exact source 与 `format`；Talk 保留 intake meta；Translation
   带 `source_file/target_language/toc_json/toc_page_side` 和用户的 `source_decision`。
-  - Book Analyse：从 Prepare evidence 中的 exact manifest 用 `read_json` 取得完整 `chapters`，
-  先只做一次 `quasi-status` 观察，据此为每章判定 `output_exists`。然后只做一次
+  - Book Analyse：只使用 status 在 `facts.manifest.valid:true` 时投影的完整 `facts.chapters`，
+  按每章 `output.present` 判定 `output_exists`。然后只做一次
   `run-stage` 调用，传入全部章节：
   `units=[{label:<chapter.slug>,context:{chapter:<exact row>,output_exists:true|false}}, ...]`，
   不得逐章各调用一次。返回的 `receipts` 数组与 `units` 下标一一对应，逐项按原有 terminal
@@ -154,7 +154,8 @@ Author
   - Talk Analyse：仅当 Prepare receipt 的 `classification=="live"`；`inputs` 取该 receipt 中
   primary transcript 与同 generation engine artifacts 的 `{role,path,sha256,size}`。`dead|empty`
   canonical 由 Prepare 拥有，不再调用 Analyse。
-  - Book Synthesise：`input_paths` 取 status observation 中已落盘的完整 chapter canonical 列表。
+  - Book Synthesise：`input_paths` 只取 status `facts.chapters[].output` 中已落盘且可用的完整
+  chapter canonical 列表。
   - Audit：Book/Talk 使用 exact canonical target 与 `pass:1`；Author 同理。Translation
   没有独立 Audit stage。
 5. Paper 链以外的每个 Stage receipt 都按 terminal 处理：
@@ -181,7 +182,7 @@ Author
 8. Author 的 `discover-books` 与 `discover-papers` 可并行运行（count 分别来自 maxBooks、
  maxPapers），然后以全部 candidates 调用 `resolve-membership`。按 identity 去重后由主线程
  逐成员推进其单材料 loop；admission 一律以
- `quasi-status --kind K --slug S --json --identity` 的 disk identity 与 canonical path 为准。
+ `quasi-status --kind K --slug S --json` 的 disk identity 与 canonical fact 为准。
  本轮处理过的成员另需其 loop 的 clean Audit receipt；本轮之前已完成的成员直接视为已 audit
  （审计漂移由维护者的周期性全库 audit 兜底）。把 admitted members 作为
  `{material_key,kind,id,path,title}` 传给 `stage:"synthesise"`；随后 Audit，必要时按第 6 步
@@ -189,14 +190,14 @@ Author
 
 ## 断点续跑
 
-对任意已知 slug 重新运行 `quasi-status --kind K --slug S --json`，读取实际 evidence，再结合
+对任意已知 slug 重新运行 `quasi-status --kind K --slug S --json`，读取实际 facts，再结合
 用户目标选择下一次 `run-stage`；不需要 JS cursor 或旧 graph receipt。
 
-- Paper 用 `--identity` 核对 owner，从首个未完成阶段以 `stage+until:"audit"` 入链；Analyse 的
-normalized text 必须由 observation 唯一指向，否则请用户选择。
-- Book/Talk 用 `--identity` 可核对已存在 canonical owner。
-- Translation 的 derivative glob 只是 observation；主线程按请求的完整 target tag 识别 exact
-`processing/translations/{slug}-{target-tag-lower}.pdf`，必要时用 Prepare reconcile。
+- Paper 用顶层 `identity` 核对 owner，从 facts 证明的首个缺口以 `stage+until:"audit"` 入链；
+Analyse 的 normalized text 必须由 `facts.prepared` 唯一指向，否则请用户选择。
+- Book/Talk 用顶层 `identity` 与 canonical/overview fact 核对已存在 canonical owner。
+- Translation 只调用带完整 target tag 的 status，并读取该 target 的 exact `facts.output` 与
+`facts.manifest`；必要时用 Prepare reconcile。
 - unknown writer 若 status 不能证明 exact output，保持 stopped；新会话也不能自动 replay。
 - Audit unknown 不能靠 status 恢复 clean 证明；向用户说明需要一次新的明确 Audit 请求。
 

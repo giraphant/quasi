@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Report which canonical material workflow stages are proven on disk.
-
-This command deliberately observes only project files.  It neither replays a
-workflow nor interprets a prior run receipt: the artifact layout itself is the
-admission state for the next deterministic stage.
-"""
+"""Report factual on-disk observations for one logical material."""
 
 from __future__ import annotations
 
@@ -16,7 +11,7 @@ import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, cast
 
 import yaml
 
@@ -24,13 +19,20 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.schemas.pipeline import PIPELINE  # noqa: E402
+from scripts.schemas.topic import TopicSchema  # noqa: E402
+from scripts.translate.translate_commit import (  # noqa: E402
+    TranslateContractError,
+    output_paths,
+    validate_language,
+)
 
 
-STATUS_VERSION = "quasi.status/0.1"
-SCAN_VERSION = "quasi.status-scan/0.1"
+STATUS_VERSION = "quasi.status/0.2"
+SCAN_VERSION = "quasi.status-scan/0.2"
 ERROR_VERSION = "quasi.status.error/0.1"
 SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,79}\Z")
 CHAPTER_SLOT = re.compile(r"\d{2,3}[a-z]{0,2}\Z")
+CHAPTER_TITLE = re.compile(r"[^\x00-\x1f\x7f-\x9f]+\Z")
 MEDIA_EXTENSIONS = (
     "mov",
     "mp4",
@@ -82,9 +84,7 @@ def artifact_path(
     """Expand one canonical pipeline artifact template under ``root``."""
 
     stage_definition = next(
-        item
-        for item in PIPELINE[kind]["stages"]
-        if item["stage"] == stage_name
+        item for item in PIPELINE[kind]["stages"] if item["stage"] == stage_name
     )
     return root / stage_definition["artifacts"][role].format(**values)
 
@@ -107,8 +107,6 @@ def observe_file(path: Path, *, nonempty: bool) -> FileObservation:
             return FileObservation(present=True, usable=False)
         if nonempty and info.st_size <= 0:
             return FileObservation(present=True, usable=False)
-        # A metadata-only stat cannot distinguish a readable file from an
-        # unreadable artifact.  One byte is enough for ordinary file stages.
         with path.open("rb") as handle:
             handle.read(1)
     except OSError:
@@ -116,21 +114,13 @@ def observe_file(path: Path, *, nonempty: bool) -> FileObservation:
     return FileObservation(present=True, usable=True)
 
 
-def evidence(root: Path, paths: Iterable[Path]) -> list[str]:
-    """Return exactly the named artifact paths that are present on disk."""
-
-    found: list[str] = []
-    for path in paths:
-        try:
-            path.lstat()
-        except OSError:
-            continue
-        found.append(relative(root, path))
-    return found
-
-
-def stage(name: str, complete: bool | None, found: Iterable[str]) -> dict[str, Any]:
-    return {"stage": name, "complete": complete, "evidence": list(found)}
+def artifact_observation(root: Path, path: Path) -> dict[str, Any]:
+    observed = observe_file(path, nonempty=True)
+    return {
+        "path": relative(root, path),
+        "present": observed.present,
+        "usable": observed.usable,
+    }
 
 
 def parse_frontmatter(path: Path) -> dict[str, Any] | None:
@@ -160,13 +150,15 @@ def parse_frontmatter(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def observed_frontmatter(
+def canonical_observation(
     root: Path, path: Path
-) -> tuple[bool, list[str], dict[str, Any] | None]:
-    observation = observe_file(path, nonempty=True)
-    found = evidence(root, [path])
-    parsed = parse_frontmatter(path) if observation.usable else None
-    return parsed is not None, found, parsed
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Observe a canonical Markdown artifact and parse its identity envelope."""
+
+    observation = artifact_observation(root, path)
+    frontmatter = parse_frontmatter(path) if observation["usable"] else None
+    observation["usable"] = frontmatter is not None
+    return observation, frontmatter
 
 
 def frontmatter_identity(frontmatter: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -174,9 +166,8 @@ def frontmatter_identity(frontmatter: dict[str, Any] | None) -> dict[str, Any] |
 
     if frontmatter is None:
         return None
-    fields = ("title", "authors", "name", "year")
     projected: dict[str, Any] = {}
-    for field in fields:
+    for field in ("title", "authors", "name", "year"):
         if field not in frontmatter:
             continue
         value = frontmatter[field]
@@ -192,11 +183,49 @@ def frontmatter_identity(frontmatter: dict[str, Any] | None) -> dict[str, Any] |
     return projected
 
 
-def safe_chapter_filename(value: object) -> str | None:
+def status_payload(
+    kind: str,
+    slug: str,
+    identity: dict[str, Any] | None,
+    facts: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": STATUS_VERSION,
+        "kind": kind,
+        "slug": slug,
+        "identity": identity,
+        "facts": facts,
+    }
+
+
+def paper_status(root: Path, slug: str) -> dict[str, Any]:
+    source = artifact_path(root, "paper", "acquire", "output", slug=slug)
+    prepared = [
+        artifact_path(root, "paper", "prepare", "normalized", slug=slug),
+        artifact_path(root, "paper", "prepare", "recoveryText", slug=slug),
+    ]
+    canonical = artifact_path(root, "paper", "analyse", "output", slug=slug)
+    canonical_fact, frontmatter = canonical_observation(root, canonical)
+    return status_payload(
+        "paper",
+        slug,
+        frontmatter_identity(frontmatter) if canonical_fact["usable"] else None,
+        {
+            "kind": "paper",
+            "source": artifact_observation(root, source),
+            "prepared": [artifact_observation(root, path) for path in prepared],
+            "canonical": canonical_fact,
+        },
+    )
+
+
+def safe_chapter_filename(value: object, slot: str) -> str | None:
     if (
         not isinstance(value, str)
         or not value
         or len(value) > 128
+        or not value.startswith(f"{slot}_")
+        or not value.endswith(".txt")
         or "/" in value
         or "\\" in value
         or ".." in value
@@ -205,226 +234,137 @@ def safe_chapter_filename(value: object) -> str | None:
     return value
 
 
-def chapter_refs(
-    root: Path, slug: str
-) -> tuple[bool, list[dict[str, str]], list[str]]:
-    """Load the committed Book chapter inventory, without accepting guesses.
-
-    The workflow's exact chapter join is:
-    ``processing/chapters/{slug}/{filename}`` ->
-    ``vault/books/{slug}/ch{slot}-{chapter-slug}.md``.
-    """
-
-    chapter_root = artifact_path(
-        root, "book", "prepare", "outputDir", slug=slug
+def chapter_page_pair(start: object, end: object) -> bool:
+    if start is None or end is None:
+        return start is None and end is None
+    return (
+        type(start) is int
+        and type(end) is int
+        and start >= 1
+        and end >= start
     )
+
+
+def chapter_inventory(
+    root: Path, slug: str
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     manifest = artifact_path(root, "book", "prepare", "manifest", slug=slug)
-    manifest_found = evidence(root, [manifest])
-    observation = observe_file(manifest, nonempty=True)
-    if not observation.usable:
-        return False, [], manifest_found
+    manifest_fact = artifact_observation(root, manifest)
+    manifest_fact["valid"] = False
+    if not manifest_fact["usable"]:
+        return manifest_fact, []
     try:
         payload = json.loads(manifest.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
-        return False, [], manifest_found
+        return manifest_fact, []
     rows = payload.get("chapters") if isinstance(payload, dict) else None
-    if not isinstance(rows, list):
-        return False, [], manifest_found
+    if not isinstance(rows, list) or not rows:
+        return manifest_fact, []
 
-    result: list[dict[str, str]] = []
+    projected: list[dict[str, Any]] = []
     seen_slots: set[str] = set()
     seen_filenames: set[str] = set()
+    seen_slugs: set[str] = set()
     for row in rows:
         if not isinstance(row, dict):
-            return False, [], manifest_found
+            return manifest_fact, []
         slot = row.get("slot")
+        title = row.get("title")
         chapter_slug = row.get("slug")
-        filename = safe_chapter_filename(row.get("filename"))
+        word_count = row.get("word_count")
+        if not isinstance(slot, str) or CHAPTER_SLOT.fullmatch(slot) is None:
+            return manifest_fact, []
+        filename = safe_chapter_filename(row.get("filename"), slot)
         if (
-            not isinstance(slot, str)
-            or CHAPTER_SLOT.fullmatch(slot) is None
+            filename is None
+            or not isinstance(title, str)
+            or not 1 <= len(title) <= 500
+            or CHAPTER_TITLE.fullmatch(title) is None
             or not isinstance(chapter_slug, str)
             or SLUG.fullmatch(chapter_slug) is None
-            or filename is None
+            or type(word_count) is not int
+            or word_count < 0
+            or not chapter_page_pair(row.get("start_page"), row.get("end_page"))
             or slot in seen_slots
             or filename in seen_filenames
+            or chapter_slug in seen_slugs
         ):
-            return False, [], manifest_found
+            return manifest_fact, []
         seen_slots.add(slot)
         seen_filenames.add(filename)
-        result.append({"slot": slot, "slug": chapter_slug, "filename": filename})
-    return True, result, manifest_found
+        seen_slugs.add(chapter_slug)
+        projected.append(
+            {
+                "slot": slot,
+                "title": title,
+                "filename": filename,
+                "slug": chapter_slug,
+                "word_count": word_count,
+                "start_page": row.get("start_page"),
+                "end_page": row.get("end_page"),
+            }
+        )
+    manifest_fact["valid"] = True
+    return manifest_fact, projected
 
 
-def paper_status(root: Path, slug: str, *, include_identity: bool = False) -> dict[str, Any]:
-    source = artifact_path(root, "paper", "acquire", "output", slug=slug)
-    source_text = artifact_path(
-        root, "paper", "prepare", "normalized", slug=slug
-    )
-    ocr_source = artifact_path(
-        root, "paper", "prepare", "recoverySource", slug=slug
-    )
-    ocr_text = artifact_path(
-        root, "paper", "prepare", "recoveryText", slug=slug
-    )
-    canonical = artifact_path(root, "paper", "analyse", "output", slug=slug)
-
-    acquire = observe_file(source, nonempty=True)
-    prepared = [source_text, ocr_text]
-    prepared_observations = [observe_file(path, nonempty=True) for path in prepared]
-    analyse_complete, analyse_evidence, canonical_frontmatter = observed_frontmatter(
-        root, canonical
-    )
-    observations = {
-        "acquire": (acquire.usable, evidence(root, [source])),
-        "prepare": (
-            any(item.usable for item in prepared_observations),
-            evidence(root, prepared),
-        ),
-        "analyse": (analyse_complete, analyse_evidence),
-    }
-    stages = [
-        stage(item["stage"], *observations[item["stage"]])
-        for item in PIPELINE["paper"]["stages"]
-        if item["stage"] in observations
+def book_status(root: Path, slug: str) -> dict[str, Any]:
+    sources = [
+        (
+            format_name,
+            artifact_path(
+                root,
+                "book",
+                "prepare",
+                "source",
+                slug=slug,
+                format=format_name,
+            ),
+        )
+        for format_name in ("epub", "pdf")
     ]
-    next_stage = first_incomplete(stages)
-    if next_stage == "acquire":
-        refs: dict[str, Any] = {"outputs": [relative(root, source)]}
-    elif next_stage == "prepare":
-        refs = {
-            "input": relative(root, source),
-            "outputs": [
-                relative(root, source_text),
-                relative(root, ocr_source),
-                relative(root, ocr_text),
-            ],
+    manifest_fact, inventory = chapter_inventory(root, slug)
+    chapter_root = artifact_path(root, "book", "prepare", "outputDir", slug=slug)
+    book_root = artifact_path(
+        root, "book", "synthesise", "output", slug=slug
+    ).parent
+    chapters = [
+        {
+            **chapter,
+            "input": artifact_observation(
+                root, chapter_root / chapter["filename"]
+            ),
+            "output": canonical_observation(
+                root,
+                book_root / f"ch{chapter['slot']}-{chapter['slug']}.md",
+            )[0],
         }
-    elif next_stage == "analyse":
-        refs = {
-            "inputs": [
-                relative(root, path)
-                for path, item in zip(prepared, prepared_observations)
-                if item.usable
-            ],
-            "output": relative(root, canonical),
-        }
-    else:
-        refs = {}
-    return status_payload(
-        "paper",
-        slug,
-        stages,
-        next_stage,
-        refs,
-        identity=(
-            frontmatter_identity(canonical_frontmatter)
-            if include_identity and analyse_complete
-            else None
-        ),
-        include_identity=include_identity,
-    )
-
-
-def book_status(root: Path, slug: str, *, include_identity: bool = False) -> dict[str, Any]:
-    source_epub = artifact_path(
-        root, "book", "prepare", "source", slug=slug, format="epub"
-    )
-    source_pdf = artifact_path(
-        root, "book", "prepare", "source", slug=slug, format="pdf"
-    )
-    sources = [source_epub, source_pdf]
-    source_observations = [observe_file(path, nonempty=True) for path in sources]
-    inventory_valid, chapters, manifest_evidence = chapter_refs(root, slug)
-
-    chapter_root = artifact_path(
-        root, "book", "prepare", "outputDir", slug=slug
-    )
-    chapter_inputs = [chapter_root / item["filename"] for item in chapters]
-    input_observations = [observe_file(path, nonempty=True) for path in chapter_inputs]
-    prepare_evidence = manifest_evidence + evidence(root, chapter_inputs)
-    prepare_complete = inventory_valid and all(
-        item.usable for item in input_observations
-    )
-
+        for chapter in inventory
+    ]
     overview = artifact_path(root, "book", "synthesise", "output", slug=slug)
-    book_dir = overview.parent
-    chapter_outputs = [
-        book_dir / f"ch{item['slot']}-{item['slug']}.md" for item in chapters
-    ]
-    chapter_frontmatter = [observed_frontmatter(root, path) for path in chapter_outputs]
-    analyse_complete = inventory_valid and all(
-        complete for complete, _found, _frontmatter in chapter_frontmatter
-    )
-    synthesise_complete, synthesise_evidence, overview_frontmatter = (
-        observed_frontmatter(root, overview)
-    )
-
-    observations = {
-        "acquire": (
-            any(item.usable for item in source_observations),
-            evidence(root, sources),
-        ),
-        "prepare": (prepare_complete, prepare_evidence),
-        "analyse": (analyse_complete, evidence(root, chapter_outputs)),
-        "synthesise": (synthesise_complete, synthesise_evidence),
-    }
-    stages = [
-        stage(item["stage"], *observations[item["stage"]])
-        for item in PIPELINE["book"]["stages"]
-        if item["stage"] in observations
-    ]
-    next_stage = first_incomplete(stages)
-    if next_stage == "acquire":
-        refs: dict[str, Any] = {"outputs": [relative(root, path) for path in sources]}
-    elif next_stage == "prepare":
-        refs = {
-            "inputs": [
-                relative(root, path)
-                for path, item in zip(sources, source_observations)
-                if item.usable
-            ],
-            "output_dir": relative(root, chapter_root),
-            "manifest": relative(
-                root,
-                artifact_path(root, "book", "prepare", "manifest", slug=slug),
-            ),
-        }
-    elif next_stage == "analyse":
-        refs = {
-            "manifest": relative(
-                root,
-                artifact_path(root, "book", "prepare", "manifest", slug=slug),
-            ),
-            "inputs": [relative(root, path) for path in chapter_inputs],
-            "outputs": [relative(root, path) for path in chapter_outputs],
-        }
-    elif next_stage == "synthesise":
-        refs = {
-            "inputs": [relative(root, path) for path in chapter_outputs],
-            "output": relative(root, overview),
-        }
-    else:
-        refs = {}
+    overview_fact, frontmatter = canonical_observation(root, overview)
     return status_payload(
         "book",
         slug,
-        stages,
-        next_stage,
-        refs,
-        identity=(
-            frontmatter_identity(overview_frontmatter)
-            if include_identity and synthesise_complete
-            else None
-        ),
-        include_identity=include_identity,
+        frontmatter_identity(frontmatter) if overview_fact["usable"] else None,
+        {
+            "kind": "book",
+            "sources": [
+                {
+                    "format": format_name,
+                    "artifact": artifact_observation(root, path),
+                }
+                for format_name, path in sources
+            ],
+            "manifest": manifest_fact,
+            "chapters": chapters,
+            "overview": overview_fact,
+        },
     )
 
 
 def talk_transcripts(root: Path, slug: str) -> list[Path]:
-    directory = artifact_path(
-        root, "talk", "prepare", "processingDir", slug=slug
-    )
+    directory = artifact_path(root, "talk", "prepare", "processingDir", slug=slug)
     try:
         entries = sorted(directory.iterdir(), key=lambda item: item.name)
     except OSError:
@@ -436,142 +376,165 @@ def talk_transcripts(root: Path, slug: str) -> list[Path]:
     ]
 
 
-def talk_status(root: Path, slug: str, *, include_identity: bool = False) -> dict[str, Any]:
-    sources = [root / "sources" / f"{slug}.{extension}" for extension in MEDIA_EXTENSIONS]
-    source_observations = [observe_file(path, nonempty=True) for path in sources]
+def talk_status(root: Path, slug: str) -> dict[str, Any]:
+    media = [root / "sources" / f"{slug}.{extension}" for extension in MEDIA_EXTENSIONS]
     transcripts = talk_transcripts(root, slug)
-    transcript_observations = [
-        observe_file(path, nonempty=True) for path in transcripts
-    ]
-    processing_dir = artifact_path(
-        root, "talk", "prepare", "processingDir", slug=slug
-    )
     canonical = artifact_path(root, "talk", "analyse", "output", slug=slug)
-    canonical_complete, canonical_evidence, canonical_frontmatter = (
-        observed_frontmatter(root, canonical)
-    )
-
-    prepare_evidence = evidence(root, sources) + evidence(root, transcripts)
-    observations = {
-        "prepare": (
-            any(item.usable for item in transcript_observations),
-            prepare_evidence,
-        ),
-        "analyse": (canonical_complete, canonical_evidence),
-    }
-    stages = [
-        stage(item["stage"], *observations[item["stage"]])
-        for item in PIPELINE["talk"]["stages"]
-        if item["stage"] in observations
-    ]
-    next_stage = first_incomplete(stages)
-    if next_stage == "prepare":
-        refs = {
-            "inputs": [
-                relative(root, path)
-                for path, item in zip(sources, source_observations)
-                if item.usable
-            ],
-            "output_dir": relative(root, processing_dir),
-        }
-    elif next_stage == "analyse":
-        refs = {
-            "inputs": [
-                relative(root, path)
-                for path, item in zip(transcripts, transcript_observations)
-                if item.usable
-            ],
-            "output": relative(root, canonical),
-        }
-    else:
-        refs = {}
+    canonical_fact, frontmatter = canonical_observation(root, canonical)
     return status_payload(
         "talk",
         slug,
-        stages,
-        next_stage,
-        refs,
-        identity=(
-            frontmatter_identity(canonical_frontmatter)
-            if include_identity and canonical_complete
+        frontmatter_identity(frontmatter) if canonical_fact["usable"] else None,
+        {
+            "kind": "talk",
+            "media": [artifact_observation(root, path) for path in media],
+            "transcripts": [artifact_observation(root, path) for path in transcripts],
+            "canonical": canonical_fact,
+        },
+    )
+
+
+def translation_status(
+    root: Path,
+    slug: str,
+    target_language: str,
+) -> dict[str, Any]:
+    target_language = validate_language(target_language)
+    resolved_root = root.expanduser().resolve()
+    paths = output_paths(
+        project_root=resolved_root,
+        slug=slug,
+        target_language=target_language,
+    )
+    output = cast(Path, paths["output_path"])
+    manifest = cast(Path, paths["manifest_path"])
+    source = artifact_path(
+        resolved_root, "translation", "prepare", "source", slug=slug
+    )
+    return status_payload(
+        "translation",
+        slug,
+        None,
+        {
+            "kind": "translation",
+            "target_language": target_language,
+            "source": artifact_observation(resolved_root, source),
+            "output": artifact_observation(resolved_root, output),
+            "manifest": artifact_observation(resolved_root, manifest),
+        },
+    )
+
+
+def author_status(root: Path, slug: str) -> dict[str, Any]:
+    canonical = artifact_path(root, "author", "synthesise", "output", slug=slug)
+    canonical_fact, frontmatter = canonical_observation(root, canonical)
+    return status_payload(
+        "author",
+        slug,
+        frontmatter_identity(frontmatter) if canonical_fact["usable"] else None,
+        {"kind": "author", "canonical": canonical_fact},
+    )
+
+
+def member_path(root: Path, kind: str, slug: str) -> Path:
+    if kind == "paper":
+        return artifact_path(root, "paper", "analyse", "output", slug=slug)
+    if kind == "book":
+        return artifact_path(root, "book", "synthesise", "output", slug=slug)
+    return artifact_path(root, "talk", "analyse", "output", slug=slug)
+
+
+def topic_projection(
+    root: Path,
+    topic_slug: str,
+    frontmatter: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    try:
+        outline = TopicSchema.model_validate(frontmatter)
+    except (TypeError, ValueError):
+        return None
+    if outline.kind != "outline":
+        return None
+
+    subquestions: list[dict[str, Any]] = []
+    members: list[dict[str, Any]] = []
+    cards: list[dict[str, Any]] = []
+    for subquestion in outline.subquestions or []:
+        subquestions.append(
+            {
+                "id": subquestion.id,
+                "question": subquestion.question,
+                "coverage": subquestion.coverage,
+                "channel": subquestion.channel,
+                "theory_used": subquestion.theory_used,
+            }
+        )
+        for member in subquestion.items or []:
+            if SLUG.fullmatch(member.slug) is None:
+                return None
+            path = member_path(root, member.kind, member.slug)
+            artifact, _frontmatter = canonical_observation(root, path)
+            members.append(
+                {
+                    "kind": member.kind,
+                    "slug": member.slug,
+                    "subq": subquestion.id,
+                    "role": member.role,
+                    "artifact": artifact,
+                }
+            )
+        for card_slug in subquestion.cards:
+            if SLUG.fullmatch(card_slug) is None:
+                return None
+            path = root / "vault" / "topics" / topic_slug / "cards" / f"{card_slug}.md"
+            artifact, card_frontmatter = canonical_observation(root, path)
+            title = (
+                card_frontmatter.get("title")
+                if artifact["usable"]
+                and isinstance(card_frontmatter, dict)
+                and isinstance(card_frontmatter.get("title"), str)
+                else None
+            )
+            cards.append(
+                {
+                    "slug": card_slug,
+                    "subq": subquestion.id,
+                    "title": title,
+                    "artifact": artifact,
+                }
+            )
+    return {"subquestions": subquestions, "members": members, "cards": cards}
+
+
+def topic_status(root: Path, slug: str) -> dict[str, Any]:
+    outline = artifact_path(root, "topic", "steer", "outputPath", slug=slug)
+    overview = artifact_path(
+        root, "topic", "synthesise-overview", "outputPath", slug=slug
+    )
+    resources = artifact_path(
+        root, "topic", "synthesise-resources", "outputPath", slug=slug
+    )
+    outline_fact = artifact_observation(root, outline)
+    outline_frontmatter = parse_frontmatter(outline) if outline_fact["usable"] else None
+    projection = topic_projection(root, slug, outline_frontmatter)
+    outline_fact.update({"valid": projection is not None, "projection": projection})
+    overview_fact, overview_frontmatter = canonical_observation(root, overview)
+    resources_fact, _resources_frontmatter = canonical_observation(root, resources)
+    return status_payload(
+        "topic",
+        slug,
+        (
+            frontmatter_identity(overview_frontmatter)
+            if overview_fact["usable"]
             else None
         ),
-        include_identity=include_identity,
+        {
+            "kind": "topic",
+            "outline": outline_fact,
+            "overview": overview_fact,
+            "resources": resources_fact,
+        },
     )
-
-
-def translation_status(root: Path, slug: str) -> dict[str, Any]:
-    source = artifact_path(root, "translation", "prepare", "source", slug=slug)
-    source_observation = observe_file(source, nonempty=True)
-    derivative_pattern = artifact_path(
-        root, "translation", "prepare", "derivatives", slug=slug
-    )
-    try:
-        derivatives = sorted(
-            derivative_pattern.parent.glob(derivative_pattern.name),
-            key=lambda path: path.name,
-        )
-    except OSError:
-        derivatives = []
-    derivative_observations = [
-        observe_file(path, nonempty=True) for path in derivatives
-    ]
-    observations = {
-        "prepare": (
-            any(item.usable for item in derivative_observations),
-            evidence(root, derivatives),
-        )
-    }
-    stages = [
-        # Acquire is an observation view of Prepare's source precondition, not
-        # a dispatchable Translation pipeline stage.
-        stage(
-            "acquire",
-            source_observation.usable,
-            evidence(root, [source]),
-        ),
-        *(
-            stage(item["stage"], *observations[item["stage"]])
-            for item in PIPELINE["translation"]["stages"]
-            if item["stage"] in observations
-        ),
-    ]
-    next_stage = first_incomplete(stages)
-    refs: dict[str, Any] = {
-        "source": relative(root, source),
-        "derivatives": [relative(root, path) for path in derivatives],
-    }
-    return status_payload("translation", slug, stages, next_stage, refs)
-
-
-def first_incomplete(stages: Iterable[dict[str, Any]]) -> str | None:
-    return next(
-        (item["stage"] for item in stages if item["complete"] is False),
-        None,
-    )
-
-
-def status_payload(
-    kind: str,
-    slug: str,
-    stages: list[dict[str, Any]],
-    next_stage: str | None,
-    refs: dict[str, Any],
-    *,
-    identity: dict[str, Any] | None = None,
-    include_identity: bool = False,
-) -> dict[str, Any]:
-    payload = {
-        "schema_version": STATUS_VERSION,
-        "kind": kind,
-        "slug": slug,
-        "stages": stages,
-        "next_stage": next_stage,
-        "refs": refs,
-    }
-    if include_identity:
-        payload["identity"] = identity
-    return payload
 
 
 def children(directory: Path) -> list[Path]:
@@ -586,39 +549,39 @@ def valid_slug(value: str) -> bool:
 
 
 def scan_status(root: Path) -> dict[str, Any]:
-    """Discover all material layouts and preserve PDF's honest ambiguity.
+    """Discover material layouts without turning observations into control hints."""
 
-    A bare ``sources/{slug}.pdf`` is valid for either a Paper or a Book.  If
-    its later kind-specific layout exists, it selects that kind; otherwise scan
-    emits both possibilities rather than silently assigning a material type.
-    """
-
-    discovered: dict[str, set[str]] = {"paper": set(), "book": set(), "talk": set()}
+    discovered: dict[str, set[str]] = {
+        "author": set(),
+        "paper": set(),
+        "book": set(),
+        "talk": set(),
+        "topic": set(),
+    }
     scan_slug = "scan-root"
     for directory, kind, suffix in (
+        (
+            artifact_path(root, "author", "synthesise", "output", slug=scan_slug).parent,
+            "author",
+            ".md",
+        ),
         (
             artifact_path(root, "paper", "analyse", "output", slug=scan_slug).parent,
             "paper",
             ".md",
         ),
         (
-            artifact_path(
-                root, "paper", "prepare", "normalized", slug=scan_slug
-            ).parent.parent,
+            artifact_path(root, "paper", "prepare", "normalized", slug=scan_slug).parent.parent,
             "paper",
             None,
         ),
         (
-            artifact_path(
-                root, "book", "synthesise", "output", slug=scan_slug
-            ).parent.parent,
+            artifact_path(root, "book", "synthesise", "output", slug=scan_slug).parent.parent,
             "book",
             None,
         ),
         (
-            artifact_path(
-                root, "book", "prepare", "outputDir", slug=scan_slug
-            ).parent,
+            artifact_path(root, "book", "prepare", "outputDir", slug=scan_slug).parent,
             "book",
             None,
         ),
@@ -628,10 +591,13 @@ def scan_status(root: Path) -> dict[str, Any]:
             None,
         ),
         (
-            artifact_path(
-                root, "talk", "prepare", "processingDir", slug=scan_slug
-            ).parent,
+            artifact_path(root, "talk", "prepare", "processingDir", slug=scan_slug).parent,
             "talk",
+            None,
+        ),
+        (
+            artifact_path(root, "topic", "steer", "outputPath", slug=scan_slug).parent.parent,
+            "topic",
             None,
         ),
     ):
@@ -646,32 +612,27 @@ def scan_status(root: Path) -> dict[str, Any]:
         root, "paper", "acquire", "output", slug=scan_slug
     ).parent
     for entry in children(source_directory):
-        name = entry.name
-        suffix = entry.suffix.lower()
         slug = entry.stem
+        suffix = entry.suffix.lower()
         if not valid_slug(slug):
             continue
         if suffix == ".epub":
             discovered["book"].add(slug)
         elif suffix == ".pdf":
-            known_kinds = [
-                kind for kind in ("paper", "book") if slug in discovered[kind]
-            ]
-            for kind in known_kinds or ["paper", "book"]:
+            known = [kind for kind in ("paper", "book") if slug in discovered[kind]]
+            for kind in known or ["paper", "book"]:
                 discovered[kind].add(slug)
         elif suffix[1:] in MEDIA_EXTENSIONS:
             discovered["talk"].add(slug)
 
-    items = [
-        {
-            "kind": kind,
-            "slug": slug,
-            "next_stage": material_status(root, kind, slug)["next_stage"],
-        }
-        for kind in sorted(discovered)
-        for slug in sorted(discovered[kind])
-    ]
-    return {"schema_version": SCAN_VERSION, "items": items}
+    return {
+        "schema_version": SCAN_VERSION,
+        "items": [
+            {"kind": kind, "slug": slug}
+            for kind in sorted(discovered)
+            for slug in sorted(discovered[kind])
+        ],
+    }
 
 
 def material_status(
@@ -679,41 +640,56 @@ def material_status(
     kind: str,
     slug: str,
     *,
-    include_identity: bool = False,
+    target_language: str | None = None,
 ) -> dict[str, Any]:
     if kind == "paper":
-        return paper_status(root, slug, include_identity=include_identity)
+        return paper_status(root, slug)
     if kind == "book":
-        return book_status(root, slug, include_identity=include_identity)
+        return book_status(root, slug)
     if kind == "talk":
-        return talk_status(root, slug, include_identity=include_identity)
+        return talk_status(root, slug)
     if kind == "translation":
-        if include_identity:
-            raise InvocationError("--identity is not supported for translation")
-        return translation_status(root, slug)
+        if target_language is None:
+            raise InvocationError("--target-language is required for translation")
+        return translation_status(root, slug, target_language)
+    if kind == "author":
+        return author_status(root, slug)
+    if kind == "topic":
+        return topic_status(root, slug)
     raise AssertionError(f"unsupported kind: {kind}")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = StatusArgumentParser(add_help=True, prog="quasi-status")
-    parser.add_argument("--kind", choices=("paper", "book", "talk", "translation"))
+    parser.add_argument(
+        "--kind", choices=("paper", "book", "talk", "translation", "author", "topic")
+    )
     parser.add_argument("--slug")
+    parser.add_argument("--target-language")
     parser.add_argument("--scan", action="store_true")
-    parser.add_argument("--identity", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     if not args.json:
         raise InvocationError("--json is required")
     if args.scan:
-        if args.kind is not None or args.slug is not None or args.identity:
+        if args.kind is not None or args.slug is not None or args.target_language is not None:
             raise InvocationError(
-                "--scan cannot be combined with --kind, --slug, or --identity"
+                "--scan cannot be combined with --kind, --slug, or --target-language"
             )
         return args
     if args.kind is None or args.slug is None:
         raise InvocationError("--kind and --slug are required unless --scan is used")
     if not valid_slug(args.slug):
         raise InvocationError("--slug must be canonical ASCII kebab (1..80 characters)")
+    if args.kind == "translation":
+        if args.target_language is None:
+            raise InvocationError("--target-language is required for translation")
+        try:
+            args.target_language = validate_language(args.target_language)
+        except TranslateContractError as exc:
+            raise InvocationError(str(exc)) from exc
+    elif args.target_language is not None:
+        raise InvocationError("--target-language is only valid for translation")
     return args
 
 
@@ -724,6 +700,16 @@ def emit(value: dict[str, Any]) -> None:
 def main(argv: list[str] | None = None) -> int:
     try:
         args = parse_args(sys.argv[1:] if argv is None else argv)
+        value = (
+            scan_status(project_root())
+            if args.scan
+            else material_status(
+                project_root(),
+                args.kind,
+                args.slug,
+                target_language=args.target_language,
+            )
+        )
     except InvocationError as exc:
         emit(
             {
@@ -732,18 +718,7 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
         return 2
-    root = project_root()
-    if args.scan:
-        emit(scan_status(root))
-    else:
-        emit(
-            material_status(
-                root,
-                args.kind,
-                args.slug,
-                include_identity=args.identity,
-            )
-        )
+    emit(value)
     return 0
 
 
