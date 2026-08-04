@@ -51,6 +51,9 @@ async function load(source) {
 }
 
 const dispatch = await load("scripts/workflows/shared/dispatch.mts");
+const preparedDispatch = await load(
+  "scripts/workflows/shared/dispatch-prepared.mts",
+);
 const catalog = await load("scripts/workflows/operations/catalog.mts");
 let agentCalls = 0;
 const runtime = {
@@ -75,7 +78,7 @@ try {
       error.name = "PredicateExplosion";
       throw error;
     };
-    result = await dispatch.dispatchPreparedOperation(runtime, prepared);
+    result = await preparedDispatch.dispatchPreparedOperation(runtime, prepared);
   } else {
     result = await dispatch.dispatchOperation(runtime, config.invocation);
   }

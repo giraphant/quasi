@@ -96,6 +96,12 @@ export interface OperationDescriptor extends OperationRow {
   readonly artifacts: ArtifactTemplates;
 }
 
+export const PAPER_OPERATION_IDENTITIES: readonly PipelineStage[];
+export const BOOK_OPERATION_IDENTITIES: readonly PipelineStage[];
+export const TALK_OPERATION_IDENTITIES: readonly PipelineStage[];
+export const TRANSLATION_OPERATION_IDENTITIES: readonly PipelineStage[];
+export const TOPIC_OPERATION_IDENTITIES: readonly PipelineStage[];
+export const AUTHOR_OPERATION_IDENTITIES: readonly PipelineStage[];
 export const PIPELINE: Readonly<Record<KindName, KindDefinition>>;
 export const AUTHOR_ARTIFACT_CONTRACT: ArtifactContract;
 export const PAPER_ARTIFACT_CONTRACT: ArtifactContract;
