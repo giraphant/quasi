@@ -76,22 +76,19 @@ const localOwnerSchema = {
   required: ["identity_slug", "vault_slug", "path", "match"],
   properties: {
     identity_slug: { type: "string", pattern: MATERIAL_SLUG_PATTERN },
-    vault_slug: { type: ["string", "null"], pattern: MATERIAL_SLUG_PATTERN },
-    path: { type: ["string", "null"], maxLength: 2048 },
-    match: { type: ["string", "null"], enum: ["slug", "isbn", "doi", "title", null] },
+    vault_slug: { type: "string", pattern: MATERIAL_SLUG_PATTERN },
+    path: { type: "string", maxLength: 2048 },
+    match: { type: "string", enum: ["slug", "isbn", "doi", "title"] },
   },
 };
 
-const validLocalOwner: AnyFunction = (owner, kind) => {
+const validLocalOwner: AnyFunction = (owner, kind, identitySlug) => {
   if (owner === null) return true;
-  if (!owner) return false;
-  if (owner.vault_slug === null)
-    return owner.path === null && owner.match === null;
   const expected =
     kind === "book"
       ? `vault/books/${owner.vault_slug}/00-overview.md`
       : `vault/papers/${owner.vault_slug}.md`;
-  return owner.path === expected && owner.match !== null;
+  return owner.identity_slug === identitySlug && owner.path === expected;
 };
 
 export const materialSearchOperationRows: OperationRow[] = [
@@ -159,7 +156,11 @@ export const materialSearchOperationRows: OperationRow[] = [
       !!receipt.identity &&
       ["high", "medium"].includes(receipt.confidence) &&
       receipt.identity.confidence === receipt.confidence &&
-      validLocalOwner(receipt.local_owner, receipt.kind),
+      validLocalOwner(
+        receipt.local_owner,
+        receipt.kind,
+        receipt.identity.slug,
+      ),
     envelope: (_context, refs) => ({
       schema_version: "quasi.stage.request/0.2",
       operation: "material.search",

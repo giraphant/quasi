@@ -298,6 +298,125 @@ def _audit_output(status: str, *, coherent: bool = True) -> dict[str, Any]:
     }
 
 
+def _search_identity(kind: str, *, slug: str) -> dict[str, Any]:
+    common = {
+        "slug": slug,
+        "title": "Exact Material",
+        "authors": ["Ada Example"],
+        "year": 2024,
+        "confidence": "high",
+    }
+    if kind == "book":
+        return {
+            **common,
+            "isbn": "9780000000000",
+            "publisher": "Exact Press",
+            "category": "monograph",
+        }
+    return {
+        **common,
+        "doi": "10.1000/exact",
+        "oa_url": "https://example.test/exact.pdf",
+        "url": "https://example.test/exact",
+        "journal": "Exact Joins",
+    }
+
+
+def _search_output(
+    kind: str,
+    *,
+    identity_slug: str,
+    local_owner: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "identity": _search_identity(kind, slug=identity_slug),
+        "local_owner": local_owner,
+        "confidence": "high",
+        "observations": [],
+        "terminal": {"status": "complete", "issue": None},
+    }
+
+
+def test_search_null_owner_is_a_coherent_observed_miss() -> None:
+    report = _dispatch(
+        {
+            "invocation": _invocation("material.search", kind="paper"),
+            "model_output": _search_output(
+                "paper",
+                identity_slug="selected-paper",
+                local_owner=None,
+            ),
+        }
+    )
+
+    assert report["result"]["kind"] == "receipt"
+
+
+def test_search_owner_schema_does_not_encode_a_hit_with_null_fields() -> None:
+    owner_schema = _prepare("material.search")["options"]["schema"]["properties"][
+        "local_owner"
+    ]
+
+    assert owner_schema["type"] == ["object", "null"]
+    for field in ("vault_slug", "path", "match"):
+        assert owner_schema["properties"][field]["type"] == "string"
+
+
+def test_search_complete_rejects_an_owner_for_a_different_identity() -> None:
+    report = _dispatch(
+        {
+            "invocation": _invocation("material.search", kind="paper"),
+            "model_output": _search_output(
+                "paper",
+                identity_slug="selected-paper",
+                local_owner={
+                    "identity_slug": "different-paper",
+                    "vault_slug": "existing-paper",
+                    "path": "vault/papers/existing-paper.md",
+                    "match": "doi",
+                },
+            ),
+        }
+    )
+
+    assert report["result"]["kind"] == "incoherent_complete"
+
+
+@pytest.mark.parametrize(
+    ("kind", "vault_slug", "path"),
+    [
+        ("paper", "existing-paper", "vault/papers/existing-paper.md"),
+        (
+            "book",
+            "existing-book",
+            "vault/books/existing-book/00-overview.md",
+        ),
+    ],
+)
+def test_search_complete_accepts_identity_bound_to_a_different_vault_slug(
+    kind: str,
+    vault_slug: str,
+    path: str,
+) -> None:
+    report = _dispatch(
+        {
+            "invocation": _invocation("material.search", kind=kind),
+            "model_output": _search_output(
+                kind,
+                identity_slug="selected-identity",
+                local_owner={
+                    "identity_slug": "selected-identity",
+                    "vault_slug": vault_slug,
+                    "path": path,
+                    "match": "title",
+                },
+            ),
+        }
+    )
+
+    assert report["result"]["kind"] == "receipt"
+
+
 @pytest.mark.parametrize(
     "status", ["complete", "needs_input", "blocked", "failed"]
 )

@@ -46,9 +46,11 @@ ISBN，以及用户需要其中哪一章或哪一节，让用户在“改为收�
 之间选择。`complete` 的 identity 始终与 request 同 kind；本阶段不得越过用户直接改按容器调查。
 
 选定身份后，用 vault resolver 查询该完整身份。未命中时 `local_owner` 使用真正的 JSON
-`null`；命中时回显 helper 给出的 exact owner object，其中 `identity_slug` 是实际交给 resolver
-的 selected identity slug，而不是用户线索推导出的 provisional slug。本阶段只读，不创建
-metadata 文件。
+`null`；命中时回显 helper 给出的 complete exact owner object，`identity_slug`、`vault_slug`、
+`path` 和 `match` 都是非 null。其中 `identity_slug` 是实际交给 resolver 的 selected identity
+slug，而不是用户线索推导出的 provisional slug；`path` 是由 helper 返回的 `vault_slug` 所在
+canonical vault path。若 resolver 命中但无法给出这个完整 object，返回 `blocked`。本阶段只读，
+不创建 metadata 文件。
 
 ## 阶段判断
 
