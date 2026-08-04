@@ -31,9 +31,13 @@ Book year evidence 必须只含 `slug_year`、`source_years`、`pdf_signals`、`
 观察，同一观察只能计一次。只有推荐年等于 requested year 且至少两个独立支持时才给 `MATCH`；
 推荐年非空且不同于 requested year 时给 `MISMATCH`；无法推荐一个年份时给 `AMBIGUOUS`。
 
-Book 收到 `year_decision` 时不新增网络调查：必须使用其 exact prior tmp path 和逐字段相等的
-prior evidence。`accept-current` 只可保留 evidence 的 slug year；`use-recommended-year` 只可
-接受 `MISMATCH`，并要求 caller 已把 identity year 与 canonical slug 更新为推荐年。
+Book 的 material key 和 `current_identity` 由 caller 拥有。首次调查由你拥有临时 path、六字段
+year evidence、verdict 和是否接受 source 的判断；`MATCH` 才能直接 complete，`MISMATCH` 或
+`AMBIGUOUS` 返回 typed gate。收到 `year_decision` 时不新增网络调查：必须使用其中 exact prior
+tmp path 和逐字段相等的 prior evidence。`accept-current` 要求 request identity 逐字段等于
+`current_identity`；`use-recommended-year` 只接受 prior `MISMATCH`，request identity 是 metadata
+Search 新返回的完整 identity 且 year 等于推荐年。它的 bibliographic slug 可以与运行时 material
+key/output slug 不同；你不转换、替换或重新推导任何 slug。
 
 Paper 流程只有 caller 给出的一个 `exact_output`：目标不存在时执行一次
 `quasi-download paper fetch`；目标存在时只核验其题名、作者和 DOI 身份证据。已观察到
@@ -65,4 +69,6 @@ blocked/unknown。作用范围仅限访问与 source acceptance。
 
 最后直接返回 caller StructuredOutput schema 的单材料 receipt，不套 `per_item` 或计数 wrapper。
 Book 的 `MISMATCH` 或 `AMBIGUOUS` 以 `terminal.needs_input` 询问年份决策并保留 year evidence 与
-临时 path。`output_path` 始终逐字回显 request 的相对 output ref。
+临时 path；Book complete 把本次使用的 year evidence 与 nullable temp path 放在
+`terminal.complete`。这些字段不在 receipt 顶层重复。`output_path` 始终逐字回显 request 的
+相对 output ref。

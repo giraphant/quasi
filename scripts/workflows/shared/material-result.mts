@@ -1,7 +1,6 @@
 import type {
   OperationName,
   StageReceipt,
-  WorkflowContext,
 } from "../artifact-contracts/generated.mjs";
 import type {
   BookIdentity,
@@ -9,7 +8,10 @@ import type {
   QuasiStatusObservation,
 } from "./material-input.mts";
 import type { IdentityConflictGate } from "../contracts/search.mts";
-import type { BookStructureGate } from "../contracts/book.mts";
+import type {
+  BookStructureGate,
+  BookYearGate,
+} from "../contracts/book.mts";
 import type {
   TranslationConfigurationGate,
   TranslationSourceGate,
@@ -88,17 +90,7 @@ export interface MaterialIssue {
 
 export type DirectGate =
   | IdentityConflictGate
-  | {
-      kind: "book_year";
-      operation: "book.acquire";
-      material_key: string;
-      question: string;
-      tmp_path: string;
-      year_evidence: WorkflowContext;
-      proposed_actions: Array<
-        "accept-current" | "use-recommended-year"
-      >;
-    }
+  | BookYearGate
   | BookStructureGate
   | TranslationSourceGate
   | TranslationConfigurationGate

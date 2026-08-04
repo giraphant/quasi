@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from copy import deepcopy
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -293,12 +294,17 @@ def _audit_output(*, coherent: bool = True) -> dict[str, Any]:
     }
 
 
-def _search_identity(kind: str, *, slug: str) -> dict[str, Any]:
+def _search_identity(
+    kind: str,
+    *,
+    slug: str,
+    year: int = 2024,
+) -> dict[str, Any]:
     common = {
         "slug": slug,
         "title": "Exact Material",
         "authors": ["Ada Example"],
-        "year": 2024,
+        "year": year,
         "confidence": "high",
     }
     if kind == "book":
@@ -322,13 +328,81 @@ def _search_output(
     *,
     identity_slug: str,
     local_owner: dict[str, Any] | None,
+    year: int = 2024,
 ) -> dict[str, Any]:
     return {
-        "identity": _search_identity(kind, slug=identity_slug),
+        "identity": _search_identity(kind, slug=identity_slug, year=year),
         "local_owner": local_owner,
         "confidence": "high",
         "observations": [],
         "terminal": {"status": "complete", "issue": None},
+    }
+
+
+def _book_year_evidence(
+    verdict: str,
+    *,
+    slug_year: int = 2024,
+) -> dict[str, Any]:
+    return {
+        "slug_year": slug_year,
+        "source_years": {"publisher": 2025, "catalogue": 2025},
+        "pdf_signals": {
+            "first_published": 2025,
+            "copyright_year": 2025,
+            "original_year": None,
+            "other_years": [2024],
+        },
+        "recommended_year": {
+            "MATCH": slug_year,
+            "MISMATCH": 2025,
+            "AMBIGUOUS": None,
+        }[verdict],
+        "recommendation_reason": "Publisher and catalogue evidence agree.",
+        "verdict": verdict,
+    }
+
+
+def _book_year_decision(action: str) -> dict[str, Any]:
+    current_identity = _search_identity(
+        "book",
+        slug="bibliographic-book-2024",
+        year=2024,
+    )
+    return {
+        "current_identity": current_identity,
+        "tmp_path": ".quasi/temp/downloads/exact-material.pdf",
+        "year_evidence": _book_year_evidence(
+            "MISMATCH" if action == "use-recommended-year" else "AMBIGUOUS"
+        ),
+        "action": action,
+    }
+
+
+def _book_acquire_output(
+    evidence: dict[str, Any],
+    *,
+    tmp_path: str | None = ".quasi/temp/downloads/exact-material.pdf",
+) -> dict[str, Any]:
+    return {
+        "output_path": "sources/exact-material.pdf",
+        "format": "pdf",
+        "allowed_output_paths": [
+            "sources/exact-material.epub",
+            "sources/exact-material.pdf",
+        ],
+        "write_state": "written",
+        "identity_verified": True,
+        "isbn": "9780000000000",
+        "attempts": [],
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "disposition": "created",
+            "source": "publisher",
+            "tmp_path": tmp_path,
+            "year_evidence": evidence,
+        },
     }
 
 
@@ -720,6 +794,135 @@ def test_book_acquire_conservatively_owns_both_possible_sources():
     ]
 
 
+def test_book_acquire_rejects_a_truthy_malformed_year_decision_before_agent():
+    report = _dispatch(
+        {
+            "invocation": _invocation(
+                "book.acquire",
+                context=_context(
+                    meta=_search_identity("book", slug="exact-book"),
+                    year_decision={"action": "accept-current"},
+                ),
+            ),
+            "model_output": None,
+        }
+    )
+
+    assert report["agentCalls"] == 0
+    assert report["result"]["kind"] == "invalid_context"
+
+
+def test_book_acquire_batch_flag_cannot_bypass_a_year_mismatch():
+    identity = _search_identity("book", slug="exact-book")
+    report = _dispatch(
+        {
+            "invocation": _invocation(
+                "book.acquire",
+                context=_context(meta=identity, batch_accept_year=True),
+            ),
+            "model_output": _book_acquire_output(
+                _book_year_evidence("MISMATCH")
+            ),
+        }
+    )
+
+    assert report["agentCalls"] == 1
+    assert report["result"]["kind"] == "incoherent_complete"
+    request = json.loads(
+        _prepare(
+            "book.acquire",
+            context=_context(meta=identity, batch_accept_year=True),
+        )["prompt"]
+    )
+    assert "batch_accept_year" not in request
+
+
+def test_book_acquire_accept_current_keeps_exact_identity_and_prior_evidence():
+    decision = _book_year_decision("accept-current")
+    invocation = _invocation(
+        "book.acquire",
+        context=_context(
+            meta=deepcopy(decision["current_identity"]),
+            year_decision=deepcopy(decision),
+        ),
+    )
+    report = _dispatch(
+        {
+            "invocation": invocation,
+            "model_output": _book_acquire_output(
+                deepcopy(decision["year_evidence"])
+            ),
+        }
+    )
+
+    assert report["result"]["kind"] == "receipt"
+    request = json.loads(
+        _prepare(
+            "book.acquire",
+            context=invocation["context"],
+        )["prompt"]
+    )
+    assert request["identity"] == decision["current_identity"]
+    assert request["current_identity"] == decision["current_identity"]
+    assert request["year_decision"] == decision
+
+    changed_identity = deepcopy(invocation)
+    changed_identity["context"]["meta"]["publisher"] = "Another Press"
+    rejected_identity = _dispatch(
+        {"invocation": changed_identity, "model_output": None}
+    )
+    changed_evidence = _book_acquire_output(
+        deepcopy(decision["year_evidence"])
+    )
+    changed_evidence["terminal"]["year_evidence"][
+        "recommendation_reason"
+    ] = "Different evidence."
+    rejected_evidence = _dispatch(
+        {"invocation": invocation, "model_output": changed_evidence}
+    )
+
+    assert rejected_identity["agentCalls"] == 0
+    assert rejected_identity["result"]["kind"] == "invalid_context"
+    assert rejected_evidence["result"]["kind"] == "incoherent_complete"
+
+
+def test_book_acquire_use_recommended_accepts_search_identity_without_slug_rewrite():
+    decision = _book_year_decision("use-recommended-year")
+    search_identity = _search_identity(
+        "book",
+        slug="metadata-owned-book-2025",
+        year=2025,
+    )
+    invocation = _invocation(
+        "book.acquire",
+        slug="existing-vault-owner",
+        context=_context(
+            meta=search_identity,
+            year_decision=deepcopy(decision),
+        ),
+    )
+    output = _book_acquire_output(deepcopy(decision["year_evidence"]))
+    output["output_path"] = "sources/existing-vault-owner.pdf"
+    output["allowed_output_paths"] = [
+        "sources/existing-vault-owner.epub",
+        "sources/existing-vault-owner.pdf",
+    ]
+
+    report = _dispatch({"invocation": invocation, "model_output": output})
+
+    assert report["result"]["kind"] == "receipt"
+    request = json.loads(
+        _prepare(
+            "book.acquire",
+            slug="existing-vault-owner",
+            context=invocation["context"],
+        )["prompt"]
+    )
+    assert request["identity"] == search_identity
+    assert request["identity"]["slug"] != "existing-vault-owner"
+    assert request["current_identity"] == decision["current_identity"]
+
+
 @pytest.mark.parametrize(
     ("operation", "scope", "path"),
     [
@@ -842,6 +1045,82 @@ def test_search_owner_reconcile_requires_the_selected_identity() -> None:
 
     assert accepted["result"]["kind"] == "receipt"
     assert changed["result"]["kind"] == "incoherent_complete"
+
+
+def test_search_rejects_accept_current_year_decision_before_agent_dispatch():
+    decision = _book_year_decision("accept-current")
+    report = _dispatch(
+        {
+            "invocation": _invocation(
+                "material.search",
+                kind="book",
+                context=_context(year_decision=decision),
+            ),
+            "model_output": None,
+        }
+    )
+
+    assert report["agentCalls"] == 0
+    assert report["result"]["kind"] == "invalid_context"
+
+
+def test_book_year_search_requires_the_recommended_year_then_uses_owner_proof():
+    decision = _book_year_decision("use-recommended-year")
+    invocation = _invocation(
+        "material.search",
+        kind="book",
+        slug="existing-vault-owner",
+        context=_context(year_decision=decision),
+    )
+    old_year = _dispatch(
+        {
+            "invocation": invocation,
+            "model_output": _search_output(
+                "book",
+                identity_slug="metadata-book-2024",
+                local_owner=None,
+                year=2024,
+            ),
+        }
+    )
+    recommended_year = _dispatch(
+        {
+            "invocation": invocation,
+            "model_output": _search_output(
+                "book",
+                identity_slug="metadata-book-2025",
+                local_owner={
+                    "identity_slug": "metadata-book-2025",
+                    "vault_slug": "existing-vault-owner",
+                    "path": "vault/books/existing-vault-owner/00-overview.md",
+                    "match": "isbn",
+                },
+                year=2025,
+            ),
+        }
+    )
+
+    assert old_year["result"]["kind"] == "incoherent_complete"
+    assert recommended_year["result"]["kind"] == "receipt"
+    request = json.loads(
+        _prepare(
+            "material.search",
+            kind="book",
+            slug="existing-vault-owner",
+            context=invocation["context"],
+        )["prompt"]
+    )
+    assert request["current_identity"] == decision["current_identity"]
+    assert request["year_decision"] == decision
+
+
+def test_ordinary_search_request_has_no_book_year_handoff():
+    request = json.loads(
+        _prepare("material.search", kind="book")["prompt"]
+    )
+
+    assert "current_identity" not in request
+    assert "year_decision" not in request
 
 
 def test_search_rejects_a_cross_kind_owner_decision_before_agent_dispatch() -> None:

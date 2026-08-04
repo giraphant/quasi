@@ -708,6 +708,32 @@ def test_acquire_write_outcome_lives_only_in_complete_terminal(kind: str) -> Non
         assert "source" not in branches[status]["properties"]
 
 
+def test_book_acquire_year_handoff_lives_once_in_its_terminal_branch() -> None:
+    report = run_stage(
+        {
+            "kind": "book",
+            "slug": "example-book",
+            "stage": "acquire",
+            "context": stage_context("book", "acquire"),
+        }
+    )
+    schema = report["direct"]["schema"]
+    assert "tmp_path" not in schema["properties"]
+    assert "year_evidence" not in schema["properties"]
+
+    branches = {
+        branch["properties"]["status"]["const"]: branch
+        for branch in schema["properties"]["terminal"]["anyOf"]
+    }
+    assert {"tmp_path", "year_evidence"}.issubset(
+        branches["complete"]["required"]
+    )
+    assert {"tmp_path", "year_evidence", "proposed_actions"}.issubset(
+        branches["needs_input"]["required"]
+    )
+    assert "proposed_actions" not in branches["complete"]["properties"]
+
+
 def test_model_schema_omits_host_stamps_and_requires_judgement_fields() -> None:
     report = run_stage(
         {"kind": "paper", "slug": "example", "stage": "audit", "context": {}}

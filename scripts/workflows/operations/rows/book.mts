@@ -7,8 +7,16 @@ import {
   contextValue,
 } from "../../context-base.mts";
 import { sameClosedValue, validText } from "../../runtime.mts";
-import { BOOK_TEMP_PATH, validYearEvidence } from "../book-year-evidence.mts";
-import { parseBookStructureDecisionValue } from "../../contracts/book.mts";
+import { parseBookIdentity } from "../../shared/material-input.mts";
+import {
+  BOOK_TEMP_PATH,
+  BOOK_YEAR_EVIDENCE_SCHEMA,
+  parseBookYearEvidence,
+} from "../book-year-evidence.mts";
+import {
+  parseBookStructureDecisionValue,
+  parseBookYearDecisionValue,
+} from "../../contracts/book.mts";
 import {
   ATTEMPT_SCHEMA,
   PREPARE_STEP_SCHEMA,
@@ -185,6 +193,35 @@ export const bookOperationRows: OperationRow[] = [
       const formats =
         rawContext.allowed_formats ||
         (base.meta.format ? [base.meta.format] : ["epub", "pdf"]);
+      const rawYearDecision = contextValue(
+        rawContext,
+        "yearDecision",
+        "year_decision",
+      );
+      const yearDecision =
+        rawYearDecision == null
+          ? null
+          : parseBookYearDecisionValue(rawYearDecision);
+      if (rawYearDecision != null && yearDecision === null)
+        throw new InputContractError(
+          "book.acquire requires one coherent year decision",
+        );
+      const invocationIdentity =
+        yearDecision === null ? null : parseBookIdentity(base.meta);
+      if (
+        yearDecision !== null &&
+        (invocationIdentity === null ||
+          (yearDecision.action === "accept-current"
+            ? !sameClosedValue(
+                invocationIdentity,
+                yearDecision.current_identity,
+              )
+            : invocationIdentity.year !==
+              yearDecision.year_evidence.recommended_year))
+      )
+        throw new InputContractError(
+          "book.acquire year decision does not bind the invocation identity",
+        );
       return {
         ...base,
         allowedSources: formats.map((format: any) => ({
@@ -192,11 +229,8 @@ export const bookOperationRows: OperationRow[] = [
           path: `sources/${base.slug}.${format}`,
         })),
         expectedYear: base.meta.year,
-        batchAcceptYear: Boolean(
-          contextValue(rawContext, "batchAcceptYear", "batch_accept_year"),
-        ),
-        yearDecision:
-          contextValue(rawContext, "yearDecision", "year_decision") || null,
+        invocationIdentity,
+        yearDecision,
       };
     },
     refs: ({ allowedSources, yearDecision }) => ({
@@ -214,8 +248,6 @@ export const bookOperationRows: OperationRow[] = [
         "identity_verified",
         "isbn",
         "attempts",
-        "year_evidence",
-        "tmp_path",
       ],
       properties: {
         output_path: {
@@ -236,18 +268,26 @@ export const bookOperationRows: OperationRow[] = [
         identity_verified: { type: "boolean" },
         isbn: { type: ["string", "null"], maxLength: 100 },
         attempts: ATTEMPT_SCHEMA,
-        year_evidence: { type: ["object", "null"] },
-        tmp_path: { type: ["string", "null"], pattern: BOOK_TEMP_PATH.source },
       },
     }),
     // disposition/source describe an accepted write, so they exist only in
     // the complete terminal; a failed run cannot echo "created" out of habit.
     terminalPayloads: () => ({
       complete: {
-        required: ["disposition", "source"],
+        required: [
+          "disposition",
+          "source",
+          "tmp_path",
+          "year_evidence",
+        ],
         properties: {
           disposition: { type: "string", enum: ["created", "reused"] },
           source: { type: "string", minLength: 1, maxLength: 200 },
+          tmp_path: {
+            type: ["string", "null"],
+            pattern: BOOK_TEMP_PATH.source,
+          },
+          year_evidence: BOOK_YEAR_EVIDENCE_SCHEMA,
         },
       },
       failed: {
@@ -269,7 +309,7 @@ export const bookOperationRows: OperationRow[] = [
             ["book.year_mismatch", "book.year_ambiguous"],
             { questionRequired: true },
           ),
-          year_evidence: { type: "object" },
+          year_evidence: BOOK_YEAR_EVIDENCE_SCHEMA,
           tmp_path: { type: "string", pattern: BOOK_TEMP_PATH.source },
           proposed_actions: {
             anyOf: [
@@ -281,6 +321,7 @@ export const bookOperationRows: OperationRow[] = [
       },
     }),
     complete: (receipt, context) => {
+      const terminal = receipt.terminal as any;
       const output = context.allowedSources.find(
         ({ path, format }: any) =>
           receipt.output_path === path && receipt.format === format,
@@ -290,35 +331,41 @@ export const bookOperationRows: OperationRow[] = [
           receipt.write_state === "written") ||
         (receipt.terminal.disposition === "reused" &&
           receipt.write_state === "not_written");
-      const expectedYear = context.yearDecision
-        ? context.yearDecision.year_evidence.slug_year
-        : context.expectedYear;
-      const decisionEcho =
-        !context.yearDecision ||
-        (receipt.tmp_path === context.yearDecision.tmp_path &&
+      const evidence = parseBookYearEvidence(
+        terminal.year_evidence,
+      );
+      const decisionEcho = context.yearDecision
+        ? terminal.tmp_path === context.yearDecision.tmp_path &&
           sameClosedValue(
-            receipt.year_evidence,
+            evidence,
             context.yearDecision.year_evidence,
-          ));
-      const yearAccepted =
-        receipt.year_evidence &&
-        validYearEvidence(receipt.year_evidence, expectedYear) &&
-        (receipt.year_evidence.verdict === "MATCH" ||
-          context.batchAcceptYear === true ||
-          context.yearDecision);
+          )
+        : evidence !== null &&
+          evidence.slug_year === context.expectedYear &&
+          evidence.verdict === "MATCH";
       return !!(
         output &&
         receipt.identity_verified === true &&
         dispositionCoherent &&
-        decisionEcho &&
-        yearAccepted
+        evidence !== null &&
+        decisionEcho
       );
     },
     envelope: (
-      { slug, meta, materialKey, batchAcceptYear },
+      { slug, meta, materialKey, invocationIdentity },
       { allowedSources, yearDecision },
     ) => {
       const formats = allowedSources.map(({ format }: any) => format);
+      const identity = invocationIdentity || {
+        title: meta.title,
+        authors: meta.authors,
+        year: meta.year,
+        isbn: meta.isbn || null,
+        publisher: meta.publisher,
+        category: meta.category,
+        confidence:
+          meta.confidence === "verified" ? "verified" : "provided",
+      };
       return {
         schema_version: "quasi.stage.request/0.2",
         operation: "book.acquire",
@@ -330,17 +377,11 @@ export const bookOperationRows: OperationRow[] = [
         allowed_formats: formats,
         allowed_outputs: allowedSources,
         refs: { allowed_outputs: allowedSources },
-        identity: {
-          title: meta.title,
-          authors: meta.authors,
-          year: meta.year,
-          isbn: meta.isbn || null,
-          publisher: meta.publisher,
-          category: meta.category,
-          confidence: meta.confidence === "verified" ? "verified" : "provided",
-        },
+        identity,
+        current_identity: yearDecision
+          ? yearDecision.current_identity
+          : null,
         identity_contract: BOOK_ARTIFACT_CONTRACT.identity,
-        batch_accept_year: Boolean(batchAcceptYear),
         year_decision: yearDecision,
         resource_bounds: { fetch_budget_per_candidate: 1, accept_budget: 1 },
         shell_argv: {

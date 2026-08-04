@@ -188,12 +188,6 @@ export interface UserDecision {
   value: unknown;
 }
 
-export interface BookYearDecisionValue {
-  tmp_path: string;
-  year_evidence: WorkflowContext;
-  action: "accept-current" | "use-recommended-year";
-}
-
 export interface TranslationSourceDecisionValue {
   candidates_fingerprint: string;
   source_path: string;
@@ -734,22 +728,6 @@ export const parseUserDecision = (
   )
     return null;
   return value as unknown as UserDecision;
-};
-
-export const parseBookYearDecisionValue = (
-  value: unknown,
-): BookYearDecisionValue | null => {
-  if (
-    !isRecord(value) ||
-    !exactKeys(value, ["tmp_path", "year_evidence", "action"]) ||
-    typeof value.tmp_path !== "string" ||
-    !isRecord(value.year_evidence) ||
-    !["accept-current", "use-recommended-year"].includes(
-      value.action as string,
-    )
-  )
-    return null;
-  return value as unknown as BookYearDecisionValue;
 };
 
 export const parseTranslationSourceDecisionValue = (

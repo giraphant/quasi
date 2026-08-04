@@ -50,6 +50,13 @@ Request 若带有 `identity_decision`，它是 caller 已校验并回显过完�
 选择。本次调用只为该 selected identity 重新观察 local owner；`complete.identity` 必须逐字段
 等于选择值，不能再次改选另一个身份。
 
+Book Request 若带有 `year_decision`，只会是 caller 已校验的 `use-recommended-year` 分支；
+其中的 `current_identity`、prior year evidence 和 material key 都由 caller 绑定。本次调用负责
+根据同一作品的书目证据返回一个完整的新 Book identity：year 必须等于 prior evidence 的
+`recommended_year`，canonical identity slug 也由本次书目判断拥有，不能由旧 slug 做字符串
+替换。随后照常用新 identity 查询 local owner；resolver 的 `vault_slug` 可以与新 identity slug
+不同。`accept-current` 不会调用本阶段，普通 Search 也不会收到 Book year handoff。
+
 选定身份后，用 vault resolver 查询该完整身份，只消费对应的唯一 helper row
 `{kind,slug,vault_slug,path,match,error?}`。先检查 `error`：row 只要含有该字段就返回
 `blocked`。仅当 row 不含 `error` 且 `vault_slug`、`path`、`match` 三项都是 null 时，返回

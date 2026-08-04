@@ -3,6 +3,137 @@ import {
   sameClosedValue,
   validText,
 } from "../runtime.mts";
+import {
+  parseBookIdentity,
+  validMaterialSlug,
+  type BookIdentity,
+} from "../shared/material-input.mts";
+import {
+  parseBookYearEvidence,
+  validBookTempPath,
+  type BookYearEvidence,
+} from "../operations/book-year-evidence.mts";
+
+export interface BookYearDecisionValue {
+  current_identity: BookIdentity;
+  tmp_path: string;
+  year_evidence: BookYearEvidence;
+  action: "accept-current" | "use-recommended-year";
+}
+
+export interface BookYearGate {
+  kind: "book_year";
+  operation: "book.acquire";
+  material_key: string;
+  current_identity: BookIdentity;
+  question: string;
+  tmp_path: string;
+  year_evidence: BookYearEvidence;
+  proposed_actions: Array<
+    "accept-current" | "use-recommended-year"
+  >;
+}
+
+export const parseBookYearDecisionValue = (
+  value: unknown,
+): BookYearDecisionValue | null => {
+  if (
+    !exactKeys(value, [
+      "current_identity",
+      "tmp_path",
+      "year_evidence",
+      "action",
+    ])
+  )
+    return null;
+  const decision = value as Record<string, unknown>;
+  const currentIdentity = parseBookIdentity(decision.current_identity);
+  const evidence = parseBookYearEvidence(decision.year_evidence);
+  const action = decision.action;
+  if (
+    currentIdentity === null ||
+    !validBookTempPath(decision.tmp_path) ||
+    evidence === null ||
+    evidence.slug_year !== currentIdentity.year ||
+    (action === "accept-current" &&
+      !["MISMATCH", "AMBIGUOUS"].includes(evidence.verdict)) ||
+    (action === "use-recommended-year" &&
+      evidence.verdict !== "MISMATCH") ||
+    !["accept-current", "use-recommended-year"].includes(
+      action as string,
+    )
+  )
+    return null;
+  return {
+    current_identity: currentIdentity,
+    tmp_path: decision.tmp_path,
+    year_evidence: evidence,
+    action,
+  } as BookYearDecisionValue;
+};
+
+const validBookMaterialKey = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.startsWith("book:") &&
+  validMaterialSlug(value.slice("book:".length));
+
+export const parseBookYearGate = (
+  receipt: any,
+  currentIdentityValue: unknown,
+): BookYearGate | null => {
+  const currentIdentity = parseBookIdentity(currentIdentityValue);
+  const terminal = receipt?.terminal;
+  const issue = terminal?.issue;
+  const evidence = parseBookYearEvidence(terminal?.year_evidence);
+  if (
+    currentIdentity === null ||
+    receipt?.operation !== "book.acquire" ||
+    !validBookMaterialKey(receipt?.material_key) ||
+    !exactKeys(terminal, [
+      "status",
+      "issue",
+      "tmp_path",
+      "year_evidence",
+      "proposed_actions",
+    ]) ||
+    terminal.status !== "needs_input" ||
+    !exactKeys(issue, [
+      "code",
+      "operation",
+      "summary",
+      "user_question",
+      "retryable",
+    ]) ||
+    issue.operation !== "book.acquire" ||
+    !validText(issue.summary, 1, 4000) ||
+    !validText(issue.user_question, 1, 4000) ||
+    typeof issue.retryable !== "boolean" ||
+    !validBookTempPath(terminal.tmp_path) ||
+    evidence === null ||
+    evidence.slug_year !== currentIdentity.year ||
+    (evidence.verdict === "MISMATCH"
+      ? issue.code !== "book.year_mismatch" ||
+        !sameClosedValue(terminal.proposed_actions, [
+          "accept-current",
+          "use-recommended-year",
+        ])
+      : evidence.verdict === "AMBIGUOUS"
+        ? issue.code !== "book.year_ambiguous" ||
+          !sameClosedValue(terminal.proposed_actions, ["accept-current"])
+        : true)
+  )
+    return null;
+  return {
+    kind: "book_year",
+    operation: "book.acquire",
+    material_key: receipt.material_key,
+    current_identity: currentIdentity,
+    question: issue.user_question,
+    tmp_path: terminal.tmp_path,
+    year_evidence: evidence,
+    proposed_actions: terminal.proposed_actions,
+  };
+};
 
 export interface BookStructureChapter {
   title: string;

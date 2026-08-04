@@ -497,11 +497,7 @@ def test_decision_applies_only_to_matching_next_operation_and_fresh_state():
     decision = {
         "material_key": "book:exact-book",
         "operation": "book.acquire",
-        "value": {
-            "tmp_path": ".quasi/temp/exact-book.pdf",
-            "year_evidence": {"recommended_year": 2020},
-            "action": "use-recommended-year",
-        },
+        "value": book_year_decision("use-recommended-year"),
     }
 
     matching = run_workflow_export(
@@ -543,22 +539,12 @@ def test_decision_applies_only_to_matching_next_operation_and_fresh_state():
     assert stale is None
 
 
-def test_gate_decision_values_keep_their_evidence_bindings():
-    book_value = {
-        "tmp_path": ".quasi/temp/exact-book.pdf",
-        "year_evidence": {"recommended_year": 2020},
-        "action": "accept-current",
-    }
+def test_translation_decision_value_keeps_its_evidence_binding():
     translation_value = {
         "candidates_fingerprint": "a" * 64,
         "source_path": "sources/exact-paper.pdf",
     }
 
-    assert run_workflow_export(
-        INPUT_MODULE,
-        "parseBookYearDecisionValue",
-        book_value,
-    ) == book_value
     assert run_workflow_export(
         INPUT_MODULE,
         "parseTranslationSourceDecisionValue",
@@ -660,6 +646,170 @@ def test_identity_conflict_decision_echoes_gate_and_selects_a_member():
         "parseIdentityConflictDecisionValue",
         foreign_selection,
         gate,
+    ) is None
+
+
+def book_year_evidence(
+    verdict: str,
+    *,
+    slug_year: int = 2024,
+) -> dict[str, Any]:
+    recommended_year = {
+        "MATCH": slug_year,
+        "MISMATCH": 2025,
+        "AMBIGUOUS": None,
+    }[verdict]
+    return {
+        "slug_year": slug_year,
+        "source_years": {"publisher": 2025, "catalogue": 2025},
+        "pdf_signals": {
+            "first_published": 2025,
+            "copyright_year": 2025,
+            "original_year": None,
+            "other_years": [2024],
+        },
+        "recommended_year": recommended_year,
+        "recommendation_reason": "Publisher and catalogue evidence agree.",
+        "verdict": verdict,
+    }
+
+
+def book_year_decision(action: str) -> dict[str, Any]:
+    verdict = "AMBIGUOUS" if action == "accept-current" else "MISMATCH"
+    return {
+        "current_identity": deepcopy(BOOK_IDENTITY),
+        "tmp_path": ".quasi/temp/downloads/exact-book.pdf",
+        "year_evidence": book_year_evidence(verdict),
+        "action": action,
+    }
+
+
+@pytest.mark.parametrize("action", ["accept-current", "use-recommended-year"])
+def test_book_year_decision_preserves_all_four_bound_values(action: str):
+    value = book_year_decision(action)
+
+    assert run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookYearDecisionValue",
+        value,
+    ) == value
+
+
+@pytest.mark.parametrize(
+    ("verdict", "action"),
+    [
+        ("MATCH", "accept-current"),
+        ("MATCH", "use-recommended-year"),
+        ("AMBIGUOUS", "use-recommended-year"),
+    ],
+)
+def test_book_year_decision_rejects_actions_without_a_prior_gate(
+    verdict: str,
+    action: str,
+):
+    value = book_year_decision(action)
+    value["year_evidence"] = book_year_evidence(verdict)
+
+    assert run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookYearDecisionValue",
+        value,
+    ) is None
+
+
+def test_book_year_decision_binds_evidence_to_current_identity_year():
+    value = book_year_decision("accept-current")
+    value["year_evidence"] = book_year_evidence("AMBIGUOUS", slug_year=2023)
+
+    assert run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookYearDecisionValue",
+        value,
+    ) is None
+
+
+def book_year_receipt(
+    verdict: str,
+    *,
+    material_key: str = "book:owned-book",
+) -> dict[str, Any]:
+    issue_code = {
+        "MATCH": "book.year_mismatch",
+        "MISMATCH": "book.year_mismatch",
+        "AMBIGUOUS": "book.year_ambiguous",
+    }[verdict]
+    proposed_actions = (
+        ["accept-current", "use-recommended-year"]
+        if verdict == "MISMATCH"
+        else ["accept-current"]
+    )
+    return {
+        "operation": "book.acquire",
+        "material_key": material_key,
+        "terminal": {
+            "status": "needs_input",
+            "issue": {
+                "code": issue_code,
+                "operation": "book.acquire",
+                "summary": "The source year needs a user decision.",
+                "user_question": "Which publication year should be retained?",
+                "retryable": False,
+            },
+            "tmp_path": ".quasi/temp/downloads/exact-book.pdf",
+            "year_evidence": book_year_evidence(verdict),
+            "proposed_actions": proposed_actions,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("verdict", "proposed_actions"),
+    [
+        ("MISMATCH", ["accept-current", "use-recommended-year"]),
+        ("AMBIGUOUS", ["accept-current"]),
+    ],
+)
+def test_book_year_gate_keeps_owner_key_separate_from_identity_slug(
+    verdict: str,
+    proposed_actions: list[str],
+):
+    receipt = book_year_receipt(verdict)
+
+    gate = run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookYearGate",
+        receipt,
+        BOOK_IDENTITY,
+    )
+
+    assert gate == {
+        "kind": "book_year",
+        "operation": "book.acquire",
+        "material_key": "book:owned-book",
+        "current_identity": BOOK_IDENTITY,
+        "question": "Which publication year should be retained?",
+        "tmp_path": ".quasi/temp/downloads/exact-book.pdf",
+        "year_evidence": receipt["terminal"]["year_evidence"],
+        "proposed_actions": proposed_actions,
+    }
+
+
+@pytest.mark.parametrize("mutation", ["verdict", "issue", "actions"])
+def test_book_year_gate_rejects_verdict_issue_action_incoherence(mutation: str):
+    receipt = book_year_receipt("MISMATCH")
+    terminal = receipt["terminal"]
+    if mutation == "verdict":
+        terminal["year_evidence"] = book_year_evidence("MATCH")
+    elif mutation == "issue":
+        terminal["issue"]["code"] = "book.year_ambiguous"
+    else:
+        terminal["proposed_actions"] = ["accept-current"]
+
+    assert run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookYearGate",
+        receipt,
+        BOOK_IDENTITY,
     ) is None
 
 

@@ -11,6 +11,7 @@ import {
   IDENTITY_CONFLICTS,
   parseIdentityConflictDecisionValue,
 } from "../../contracts/search.mts";
+import { parseBookYearDecisionValue } from "../../contracts/book.mts";
 import { issueSchema } from "../shared.mts";
 import type { OperationRow } from "../../artifact-contracts/generated.mjs";
 
@@ -116,13 +117,30 @@ export const materialSearchOperationRows: OperationRow[] = [
         throw new InputContractError(
           "material.search requires one same-kind identity decision",
         );
+      const rawYearDecision = contextValue(
+        rawContext,
+        "yearDecision",
+        "year_decision",
+      );
+      const yearDecision =
+        rawYearDecision == null
+          ? null
+          : parseBookYearDecisionValue(rawYearDecision);
+      if (
+        rawYearDecision != null &&
+        (base.kind !== "book" ||
+          yearDecision === null ||
+          yearDecision.action !== "use-recommended-year")
+      )
+        throw new InputContractError(
+          "material.search accepts only a Book recommended-year decision",
+        );
       return {
         ...base,
         requestedSlug: base.slug,
         query: rawContext.query || rawContext.request || base.meta,
         identityDecision,
-        yearDecision:
-          contextValue(rawContext, "yearDecision", "year_decision") || null,
+        yearDecision,
       };
     },
     refs: ({
@@ -198,6 +216,9 @@ export const materialSearchOperationRows: OperationRow[] = [
           receipt.identity,
           context.identityDecision.selected_candidate.identity,
         )) &&
+      (context.yearDecision === null ||
+        receipt.identity.year ===
+          context.yearDecision.year_evidence.recommended_year) &&
       validLocalOwner(
         receipt.local_owner,
         receipt.kind,
@@ -215,7 +236,12 @@ export const materialSearchOperationRows: OperationRow[] = [
       requested_slug: refs.requestedSlug,
       query: refs.query,
       identity_decision: refs.identityDecision,
-      year_decision: refs.yearDecision,
+      ...(refs.yearDecision
+        ? {
+            current_identity: refs.yearDecision.current_identity,
+            year_decision: refs.yearDecision,
+          }
+        : {}),
       identity_contract:
         refs.kind === "book"
           ? BOOK_ARTIFACT_CONTRACT.identity
