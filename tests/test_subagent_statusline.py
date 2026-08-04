@@ -309,6 +309,8 @@ def test_refresh_path_imports_only_stdlib_and_does_no_external_work() -> None:
         "socket.socket",
         "subprocess.Popen",
         "subprocess.call",
+        "subprocess.getoutput",
+        "subprocess.getstatusoutput",
         "subprocess.run",
         "urllib.request.urlopen",
         "urllib.request.urlretrieve",
