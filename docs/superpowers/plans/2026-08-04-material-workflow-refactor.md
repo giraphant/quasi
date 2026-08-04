@@ -565,16 +565,22 @@ git commit -m "refactor: expose factual material status observations"
 - Create: `scripts/workflows/operations/catalogs/book.mts`
 - Create: `scripts/workflows/operations/catalogs/talk.mts`
 - Create: `scripts/workflows/operations/catalogs/translation.mts`
+- Modify: `scripts/build-workflows.mjs`
+- Modify: `scripts/schemas/export_contracts.py`
+- Modify: `scripts/workflows/artifact-contracts/generated.mjs` (generated)
+- Modify: `scripts/workflows/artifact-contracts/generated.d.mts` (generated)
 - Modify: `scripts/workflows/shared/dispatch.mts`
 - Modify: `scripts/workflows/operations/catalog.mts`
 - Modify: `tests/test_workflow_dispatch.py`
 - Modify: `tests/test_workflow_bundle_abi.py`
 
-- [ ] Add one esbuild-metafile dependency test proving that a prepared-dispatch probe imports neither `operations/catalog.mts` nor any operation row, and one probe per leaf material proving that its preparer imports only Search plus that material's row modules. This is the executable independence boundary, not a snapshot of bundle text or byte size.
+- [ ] Add one esbuild-metafile dependency test proving that a prepared-dispatch probe imports neither `operations/catalog.mts` nor any operation row, and one parameterized probe proving the exact leaf row sets: Paper `{search,paper}`, Book `{search,book}`, Talk `{talk}`, Translation `{translation}`. Search is intentionally shared by Paper/Book. No leaf probe may import the universal catalog. This is the executable independence boundary, not a snapshot of bundle text or byte size.
 
 - [ ] Move `DispatchOutcome` and `dispatchPreparedOperation()` into `dispatch-prepared.mts`, which imports only host/result/artifact types and never imports a catalog. Keep the temporary compatibility `dispatchOperation()` in `dispatch.mts`; it alone may import the universal catalog until Task 13. Do not duplicate error mapping or add another receipt validator.
 
-- [ ] Extract the row-parameterized preparation algorithm into `operations/prepare.mts`. Material-local catalog modules pass only their exact row sets: Paper = Search + Paper, Book = Search + Book, Talk = Talk, Translation = Translation. They use the generated factual operation identity projection and the same `defineOperation` path; they do not copy phase/effect/agent/artifact values or introduce hand-maintained stage sequences. A leaf plan imports its one material catalog and `dispatch-prepared.mts`, never `operations/catalog.mts` or `shared/dispatch.mts`.
+- [ ] Extract the row-parameterized preparation algorithm and its `CatalogOperation/OperationInvocation/PreparedOperation` types into `operations/prepare.mts`. It accepts an exact generated identity array plus exact rows and imports neither `PIPELINE`, a catalog, nor any row. Material-local catalog modules inject kind and pass only their row sets through the same `defineOperation` path; they do not copy phase/effect/agent/artifact values, add defensive kind branches, or introduce hand-maintained sequences. A leaf plan imports its one material catalog and `dispatch-prepared.mts`, never `operations/catalog.mts` or `shared/dispatch.mts`.
+
+- [ ] Generate independent array literals `PAPER_OPERATION_IDENTITIES`, `BOOK_OPERATION_IDENTITIES`, `TALK_OPERATION_IDENTITIES`, `TRANSLATION_OPERATION_IDENTITIES`, `TOPIC_OPERATION_IDENTITIES`, and `AUTHOR_OPERATION_IDENTITIES` from the existing `pipeline.py` source of truth. Do not define them as `PIPELINE.<kind>.stages`: esbuild retains the whole object even for static property access. Assemble compatibility `PIPELINE` from those same generated arrays so there is no second identity source; emit matching `.d.mts` declarations.
 
 - [ ] Keep the compatibility catalog as a thin aggregation over the same preparer and all rows so every existing caller remains runnable. Task 13 deletes that aggregation with `run-stage`; no named Workflow gains a universal resolver.
 
@@ -583,7 +589,7 @@ git commit -m "refactor: expose factual material status observations"
 ```bash
 npm run check:workflows
 python3 -m pytest tests/test_workflow_dispatch.py tests/test_workflow_bundle_abi.py tests/test_run_stage.py -q
-git add scripts/workflows/shared/dispatch-prepared.mts scripts/workflows/shared/dispatch.mts scripts/workflows/operations/prepare.mts scripts/workflows/operations/catalog.mts scripts/workflows/operations/catalogs tests/test_workflow_dispatch.py tests/test_workflow_bundle_abi.py
+git add scripts/build-workflows.mjs scripts/schemas/export_contracts.py scripts/workflows/artifact-contracts/generated.mjs scripts/workflows/artifact-contracts/generated.d.mts scripts/workflows/shared/dispatch-prepared.mts scripts/workflows/shared/dispatch.mts scripts/workflows/operations/prepare.mts scripts/workflows/operations/catalog.mts scripts/workflows/operations/catalogs tests/test_workflow_dispatch.py tests/test_workflow_bundle_abi.py
 git commit -m "refactor: isolate material operation dependencies"
 ```
 
@@ -596,14 +602,18 @@ git commit -m "refactor: isolate material operation dependencies"
 - Create/Modify: `scripts/workflows/contracts/talk.mts`
 - Create/Modify: `scripts/workflows/contracts/translation.mts`
 - Create/Modify: `scripts/workflows/contracts/topic.mts`
+- Modify: `scripts/workflows/contracts/search.mts`
 - Modify: `scripts/workflows/shared/material-input.mts`
 - Modify: `scripts/workflows/shared/material-result.mts`
 - Modify: `tests/test_material_result.py`
 - Modify: `tests/test_workflow_bundle_abi.py`
+- Modify: `tests/test_skill_orchestration.py`
 
-- [ ] Move closed identities, kind-specific status facts, seed parsing, and gate/decision parsing into their owning domain contract modules. `material-input.mts` retains only genuine shared primitives: slug/language normalization where cross-kind, the UserDecision envelope, observation keys/maps, and small envelope helpers. Do not create a new framework or a barrel that makes every leaf import every domain contract.
+- [ ] Move closed identities, kind-specific status facts, seed parsing, and gate/decision parsing into their owning domain contract modules. `material-input.mts` retains only genuine shared primitives: slug/language normalization, shared artifact/status-envelope primitives, generic `LeafSeed`, the UserDecision envelope, observation keys/maps, a binder for observations already validated by the owning domain parser, and small exact-envelope helpers. Delete its six-kind runtime facts union and parser switch. Do not create a parser registry, framework, `contracts/index.mts`, `export *` barrel, or shared-result re-export that makes every leaf import every domain.
 
-- [ ] Give Paper and Book separate public entry parsers; a named entry imports only its own parser plus shared primitives. Delete the generic `parseLeafMaterialInput` export in this task and migrate its tests to those real parser seams; it has no production caller and must not survive as a temporary Paper/Book barrel. Preserve behavior while moving code; do not add field-permutation tests.
+- [ ] Keep ownership direct: Paper owns Paper identity/intake/status/owner-drift/run-input parsing; Book owns the corresponding Book contracts plus structure/year; Talk, Translation, and Topic own their status and gate types; Search remains the explicit cross-domain identity-conflict seam and type-imports Paper/Book. `material-result.mts` may type-import domain result members but has no runtime import or re-export of their parsers. Author adds its domain status contract with Task 11 rather than remaining a shared special case.
+
+- [ ] Give Paper and Book separate `parsePaperRunInput` / `parseBookRunInput` public parsers over the same exact `{seed,observation,options,userDecision?}` envelope; a named entry imports only its own parser plus shared primitives. Delete `parseLeafMaterialInput` and its generic parsed-result types in this task and migrate tests to the real parser seams; it has no production caller and must not survive as a temporary Paper/Book barrel. `tests/test_skill_orchestration.py` must validate a status through its domain parser before exercising the sparse binder. Preserve behavior while moving code; do not add field-permutation tests.
 
 - [ ] Remove `receipts` from `MaterialResultBase` and its constructors. Plans keep validated current-run receipts only in local variables for carry, joining, and bounded repair; Skills and higher-order plans receive only material identity, terminal, issue/gate, exact artifacts, `next`, or Topic pending work. Add one public-result shape test plus one owner-drift case proving `material.canonical.slug` is the runtime vault slug while bibliographic identity remains separate, then delete receipt-shape assertions rather than replacing them with a compact trace that has no consumer.
 
@@ -613,8 +623,8 @@ git commit -m "refactor: isolate material operation dependencies"
 
 ```bash
 npm run check:workflows
-python3 -m pytest tests/test_material_result.py tests/test_workflow_dispatch.py tests/test_workflow_bundle_abi.py -q
-git add scripts/workflows/contracts scripts/workflows/shared/material-input.mts scripts/workflows/shared/material-result.mts tests/test_material_result.py tests/test_workflow_bundle_abi.py
+python3 -m pytest tests/test_material_result.py tests/test_workflow_dispatch.py tests/test_workflow_bundle_abi.py tests/test_skill_orchestration.py -q
+git add scripts/workflows/contracts scripts/workflows/shared/material-input.mts scripts/workflows/shared/material-result.mts tests/test_material_result.py tests/test_workflow_bundle_abi.py tests/test_skill_orchestration.py
 git commit -m "refactor: keep material contracts and results narrow"
 ```
 
