@@ -56,6 +56,30 @@ PAPER_OBSERVATION = {
 }
 
 
+BOOK_OBSERVATION = {
+    "schema_version": "quasi.status/0.2",
+    "kind": "book",
+    "slug": "request-book-1",
+    "identity": None,
+    "facts": {
+        "kind": "book",
+        "sources": [],
+        "manifest": {
+            "path": "processing/chapters/request-book-1/manifest.json",
+            "present": False,
+            "usable": False,
+            "valid": False,
+        },
+        "chapters": [],
+        "overview": {
+            "path": "vault/books/request-book-1/overview.md",
+            "present": False,
+            "usable": False,
+        },
+    },
+}
+
+
 def translation_observation(target_language: str) -> dict[str, Any]:
     target = target_language.lower()
     return {
@@ -89,7 +113,11 @@ def translation_observation(target_language: str) -> dict[str, Any]:
 
 def valid_input() -> dict[str, Any]:
     return {
-        "identity": deepcopy(PAPER_IDENTITY),
+        "seed": {
+            "state": "canonical",
+            "material_slug": "exact-paper",
+            "identity": deepcopy(PAPER_IDENTITY),
+        },
         "observation": deepcopy(PAPER_OBSERVATION),
         "options": {},
     }
@@ -99,13 +127,45 @@ def parse_paper(value: Any) -> dict[str, Any]:
     return run_workflow_export(INPUT_MODULE, "parseLeafMaterialInput", value, "paper")
 
 
-def assert_invalid_input(result: dict[str, Any], requested_slug: str | None) -> None:
+def parse_book(value: Any) -> dict[str, Any]:
+    return run_workflow_export(INPUT_MODULE, "parseLeafMaterialInput", value, "book")
+
+
+def assert_parsed_seed(
+    value: dict[str, Any],
+    kind: str,
+    observation_key: str,
+) -> None:
+    result = run_workflow_export(
+        INPUT_MODULE,
+        "parseLeafMaterialInput",
+        value,
+        kind,
+    )
+    assert result == {
+        "ok": True,
+        "value": {
+            "seed": value["seed"],
+            "observations": {
+                "__map_entries__": [[observation_key, value["observation"]]]
+            },
+            "options": value["options"],
+            "userDecision": None,
+        },
+    }
+
+
+def assert_invalid_input(
+    result: dict[str, Any],
+    requested_slug: str | None,
+    kind: str = "paper",
+) -> None:
     assert result == {
         "ok": False,
         "result": {
             "schema_version": "quasi.material.result/0.1",
             "material": {
-                "requested": {"kind": "paper", "slug": requested_slug},
+                "requested": {"kind": kind, "slug": requested_slug},
                 "canonical": None,
             },
             "receipts": [],
@@ -126,18 +186,18 @@ def test_non_object_input_blocks_before_dispatch(value: Any):
     assert_invalid_input(parse_paper(value), None)
 
 
-def test_missing_identity_blocks_before_dispatch():
+def test_canonical_seed_missing_full_identity_blocks_before_dispatch():
     value = valid_input()
-    del value["identity"]
+    del value["seed"]["identity"]
 
-    assert_invalid_input(parse_paper(value), None)
+    assert_invalid_input(parse_paper(value), "exact-paper")
 
 
-def test_malformed_slug_blocks_before_dispatch():
+def test_canonical_seed_with_malformed_identity_slug_blocks_before_dispatch():
     value = valid_input()
-    value["identity"]["slug"] = "Not/A-Slug"
+    value["seed"]["identity"]["slug"] = "Not/A-Slug"
 
-    assert_invalid_input(parse_paper(value), None)
+    assert_invalid_input(parse_paper(value), "exact-paper")
 
 
 def test_missing_observation_blocks_before_dispatch():
@@ -147,20 +207,108 @@ def test_missing_observation_blocks_before_dispatch():
     assert_invalid_input(parse_paper(value), "exact-paper")
 
 
-def test_valid_material_envelope_builds_one_sparse_observation_map():
-    result = parse_paper(valid_input())
+def test_strict_canonical_seed_builds_one_sparse_observation_map():
+    assert_parsed_seed(valid_input(), "paper", "paper:exact-paper")
 
-    assert result == {
-        "ok": True,
-        "value": {
-            "identity": PAPER_IDENTITY,
-            "observations": {
-                "__map_entries__": [["paper:exact-paper", PAPER_OBSERVATION]]
-            },
-            "options": {},
-            "userDecision": None,
+
+def test_minimal_paper_doi_seed_preserves_provisional_identity():
+    value = {
+        "seed": {
+            "state": "provisional",
+            "requested_slug": "request-paper-1",
+            "hints": {"doi": "10.1000/provisional"},
         },
+        "observation": {
+            **deepcopy(PAPER_OBSERVATION),
+            "slug": "request-paper-1",
+        },
+        "options": {},
     }
+
+    assert_parsed_seed(value, "paper", "paper:request-paper-1")
+
+
+def test_minimal_book_isbn_seed_preserves_provisional_identity():
+    value = {
+        "seed": {
+            "state": "provisional",
+            "requested_slug": "request-book-1",
+            "hints": {"isbn": "9780000000000"},
+        },
+        "observation": deepcopy(BOOK_OBSERVATION),
+        "options": {},
+    }
+
+    assert_parsed_seed(value, "book", "book:request-book-1")
+
+
+@pytest.mark.parametrize(
+    ("kind", "seed", "observation"),
+    [
+        (
+            "paper",
+            {"state": "provisional", "requested_slug": "request-paper-1", "hints": {}},
+            {**deepcopy(PAPER_OBSERVATION), "slug": "request-paper-1"},
+        ),
+        (
+            "book",
+            {"state": "provisional", "requested_slug": "request-book-1", "hints": {}},
+            BOOK_OBSERVATION,
+        ),
+    ],
+)
+def test_provisional_seed_requires_one_search_anchor(
+    kind: str,
+    seed: dict[str, Any],
+    observation: dict[str, Any],
+):
+    value = {"seed": seed, "observation": observation, "options": {}}
+
+    result = run_workflow_export(
+        INPUT_MODULE,
+        "parseLeafMaterialInput",
+        value,
+        kind,
+    )
+
+    requested_slug = seed["requested_slug"]
+    assert_invalid_input(result, requested_slug, kind)
+
+
+def test_provisional_observation_binds_to_requested_slug():
+    value = {
+        "seed": {
+            "state": "provisional",
+            "requested_slug": "request-paper-1",
+            "hints": {"title": "A provisional paper"},
+        },
+        "observation": deepcopy(PAPER_OBSERVATION),
+        "options": {},
+    }
+
+    assert_invalid_input(parse_paper(value), "request-paper-1")
+
+
+def test_canonical_observation_binds_to_material_slug():
+    value = valid_input()
+    value["seed"]["material_slug"] = "owned-paper"
+
+    assert_invalid_input(parse_paper(value), "owned-paper")
+
+
+def test_owner_drift_keeps_material_slug_separate_from_identity_slug():
+    value = valid_input()
+    value["seed"]["material_slug"] = "owned-paper"
+    value["observation"]["slug"] = "owned-paper"
+
+    assert_parsed_seed(value, "paper", "paper:owned-paper")
+
+
+def test_unknown_seed_key_blocks_before_dispatch():
+    value = valid_input()
+    value["seed"]["cursor"] = "hidden-state"
+
+    assert_invalid_input(parse_paper(value), "exact-paper")
 
 
 @pytest.mark.parametrize(

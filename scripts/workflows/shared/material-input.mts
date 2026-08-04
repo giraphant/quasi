@@ -45,6 +45,29 @@ export interface BookIdentity {
   confidence: "high" | "medium";
 }
 
+export interface PaperIntake {
+  title?: string;
+  doi?: string;
+  authors?: string[];
+  year?: number;
+  journal?: string;
+  oa_url?: string;
+  url?: string;
+}
+
+export interface BookIntake {
+  title?: string;
+  isbn?: string;
+  authors?: string[];
+  year?: number;
+  publisher?: string;
+  category?: BookIdentity["category"];
+}
+
+export type LeafSeed<TIntake, TIdentity> =
+  | { state: "provisional"; requested_slug: string; hints: TIntake }
+  | { state: "canonical"; material_slug: string; identity: TIdentity };
+
 export interface TranslationCandidate {
   path: string;
   sha256: string;
@@ -177,9 +200,10 @@ export interface TranslationSourceDecisionValue {
 }
 
 export interface ParsedLeafMaterialInput<
+  TIntake extends PaperIntake | BookIntake,
   TIdentity extends PaperIdentity | BookIdentity,
 > {
-  identity: TIdentity;
+  seed: LeafSeed<TIntake, TIdentity>;
   observations: SparseObservationMap;
   options: Readonly<Record<string, unknown>>;
   userDecision: UserDecision | null;
@@ -188,7 +212,10 @@ export interface ParsedLeafMaterialInput<
 export type ParsedLeafMaterialInputResult =
   | {
       ok: true;
-      value: ParsedLeafMaterialInput<PaperIdentity | BookIdentity>;
+      value: ParsedLeafMaterialInput<
+        PaperIntake | BookIntake,
+        PaperIdentity | BookIdentity
+      >;
     }
   | { ok: false; result: MaterialResult };
 
@@ -305,6 +332,118 @@ export const parseBookIdentity = (
   )
     return null;
   return value as unknown as BookIdentity;
+};
+
+const optionalString = (
+  value: Record<string, unknown>,
+  key: string,
+  minLength: number,
+  maxLength: number,
+): boolean =>
+  !Object.hasOwn(value, key) || validString(value[key], minLength, maxLength);
+
+const optionalAuthors = (
+  value: Record<string, unknown>,
+): boolean => !Object.hasOwn(value, "authors") || validAuthors(value.authors);
+
+const optionalYear = (value: Record<string, unknown>): boolean =>
+  !Object.hasOwn(value, "year") ||
+  (Number.isInteger(value.year) &&
+    (value.year as number) >= 1500 &&
+    (value.year as number) <= 2030);
+
+const parsePaperIntake = (value: unknown): PaperIntake | null => {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, [], [
+      "title",
+      "doi",
+      "authors",
+      "year",
+      "journal",
+      "oa_url",
+      "url",
+    ]) ||
+    (!Object.hasOwn(value, "title") && !Object.hasOwn(value, "doi")) ||
+    !optionalString(value, "title", 1, 500) ||
+    !optionalString(value, "doi", 1, 300) ||
+    !optionalAuthors(value) ||
+    !optionalYear(value) ||
+    !optionalString(value, "journal", 1, 500) ||
+    !optionalString(value, "oa_url", 1, 2048) ||
+    !optionalString(value, "url", 1, 2048)
+  )
+    return null;
+  return value as PaperIntake;
+};
+
+const parseBookIntake = (value: unknown): BookIntake | null => {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, [], [
+      "title",
+      "isbn",
+      "authors",
+      "year",
+      "publisher",
+      "category",
+    ]) ||
+    (!Object.hasOwn(value, "title") && !Object.hasOwn(value, "isbn")) ||
+    !optionalString(value, "title", 1, 500) ||
+    !optionalString(value, "isbn", 1, 100) ||
+    !optionalAuthors(value) ||
+    !optionalYear(value) ||
+    !optionalString(value, "publisher", 2, 500) ||
+    (Object.hasOwn(value, "category") &&
+      !["monograph", "edited-volume", "handbook", "other"].includes(
+        value.category as string,
+      ))
+  )
+    return null;
+  return value as BookIntake;
+};
+
+const parseLeafSeed = (
+  value: unknown,
+  kind: "paper" | "book",
+):
+  | LeafSeed<PaperIntake, PaperIdentity>
+  | LeafSeed<BookIntake, BookIdentity>
+  | null => {
+  if (!isRecord(value)) return null;
+  if (
+    value.state === "provisional" &&
+    exactKeys(value, ["state", "requested_slug", "hints"]) &&
+    validMaterialSlug(value.requested_slug)
+  ) {
+    if (kind === "paper") {
+      const hints = parsePaperIntake(value.hints);
+      return hints === null
+        ? null
+        : { state: "provisional", requested_slug: value.requested_slug, hints };
+    }
+    const hints = parseBookIntake(value.hints);
+    return hints === null
+      ? null
+      : { state: "provisional", requested_slug: value.requested_slug, hints };
+  }
+  if (
+    value.state === "canonical" &&
+    exactKeys(value, ["state", "material_slug", "identity"]) &&
+    validMaterialSlug(value.material_slug)
+  ) {
+    if (kind === "paper") {
+      const identity = parsePaperIdentity(value.identity);
+      return identity === null
+        ? null
+        : { state: "canonical", material_slug: value.material_slug, identity };
+    }
+    const identity = parseBookIdentity(value.identity);
+    return identity === null
+      ? null
+      : { state: "canonical", material_slug: value.material_slug, identity };
+  }
+  return null;
 };
 
 export const parseTranslationCandidate = (
@@ -641,8 +780,18 @@ export const decisionForOperation = (
     : null;
 
 const requestedSlug = (raw: unknown): string | null => {
-  if (!isRecord(raw) || !isRecord(raw.identity)) return null;
-  return validMaterialSlug(raw.identity.slug) ? raw.identity.slug : null;
+  if (!isRecord(raw) || !isRecord(raw.seed)) return null;
+  if (
+    raw.seed.state === "provisional" &&
+    validMaterialSlug(raw.seed.requested_slug)
+  )
+    return raw.seed.requested_slug;
+  if (
+    raw.seed.state === "canonical" &&
+    validMaterialSlug(raw.seed.material_slug)
+  )
+    return raw.seed.material_slug;
+  return null;
 };
 
 export const parseLeafMaterialInput = (
@@ -658,17 +807,16 @@ export const parseLeafMaterialInput = (
   });
   if (
     !isRecord(raw) ||
-    !exactKeys(raw, ["identity", "observation", "options"], ["userDecision"])
+    !exactKeys(raw, ["seed", "observation", "options"], ["userDecision"])
   )
     return invalid();
-  const identity =
-    kind === "paper"
-      ? parsePaperIdentity(raw.identity)
-      : parseBookIdentity(raw.identity);
-  if (identity === null) return invalid();
+  const seed = parseLeafSeed(raw.seed, kind);
+  if (seed === null) return invalid();
+  const materialSlug =
+    seed.state === "provisional" ? seed.requested_slug : seed.material_slug;
   const observations = sparseObservations([
     {
-      route: { kind, slug: identity.slug },
+      route: { kind, slug: materialSlug },
       observation: raw.observation,
     },
   ]);
@@ -684,6 +832,6 @@ export const parseLeafMaterialInput = (
     return invalid();
   return {
     ok: true,
-    value: { identity, observations, options, userDecision },
+    value: { seed, observations, options, userDecision },
   };
 };
