@@ -259,11 +259,13 @@ def test_refresh_path_imports_only_stdlib_and_does_no_external_work() -> None:
     tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
     aliases: dict[str, str] = {}
     imported_roots: set[str] = set()
-    for node in tree.body:
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for name in node.names:
-                aliases[name.asname or name.name.split(".")[0]] = name.name
-                imported_roots.add(name.name.split(".")[0])
+                root = name.name.split(".")[0]
+                bound_name = name.asname or root
+                aliases[bound_name] = name.name if name.asname else root
+                imported_roots.add(root)
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported_roots.add(node.module.split(".")[0])
             for name in node.names:
@@ -296,5 +298,23 @@ def test_refresh_path_imports_only_stdlib_and_does_no_external_work() -> None:
         if isinstance(node, ast.Call)
         if (name := resolved_name(node.func)) is not None
     }
-    external_roots = {"ftplib", "http", "smtplib", "socket", "subprocess", "urllib"}
-    assert not {call.split(".", 1)[0] for call in calls} & external_roots
+    external_entrypoints = {
+        "ftplib.FTP",
+        "ftplib.FTP_TLS",
+        "http.client.HTTPConnection",
+        "http.client.HTTPSConnection",
+        "smtplib.SMTP",
+        "smtplib.SMTP_SSL",
+        "socket.create_connection",
+        "socket.socket",
+        "subprocess.Popen",
+        "subprocess.call",
+        "subprocess.run",
+        "urllib.request.urlopen",
+        "urllib.request.urlretrieve",
+    }
+    assert not {
+        call
+        for call in calls
+        if call in external_entrypoints or call.startswith("subprocess.check_")
+    }

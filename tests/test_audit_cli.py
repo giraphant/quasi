@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -314,11 +315,20 @@ journal: Endeavour""")
     result = run_audit(project, "--path", "vault", "--report", "toc")
 
     assert result.returncode == 0, result.stderr
-    assert "vault/books/mixed-1994" in result.stdout
-    assert "vault/books/plain-1991" in result.stdout
-    assert result.stdout.index("vault/books/mixed-1994") < result.stdout.index(
-        "vault/books/plain-1991"
+    lines = result.stdout.splitlines()
+    mixed_line = next(line for line in lines if "vault/books/mixed-1994" in line)
+    plain_line = next(line for line in lines if "vault/books/plain-1991" in line)
+    summary_line = next(
+        line
+        for line in lines
+        if re.search(r"\b\d+\s+books?\b", line, re.IGNORECASE)
+        and re.search(r"\b\d+\s+chapters?\b", line, re.IGNORECASE)
     )
+    assert lines.index(mixed_line) < lines.index(plain_line)
+    assert re.search(r"\b11\b", mixed_line)
+    assert re.search(r"\b2\b", plain_line)
+    assert re.search(r"\b2\s+books?\b", summary_line, re.IGNORECASE)
+    assert re.search(r"\b13\s+chapters?\b", summary_line, re.IGNORECASE)
     assert result.stdout.index("ch02-x.md") < result.stdout.index("ch10-x.md")
     assert "not-a-chapter.md" not in result.stdout
     assert paper.read_text(encoding="utf-8") == original
@@ -392,9 +402,13 @@ themes: [chimerism, feminist technoscience]""",
     result = run_audit(project, "--path", "vault", "--report", "fields")
 
     assert result.returncode == 0, result.stderr
-    assert "authors" in result.stdout
+    authors_line = next(
+        line for line in result.stdout.splitlines() if "authors" in line
+    )
+    assert re.search(r"\b1\b", authors_line)
+    assert "100.0%" in authors_line
+    assert "vault/papers/flow-array.md" in authors_line
     assert "paper" in result.stdout
-    assert "vault/papers/flow-array.md" in result.stdout
     assert paper.read_text(encoding="utf-8") == original
     assert not (project / ".quasi" / "audit" / "typecheck-results.json").exists()
 
