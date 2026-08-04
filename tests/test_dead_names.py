@@ -74,9 +74,21 @@ DEAD_NAMES = [
     "research/topic-recall.mjs",
     "operations/chains.mjs",
     "run-stage-context.mjs",
+    "workflows/run-stage.mjs",
+    "quasi.run-stage.chain",
+    "quasi.run-stage.batch",
+    "quasi.run-stage.error",
+    "RUN_STAGE_REGISTRY",
+    "STAGE_CHAINS",
+    '"until":',
+    '"units":',
 ]
 
 DEAD_GRAPH_PATHS = [
+    "workflows/run-stage.mjs",
+    "scripts/workflows/run-stage.entry.mts",
+    "scripts/workflows/shared/dispatch.mts",
+    "scripts/workflows/operations/catalog.mts",
     "workflows/process-material.mjs",
     "scripts/workflows/process-material.entry.mjs",
     "scripts/workflows/materials/interpreter.mjs",
@@ -96,18 +108,6 @@ DEAD_GRAPH_PATHS = [
     "scripts/workflows/operations/audit.mjs",
     "scripts/workflows/operations/synthesise.mjs",
 ]
-
-LEAF_DRIVER_START = "<!-- quasi:leaf-driver:start -->"
-LEAF_DRIVER_END = "<!-- quasi:leaf-driver:end -->"
-RETIRED_LEAF_MODE_NAMES = (
-    "workflows/run-stage.mjs",
-    "quasi.run-stage.chain",
-    "quasi.run-stage.batch",
-    '"stage":',
-    '"until":',
-    '"units":',
-)
-
 
 def active_markdown_files() -> list[Path]:
     files: list[Path] = []
@@ -166,18 +166,3 @@ def test_removed_public_skill_directories_are_not_present():
 def test_removed_graph_driver_paths_are_not_present():
     for relative in DEAD_GRAPH_PATHS:
         assert not (PLUGIN_ROOT / relative).exists()
-
-
-def test_migrated_leaf_driver_does_not_reference_public_stage_modes():
-    skill = (
-        PLUGIN_ROOT / "skills" / "collect-material" / "SKILL.md"
-    ).read_text(encoding="utf-8")
-    assert skill.count(LEAF_DRIVER_START) == 1
-    assert skill.count(LEAF_DRIVER_END) == 1
-    leaf = skill.split(LEAF_DRIVER_START, 1)[1].split(LEAF_DRIVER_END, 1)[0]
-    talk = (
-        PLUGIN_ROOT / "skills" / "collect-material" / "references" / "talk.md"
-    ).read_text(encoding="utf-8")
-    active = f"{leaf}\n{talk}"
-    for name in RETIRED_LEAF_MODE_NAMES:
-        assert name not in active

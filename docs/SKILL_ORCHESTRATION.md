@@ -1,37 +1,32 @@
 # Skill Orchestration Schema
 
-date: 2026-07-31
+date: 2026-08-04
 status: maintainer contract
 
-This document describes how quasi skills coordinate a graph. It is maintainer
-guidance; active `SKILL.md` files contain only the runtime guidance needed by the
-executing model.
+This document describes how quasi Skills drive named material Workflows. Active
+`SKILL.md` files contain only the runtime guidance needed by their executing
+model.
 
 ## Principle
 
-A skill is the user-facing coordinator. It recognises intent, starts the graph,
-understands typed terminals, presents real human decisions, and explains what
-happened. It does not duplicate the graph's material state or a specialist's
-professional method.
+A Skill is a thin user-facing driver. It recognises intent, observes exact disk
+state, invokes a fixed named Workflow, presents typed human decisions, and
+verifies the returned artifacts. It does not reproduce material progression or a
+specialist's professional method.
 
-The Workflow is a stage board. It controls phase order, exact envelopes,
-concurrency, coalescing, ownership boundaries, and typed routing. It should be
-easy to answer “which material is at which stage?” without reading specialist
-reasoning.
+A named Workflow owns one logical material. Its TypeScript plan selects
+material-local operations from current testimony and returns one typed Material
+result. An Agent owns judgement inside one exact operation envelope. A
+deterministic CLI owns its declared I/O mechanics.
 
-An Agent is a goal-owning specialist. Given exact scope and declared
-capabilities, it may investigate, compare evidence, and perform local recovery
-until it can honestly return `complete`, `needs_input`, `blocked`, or `failed`.
-The deterministic CLI remains responsible for I/O mechanics, locks, staging,
-fingerprints, and atomic publication.
+## Active Skill shape
 
-## Active Skill Shape
-
-Use these landmarks when they help the executing model:
+Use these landmarks when applicable:
 
 ```text
 任务
 输入
+硬约束
 状态
 Agent / Helper 合同
 工作流
@@ -41,114 +36,102 @@ Agent / Helper 合同
 ```
 
 `任务` is one positive sentence. `输入` records facts that can come from the
-user. `状态` names authoritative receipts and ownership. `执行流程` is concise
-pseudocode only when prose would leave host or batch behaviour ambiguous.
-
-Frontmatter `description` is a short routing hint describing user intent. It is
-not a trigger-word list, phase walkthrough, history note, or miniature README.
+user. Frontmatter `description` is a short routing hint, not a trigger list,
+history note, or phase walkthrough.
 
 ## Ownership
 
-- The graph owns canonical identity, phase state, exact artifacts, and material
-  or collection receipts.
-- The Skill owns the current user request, explicit user decisions, and
-  skill-scoped completion sidecars.
-- A Stage Unit Agent owns its professional judgement within the request
-  envelope. Read-only specialists return evidence; producer specialists write
-  only caller-named products.
-- A deterministic CLI writes only outputs named by its command contract.
-- Artifact schemas own frontmatter and body structure; Workflow Operations own
-  dynamic refs and evidence requirements.
+- The Skill owns the current user request, top-level material concurrency, and
+  presentation of typed results.
+- The named Workflow owns material identity transitions, operation order,
+  bounded joins, checkpoints, and owner-correct repair.
+- The exact `quasi-status/0.2` observation owns durable processing facts.
+- A Stage Agent owns professional judgement within one request envelope.
+- Artifact schemas own frontmatter/body structure; the operation catalog in
+  `scripts/schemas/operations.py` owns stable operation identity and artifact templates; descriptor rows own only
+  request/receipt behavior.
 
-This split leaves one source of truth for each concern. In particular, the
-Skill does not keep a second recall/metadata/writer-success state machine, and
-the Graph does not reproduce an Agent's search strategy or recovery dialogue.
+There is no second Skill state machine, Workflow cursor, receipt log, or inferred
+writer success.
 
-## Stage Unit Contract
+## Named Workflow input and result
 
-A Stage Unit request should answer:
+The active entries are:
 
 ```text
-Goal          What useful state this specialist must establish.
+workflows/paper.mjs
+workflows/book.mjs
+workflows/talk.mjs
+workflows/translation.mjs
+workflows/author.mjs
+workflows/topic.mjs
+```
+
+Paper, Book, Talk, and Translation receive a closed seed/options envelope plus
+one exact status observation. Author and Topic may additionally return exact
+routes for host observation and an opaque one-item continuation.
+
+The public result is `quasi.material.result/0.1`:
+
+- `complete` — verify its exact canonical artifacts with fresh status;
+- `needs_observation` — fetch only the returned routes and reinvoke the same
+  entry with the unchanged continuation;
+- `needs_input` — present the typed gate, refresh its routes, and attach only the
+  gate-owned decision;
+- `incomplete` — report Topic's ordered bounded pending work without calling it
+  saturated; and
+- `blocked|failed` — present the typed issue and stop.
+
+One result is consumed once. A fresh ordinary invocation reconstructs from disk;
+only a current gate or observation result authorises use of its opaque
+continuation.
+
+## Internal Stage unit contract
+
+A prepared Stage request states:
+
+```text
+Goal          The useful state this specialist must establish.
 Identity      The bounded material or collection identity.
 Exact refs    Inputs it may inspect and outputs it may create.
 Capabilities The public quasi commands or exact reads/writes it may use.
-Evidence      Facts already established by earlier stages.
-Receipt       One StructuredOutput schema and its terminal meanings.
+Evidence      Facts already established by the caller.
+Receipt       One StructuredOutput schema and terminal meanings.
 ```
 
-The shared receipt is `quasi.stage.receipt/0.3`. Its model-facing schema omits
-top-level single-value `const` fields; after validation, run-stage stamps those
-bookkeeping values into the full receipt. The model still produces all judgement
-fields and the required closed `terminal`, so a success receipt cannot also carry
-a failure issue:
+The internal receipt is `quasi.stage.receipt/0.3`. The model produces judgement
+fields and one closed `complete|needs_input|blocked|failed` terminal. After
+StructuredOutput validation, the host stamps top-level single-value bookkeeping
+consts. Plans may check small concrete cross-field relationships, but do not
+reinterpret a schema-valid specialist failure.
 
-- `complete`: the specialist established the exact postcondition consumed by
-  the next stage.
-- `needs_input`: one concrete user answer can change the outcome; the terminal
-  carries the evidence-backed candidates and exact identity conflict fields.
-- `blocked`: the current capability boundary or an unknown writer outcome
-  prevents a trustworthy continuation.
-- `failed`: the specialist exhausted useful approaches and reached a known
-  failure.
+An Agent chooses its own useful number of searches, comparisons, or recovery
+steps. Numerical bounds belong at genuine shared-resource or composition
+boundaries, not as proxies for professional judgement.
 
-StructuredOutput validates the model-facing schema; skills and Graph consume the
-complete stamped receipt. Graph-side checks may re-prove exact path ownership and
-joins between artifacts, but should not
-reinterpret a schema-valid failure as malformed because of a hidden policy.
+## Concurrency and recovery
 
-An Agent chooses its own useful number of queries, comparisons, or diagnostic
-steps. A numerical budget belongs in the Graph when it protects a shared
-resource, prevents duplicate writers, or bounds a collection fan-out—not as a
-proxy for professional judgement.
+`collect-material` may run up to its documented number of distinct top-level
+material keys concurrently. One named Workflow owns each key. Only Book fans out
+inside a Workflow, using one host pipeline over disjoint chapter outputs. Topic
+uses stable sequential work with immediate outline checkpoints; Author composes
+its frozen child list sequentially.
 
-## Workflow and Batch Behaviour
+Unknown writer outcomes stop the invocation. Resume begins with fresh exact
+status and, only when returned, the current opaque continuation. Do not add
+automatic retry, lock, reservation, completed-prefix, or replay machinery.
 
-The shared UI phases are:
+## Review checklist
 
-```text
-Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit
-```
+When changing a Skill or Workflow:
 
-Agent labels begin with the stable material key and then the operation. One
-request containing 2–32 Books/Papers enters one batch Workflow. Phase-local
-FIFO admission allows items to pipeline independently while keeping one
-aggregate graph and one correlated result list.
-
-Single-action Operations may remain small. Analyse, Synthesise, and Audit often
-have one exact product and one clear postcondition; a Stage Unit is useful where
-the work naturally needs investigation or local recovery, not as a reason to
-make every Agent large.
-
-## Human Gates and Recovery
-
-The specialist formulates a concrete question and returns `needs_input`; the
-Skill presents it and records the user's answer in a new graph request. The new
-graph observes durable artifacts again rather than relying on an old JavaScript
-cursor.
-
-Unknown writer outcomes remain suspended for the current run. A later explicit
-request re-enters the graph: Search observes the exact local owner again and
-the receiving production Stage reconciles its durable artifact before any new
-write. Neither Agent autonomy nor Skill recovery creates a concurrent duplicate
-writer.
-
-For a batch, the Skill reports all item terminals together and gathers user
-answers before submitting one follow-up batch containing the affected original
-items.
-
-## Review Checklist
-
-When changing a skill or stage:
-
-1. Identify one owner for user state, graph state, specialist judgement, CLI
-   effects, and artifact shape.
-2. Confirm the request is self-contained and every writable path is exact.
-3. Confirm StructuredOutput and runtime validation share one schema.
-4. Check that negative prose is limited to genuine safety or ownership
-   boundaries; describe the desired work positively.
-5. Keep phases progress-oriented and labels material-oriented.
-6. Update tests that assert receipts, routing, source/bundle parity, or removed
-   names.
-7. Rebuild `workflows/process-material.mjs` from `scripts/workflows/` and run
-   the focused plus full test suites.
+1. Identify one owner for user state, material progression, specialist judgement,
+   deterministic effects, and artifact shape.
+2. Keep every writable path exact and every public input closed.
+3. Reuse the generated schema and prepared-dispatch boundary; do not add another
+   validator.
+4. Keep negative prose limited to real safety or ownership boundaries.
+5. Prefer one causal test per meaningful seam over field or mode matrices.
+6. Update routing, dead-name, bundle-parity, and exact-status tests.
+7. Run `npm run build:workflows`, `npm run check:workflows`, focused tests, and
+   the full suite.

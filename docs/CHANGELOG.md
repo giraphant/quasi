@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **Unreleased** (2026-08-04): **六种材料各自拥有固定 Workflow，通用 mode engine 正式退出。**
+  - Author 现在通过 fresh exact status 组合 Paper/Book leaf；Topic 通过同样的 observation handshake 组合 Paper/Book/Talk，并把 Recall、稳定顺序的有界研究轮次、每项 admission checkpoint、三份产品的 owner-correct Audit/repair 收进 `workflows/topic.mjs`。两条外层 Skill 都只传 closed envelope、opaque continuation 与 typed gate，不再维护另一份业务状态机。
+  - 删除无调用者的 `run-stage` source/bundle、universal catalog、dispatch wrapper，以及 single/batch/until compatibility mode。非公共 catalog 直接命名为 `scripts/schemas/operations.py`，其中 25 项事实型 `OPERATION_CATALOG` 只保存 operation 的 eligible kinds、phase、effect、Agent 与 artifact templates；不再保存阶段顺序、carry、alias、chain 或 next pointer。
+  - 测试不为退休机制保留兼容博物馆：删除 88 项 mode tests 和重复 bundle harness，只迁移 chapter output testimony、Paper Acquire URL/diagnose、Stage host-stamp partition、四 terminal、Acquire branch-local fields 等仍承重的因果边界。六个生成 bundle 共用一个参数化 ABI harness；Topic 的恢复、gate、checkpoint 与去重仍由 18 条端到端因果 journey 保护。
+  - 这次目标是降低变化放大与维护面，不是追求最少行数：Book 仍保留唯一真实的内部 chapter `pipeline()`；Agent 方法、OCR/Translation 的实测恢复知识、Stage StructuredOutput 校验和 exact writer ownership 均未被压扁，也没有新增 lock、reservation、cursor、retry engine 或 cleanup subsystem。
+
 - **0.65.0** (2026-08-04): **四种 leaf 材料各自成为一条完整 Workflow，Skill 不再逐阶段编排。**
   - Paper、Book、Talk、Translation 现在分别由生成的 `workflows/{paper,book,talk,translation}.mjs` 从当前磁盘事实运行到完成或 typed gate；一条调用只拥有一个逻辑材料，只有 Book 在内部用宿主 `pipeline()` 并发互不冲突的章节。每条 bundle 只带本材料的 descriptor rows 与专业依赖，不再把全库 operation catalog 塞进同一个运行入口。
   - `collect-material` 的 leaf 路径收敛为薄 driver：一次 exact pre-status、固定 kind→Workflow 映射、material-level terminal、完成后的 exact post-status；不同材料最多五条并发，同一已知 exact key 只合并字节完全相同的请求。不增加锁、canonical reservation、碰撞清洁、cursor 或第二份状态。Author 与 Topic 在这个中间版仍保留 `run-stage` 兼容编排，后续各自迁移。

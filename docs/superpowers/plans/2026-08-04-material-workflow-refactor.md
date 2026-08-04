@@ -959,7 +959,7 @@ git commit -m "feat: move topic orchestration into a named workflow"
 - Modify: `tests/test_skill_orchestration.py`
 - Modify: `tests/test_status_cli.py`
 
-- [ ] Prove the deletion gate before editing:
+- [x] Prove the deletion gate before editing:
 
 ```bash
 ! rg -n 'workflows/run-stage\.mjs|RUN_STAGE_REGISTRY|STAGE_CHAINS|"until"|"units"' skills
@@ -967,9 +967,9 @@ git commit -m "feat: move topic orchestration into a named workflow"
 
 The command must have no active Skill hits.
 
-- [ ] Move every ledger invariant to passing replacement tests. Delete `test_run_stage.py` only after the ledger contains no unmigrated load-bearing row.
+- [x] Move every ledger invariant to passing replacement tests. Delete `test_run_stage.py` only after the ledger contains no unmigrated load-bearing row.
 
-- [ ] Remove sequencing, chain, carry, and public mode registry data from `pipeline.py`. Retain only this shape (with one row for every existing operation and its real templates):
+- [x] Remove sequencing, chain, carry, and public mode registry data from `pipeline.py`. Retain only this shape (with one row for every existing operation and its real templates):
 
 ```py
 OPERATION_CATALOG = {
@@ -993,15 +993,15 @@ OPERATION_CATALOG = {
 
 There are no stage aliases, per-kind sequences, carries, next-operation pointers, or chains. Generated TypeScript exposes `OperationDefinition` and `OperationName`, not `StageName`, `PipelineCarry`, or `KindDefinition.chain`. Status looks up a stable operation key plus artifact role only for path templates; plans call that same catalog through typed operation literals, with no second declaration list.
 
-- [ ] Update `status.py` to read the narrowed evidence catalog while continuing to compute facts with its explicit Python observers. Status must not become a rule-DSL graph interpreter.
+- [x] Update `status.py` to read the narrowed evidence catalog while continuing to compute facts with its explicit Python observers. Status must not become a rule-DSL graph interpreter.
 
-- [ ] Remove `run-stage` from the build table and delete its source/generated entry together with the compatibility-only universal catalog and `dispatchOperation()` wrapper. Named plans retain the row-parameterized preparer, their material-local catalogs, and pure `dispatchPreparedOperation()`. Remove only mode-specific tests and compatibility errors; retain migrated dispatch/plan behavior. Add the retired name to quarantine only in Task 14 after maintained documents stop referring to it, so the quarantine test and its own literal do not make this commit self-failing.
+- [x] Remove `run-stage` from the build table and delete its source/generated entry together with the compatibility-only universal catalog and `dispatchOperation()` wrapper. Named plans retain the row-parameterized preparer, their material-local catalogs, and pure `dispatchPreparedOperation()`. Remove only mode-specific tests and compatibility errors; retain migrated dispatch/plan behavior. Add the retired name to quarantine only in Task 14 after maintained documents stop referring to it, so the quarantine test and its own literal do not make this commit self-failing.
 
-- [ ] Delete `validateCompatibilityEntry`, `validatePipelineStructure`, compatibility typedefs/probes, and all `PIPELINE/RUN_STAGE_REGISTRY/STAGE_CHAINS` build validation that existed only for `run-stage` from `scripts/build-workflows.mjs`. Retain the fixed-kind `validateMaterialEntry` and public ABI/size checks.
+- [x] Delete `validateCompatibilityEntry`, `validatePipelineStructure`, compatibility typedefs/probes, and all `PIPELINE/RUN_STAGE_REGISTRY/STAGE_CHAINS` build validation that existed only for `run-stage` from `scripts/build-workflows.mjs`. Retain the fixed-kind `validateMaterialEntry` and public ABI/size checks.
 
-- [ ] Replace the compatibility-only ABI regression with a parameterized execution test over `paper.mjs`, `book.mjs`, `talk.mjs`, `translation.mjs`, `author.mjs`, and `topic.mjs`. Each generated bundle must execute its internal `run` through the public top-level wrapper and return the source result. The test contains no retired `run-stage` reference.
+- [x] Replace the compatibility-only ABI regression with a parameterized execution test over `paper.mjs`, `book.mjs`, `talk.mjs`, `translation.mjs`, `author.mjs`, and `topic.mjs`. Each generated bundle must execute its internal `run` through the public top-level wrapper and return the source result. The test contains no retired `run-stage` reference.
 
-- [ ] Rebuild, run the static retirement gate, and commit.
+- [x] Rebuild and run the static retirement gate. The focused replacement suite passed 157 tests; the final commit follows the repository completion audit.
 
 ```bash
 npm run build:workflows
@@ -1030,13 +1030,13 @@ The Task 13 `rg` must have no runtime or test matches. Root maintainer documents
 - Modify: `docs/superpowers/specs/2026-08-04-material-workflow-refactor-design.md`
 - Modify: `tests/test_dead_names.py`
 
-- [ ] Update the layer/runtime contracts to named Workflows, explicit plans, shared dispatch, target-aware Translation status, Author/Topic one-way composition, and Book-only internal `pipeline()`.
+- [x] Update the layer/runtime contracts to named Workflows, explicit plans, shared dispatch, target-aware Translation status, Author/Topic one-way composition, and Book-only internal `pipeline()`.
 
-- [ ] Mark the design implemented and append a newest-first changelog entry explaining why generic modes and Skill-owned stage logic were removed. Do not rewrite historical changelog mentions.
+- [x] Mark the design implemented and append a newest-first changelog entry explaining why generic modes and Skill-owned stage logic were removed. Do not rewrite historical changelog mentions.
 
-- [ ] Add the retired public `run-stage` names to `tests/test_dead_names.py` only now, with its existing active-code/document scope. Run the test after all maintained contracts are updated; the quarantine file's own literals remain outside its scan.
+- [x] Add the retired public `run-stage` names to `tests/test_dead_names.py` only now, with its existing active-code/document scope. Run the test after all maintained contracts are updated; the quarantine file's own literals remain outside its scan.
 
-- [ ] Copy the final maintainer guide change so the two root instruction files are byte-identical, then verify:
+- [x] Copy the final maintainer guide change so the two root instruction files are byte-identical, then verify:
 
 ```bash
 cmp -s CLAUDE.md AGENTS.md
@@ -1044,7 +1044,7 @@ cmp -s CLAUDE.md AGENTS.md
 python3 -m pytest tests/test_dead_names.py -q
 ```
 
-- [ ] Run the complete workflow and repository audit:
+- [x] Run the complete workflow and repository audit:
 
 ```bash
 npm run build:workflows
@@ -1055,11 +1055,45 @@ git diff --check
 git status --short
 ```
 
-- [ ] Inspect every guard/fallback/retry/compatibility branch changed in this refactor and record its evidence in the implementation plan's completion notes. Remove any branch without a documented host contract, reachable state, active caller, or reproduced regression.
+- [x] Inspect every guard/fallback/retry/compatibility branch changed in this refactor and record its evidence in the implementation plan's completion notes. Remove any branch without a documented host contract, reachable state, active caller, or reproduced regression.
 
-- [ ] Commit maintained contracts.
+- [x] Commit maintained contracts.
 
 ```bash
 git add AGENTS.md CLAUDE.md docs skills workflows scripts tests
 git commit -m "docs: document material-oriented workflow architecture"
 ```
+
+#### Completion notes
+
+- The generic single/batch/`until` engine, its universal resolver, compatibility
+  dispatch wrapper, generated bundle, and mode-only tests were deleted after the
+  active-Skill and static retirement gates proved that they had no callers.
+- Private operation context now has one camelCase shape supplied by the six named
+  plans. The retired camel/snake aliases, `contextValue`, the unproduced
+  `invalid_context` outcome, and three unused generic gate aliases were removed;
+  public Stage request/receipt JSON remains snake_case.
+- `operationPreparer()` still rejects an operation missing from its fixed-kind
+  local row set. This is the exact catalog/row ownership boundary, exercised for
+  all 25 operations by
+  `test_local_catalogs_preserve_each_operation_identity_and_schema_partition`.
+- The host bundle checks for one `meta`, no runtime imports or filesystem access,
+  executable wrapper syntax, generated-file currency, and the 512 KiB limit
+  remain because they enforce the documented Claude Workflow ABI. Six named
+  source/generated executions and exact metafile domain sets cover that boundary.
+- `dispatchPreparedOperation()` retains only the documented unknown-Agent outcome
+  and incoherent-complete stop paths. The former is covered by the no-replay
+  dispatch/plan tests; the latter preserves the validated receipt for diagnosis.
+- Book retains the only host `pipeline()` call because manifest-listed chapter
+  writers have disjoint exact outputs. Its join tests prove stable order, settle
+  every launched child, and make unknown dominate without starting synthesis.
+  Author and Topic remain sequential.
+- No runtime retry engine, timeout, lock, reservation, replay cursor, cleanup
+  subsystem, stage alias, or compatibility mode was added. Status now performs a
+  direct `operation + artifact role` lookup in `scripts/schemas/operations.py`;
+  its material observers remain explicit Python.
+- Final evidence on the completed tree: `npm run build:workflows` and
+  `npm run check:workflows` passed for all six bundles; isolated
+  `python3 -m pytest -q` reported `686 passed, 6 warnings`; the instruction mirror,
+  dead-name/static retirement scans, `git diff --check`, and the independent
+  whole-branch plus scoped fix reviews were clean.

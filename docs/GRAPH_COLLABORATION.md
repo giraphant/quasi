@@ -1,131 +1,111 @@
-# Skill-driven collaboration model
+# Named Workflow collaboration model
 
-Maintainer constitution for quasi's stage collaboration. This document pins how
-skills, descriptor rows, specialist Agents, and deterministic capabilities share
-authority now that the self-running graph driver is gone. Like
-`docs/SKILL_ORCHESTRATION.md`, it is maintainer guidance: active skills and Agent
-contracts must contain only the runtime information their executing model needs.
+Maintainer guidance for how quasi divides authority between Skills, named
+Workflows, specialist Agents, and deterministic capabilities. Active Skills and
+Agent contracts should contain only what their executing model needs.
 
-## The four layers
+## Layers
 
-1. **Skills** (`skills/*/SKILL.md`) are the drivers. They identify user intent,
-   normalise and coalesce requests, observe disk state through `quasi-status`,
-   select the next applicable stage, present typed human gates, and stop honestly
-   on blocked, failed, or unknown writer outcomes.
-2. **Rows plus run-stage** (`scripts/workflows/operations/rows/`,
-   `scripts/workflows/run-stage.entry.mts`, and the generated
-   `workflows/run-stage.mjs`) form the host boundary. A descriptor row owns one
-   operation's exact refs, envelope, Agent type, phase, receipt schema, and narrow
-   completion contract. run-stage resolves one `kind + stage`, invokes exactly one
-   Agent with that row's prompt/schema, and returns its receipt verbatim. It has no
-   next-stage routing, retry, coalescing, join, or material-state loop.
-3. **Agents** (`agents/*.md`) own all fuzzy judgment: method choice,
-   interpretation of capability output, local recovery, stopping, and the honesty
-   of their terminal. An Agent reads or writes only the exact artifacts in its
-   request.
-4. **CLIs** (`bin/quasi-*`, `scripts/`) are deterministic and, where they write,
-   transactional through fenced generation and manifest-last or atomic
-   publication. They own file mutation and identity/state probes, never fuzzy
-   judgment.
+1. **Skills** (`skills/*/SKILL.md`) recognise user intent, construct one closed
+   Workflow input, obtain exact `quasi-status` observations requested by the
+   Workflow, present typed gates, and verify final artifacts.
+2. **Named Workflows** (`workflows/{paper,book,talk,translation,author,topic}.mjs`)
+   own fixed material progression. Their editable TypeScript plans live under
+   `scripts/workflows/`; material-local catalogs select only their own operation
+   rows.
+3. **Operation rows and Agents** own one specialist boundary. A row derives exact
+   refs, prompt, receipt schema, and a small cross-field completion predicate. The
+   Agent owns professional method, local recovery, and its honest terminal.
+4. **CLIs** (`bin/quasi-*`, `scripts/`) perform deterministic observation and I/O.
+   A writer touches only outputs named by its command or Agent envelope.
+
+`scripts/schemas/operations.py` supplies operation identity and artifact templates to both Workflow
+builds and `quasi-status`; it does not define a stage graph.
 
 ## Trust rules
 
-- **Shape is proven by the host.** The schema passed to StructuredOutput is the
-  receipt-shape authority. run-stage returns that receipt unchanged; neither it
-  nor the skill adds a second schema validator.
-- **Facts are proven by disk observations.** `quasi-status` reports exact evidence
-  and refs. After a stage, the skill re-observes disk before choosing a later
-  writer. A receipt alone never proves a later-stage artifact exists.
-- **Judgment belongs to the specialist.** A schema-valid
-  `complete|needs_input|blocked|failed` terminal is consumed as returned. The
-  skill must not reinterpret a failure merely because it would prefer another
-  method.
-- **Routing belongs to the skill.** Stage order, bounded concurrency, duplicate
-  prevention, collection membership, and user-facing gates are explicit skill
-  actions over observations and receipts, not an implicit graph state machine.
+- **The host proves shape.** StructuredOutput validates the model-facing Stage
+  receipt. The prepared-dispatch boundary stamps host-owned single-value fields
+  after validation; callers do not run a second receipt validator.
+- **Disk proves durable facts.** Skills pass exact `quasi-status/0.2`
+  observations. A Material result never authorises guessing another path or
+  treating prose as writer success.
+- **The specialist owns judgement.** A schema-valid
+  `complete|needs_input|blocked|failed` Stage terminal is not reinterpreted by a
+  plan because another method looks preferable.
+- **The named plan owns progression.** Paper, Book, Talk, Translation, Author,
+  and Topic each have one explicit plan. There is no universal mode engine,
+  runtime stage router, or durable Workflow cursor.
 
-## The one-call protocol
+## Public and internal results
 
-Every Workflow invocation selects one data row:
+The public boundary is `quasi.material.result/0.1`. A named Workflow returns one
+material-level terminal:
 
-```text
-{ operation, agentType, stage, exact_refs, envelope, receipt_schema,
-  completion_contract }
-```
+- `complete`, with exact artifacts and an optional typed next material;
+- `needs_observation`, with exact routes and one opaque continuation;
+- `needs_input`, with a typed gate and, for composed leaf gates, the effective
+  continuation;
+- `incomplete`, only for a bounded Topic result with ordered pending work; or
+- `blocked|failed`, with one typed issue.
 
-- Receipts share `quasi.stage.receipt/0.3` and exactly four terminals; run-stage
-  host-stamps top-level single-value `const` fields after model-output validation:
-  `complete | needs_input | blocked | failed`.
-- `workflows/run-stage.mjs` accepts `kind`, `slug`, `stage`, and caller context,
-  resolves one row, makes one Agent call, and returns the result.
-- StructuredOutput repair of a still-running invocation is provider-level schema
-  correction, not a new stage dispatch.
-- A skill may dispatch independent work concurrently, but it must resolve and
-  coalesce identity before any duplicate writer.
-- A missing or ambiguous writer receipt stops the current driver. Resume starts
-  with `quasi-status`; the writer is never blindly replayed.
-- `needs_input` is presented to the user unchanged. `blocked` and `failed` stop
-  that item with their typed issue.
+Inside a plan, each prepared operation returns `quasi.stage.receipt/0.3` with
+exactly four specialist terminals. StructuredOutput repair while that Agent is
+still running is provider-level correction, not a new operation dispatch.
+
+## Composition rules
+
+- One named invocation owns one logical material. Only Book uses host
+  `pipeline()` internally, for chapter outputs whose exact write targets are
+  disjoint.
+- Author composes Paper and Book plans. Topic composes Paper, Book, and Talk
+  plans plus Topic-owned rows. They request fresh exact host observations through
+  `needs_observation`; the Skill copies the opaque continuation back unchanged.
+- Unknown writer outcomes stop. A later invocation starts from fresh disk
+  testimony; it never blindly replays the writer.
+- A Skill may run different top-level material Workflows concurrently after
+  exact material keys are known. The plans do not add a second scheduler, lock,
+  reservation, replay log, or collision-cleanup layer.
+- `needs_input` is shown at the owning boundary. Only the gate's declared value
+  is added on resume.
 
 ## What must not return
 
-- a self-running graph, per-kind loop, batch driver, router, join runtime, FIFO
-  lane scheduler, receipt classifier, or automatic replay mechanism;
-- a compatibility alias for a deleted entry or module — project policy is
-  delete, do not alias;
-- per-operation method trees in skills or rows;
-- inferred state inside `quasi-status`; it reports observations only;
-- duplicate artifact ownership or path discovery outside the current envelope.
+- a universal stage runner, `until` mode, batch envelope, FIFO lane scheduler,
+  generic graph executor, or compatibility alias for one;
+- per-Agent query counts, provider cascades, OCR heuristics, or recovery trees in
+  Skills or operation rows;
+- path discovery outside an exact envelope, duplicate writer ownership, or a
+  second hidden material-state file; or
+- broad tests that enumerate generic modes instead of protecting a concrete
+  causal seam.
 
 ## Project roots and observability
 
-- cwd is the project/vault root. A non-empty `CLAUDE_PROJECT_DIR` takes
-  precedence, but Workflow specialists may receive it as an empty string and
-  must then use cwd for exact relative refs.
-- `claude -p --output-format json` stdout contains only the final session
-  envelope, not a complete stage/tool trace. Headless E2E harnesses must inspect
-  the session JSONL and per-Workflow JSON sidecars when proving which stage
-  driver ran.
+cwd is the project/vault root. A non-empty `CLAUDE_PROJECT_DIR` takes precedence;
+Workflow specialists may receive it empty and then use cwd. Headless
+`claude -p --output-format json` stdout is only the final session envelope; E2E
+diagnosis may also require the session JSONL and per-Workflow sidecars.
 
 ## Tests
 
-Tests defend the capability layer and the surviving stage protocol:
+Keep tests at ownership boundaries:
 
-- keep capability CLI tests (extract, download, translate, transcribe, audit,
-  vault, status), skill/dead-name guards, schema registry tests, and run-stage
-  protocol tests;
-- run-stage protocol coverage resolves every registered kind/stage row, checks
-  schema generation, and pins the four closed terminal branches from
-  `scripts/workflows/stage.mts`;
-- do not recreate per-loop edge-order, ingress, join, scheduler, retry, or batch
-  harnesses for deleted machinery;
-- a failing characterization test is not authority when it contradicts this
-  constitution: delete or rewrite it against the surviving boundary.
+- capability CLI and status observations;
+- generated schema, operation-catalog, and bundle parity;
+- prepared dispatch host stamping and the four closed Stage terminals;
+- one causal journey for each meaningful material transition, typed gate,
+  unknown-writer stop, join, checkpoint, and owner repair; and
+- Skill routing and dead-name quarantine.
 
-## Migration state
+Do not recreate deleted stage-order, ingress, batch, retry, or scheduler matrices.
+A characterization test for retired machinery is not a compatibility contract.
 
-- **0.52.27**: Paper/Book Acquire moved to the shared Stage receipt; Book year
-  gates became `needs_input`; `quasi-status` was added as the disk oracle.
-- **0.53.0**: one `defineOperation` factory began interpreting descriptor rows;
-  host-specific adapters and duplicate schema backstops were removed.
-- **0.54.0**: Author and Topic operations moved onto descriptor rows, and the
-  public topic skill became `research-topic`.
-- **0.55.0 (skill-driven cutover)**: the self-running driver layer and its graph
-  tests were deleted. The runtime is now exactly the four layers above: skill,
-  rows + run-stage, Agents, and CLIs. A real clean-project E2E at
-  `/tmp/quasi-e2e-r4/REPORT.md` was the deletion gate: `collect-material`
-  alternated five run-stage calls with `quasi-status` observations through
-  Search → Acquire → Prepare → Analyse → Audit, created and independently
-  verified all artifacts, and never invoked the retired driver. The run also
-  established two expected observations: Analyse may complete before Audit
-  performs mechanical normalization, which is designed Analyse-then-Audit
-  behavior; and headless stdout alone does not expose the full stage/tool trace,
-  so JSONL plus Workflow sidecars are the definitive execution evidence.
+## Migration record
 
-## Next focus
-
-Keep skills readable as explicit drivers, and reduce duplicated vocabulary
-across descriptor rows without moving judgment into them. Audit is
-deliberately not a status concern: a full-vault audit re-runs in under a
-minute (measured: 19,648 files in 42s), so cleanliness is recomputed on
-demand and covered by the maintainer's periodic sweep, never cached.
+- **0.55.0:** the self-running graph driver was replaced by Skill-driven Stage
+  dispatch and exact disk observation.
+- **2026-08-04 named-entry cutover:** Paper, Book, Talk, Translation, Author, and
+  Topic gained fixed named Workflows. The universal Stage compatibility engine
+  and its mode tests were then retired; Stage receipts remain only as the
+  internal Agent boundary.

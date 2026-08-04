@@ -11,7 +11,7 @@ the layer directly below them.
 
 ```text
 L5 skills/          user-facing coordinators and human gates
-L4 scripts/workflows/ modular TypeScript source for host-neutral stage graphs
+L4 scripts/workflows/ modular TypeScript source for named material plans
 L4 workflows/       generated, host-loadable workflow entries
 L3 agents/          specialist LLM workers, only calls quasi-* bins
 L2 bin/             stable command surface
@@ -44,8 +44,8 @@ separate:
 | `quasi-doctor` | runtime healthcheck: venv sync, core Python deps, optional external tools by profile |
 | `quasi-translate` | configured `immersive|pdf2zh` PDF translation; shared alternating-page, TOC, ToUnicode, and coverage contract |
 
-`quasi-status` imports `scripts/schemas/pipeline.py::PIPELINE` for the reported
-stage order and exact artifact path templates. Its hardened manifest parsing,
+`quasi-status` imports `scripts/schemas/operations.py::OPERATION_CATALOG` for exact
+artifact path templates. Its hardened manifest parsing,
 frontmatter reads, media enumeration, derivative globbing, and scan discovery
 remain explicit Python observation logic rather than a rule-DSL walker.
 
@@ -73,26 +73,23 @@ Removed legacy bins:
 
 ## Workflow source and runtime
 
-`scripts/schemas/pipeline.py` is the single source of kind/stage order,
-operation identity (`operation`, display phase, effect, and agent), declarative
-receipt-to-context carries, and stage artifact path templates. The Python exporter
-projects `PIPELINE` into `scripts/workflows/artifact-contracts/generated.mjs` alongside
-the canonical artifact contracts, and emits `generated.d.mts` literal unions and
-interfaces from the same source. `scripts/workflows/operations/rows/*.mts` owns
-operation-specific context derivation as well as request/receipt behavior. Leaf-local
-catalogs expose only the rows needed by Paper, Book, Talk, or Translation; the named
-plans own material progression, joins, and bounded repair. The Author and Topic plans compose their
-leaf entries through explicit host-observation handshakes. `run-stage.entry.mts` remains
-a temporary compatibility dispatcher, supplies the shared passthrough/default
-base, expands manifest templates after row context is known, and derives both
-`RUN_STAGE_REGISTRY` and runtime chain functions. `scripts/build-workflows.mjs`
-rejects duplicate kind/stage pairs, missing or duplicate row joins, unregistered rows,
-invalid manifest identity, and carries whose source field is not required by the owning
-receipt schema in both build and `--check` mode. The pinned esbuild dependency compiles
-the editable `.mts` layer into committed `workflows/{run-stage,paper,book,talk,translation,author,topic}.mjs`
-at build time; `npm run check:workflows` also rejects a stale projection, declaration, bundle, or
-forbidden runtime import, then runs strict `tsc --noEmit` checking over those
-TypeScript sources.
+`scripts/schemas/operations.py` is the single source of operation identity.
+`OPERATION_CATALOG` maps each stable operation to eligible kinds,
+display phase, effect, Agent, and artifact path templates. The Python exporter projects
+that catalog into `scripts/workflows/artifact-contracts/generated.mjs` alongside the
+canonical artifact contracts and emits matching declarations. It contains no stage
+order, carry, alias, or next-operation graph.
+
+`scripts/workflows/operations/rows/*.mts` owns operation-specific context derivation and
+request/receipt behavior. Six material-local catalogs expose only the rows needed by
+Paper, Book, Talk, Translation, Author, or Topic. Their named plans own progression,
+joins, checkpoints, and bounded repair; Author and Topic compose leaf plans through
+explicit host-observation handshakes. `scripts/build-workflows.mjs` verifies each fixed
+entry's metadata and `materialKind`, generated-artifact currency, and bundle ABI,
+imports, and size. Focused pytest checks prove operation-catalog/local-row alignment.
+The pinned esbuild dependency compiles the editable `.mts` entries into the
+committed `workflows/{paper,book,talk,translation,author,topic}.mjs` bundles;
+`npm run check:workflows` also runs strict `tsc --noEmit`.
 
 `collect-material` drives each leaf with one exact pre-status and a fixed kind→entry
 mapping. A leaf entry validates its closed seed/observation/options envelope, runs from
@@ -104,13 +101,12 @@ then joins before synthesis. A typed gate returns the current effective
 `{route,seed,options}`; the caller obtains fresh exact status and adds only the new
 decision. Unknown writer outcomes stop instead of racing a second writer.
 
-Inside both named plans and the compatibility entry, each descriptor row gives one
-specialist a goal, exact refs, declared capabilities, and a closed
+Inside a named plan, each descriptor row gives one specialist a goal, exact refs,
+declared capabilities, and a closed
 `quasi.stage.receipt/0.3` model-facing schema. After StructuredOutput validates the
 model-produced judgement fields and terminal, the host stamps top-level single-value
-bookkeeping consts. Compatibility `run-stage` can still dispatch one row, same-stage
-units with disjoint targets, or a registered fixed `until` slice; it does not branch,
-join, or persist state.
+bookkeeping consts through the prepared-dispatch boundary. No universal stage router or
+mode envelope remains.
 
 Root `settings.json` supplies a plugin-default `subagentStatusLine`. The
 zero-dependency `scripts/subagent-statusline.py` renders only quasi task rows,

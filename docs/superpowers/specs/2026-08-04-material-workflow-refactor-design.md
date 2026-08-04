@@ -1,12 +1,13 @@
 # Material-Oriented Workflow Refactor
 
 date: 2026-08-04
-status: awaiting user review
+status: implemented
 
 ## Summary
 
 Replace the public, universal `run-stage` controller with one official Claude Code
-Workflow per first-order material kind: Paper, Book, Talk, and Translation. Keep
+Workflow per material or composition kind: Paper, Book, Talk, Translation,
+Author, and Topic. Keep
 the official Workflow runtime where it adds unique value—host-enforced structured
 agent output—and move each material's control flow into a small, readable
 TypeScript plan.
@@ -18,6 +19,11 @@ chooses stages or understands material-specific branching.
 
 The objective is maintainability, not minimum source lines. Generated bundles may
 duplicate shared bytes; authored business logic must not be duplicated.
+
+Implementation followed the same boundary for the two higher-order kinds: Author
+composes completed Paper/Book leaf plans, while Topic composes Paper/Book/Talk
+plans plus its own stable checkpointed research loop. The outer Skills only
+transport exact observations, typed decisions, and final artifact verification.
 
 ## Context
 
