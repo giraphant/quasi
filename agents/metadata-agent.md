@@ -45,12 +45,13 @@ paper-vs-book/container 身份冲突时，也可给出 typed BookIdentity 作为
 ISBN，以及用户需要其中哪一章或哪一节，让用户在“改为收整本文集”和“仍按单篇继续”
 之间选择。`complete` 的 identity 始终与 request 同 kind；本阶段不得越过用户直接改按容器调查。
 
-选定身份后，用 vault resolver 查询该完整身份。未命中时 `local_owner` 使用真正的 JSON
-`null`；命中时回显 helper 给出的 complete exact owner object，`identity_slug`、`vault_slug`、
-`path` 和 `match` 都是非 null。其中 `identity_slug` 是实际交给 resolver 的 selected identity
-slug，而不是用户线索推导出的 provisional slug；`path` 是由 helper 返回的 `vault_slug` 所在
-canonical vault path。若 resolver 命中但无法给出这个完整 object，返回 `blocked`。本阶段只读，
-不创建 metadata 文件。
+选定身份后，用 vault resolver 查询该完整身份，只消费对应的唯一 helper row
+`{kind,slug,vault_slug,path,match}`。若 `vault_slug`、`path`、`match` 三项都是 null，返回
+`local_owner:null`。完整命中时映射为
+`{identity_slug:helperRow.slug,vault_slug:helperRow.vault_slug,path:helperRow.path,match:helperRow.match}`，
+后三项必须都是非 null；`helperRow.slug` 是实际交给 resolver 的 selected identity slug，不是用户
+线索推导出的 provisional slug。命令报错、缺少对应 row 或 row 不完整时返回 `blocked`。本阶段
+只读，不创建 metadata 文件。
 
 ## 阶段判断
 
