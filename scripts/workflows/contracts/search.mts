@@ -1,9 +1,11 @@
 import {
-  parseBookIdentity,
   parsePaperIdentity,
-  type BookIdentity,
   type PaperIdentity,
-} from "../shared/material-input.mts";
+} from "./paper.mts";
+import {
+  parseBookIdentity,
+  type BookIdentity,
+} from "./book.mts";
 import {
   exactKeys,
   sameClosedValue,

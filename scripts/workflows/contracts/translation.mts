@@ -1,10 +1,97 @@
 import {
-  parseTranslationCandidate,
-  type TranslationCandidate,
+  exactKeys as exactEnvelopeKeys,
+  isArtifactObservation,
+  isRecord,
+  normalizeLanguage,
+  parseStatusEnvelope,
+  type ArtifactObservation,
+  type QuasiStatusObservation,
 } from "../shared/material-input.mts";
 import { exactKeys, validText } from "../runtime.mts";
 
 const SHA256 = /^[0-9a-f]{64}$/;
+
+export interface TranslationCandidate {
+  path: string;
+  sha256: string;
+  size: number;
+  pages: number;
+}
+
+export interface TranslationSourceDecisionValue {
+  candidates_fingerprint: string;
+  source_path: string;
+}
+
+export interface TranslationStatusFacts {
+  kind: "translation";
+  target_language: string;
+  source: ArtifactObservation;
+  output: ArtifactObservation;
+  manifest: ArtifactObservation;
+}
+
+export type TranslationStatusObservation = QuasiStatusObservation<
+  "translation",
+  TranslationStatusFacts
+>;
+
+export const parseTranslationCandidate = (
+  value: unknown,
+): TranslationCandidate | null => {
+  if (
+    !isRecord(value) ||
+    !exactEnvelopeKeys(value, ["path", "sha256", "size", "pages"]) ||
+    typeof value.path !== "string" ||
+    typeof value.sha256 !== "string" ||
+    !SHA256.test(value.sha256) ||
+    !Number.isInteger(value.size) ||
+    (value.size as number) < 1 ||
+    !Number.isInteger(value.pages) ||
+    (value.pages as number) < 1
+  )
+    return null;
+  return value as unknown as TranslationCandidate;
+};
+
+export const parseTranslationSourceDecisionValue = (
+  value: unknown,
+): TranslationSourceDecisionValue | null => {
+  if (
+    !isRecord(value) ||
+    !exactEnvelopeKeys(value, ["candidates_fingerprint", "source_path"]) ||
+    typeof value.candidates_fingerprint !== "string" ||
+    !SHA256.test(value.candidates_fingerprint) ||
+    typeof value.source_path !== "string" ||
+    value.source_path.length === 0
+  )
+    return null;
+  return value as unknown as TranslationSourceDecisionValue;
+};
+
+export const parseTranslationStatusObservation = (
+  value: unknown,
+): TranslationStatusObservation | null => {
+  const observation = parseStatusEnvelope(value, "translation");
+  if (observation === null) return null;
+  const facts = observation.facts;
+  if (
+    !exactEnvelopeKeys(facts, [
+      "kind",
+      "target_language",
+      "source",
+      "output",
+      "manifest",
+    ]) ||
+    facts.kind !== "translation" ||
+    normalizeLanguage(facts.target_language) !== facts.target_language ||
+    !isArtifactObservation(facts.source) ||
+    !isArtifactObservation(facts.output) ||
+    !isArtifactObservation(facts.manifest)
+  )
+    return null;
+  return observation as unknown as TranslationStatusObservation;
+};
 
 interface TranslationGateBase {
   operation: "translation.prepare";

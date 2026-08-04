@@ -1,14 +1,12 @@
 import type {
   OperationName,
-  StageReceipt,
 } from "../artifact-contracts/generated.mjs";
 import type {
-  BookIdentity,
-  PaperIdentity,
-  QuasiStatusObservation,
+  ObservationRoute,
 } from "./material-input.mts";
 import type { IdentityConflictGate } from "../contracts/search.mts";
 import type {
+  BookIdentity,
   BookStructureGate,
   BookYearGate,
 } from "../contracts/book.mts";
@@ -16,6 +14,10 @@ import type {
   TranslationConfigurationGate,
   TranslationSourceGate,
 } from "../contracts/translation.mts";
+import type {
+  TopicGate,
+  TopicPendingWork,
+} from "../contracts/topic.mts";
 
 export const MATERIAL_RESULT_VERSION = "quasi.material.result/0.1" as const;
 
@@ -34,6 +36,7 @@ export interface RequestedMaterialIdentity {
 
 export interface CanonicalMaterialIdentity {
   kind: MaterialKind;
+  /** Runtime vault-owner slug; bibliographic identity may retain another slug. */
   slug: string;
 }
 
@@ -49,30 +52,6 @@ export interface ExactArtifactRef {
     | "resources"
     | "translation";
   path: string;
-}
-
-export type ObservationRoute =
-  | { kind: "paper" | "book" | "talk"; slug: string }
-  | {
-      kind: "translation";
-      slug: string;
-      target_language: string;
-    };
-
-export type ObservationKey =
-  | `paper:${string}`
-  | `book:${string}`
-  | `talk:${string}`
-  | `translation:paper:${string}:${string}`;
-
-export type SparseObservationMap = ReadonlyMap<
-  ObservationKey,
-  QuasiStatusObservation
->;
-
-export interface SparseObservationInput {
-  route: ObservationRoute;
-  observation: QuasiStatusObservation;
 }
 
 export type MaterialNextRoute = {
@@ -94,39 +73,7 @@ export type DirectGate =
   | BookStructureGate
   | TranslationSourceGate
   | TranslationConfigurationGate
-  | {
-      kind: "topic_seed";
-      operation: null;
-      question: string;
-      seeds: Array<{
-        kind: "paper" | "book" | "talk";
-        slug: string;
-        reason: string;
-      }>;
-    }
-  | {
-      kind: "topic_needs_seeds";
-      operation: "topic.steer";
-      question: string;
-      suggested_queries: string[];
-      uncovered_subquestions: string[];
-    };
-
-export type TopicPendingWork =
-  | {
-      kind: "material";
-      material_kind: "paper" | "book";
-      requested_slug: string;
-      subq: string;
-      role: string;
-      fingerprint: string;
-    }
-  | {
-      kind: "webcard";
-      card_slug: string;
-      subq: string;
-      fingerprint: string;
-    };
+  | TopicGate;
 
 export type TypedGate =
   | DirectGate
@@ -142,7 +89,6 @@ export interface MaterialResultBase {
     requested: RequestedMaterialIdentity;
     canonical: CanonicalMaterialIdentity | null;
   };
-  receipts: StageReceipt[];
 }
 
 export type MaterialResult =
@@ -168,15 +114,19 @@ export type MaterialResult =
       issue: MaterialIssue;
     });
 
-export type MaterialResultSeed = Omit<
-  MaterialResultBase,
-  "schema_version"
->;
+export interface MaterialResultSeed {
+  material: {
+    requested: RequestedMaterialIdentity;
+    canonical: CanonicalMaterialIdentity | null;
+  };
+}
 
 const materialBase = (seed: MaterialResultSeed): MaterialResultBase => ({
   schema_version: MATERIAL_RESULT_VERSION,
-  material: seed.material,
-  receipts: seed.receipts,
+  material: {
+    requested: seed.material.requested,
+    canonical: seed.material.canonical,
+  },
 });
 
 export const completeMaterialResult = (
@@ -241,7 +191,6 @@ export const invalidMaterialInputResult = (
   stoppedMaterialResult(
     {
       material: { requested, canonical: null },
-      receipts: [],
     },
     "blocked",
     {

@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = ROOT / "workflows" / "run-stage.mjs"
 UNIVERSAL_CATALOG = "scripts/workflows/operations/catalog.mts"
 ROW_PREFIX = "scripts/workflows/operations/rows/"
+MATERIAL_RESULT = "scripts/workflows/shared/material-result.mts"
 
 
 def _bundle_inputs(source: str) -> set[str]:
@@ -85,6 +86,19 @@ def test_leaf_catalog_has_exact_material_row_dependencies(
 
     assert UNIVERSAL_CATALOG not in inputs
     assert _row_inputs(inputs) == expected_rows
+
+
+@pytest.mark.parametrize("kind", ["paper", "book"])
+def test_leaf_parser_plus_public_result_stays_domain_local(kind: str) -> None:
+    inputs = _bundle_inputs(f"scripts/workflows/contracts/{kind}.mts")
+
+    assert MATERIAL_RESULT in inputs
+    forbidden = {
+        f"scripts/workflows/contracts/{other}.mts"
+        for other in ("paper", "book", "talk", "translation", "topic")
+        if other != kind
+    }
+    assert inputs.isdisjoint(forbidden)
 
 
 def test_generated_run_stage_executes_with_documented_workflow_host_abi() -> None:

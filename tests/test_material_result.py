@@ -10,6 +10,7 @@ from workflow_test_support import run_workflow_export
 
 INPUT_MODULE = "scripts/workflows/shared/material-input.mts"
 RESULT_MODULE = "scripts/workflows/shared/material-result.mts"
+PAPER_CONTRACT_MODULE = "scripts/workflows/contracts/paper.mts"
 SEARCH_CONTRACT_MODULE = "scripts/workflows/contracts/search.mts"
 BOOK_CONTRACT_MODULE = "scripts/workflows/contracts/book.mts"
 TRANSLATION_CONTRACT_MODULE = "scripts/workflows/contracts/translation.mts"
@@ -138,11 +139,19 @@ def valid_input() -> dict[str, Any]:
 
 
 def parse_paper(value: Any) -> dict[str, Any]:
-    return run_workflow_export(INPUT_MODULE, "parseLeafMaterialInput", value, "paper")
+    return run_workflow_export(
+        PAPER_CONTRACT_MODULE,
+        "parsePaperRunInput",
+        value,
+    )
 
 
 def parse_book(value: Any) -> dict[str, Any]:
-    return run_workflow_export(INPUT_MODULE, "parseLeafMaterialInput", value, "book")
+    return run_workflow_export(
+        BOOK_CONTRACT_MODULE,
+        "parseBookRunInput",
+        value,
+    )
 
 
 def assert_parsed_seed(
@@ -150,12 +159,9 @@ def assert_parsed_seed(
     kind: str,
     observation_key: str,
 ) -> None:
-    result = run_workflow_export(
-        INPUT_MODULE,
-        "parseLeafMaterialInput",
-        value,
-        kind,
-    )
+    module = PAPER_CONTRACT_MODULE if kind == "paper" else BOOK_CONTRACT_MODULE
+    parser = "parsePaperRunInput" if kind == "paper" else "parseBookRunInput"
+    result = run_workflow_export(module, parser, value)
     assert result == {
         "ok": True,
         "value": {
@@ -182,7 +188,6 @@ def assert_invalid_input(
                 "requested": {"kind": kind, "slug": requested_slug},
                 "canonical": None,
             },
-            "receipts": [],
             "terminal": "blocked",
             "issue": {
                 "code": "material.invalid_input",
@@ -278,12 +283,7 @@ def test_provisional_seed_requires_one_search_anchor(
 ):
     value = {"seed": seed, "observation": observation, "options": {}}
 
-    result = run_workflow_export(
-        INPUT_MODULE,
-        "parseLeafMaterialInput",
-        value,
-        kind,
-    )
+    result = parse_paper(value) if kind == "paper" else parse_book(value)
 
     requested_slug = seed["requested_slug"]
     assert_invalid_input(result, requested_slug, kind)
@@ -325,7 +325,25 @@ def test_owner_drift_keeps_material_slug_separate_from_identity_slug():
         "usable": True,
     }
 
-    assert_parsed_seed(value, "paper", "paper:owned-paper")
+    parsed = parse_paper(value)
+    assert parsed["ok"] is True
+    assert parsed["value"]["seed"]["material_slug"] == "owned-paper"
+    assert parsed["value"]["seed"]["identity"]["slug"] == "exact-paper"
+
+    result = run_workflow_export(
+        RESULT_MODULE,
+        "completeMaterialResult",
+        {
+            "material": {
+                "requested": {"kind": "paper", "slug": "owned-paper"},
+                "canonical": {"kind": "paper", "slug": "owned-paper"},
+            }
+        },
+        [{"role": "canonical", "path": "vault/papers/owned-paper.md"}],
+        None,
+    )
+
+    assert result["material"]["canonical"]["slug"] == "owned-paper"
 
 
 def test_owner_drift_rejects_an_empty_status_query_echo():
@@ -546,7 +564,7 @@ def test_translation_decision_value_keeps_its_evidence_binding():
     }
 
     assert run_workflow_export(
-        INPUT_MODULE,
+        TRANSLATION_CONTRACT_MODULE,
         "parseTranslationSourceDecisionValue",
         translation_value,
     ) == translation_value
@@ -1026,13 +1044,13 @@ def test_translation_gate_rejects_issue_and_gate_kind_mismatch():
     ) is None
 
 
-def test_complete_material_result_preserves_closed_host_envelope():
+def test_complete_material_result_exposes_only_the_closed_public_shape():
     base = {
         "material": {
             "requested": {"kind": "paper", "slug": "exact-paper"},
             "canonical": {"kind": "paper", "slug": "exact-paper"},
         },
-        "receipts": [{"terminal": {"status": "complete", "issue": None}}],
+        "receipts": [{"legacy_sentinel": "must-not-cross-public-boundary"}],
     }
     artifacts = [{"role": "canonical", "path": "vault/papers/exact-paper.md"}]
 
@@ -1046,7 +1064,7 @@ def test_complete_material_result_preserves_closed_host_envelope():
 
     assert result == {
         "schema_version": "quasi.material.result/0.1",
-        **base,
+        "material": base["material"],
         "terminal": "complete",
         "issue": None,
         "artifacts": artifacts,
@@ -1060,7 +1078,6 @@ def test_topic_incomplete_result_has_only_closed_pending_rows():
             "requested": {"kind": "topic", "slug": "exact-topic"},
             "canonical": {"kind": "topic", "slug": "exact-topic"},
         },
-        "receipts": [],
     }
     issue = {
         "code": "topic.round_limit",
@@ -1117,7 +1134,6 @@ def test_stopped_material_result_has_closed_terminal_constructor(terminal: str):
             "requested": {"kind": "talk", "slug": "exact-talk"},
             "canonical": None,
         },
-        "receipts": [],
     }
     issue = {
         "code": "material.stopped",

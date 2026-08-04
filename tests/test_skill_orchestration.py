@@ -70,13 +70,20 @@ def test_status_producer_and_workflow_consumer_share_the_factual_envelope(
 ) -> None:
     payload = status_module.paper_status(tmp_path, "exact-paper")
 
+    observation = run_workflow_export(
+        "scripts/workflows/contracts/paper.mts",
+        "parsePaperStatusObservation",
+        payload,
+    )
+    assert observation == payload
+
     parsed = run_workflow_export(
         "scripts/workflows/shared/material-input.mts",
         "sparseObservations",
         [
             {
                 "route": {"kind": "paper", "slug": "exact-paper"},
-                "observation": payload,
+                "observation": observation,
             }
         ],
     )

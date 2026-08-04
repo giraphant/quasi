@@ -7,13 +7,13 @@ import {
   contextValue,
 } from "../../context-base.mts";
 import { sameClosedValue, validText } from "../../runtime.mts";
-import { parseBookIdentity } from "../../shared/material-input.mts";
 import {
   BOOK_TEMP_PATH,
   BOOK_YEAR_EVIDENCE_SCHEMA,
   parseBookYearEvidence,
 } from "../book-year-evidence.mts";
 import {
+  parseBookIdentity,
   parseBookStructureDecisionValue,
   parseBookYearDecisionValue,
 } from "../../contracts/book.mts";
