@@ -58,16 +58,24 @@ export interface QuasiStatusStageObservation {
   evidence: string[];
 }
 
-export interface QuasiStatusObservation {
+interface QuasiStatusObservationBase {
   schema_version: "quasi.status/0.1";
-  kind: "paper" | "book" | "talk" | "translation";
   slug: string;
-  target_language?: string;
   stages: QuasiStatusStageObservation[];
   next_stage: string | null;
   refs: WorkflowContext;
   identity?: WorkflowContext | null;
 }
+
+export type QuasiStatusObservation =
+  | (QuasiStatusObservationBase & {
+      kind: "paper" | "book" | "talk";
+      target_language?: never;
+    })
+  | (QuasiStatusObservationBase & {
+      kind: "translation";
+      target_language: string;
+    });
 
 export interface UserDecision {
   material_key: string;
@@ -238,12 +246,13 @@ export const parseTranslationCandidate = (
 const parseStatusObservation = (
   value: unknown,
 ): QuasiStatusObservation | null => {
+  const translation = isRecord(value) && value.kind === "translation";
   if (
     !isRecord(value) ||
     !exactKeys(
       value,
       ["schema_version", "kind", "slug", "stages", "next_stage", "refs"],
-      ["identity", "target_language"],
+      translation ? ["identity", "target_language"] : ["identity"],
     ) ||
     value.schema_version !== "quasi.status/0.1" ||
     !["paper", "book", "talk", "translation"].includes(
@@ -265,8 +274,8 @@ const parseStatusObservation = (
     (Object.hasOwn(value, "identity") &&
       value.identity !== null &&
       !isRecord(value.identity)) ||
-    (Object.hasOwn(value, "target_language") &&
-      normalizeLanguage(value.target_language) === null)
+    (translation &&
+      normalizeLanguage(value.target_language) !== value.target_language)
   )
     return null;
   return value as unknown as QuasiStatusObservation;
@@ -318,9 +327,7 @@ export const sparseObservations = (
       observation.kind !== route.kind ||
       observation.slug !== route.slug ||
       (route.kind === "translation" &&
-        observation.target_language !== undefined &&
-        normalizeLanguage(observation.target_language) !==
-          route.target_language)
+        observation.target_language !== route.target_language)
     )
       return null;
     const key = observationKey(route);

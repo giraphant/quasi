@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from workflow_test_support import run_workflow_export
+from workflow_test_support import inspect_typescript_contract, run_workflow_export
 
 
 INPUT_MODULE = "scripts/workflows/shared/material-input.mts"
@@ -162,6 +162,87 @@ def test_translation_target_mismatch_has_no_dispatchable_value():
     assert result is None
 
 
+def test_translation_observation_missing_target_has_no_dispatchable_value():
+    observation = {
+        "schema_version": "quasi.status/0.1",
+        "kind": "translation",
+        "slug": "exact-paper",
+        "stages": [
+            {"stage": "acquire", "complete": True, "evidence": ["sources/exact-paper.pdf"]},
+            {"stage": "prepare", "complete": False, "evidence": []},
+        ],
+        "next_stage": "prepare",
+        "refs": {"source": "sources/exact-paper.pdf", "derivatives": []},
+    }
+
+    result = run_workflow_export(
+        INPUT_MODULE,
+        "sparseObservations",
+        [
+            {
+                "route": {
+                    "kind": "translation",
+                    "slug": "exact-paper",
+                    "target_language": "zh-CN",
+                },
+                "observation": observation,
+            }
+        ],
+    )
+
+    assert result is None
+
+
+def test_translation_observation_rejects_noncanonical_target_tag():
+    observation = {
+        "schema_version": "quasi.status/0.1",
+        "kind": "translation",
+        "slug": "exact-paper",
+        "target_language": "zh-cn",
+        "stages": [
+            {"stage": "acquire", "complete": True, "evidence": ["sources/exact-paper.pdf"]},
+            {"stage": "prepare", "complete": False, "evidence": []},
+        ],
+        "next_stage": "prepare",
+        "refs": {"source": "sources/exact-paper.pdf", "derivatives": []},
+    }
+
+    result = run_workflow_export(
+        INPUT_MODULE,
+        "sparseObservations",
+        [
+            {
+                "route": {
+                    "kind": "translation",
+                    "slug": "exact-paper",
+                    "target_language": "zh-CN",
+                },
+                "observation": observation,
+            }
+        ],
+    )
+
+    assert result is None
+
+
+def test_non_translation_observation_rejects_target_field():
+    observation = deepcopy(PAPER_OBSERVATION)
+    observation["target_language"] = "zh-CN"
+
+    result = run_workflow_export(
+        INPUT_MODULE,
+        "sparseObservations",
+        [
+            {
+                "route": {"kind": "paper", "slug": "exact-paper"},
+                "observation": observation,
+            }
+        ],
+    )
+
+    assert result is None
+
+
 def test_translation_observation_key_uses_normalized_full_target_tag():
     observation = {
         "schema_version": "quasi.status/0.1",
@@ -196,6 +277,23 @@ def test_translation_observation_key_uses_normalized_full_target_tag():
             ["translation:paper:exact-paper:zh-CN", observation]
         ]
     }
+
+
+def test_run_stage_uses_the_one_shared_dispatch_runtime_contract():
+    contract = inspect_typescript_contract("scripts/workflows/run-stage.entry.mts")
+
+    assert "AgentOptions" not in contract["localTypes"]
+    assert "Agent" not in contract["localTypes"]
+    assert set(contract["imports"]["./shared/host-runtime.mts"]) == {
+        "AgentOptions",
+        "DispatchRuntime",
+    }
+    assert contract["interfaces"]["RunRuntime"]["extends"] == ["DispatchRuntime"]
+    assert contract["functions"]["dispatchStageUnit"][:3] == [
+        'DispatchRuntime["agent"]',
+        "string",
+        "AgentOptions",
+    ]
 
 
 def test_sparse_observations_rejects_duplicate_keys():

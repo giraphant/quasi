@@ -20,6 +20,10 @@ import {
   stageReceiptSchema,
 } from "./stage.mts";
 import type {
+  AgentOptions,
+  DispatchRuntime,
+} from "./shared/host-runtime.mts";
+import type {
   KindName,
   OperationDescriptor,
   OperationName,
@@ -70,20 +74,7 @@ interface RunArgs {
   units?: RunUnit[];
 }
 
-interface AgentOptions {
-  schema: Record<string, any>;
-  agentType: string;
-  phase: string;
-  label: string;
-}
-
-type Agent = (
-  prompt: string,
-  options: AgentOptions,
-) => Promise<WorkflowContext | null>;
-
-interface RunRuntime {
-  agent: Agent;
+interface RunRuntime extends DispatchRuntime {
   parallel?: (
     thunks: Array<() => Promise<StageReceipt | null>>,
   ) => Promise<Array<StageReceipt | null>>;
@@ -195,7 +186,7 @@ const stampStageReceipt = (
 };
 
 const dispatchStageUnit = async (
-  agent: Agent,
+  agent: DispatchRuntime["agent"],
   prompt: string,
   options: AgentOptions,
   stampedValues: WorkflowContext,
