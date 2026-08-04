@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from workflow_test_support import inspect_typescript_contract, run_workflow_export
+from workflow_test_support import run_workflow_export
 
 
 INPUT_MODULE = "scripts/workflows/shared/material-input.mts"
@@ -277,23 +277,6 @@ def test_translation_observation_key_uses_normalized_full_target_tag():
             ["translation:paper:exact-paper:zh-CN", observation]
         ]
     }
-
-
-def test_run_stage_uses_the_one_shared_dispatch_runtime_contract():
-    contract = inspect_typescript_contract("scripts/workflows/run-stage.entry.mts")
-
-    assert "AgentOptions" not in contract["localTypes"]
-    assert "Agent" not in contract["localTypes"]
-    assert set(contract["imports"]["./shared/host-runtime.mts"]) == {
-        "AgentOptions",
-        "DispatchRuntime",
-    }
-    assert contract["interfaces"]["RunRuntime"]["extends"] == ["DispatchRuntime"]
-    assert contract["functions"]["dispatchStageUnit"][:3] == [
-        'DispatchRuntime["agent"]',
-        "string",
-        "AgentOptions",
-    ]
 
 
 def test_sparse_observations_rejects_duplicate_keys():

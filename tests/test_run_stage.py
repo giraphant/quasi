@@ -10,17 +10,34 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ENTRY = ROOT / "workflows" / "run-stage.mjs"
+ENTRY = ROOT / "scripts" / "workflows" / "run-stage.entry.mts"
 
 NODE_HARNESS = r"""
-import {
+import { build } from "esbuild";
+
+const built = await build({
+  absWorkingDir: process.cwd(),
+  bundle: true,
+  charset: "utf8",
+  entryPoints: [__ENTRY__],
+  format: "esm",
+  legalComments: "none",
+  logLevel: "silent",
+  platform: "node",
+  sourcemap: false,
+  target: ["es2022"],
+  treeShaking: true,
+  write: false,
+});
+const moduleUrl = `data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString("base64")}`;
+const {
   RUN_STAGE_REGISTRY,
   STAGE_STATUSES,
   resolveStage,
   resolveStageContext,
   run,
   stageReceiptSchema,
-} from __ENTRY__
+} = await import(moduleUrl);
 
 const config = JSON.parse(process.argv[1])
 if (config.args?.inspectProtocol) {
@@ -51,32 +68,28 @@ if (config.args?.inspectProtocol) {
 }
 const trace = []
 const logs = []
-const receipt = { sentinel: "returned-verbatim" }
+const pipelineCalls = []
 const stageReceipts = config.stageReceipts || null
 const hasUnits = Array.isArray(config.args.units) && config.args.units.length > 0
 const result = await run({
   agent: async (prompt, options) => {
     trace.push({ prompt, options })
     const stageKey = options.phase.toLowerCase()
+    if ((config.rejectPhases || []).includes(stageKey)) {
+      throw new Error(`agent rejected during ${stageKey}`)
+    }
     if (
       stageReceipts &&
       Object.prototype.hasOwnProperty.call(stageReceipts, stageKey)
     ) {
       return stageReceipts[stageKey]
     }
-    return hasUnits
-      ? { ...receipt, unit_label: options.label }
-      : receipt
+    return null
   },
-  parallel: async (thunks) => {
+  pipeline: async (items, worker) => {
+    pipelineCalls.push(items.length)
     const out = []
-    for (const thunk of thunks) {
-      try {
-        out.push(await thunk())
-      } catch {
-        out.push(null)
-      }
-    }
+    for (const item of items) out.push(await worker(item))
     return out
   },
   log: (message) => {
@@ -85,7 +98,11 @@ const result = await run({
 }, config.args)
 const resolved = resolveStage(config.args.kind, config.args.stage)
 let direct = null
-if (resolved && !hasUnits && result.schema_version !== "quasi.run-stage.error/0.1") {
+if (
+  resolved &&
+  !hasUnits &&
+  result?.error?.code !== "run-stage.invalid_context"
+) {
   const context = resolveStageContext(
     resolved,
     config.args.slug,
@@ -103,7 +120,7 @@ if (resolved && !hasUnits && result.schema_version !== "quasi.run-stage.error/0.
     request: resolved.descriptor.envelope(context, refs),
   }
 }
-process.stdout.write(JSON.stringify({ result, trace, logs, direct }))
+process.stdout.write(JSON.stringify({ result, trace, logs, pipelineCalls, direct }))
 """
 
 
@@ -111,14 +128,17 @@ def run_stage(
     args: dict[str, Any],
     *,
     stage_receipts: dict[str, Any] | None = None,
+    reject_phases: list[str] | None = None,
 ) -> dict[str, Any]:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
-    script = NODE_HARNESS.replace("__ENTRY__", json.dumps(ENTRY.as_uri()))
+    script = NODE_HARNESS.replace("__ENTRY__", json.dumps(str(ENTRY)))
     config: dict[str, Any] = {"args": args}
     if stage_receipts is not None:
         config["stageReceipts"] = stage_receipts
+    if reject_phases is not None:
+        config["rejectPhases"] = reject_phases
     proc = subprocess.run(
         [node, "--input-type=module", "-e", script, json.dumps(config)],
         cwd=ROOT,
@@ -169,6 +189,40 @@ EXPECTED_REGISTRY = {
     },
     "translate": {"prepare": "translation.prepare"},
 }
+
+def blocked_issue(operation: str) -> dict[str, Any]:
+    return {
+        "code": f"{operation}.blocked",
+        "operation": operation,
+        "summary": "The exact operation is blocked.",
+        "user_question": None,
+        "retryable": False,
+    }
+
+
+def chapter_blocked_output() -> dict[str, Any]:
+    return {
+        "artifact_roles": ["chapter_canonical"],
+        "terminal": {
+            "status": "blocked",
+            "issue": blocked_issue("chapter.analyse"),
+            "action": "create",
+            "write_state": "unknown",
+        }
+    }
+
+
+def paper_prepare_blocked_output() -> dict[str, Any]:
+    return {
+        "selected_input": None,
+        "artifacts": [],
+        "steps": [],
+        "diagnostics": [],
+        "terminal": {
+            "status": "blocked",
+            "issue": blocked_issue("paper.prepare"),
+        },
+    }
 
 
 def stage_context(kind: str, stage: str) -> dict[str, Any]:
@@ -936,7 +990,8 @@ def test_book_analyse_fans_out_units_and_preserves_receipt_order() -> None:
             "slug": "example-book",
             "stage": "analyse",
             "units": units,
-        }
+        },
+        stage_receipts={"analyse": chapter_blocked_output()},
     )
 
     result = report["result"]
@@ -949,6 +1004,7 @@ def test_book_analyse_fans_out_units_and_preserves_receipt_order() -> None:
     assert result["kind"] == "book"
     assert result["stage"] == "analyse"
     assert result["count"] == 3
+    assert report["pipelineCalls"] == [3]
     assert [call["options"]["label"] for call in report["trace"]] == expected_labels
     expected_paths = [
         (
@@ -965,8 +1021,8 @@ def test_book_analyse_fans_out_units_and_preserves_receipt_order() -> None:
         ),
     ]
     assert len(result["receipts"]) == len(expected_labels)
-    for receipt, label, (input_path, output_path) in zip(
-        result["receipts"], expected_labels, expected_paths
+    for receipt, (input_path, output_path) in zip(
+        result["receipts"], expected_paths
     ):
         assert receipt == {
             "schema_version": "quasi.stage.receipt/0.3",
@@ -977,8 +1033,7 @@ def test_book_analyse_fans_out_units_and_preserves_receipt_order() -> None:
             "attempt": 1,
             "input_path": input_path,
             "output_path": output_path,
-            "sentinel": "returned-verbatim",
-            "unit_label": label,
+            **chapter_blocked_output(),
         }
 
 
@@ -994,41 +1049,106 @@ def test_batch_invalid_context_is_per_unit_and_other_units_dispatch() -> None:
             "slug": "example-book",
             "stage": "analyse",
             "units": units,
-        }
+        },
+        stage_receipts={"analyse": chapter_blocked_output()},
     )
 
     receipts = report["result"]["receipts"]
     assert len(receipts) == 3
-    assert receipts[0]["unit_label"] == "example-book:analyse:introduction"
+    assert receipts[0]["output_path"] == (
+        "vault/books/example-book/ch01-introduction.md"
+    )
     assert receipts[1]["schema_version"] == "quasi.run-stage.error/0.1"
     assert receipts[1]["error"]["code"] == "run-stage.invalid_context"
-    assert receipts[2]["unit_label"] == "example-book:analyse:conclusion"
+    assert receipts[2]["output_path"] == (
+        "vault/books/example-book/ch03-conclusion.md"
+    )
     assert [call["options"]["label"] for call in report["trace"]] == [
         "example-book:analyse:introduction",
         "example-book:analyse:conclusion",
     ]
+    assert report["pipelineCalls"] == [2]
 
 
 def test_batch_duplicate_units_fail_before_any_agent_dispatch() -> None:
-    unit = chapter_unit("01", "introduction", "Introduction")
+    first = chapter_unit("01", "introduction", "Introduction")
+    second = chapter_unit("01", "introduction", "A different title")
+    second["label"] = "same-output-different-request"
     report = run_stage(
         {
             "kind": "book",
             "slug": "example-book",
             "stage": "analyse",
-            "units": [unit, unit],
+            "units": [first, second],
         }
     )
 
     assert report["result"]["schema_version"] == "quasi.run-stage.error/0.1"
     assert report["result"]["error"]["code"] == "run-stage.duplicate_unit"
     assert report["trace"] == []
+    assert report["pipelineCalls"] == []
+
+
+def test_single_mode_applies_completion_predicate() -> None:
+    model_output = {
+        "remaining_violations": 1,
+        "escalated": [],
+        "mutated_paths": [],
+        "terminal": {"status": "complete", "issue": None},
+    }
+    report = run_stage(
+        {"kind": "paper", "slug": "example", "stage": "audit", "context": {}},
+        stage_receipts={"audit": model_output},
+    )
+
+    assert report["result"]["schema_version"] == "quasi.run-stage.error/0.1"
+    assert report["result"]["error"]["code"] == "run-stage.incoherent_complete"
+    assert len(report["trace"]) == 1
+
+
+def test_batch_mode_applies_completion_predicate_at_each_input_index() -> None:
+    model_output = {
+        "remaining_violations": 1,
+        "escalated": [],
+        "mutated_paths": [],
+        "terminal": {"status": "complete", "issue": None},
+    }
+    report = run_stage(
+        {
+            "kind": "paper",
+            "slug": "collection",
+            "stage": "audit",
+            "units": [
+                {"slug": "first-paper", "context": {}},
+                {"slug": "second-paper", "context": {}},
+            ],
+        },
+        stage_receipts={"audit": model_output},
+    )
+
+    assert report["pipelineCalls"] == [2]
+    assert [item["error"]["code"] for item in report["result"]["receipts"]] == [
+        "run-stage.incoherent_complete",
+        "run-stage.incoherent_complete",
+    ]
+
+
+def test_single_agent_rejection_returns_typed_unknown_outcome() -> None:
+    report = run_stage(
+        {"kind": "paper", "slug": "example", "stage": "prepare", "context": {}},
+        reject_phases=["prepare"],
+    )
+
+    assert len(report["trace"]) == 1
+    assert report["result"]["schema_version"] == "quasi.run-stage.error/0.1"
+    assert report["result"]["error"]["code"] == "run-stage.unknown_outcome"
 
 
 def test_single_mode_returns_host_stamped_receipt_and_logs_narrative() -> None:
     slug = "s" * 61
     report = run_stage(
-        {"kind": "paper", "slug": slug, "stage": "prepare", "context": {}}
+        {"kind": "paper", "slug": slug, "stage": "prepare", "context": {}},
+        stage_receipts={"prepare": paper_prepare_blocked_output()},
     )
 
     assert report["result"] == {
@@ -1039,7 +1159,7 @@ def test_single_mode_returns_host_stamped_receipt_and_logs_narrative() -> None:
         "effect": "writer",
         "attempt": 1,
         "source_path": f"sources/{slug}.pdf",
-        "sentinel": "returned-verbatim",
+        **paper_prepare_blocked_output(),
     }
     assert report["logs"] == [f"prepare — {slug[:60]}"]
 

@@ -2,19 +2,25 @@ import { PIPELINE } from "./artifact-contracts/generated.mjs";
 import { InputContractError } from "./context-base.mts";
 import {
   OPERATION_ROWS,
+  prepareOperation,
   resolveCatalogOperation,
   resolveOperationContext,
+  writeTargetsOverlap,
   type CatalogOperation,
+  type OperationInvocation,
+  type PreparedOperation,
 } from "./operations/catalog.mts";
+import {
+  dispatchOperation,
+  dispatchPreparedOperation,
+  type DispatchOutcome,
+} from "./shared/dispatch.mts";
 import {
   STAGE_STATUSES,
   stageReceiptPartition,
   stageReceiptSchema,
 } from "./stage.mts";
-import type {
-  AgentOptions,
-  DispatchRuntime,
-} from "./shared/host-runtime.mts";
+import type { MaterialRuntime } from "./shared/host-runtime.mts";
 import type {
   KindName,
   OperationName,
@@ -59,10 +65,7 @@ interface RunArgs {
   units?: RunUnit[];
 }
 
-interface RunRuntime extends DispatchRuntime {
-  parallel?: (
-    thunks: Array<() => Promise<StageReceipt | null>>,
-  ) => Promise<Array<StageReceipt | null>>;
+interface RunRuntime extends MaterialRuntime {
   log?: (message: string) => void;
 }
 
@@ -128,29 +131,6 @@ const errorResult = (code: string, args: RunArgs, message: string) => ({
   },
 });
 
-const stampStageReceipt = (
-  stampedValues: WorkflowContext,
-  modelOutput: WorkflowContext | null,
-): StageReceipt | null => {
-  if (modelOutput == null) return null;
-  const collisions = Object.keys(stampedValues).filter((key) =>
-    Object.prototype.hasOwnProperty.call(modelOutput, key),
-  );
-  if (collisions.length > 0)
-    throw new Error(
-      `validated model output contains host-stamped receipt fields: ${collisions.join(", ")}`,
-    );
-  return { ...stampedValues, ...modelOutput } as StageReceipt;
-};
-
-const dispatchStageUnit = async (
-  agent: DispatchRuntime["agent"],
-  prompt: string,
-  options: AgentOptions,
-  stampedValues: WorkflowContext,
-): Promise<StageReceipt | null> =>
-  stampStageReceipt(stampedValues, await agent(prompt, options));
-
 export function resolveStage(
   kind: unknown,
   stage: unknown,
@@ -174,8 +154,39 @@ export function resolveStageContext(
   return resolveOperationContext(resolved, slug, rawContext);
 }
 
+const operationInvocation = (
+  resolved: ResolvedStage,
+  slug: any,
+  context: WorkflowContext | undefined,
+  label: string,
+): OperationInvocation => ({
+  kind: resolved.kind,
+  operation: resolved.operation,
+  slug,
+  context: context || {},
+  label,
+});
+
+const compatibilityError = (
+  outcome: Exclude<DispatchOutcome, { kind: "receipt" }>,
+  args: RunArgs,
+) =>
+  errorResult(
+    `run-stage.${outcome.kind}`,
+    args,
+    outcome.issue.summary,
+  );
+
+const compatibilityResult = (
+  outcome: DispatchOutcome,
+  args: RunArgs,
+) =>
+  outcome.kind === "receipt"
+    ? outcome.receipt
+    : compatibilityError(outcome, args);
+
 async function runChain(
-  { agent, log }: RunRuntime,
+  runtime: RunRuntime,
   args: RunArgs,
   resolved: ResolvedStage,
   chain: StageChain,
@@ -196,68 +207,42 @@ async function runChain(
         ? resolved
         : resolveStage(resolved.kind, currentStage)
     ) as ResolvedStage;
-    let stageContext;
-    let prompt;
-    let schema;
-    let stampedValues;
-    try {
-      stageContext = resolveStageContext(
+    const currentArgs = { ...args, stage: currentStage };
+    const outcome = await dispatchOperation(
+      runtime,
+      operationInvocation(
         current,
         args.slug,
         accumulatedContext,
-      );
-      prompt = current.row.prompt(stageContext);
-      ({ modelSchema: schema, stampedValues } =
-        current.row.receiptSchema(stageContext));
-    } catch (error) {
-      if (!(error instanceof InputContractError)) throw error;
+        `${args.slug}:${currentStage}`,
+      ),
+    );
+    if (outcome.kind === "invalid_context") {
       receipts.push({
         stage: currentStage,
-        receipt: errorResult(
-          "run-stage.invalid_context",
-          { ...args, stage: currentStage },
-          error instanceof Error ? error.message : String(error),
-        ),
+        receipt: compatibilityError(outcome, currentArgs),
       });
       stopReason = "invalid_context";
       break;
     }
 
-    if (typeof log === "function") {
-      log(`${currentStage} — ${String(args.slug).slice(0, 60)}`);
+    if (typeof runtime.log === "function") {
+      runtime.log(`${currentStage} — ${String(args.slug).slice(0, 60)}`);
     }
-    const receipt = await dispatchStageUnit(
-      agent,
-      prompt,
-      {
-        schema,
-        agentType: current.descriptor.agentType,
-        phase: current.descriptor.stage,
-        label: `${args.slug}:${currentStage}`,
-      },
-      stampedValues,
-    );
     stoppedAt = currentStage;
-    receipts.push({ stage: currentStage, receipt });
-
-    if (receipt == null) {
+    if (outcome.kind === "unknown_outcome") {
+      receipts.push({ stage: currentStage, receipt: null });
       stopReason = "no_receipt";
+      break;
+    }
+    const receipt = outcome.receipt;
+    receipts.push({ stage: currentStage, receipt });
+    if (outcome.kind === "incoherent_complete") {
+      stopReason = "incoherent_complete";
       break;
     }
     if (receipt.terminal.status !== "complete") {
       stopReason = receipt.terminal.status;
-      break;
-    }
-
-    let coherent = false;
-    try {
-      coherent =
-        current.row.contract.statuses.complete(receipt, stageContext) === true;
-    } catch {
-      coherent = false;
-    }
-    if (!coherent) {
-      stopReason = "incoherent_complete";
       break;
     }
 
@@ -280,7 +265,7 @@ async function runChain(
 }
 
 export async function run(
-  { agent, parallel, log }: RunRuntime,
+  runtime: RunRuntime,
   inputArgs: unknown,
 ) {
   const args =
@@ -323,7 +308,7 @@ export async function run(
         `No valid run-stage chain for kind=${resolved.kind} from=${from} until=${until}`,
       );
     }
-    return runChain({ agent, log }, args, resolved, chain, from, until);
+    return runChain(runtime, args, resolved, chain, from, until);
   }
   if (units) {
     if (units.length > 64) {
@@ -334,23 +319,30 @@ export async function run(
       );
     }
     const receipts = new Array(units.length);
-    const pending = [];
-    const promptIndexes = new Map();
+    const pending: Array<{
+      index: number;
+      args: RunArgs;
+      prepared: PreparedOperation;
+    }> = [];
     for (const [index, unit] of units.entries()) {
       const unitSlug = unit?.slug || args.slug;
       const unitArgs = { ...args, slug: unitSlug, context: unit?.context };
-      let prompt;
-      let schema;
-      let stampedValues;
+      const cleanLabel =
+        typeof unit?.label === "string"
+          ? unit.label.trim().replace(/\s+/g, " ").slice(0, 40)
+          : "";
+      const invocation = operationInvocation(
+        resolved,
+        unitSlug,
+        unit?.context,
+        `${unitSlug}:${args.stage}${cleanLabel ? `:${cleanLabel}` : ""}`,
+      );
       try {
-        const context = resolveStageContext(
-          resolved,
-          unitSlug,
-          unit?.context,
-        );
-        prompt = resolved.row.prompt(context);
-        ({ modelSchema: schema, stampedValues } =
-          resolved.row.receiptSchema(context));
+        pending.push({
+          index,
+          args: unitArgs,
+          prepared: prepareOperation(invocation),
+        });
       } catch (error) {
         if (!(error instanceof InputContractError)) throw error;
         receipts[index] = errorResult(
@@ -358,52 +350,39 @@ export async function run(
           unitArgs,
           error instanceof Error ? error.message : String(error),
         );
-        continue;
       }
-      if (promptIndexes.has(prompt)) {
-        const firstIndex = promptIndexes.get(prompt);
-        return errorResult(
-          "run-stage.duplicate_unit",
-          args,
-          `Duplicate run-stage units at indexes ${firstIndex} and ${index}`,
+    }
+    for (let left = 0; left < pending.length; left += 1) {
+      for (let right = left + 1; right < pending.length; right += 1) {
+        const overlaps = pending[left].prepared.writeTargets.some(
+          (leftTarget) =>
+            pending[right].prepared.writeTargets.some((rightTarget) =>
+              writeTargetsOverlap(leftTarget, rightTarget),
+            ),
         );
+        if (overlaps) {
+          return errorResult(
+            "run-stage.duplicate_unit",
+            args,
+            `Duplicate run-stage write targets at indexes ${pending[left].index} and ${pending[right].index}`,
+          );
+        }
       }
-      promptIndexes.set(prompt, index);
-      const cleanLabel =
-        typeof unit?.label === "string"
-          ? unit.label.trim().replace(/\s+/g, " ").slice(0, 40)
-          : "";
-      pending.push({
-        index,
-        prompt,
-        schema,
-        stampedValues,
-        label: `${unitSlug}:${args.stage}${cleanLabel ? `:${cleanLabel}` : ""}`,
-      });
     }
-    if (typeof log === "function") {
-      log(`${args.stage} × ${units.length} — ${String(args.slug).slice(0, 60)}`);
+    if (typeof runtime.log === "function") {
+      runtime.log(
+        `${args.stage} × ${units.length} — ${String(args.slug).slice(0, 60)}`,
+      );
     }
-    const thunks = pending.map(
-      ({ prompt, schema, stampedValues, label }) => async () =>
-        dispatchStageUnit(
-          agent,
-          prompt,
-          {
-            schema,
-            agentType: resolved.descriptor.agentType,
-            phase: resolved.descriptor.stage,
-            label,
-          },
-          stampedValues,
-        ),
+    const dispatched = await runtime.pipeline(
+      pending,
+      (item) => dispatchPreparedOperation(runtime, item.prepared),
     );
-    const dispatched =
-      typeof parallel === "function"
-        ? await parallel(thunks)
-        : await Promise.all(thunks.map((thunk) => thunk().catch(() => null)));
     for (const [pendingIndex, item] of pending.entries()) {
-      receipts[item.index] = dispatched[pendingIndex];
+      receipts[item.index] = compatibilityResult(
+        dispatched[pendingIndex],
+        item.args,
+      );
     }
     return {
       schema_version: "quasi.run-stage.batch/0.1",
@@ -413,31 +392,16 @@ export async function run(
       receipts,
     };
   }
-  let context;
-  let prompt;
-  let schema;
-  let stampedValues;
-  try {
-    context = resolveStageContext(resolved, args.slug, args.context);
-    prompt = resolved.row.prompt(context);
-    ({ modelSchema: schema, stampedValues } =
-      resolved.row.receiptSchema(context));
-  } catch (error) {
-    if (!(error instanceof InputContractError)) throw error;
-    return errorResult("run-stage.invalid_context", args, error instanceof Error ? error.message : String(error));
-  }
-  if (typeof log === "function") {
-    log(`${args.stage} — ${String(args.slug).slice(0, 60)}`);
-  }
-  return dispatchStageUnit(
-    agent,
-    prompt,
-    {
-      schema,
-      agentType: resolved.descriptor.agentType,
-      phase: resolved.descriptor.stage,
-      label: `${args.slug}:${args.stage}`,
-    },
-    stampedValues,
+  const outcome = await dispatchOperation(
+    runtime,
+    operationInvocation(
+      resolved,
+      args.slug,
+      args.context,
+      `${args.slug}:${args.stage}`,
+    ),
   );
+  if (outcome.kind !== "invalid_context" && typeof runtime.log === "function")
+    runtime.log(`${args.stage} — ${String(args.slug).slice(0, 60)}`);
+  return compatibilityResult(outcome, args);
 }

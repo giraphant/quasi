@@ -15,6 +15,72 @@ CATALOG_MODULE = "scripts/workflows/operations/catalog.mts"
 CONTEXT_MODULE = "scripts/workflows/context-base.mts"
 
 
+DISPATCH_HARNESS = r"""
+import { resolve } from "node:path";
+import { build } from "esbuild";
+
+const root = process.cwd();
+const config = JSON.parse(process.argv[1]);
+
+async function load(source) {
+  const result = await build({
+    absWorkingDir: root,
+    bundle: true,
+    charset: "utf8",
+    entryPoints: [resolve(root, source)],
+    format: "esm",
+    legalComments: "none",
+    logLevel: "silent",
+    platform: "node",
+    sourcemap: false,
+    target: ["es2022"],
+    treeShaking: true,
+    write: false,
+  });
+  const bundled = result.outputFiles[0].text;
+  const url = `data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`;
+  return import(url);
+}
+
+const dispatch = await load("scripts/workflows/shared/dispatch.mts");
+const catalog = await load("scripts/workflows/operations/catalog.mts");
+let agentCalls = 0;
+const runtime = {
+  agent: async () => {
+    agentCalls += 1;
+    if (config.agent_result === "reject") {
+      const error = new Error("agent exploded");
+      error.name = "AgentExplosion";
+      throw error;
+    }
+    if (config.agent_result === "null") return null;
+    return config.model_output;
+  },
+};
+
+try {
+  let result;
+  if (config.mode === "throwing_predicate") {
+    const prepared = catalog.prepareOperation(config.invocation);
+    prepared.complete = () => {
+      const error = new Error("predicate exploded");
+      error.name = "PredicateExplosion";
+      throw error;
+    };
+    result = await dispatch.dispatchPreparedOperation(runtime, prepared);
+  } else {
+    result = await dispatch.dispatchOperation(runtime, config.invocation);
+  }
+  process.stdout.write(JSON.stringify({ result, agentCalls }));
+} catch (error) {
+  process.stdout.write(JSON.stringify({
+    thrown: { name: error.name, message: error.message },
+    agentCalls,
+  }));
+}
+"""
+
+
 BASE_META = {
     "title": "Exact Material",
     "authors": ["Ada Example"],
@@ -176,6 +242,160 @@ def _export_failure(source: str, export_name: str, *args: Any) -> str:
     )
     assert proc.returncode != 0, proc.stdout
     return proc.stderr
+
+
+def _dispatch(config: dict[str, Any]) -> dict[str, Any]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", DISPATCH_HARNESS, json.dumps(config)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def _audit_invocation(*, slug: Any = "exact-material") -> dict[str, Any]:
+    return {
+        "kind": "paper",
+        "operation": "paper.audit",
+        "slug": slug,
+        "context": {},
+        "label": "exact-material:paper.audit",
+    }
+
+
+def _audit_output(status: str, *, coherent: bool = True) -> dict[str, Any]:
+    issue = None
+    if status != "complete":
+        issue = {
+            "code": f"paper.audit.{status}",
+            "operation": "paper.audit",
+            "summary": f"Paper audit returned {status}.",
+            "user_question": (
+                "Which audit finding should be resolved?"
+                if status == "needs_input"
+                else None
+            ),
+            "retryable": status != "failed",
+        }
+    return {
+        "remaining_violations": 0 if coherent else 1,
+        "escalated": [],
+        "mutated_paths": [],
+        "terminal": {"status": status, "issue": issue},
+    }
+
+
+@pytest.mark.parametrize(
+    "status", ["complete", "needs_input", "blocked", "failed"]
+)
+def test_dispatch_preserves_each_validated_terminal_and_stamps_host_fields(
+    status: str,
+) -> None:
+    model_output = _audit_output(status)
+    report = _dispatch(
+        {"invocation": _audit_invocation(), "model_output": model_output}
+    )
+
+    assert report["agentCalls"] == 1
+    assert report["result"] == {
+        "kind": "receipt",
+        "receipt": {
+            "schema_version": "quasi.stage.receipt/0.3",
+            "operation": "paper.audit",
+            "stage": "Audit",
+            "material_key": "paper:exact-material",
+            "effect": "writer",
+            "attempt": 1,
+            "target_path": "vault/papers/exact-material.md",
+            "pass": 1,
+            "artifact_roles": ["canonical"],
+            **model_output,
+        },
+    }
+
+
+def test_invalid_context_returns_typed_outcome_before_agent_dispatch() -> None:
+    report = _dispatch(
+        {"invocation": _audit_invocation(slug=None), "model_output": None}
+    )
+
+    assert report["agentCalls"] == 0
+    assert report["result"]["kind"] == "invalid_context"
+    assert report["result"]["receipt"] is None
+    assert report["result"]["issue"]["operation"] == "paper.audit"
+    assert report["result"]["issue"]["retryable"] is False
+    assert report["result"]["issue"]["observation_request"] is None
+    assert "invalid material slug" in report["result"]["issue"]["summary"]
+
+
+def test_unexpected_preparation_error_propagates_without_agent_dispatch() -> None:
+    invocation = _invocation(
+        "book.acquire",
+        context=_context(allowed_formats="epub"),
+    )
+    report = _dispatch({"invocation": invocation, "model_output": None})
+
+    assert report == {
+        "thrown": {
+            "name": "TypeError",
+            "message": "formats.map is not a function",
+        },
+        "agentCalls": 0,
+    }
+
+
+@pytest.mark.parametrize("agent_result", ["reject", "null"])
+def test_unknown_agent_outcome_blocks_without_replay(agent_result: str) -> None:
+    report = _dispatch(
+        {
+            "invocation": _audit_invocation(),
+            "agent_result": agent_result,
+        }
+    )
+
+    assert report["agentCalls"] == 1
+    assert report["result"]["kind"] == "unknown_outcome"
+    assert report["result"]["receipt"] is None
+    assert report["result"]["issue"]["operation"] == "paper.audit"
+    assert report["result"]["issue"]["retryable"] is False
+    assert report["result"]["issue"]["observation_request"] is None
+
+
+def test_schema_valid_incoherent_complete_retains_receipt() -> None:
+    model_output = _audit_output("complete", coherent=False)
+    report = _dispatch(
+        {"invocation": _audit_invocation(), "model_output": model_output}
+    )
+
+    assert report["agentCalls"] == 1
+    assert report["result"]["kind"] == "incoherent_complete"
+    assert report["result"]["receipt"]["terminal"] == model_output["terminal"]
+    assert report["result"]["receipt"]["remaining_violations"] == 1
+    assert report["result"]["issue"]["operation"] == "paper.audit"
+
+
+def test_completion_predicate_error_propagates_unchanged() -> None:
+    report = _dispatch(
+        {
+            "mode": "throwing_predicate",
+            "invocation": _audit_invocation(),
+            "model_output": _audit_output("complete"),
+        }
+    )
+
+    assert report == {
+        "thrown": {
+            "name": "PredicateExplosion",
+            "message": "predicate exploded",
+        },
+        "agentCalls": 1,
+    }
 
 
 def test_missing_slug_rejects_before_prompt_construction():
