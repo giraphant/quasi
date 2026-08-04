@@ -157,16 +157,20 @@ export const talkOperationRows: OperationRow[] = [
       },
     }),
     complete: (receipt, context) => {
-      const allowed = new Set([
-        context.prepared,
-        context.transcript,
-        context.subtitle,
-        context.canonical,
-        ...context.engines.map(
-          (engine: any) =>
+      const engineTranscripts = new Set<string>(
+        context.engines.map(
+          (engine: any): string =>
             `${context.processingDir}/transcript.${engine}.srt`,
         ),
-      ]);
+      );
+      const rolePaths: Record<string, Set<string>> = {
+        prepared_media: new Set([context.prepared]),
+        transcript: new Set([context.transcript]),
+        subtitle: new Set([context.subtitle]),
+        engine_transcript: engineTranscripts,
+        canonical: new Set([context.canonical]),
+      };
+      const artifactPaths = receipt.artifacts.map((row: any) => row.path);
       return (
         receipt.source_observation !== null &&
         receipt.source_observation.path === context.media &&
@@ -176,12 +180,18 @@ export const talkOperationRows: OperationRow[] = [
         (receipt.canonical_observation === null ||
           (receipt.canonical_observation.path === context.canonical &&
             receipt.canonical_observation.sha256 !== "0".repeat(64))) &&
+        new Set(artifactPaths).size === artifactPaths.length &&
         receipt.artifacts.every((row: any) =>
-          allowed.has(row.path),
+          rolePaths[row.role]?.has(row.path),
         ) &&
         receipt.artifacts.some(
           (row: any) =>
             row.role === "transcript" && row.path === context.transcript,
+        ) &&
+        receipt.artifacts.some(
+          (row: any) =>
+            row.role === "engine_transcript" &&
+            engineTranscripts.has(row.path),
         ) &&
         (receipt.classification === "live"
           ? receipt.canonical_action === null &&

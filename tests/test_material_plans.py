@@ -2071,11 +2071,13 @@ def canonical_translation_input(
     }
 
 
-def translation_complete() -> dict[str, Any]:
+def translation_complete(
+    source_path: str = "sources/exact-paper.pdf",
+) -> dict[str, Any]:
     return {
         "backend": "immersive",
         "source": {
-            "path": "sources/exact-paper.pdf",
+            "path": source_path,
             "sha256": "a" * 64,
             "size": 1000,
             "pages": 10,
@@ -2150,6 +2152,28 @@ def translation_gate(kind: str) -> dict[str, Any]:
                 "missing_fields": [] if source_gate else ["translate_api_key"],
                 "candidates": candidates if source_gate else [],
                 "candidates_fingerprint": "f" * 64 if source_gate else None,
+            },
+        },
+    }
+
+
+def translation_source_missing() -> dict[str, Any]:
+    return {
+        "backend": None,
+        "source": None,
+        "disposition": None,
+        "recovered": False,
+        "validation": None,
+        "steps": [],
+        "diagnostics": [],
+        "terminal": {
+            "status": "failed",
+            "issue": {
+                "code": "translation.source_missing",
+                "operation": "translation.prepare",
+                "summary": "No exact source is available.",
+                "user_question": None,
+                "retryable": False,
             },
         },
     }
@@ -2252,10 +2276,34 @@ def test_translation_source_gate_binds_its_fingerprint_and_selected_path() -> No
         "operation": gate["operation"],
         "value": decision,
     }
-    resumed = run_translation(value, [translation_complete()])
+    mismatched = run_translation(value, [translation_complete()])
+    resumed = run_translation(
+        value,
+        [translation_complete(source_path=decision["source_path"])],
+    )
 
-    assert resumed["calls"][0]["request"]["source_request"]["decision"] == decision
+    assert mismatched["result"]["terminal"] == "blocked"
+    assert mismatched["result"]["issue"]["code"] == (
+        "workflow.incoherent_complete"
+    )
+    assert (
+        resumed["calls"][0]["request"]["source_request"]["decision"]
+        == decision
+    )
     assert resumed["result"]["terminal"] == "complete"
+
+
+def test_translation_missing_source_stops_as_failed_without_retry() -> None:
+    report = run_translation(
+        canonical_translation_input(),
+        [translation_source_missing()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "translation.prepare"
+    ]
+    assert report["result"]["terminal"] == "failed"
+    assert report["result"]["issue"]["code"] == "translation.source_missing"
 
 
 def test_translation_configuration_gate_rejects_acknowledgement_decision() -> None:

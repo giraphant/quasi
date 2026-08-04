@@ -801,7 +801,13 @@ def test_talk_prepare_repair_accepts_only_the_current_classification_owner(
             "path": f"vault/talks/{slug}/transcript.md",
             "sha256": "a" * 64,
             "size": 123,
-        }
+        },
+        {
+            "role": "engine_transcript",
+            "path": f"processing/talks/{slug}/transcript.soniox.srt",
+            "sha256": "e" * 64,
+            "size": 234,
+        },
     ]
     canonical_observation = None
     if classification == "dead":
@@ -859,6 +865,68 @@ def test_talk_prepare_repair_accepts_only_the_current_classification_owner(
     )
 
     assert report["result"]["kind"] == "receipt"
+
+
+def test_talk_prepare_rejects_a_media_path_disguised_as_generation_evidence():
+    slug = "exact-talk"
+    prepared = f"vault/talks/{slug}/recording.mp4"
+    output = {
+        "source_observation": {
+            "path": f"sources/{slug}.mp3",
+            "sha256": "a" * 64,
+        },
+        "generation_observation": {
+            "manifest_path": f"processing/talks/{slug}/manifest.json",
+            "request_fingerprint": "b" * 64,
+        },
+        "classification": "live",
+        "transcript_changed": False,
+        "canonical_observation": None,
+        "canonical_action": None,
+        "artifacts": [
+            {
+                "role": "transcript",
+                "path": f"vault/talks/{slug}/transcript.md",
+                "sha256": "c" * 64,
+                "size": 123,
+            },
+            {
+                "role": "prepared_media",
+                "path": prepared,
+                "sha256": "d" * 64,
+                "size": 456,
+            },
+            {
+                "role": "engine_transcript",
+                "path": prepared,
+                "sha256": "d" * 64,
+                "size": 456,
+            },
+        ],
+        "steps": [],
+        "diagnostics": [],
+        "terminal": {"status": "complete", "issue": None},
+    }
+
+    report = _dispatch(
+        {
+            "invocation": _invocation(
+                "talk.prepare",
+                slug=slug,
+                context=_context(
+                    meta={
+                        "title": "Exact Talk",
+                        "date": "2024-01-02",
+                        "media": f"sources/{slug}.mp3",
+                        "engines": ["soniox"],
+                    },
+                ),
+            ),
+            "model_output": output,
+        }
+    )
+
+    assert report["result"]["kind"] == "incoherent_complete"
 
 
 @pytest.mark.parametrize(

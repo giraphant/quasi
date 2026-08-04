@@ -1180,7 +1180,7 @@ def translation_gate_receipt(kind: str) -> dict[str, Any]:
             source_candidate,
             {
                 **source_candidate,
-                "path": "sources/exact-paper-alt.pdf",
+                "path": "processing/papers/exact-paper/ocr.pdf",
                 "sha256": "b" * 64,
             },
         ]
@@ -1256,6 +1256,28 @@ def test_translation_gate_rejects_issue_and_gate_kind_mismatch():
         TRANSLATION_CONTRACT_MODULE,
         "parseTranslationGate",
         receipt,
+    ) is None
+
+
+def test_translation_source_gate_binds_unique_candidates_to_its_material():
+    foreign = translation_gate_receipt("source_selection")
+    foreign["terminal"]["gate"]["candidates"][1]["path"] = (
+        "processing/papers/another-paper/ocr.pdf"
+    )
+    duplicate = translation_gate_receipt("source_selection")
+    duplicate["terminal"]["gate"]["candidates"][1] = deepcopy(
+        duplicate["terminal"]["gate"]["candidates"][0]
+    )
+
+    assert run_workflow_export(
+        TRANSLATION_CONTRACT_MODULE,
+        "parseTranslationGate",
+        foreign,
+    ) is None
+    assert run_workflow_export(
+        TRANSLATION_CONTRACT_MODULE,
+        "parseTranslationGate",
+        duplicate,
     ) is None
 
 

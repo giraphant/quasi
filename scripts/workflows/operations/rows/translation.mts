@@ -324,6 +324,9 @@ export const translationOperationRows: OperationRow[] = [
       (context.requestedSource === null ||
         receipt.source.path === context.requestedSource ||
         receipt.source.path === context.recoverySource) &&
+      (context.sourceDecision === null ||
+        receipt.source.path === context.sourceDecision.source_path ||
+        receipt.source.path === context.recoverySource) &&
       receipt.recovered === (receipt.source.path === context.recoverySource) &&
       receipt.validation.source_pages === receipt.source.pages &&
       receipt.validation.output_pages === receipt.source.pages * 2 &&

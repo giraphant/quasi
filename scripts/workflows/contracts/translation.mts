@@ -311,6 +311,23 @@ export type TranslationGate =
   | TranslationSourceGate
   | TranslationConfigurationGate;
 
+const translationIdentityFromMaterialKey = (
+  value: string,
+): { slug: string; targetLanguage: string } | null => {
+  const parts = value.split(":");
+  if (
+    parts.length !== 4 ||
+    parts[0] !== "translation" ||
+    parts[1] !== "paper" ||
+    !validMaterialSlug(parts[2])
+  )
+    return null;
+  const targetLanguage = normalizeLanguage(parts[3]);
+  return targetLanguage === parts[3]
+    ? { slug: parts[2], targetLanguage }
+    : null;
+};
+
 const gateBase = (
   receipt: any,
 ): TranslationGateBase | null => {
@@ -354,12 +371,29 @@ export const parseTranslationGate = (
     Array.isArray(gate.missing_fields) &&
     gate.missing_fields.length === 0 &&
     Array.isArray(gate.candidates) &&
-    gate.candidates.length >= 2 &&
-    gate.candidates.length <= 32 &&
+    gate.candidates.length === 2 &&
     SHA256.test(gate.candidates_fingerprint)
   ) {
-    const candidates = gate.candidates.map(parseTranslationCandidate);
-    if (candidates.some((candidate: any) => candidate === null))
+    const identity = translationIdentityFromMaterialKey(base.material_key);
+    const parsedCandidates = gate.candidates.map(parseTranslationCandidate);
+    if (
+      identity === null ||
+      parsedCandidates.some((candidate: any) => candidate === null)
+    )
+      return null;
+    const candidates = parsedCandidates as TranslationCandidate[];
+    const paths = candidates.map((candidate) => candidate.path);
+    if (
+      new Set(paths).size !== paths.length ||
+      candidates.some(
+        (candidate) =>
+          !validSelectableTranslationSource(
+            candidate.path,
+            identity.slug,
+            identity.targetLanguage,
+          ),
+      )
+    )
       return null;
     return {
       ...base,
