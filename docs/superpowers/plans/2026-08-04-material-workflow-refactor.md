@@ -551,7 +551,7 @@ git commit -m "refactor: expose factual material status observations"
 - Create: `tests/test_material_plans.py`
 - Create: `tests/test_workflow_entries.py`
 
-- [ ] Add failing Paper tests for: Search → Acquire → Prepare → Analyse → Audit; existing canonical observation starting at Audit; Prepare `selected_input` carry; identity-conflict decision binding; user-confirmed Paper→Book `next`; stale Search decision ignored after fresh facts advance; a resumed prepared-but-not-analysed Paper reconciling Prepare to rebuild `selected_input`; an existing canonical whose Audit requests Analyse repair reconciling Prepare first; writer unknown stop/no later dispatch; owner-correct Analyse repair followed by one re-Audit; foreign Audit path blocked.
+- [ ] Add failing Paper tests for: a provisional `title|doi` seed running Search → Acquire → Prepare → Analyse → Audit; a strict canonical seed and existing canonical observation starting at Audit; Prepare `selected_input` carry; identity-conflict decision binding; user-confirmed Paper→Book `next`; stale Search decision ignored after fresh facts advance; a resumed prepared-but-not-analysed Paper reconciling Prepare to rebuild `selected_input`; an existing canonical whose Audit requests Analyse repair reconciling Prepare first; writer unknown stop/no later dispatch; owner-correct Analyse repair followed by one re-Audit; foreign Audit path blocked.
 
 - [ ] Implement:
 
@@ -562,7 +562,7 @@ export async function runPaperPlan(
 ): Promise<MaterialResult>;
 ```
 
-Choose the first applicable operation from explicit observed facts. Search runs only while canonical identity is not admitted. Search receipt establishes canonical slug and identity in-run; when the caller supplied a sparse observation for that canonical key, rebind to it with one in-memory `(kind,slug)` lookup and otherwise keep the explicit empty observation. Do not run a second status call inside the Workflow. Each dispatch appends its stamped receipt; the first non-complete/unknown/incoherent outcome returns immediately. Pass Prepare's validated `selected_input` directly into Analyse.
+Choose the first applicable operation from explicit observed facts. A provisional seed always runs Search; a canonical seed skips Search only when its `material_slug` observation proves the canonical artifact admitted. A coherent Search receipt establishes the bibliographic identity, while the downstream runtime slug and observation lookup use a validated `local_owner.vault_slug` on an owner hit and `receipt.identity.slug` on a miss. Preserve identity slug and runtime owner slug as distinct facts; never rewrite one into the other. When the caller supplied a sparse observation for that runtime key, rebind to it with one in-memory `(kind,slug)` lookup and otherwise keep the explicit empty observation. Do not run a second status call inside the Workflow. Each dispatch appends its stamped receipt; the first non-complete/unknown/incoherent outcome returns immediately. Pass Prepare's validated `selected_input` directly into Analyse.
 
 - [ ] Across-run receipts do not exist. If Analyse or an Audit repair needs a Prepare carry and Prepare did not complete in this invocation, dispatch `paper.prepare` in reconcile mode first and use its new validated `selected_input`; do not guess between durable normalized/OCR files. This is stage reconciliation, not a generic retry.
 
@@ -570,7 +570,7 @@ Choose the first applicable operation from explicit observed facts. Search runs 
 
 - [ ] Treat a complete result carrying `next:{kind:"book",...}` as a typed disposition, not a Paper artifact completion. The top-level Skill and both higher-order plans call `runBookPlan` (or `workflows/book.mjs` at the Skill boundary) with that identity and its exact available observation; they never duplicate the publication-type condition.
 
-- [ ] Entry parsing accepts only Paper identity/options/decision fields and calls `runPaperPlan`; it ignores no unknown routing keys.
+- [ ] Entry parsing accepts exactly `{seed,observation,options,userDecision?}` using the frozen provisional-or-canonical Paper seed contract (`material_slug` is explicit on canonical seeds) and calls `runPaperPlan`; it ignores no unknown routing keys. The Skill does not run Search first, and the plan never promotes narrow status identity into a full Search identity.
 
 - [ ] Add `paper` to the build table. The generated `workflows/paper.mjs` exports only `meta` and ends in the host wrapper return.
 
@@ -594,7 +594,7 @@ git commit -m "feat: run one paper per workflow"
 - Modify: `tests/test_material_plans.py`
 - Modify: `tests/test_workflow_entries.py`
 
-- [ ] Add failing Book tests for: happy path; Book year gate with exact `tmp_path/year_evidence/action` decision binding and stale-decision rejection; Prepare inventory fan-out; valid-manifest resume without a current-run Prepare receipt; invalid/missing manifest reconciling Prepare; missing source reconciling Acquire before Prepare; stable manifest order under out-of-order completion; overlapping exact outputs rejected before any chapter dispatch; a two-chapter observation where only the actually present output binds `reconciled/not_written`; a new chapter binds `create/written`; mixed sibling success/gate/unknown settles all and lets unknown dominate; Synthesise/Audit never start after a failed join; one owner-correct chapter or overview repair; and a chapter newly written in this run being repaired with `mode:"repair", output_exists:true` before re-Audit.
+- [ ] Add failing Book tests for: a provisional `title|isbn` seed and happy path; Book year gate with exact `current_identity/tmp_path/year_evidence/action` binding, stale-decision rejection, and `use-recommended-year` recanonicalization through Search; Book structure gate before fan-out with exact source/candidate binding; Prepare inventory fan-out; valid-manifest resume without a current-run Prepare receipt; invalid/missing manifest reconciling Prepare; missing source reconciling Acquire before Prepare; stable manifest order under out-of-order completion; overlapping exact outputs rejected before any chapter dispatch; a two-chapter observation where only the actually present output binds `reconciled/not_written`; a new chapter binds `create/written`; mixed sibling success/blocked/unknown settles all and lets unknown dominate; Synthesise/Audit never start after a failed join; one owner-correct chapter or overview repair; and a chapter newly written in this run being repaired with `mode:"repair", output_exists:true` before re-Audit.
 
 - [ ] Implement `runBookPlan(runtime,input)` using ordinary `await` for Search/Acquire/Prepare/Synthesise/Audit. For chapters:
 
@@ -631,7 +631,9 @@ const observedChapterOutputs = new Set(
 
 Use the Prepare receipt's unique chapter inventory when Prepare completed in the current run. On resume, a valid status manifest supplies the same complete validated rows; an invalid/missing manifest requires `book.prepare` reconciliation, and a missing usable source first requires `book.acquire` reconciliation. Never derive `output_exists` from expected paths. If a new chapter unexpectedly finds an output, its Agent blocks; the plan stops for a fresh next-run status.
 
-- [ ] Join in stable chapter order after every launched call settles. Unknown dominates a gate; otherwise the first non-complete outcome in manifest order controls the top-level terminal. Retain successful sibling receipts. Track chapter outputs established by coherent current-run completions; an Audit escalation for one of them invokes `chapter.analyse` with `mode:"repair"` and `output_exists:true`, then performs exactly one re-Audit.
+- [ ] Join in stable chapter order after every launched call settles. Unknown dominates blocked or failed siblings; otherwise the first non-complete outcome in manifest order controls the top-level terminal. Retain successful sibling receipts. Track chapter outputs established by coherent current-run completions; an Audit escalation for one of them invokes `chapter.analyse` with `mode:"repair"` and `output_exists:true`, then performs exactly one re-Audit.
+
+- [ ] Consume only the frozen typed gates. `book.prepare` may return `book_structure` before any chapter dispatch. Chapter Analyse has no human gate; after every launched child settles, unknown dominates blocked/failed siblings, otherwise the first manifest-order non-complete receipt controls the stop. Structurally parse a `use-recommended-year` outer decision at entry, but consume it exactly once only after the current runtime slug is known, against `book:${material_slug}`; in an owner-drift case this is the resolver-confirmed owner slug, not `current_identity.slug`. Invoke `material.search` to establish the new year and canonical slug, then thread that already-validated value internally to Acquire under the new runtime key; neither this plan nor the Skill rewrites slug text. As with Paper, a Search owner hit uses `local_owner.vault_slug` for every downstream invocation and observation lookup.
 
 - [ ] Add `book` to the build table and verify its generated public file has only `meta` plus the top-level wrapper.
 
@@ -689,7 +691,9 @@ git commit -m "feat: add talk and translation workflows"
 
 - [ ] Add only structural cross-file tests that parse valid Skill frontmatter, resolve each referenced named entry to a generated file, and reject active references to `run-stage`, public `stage`, `until`, or `units` after the relevant branch migrates. Do not snapshot sentences or try to prove execution order by grepping prose.
 
-- [ ] Rewrite the leaf portion of `collect-material` to the required thin shape: intake, known-key coalescing, pre-run observation, fixed-entry invocation, generic typed-`next` following, material-level terminal presentation, and post-complete observation. Keep Author compatibility prose only until Task 11. A Paper→Book route selects the Book entry by route kind; the Skill does not contain the publication-type condition.
+- [ ] Rewrite the leaf portion of `collect-material` to the required thin shape: validate raw hints into a provisional-or-canonical seed, known-key coalescing, one pre-run observation, fixed-entry invocation, generic typed-`next` following, material-level terminal presentation, and one post-complete observation. Retain a valid caller request key when present; otherwise assign `request-{kind}-{one-based original input ordinal}` for this invocation, and reuse `material.requested.slug` byte-for-byte on a gate resume. The Skill never runs Search itself, treats that provisional key as canonical, pads a narrow status identity, or rewrites a canonical slug/year. Keep Author compatibility prose only until Task 11. A Paper→Book route selects the Book entry by route kind; the Skill does not contain the publication-type condition.
+
+- [ ] Every named Workflow invocation carries exactly one observation matching its seed's `requested_slug` or `material_slug`. Before following a typed Paper→Book `next`, run one exact `quasi-status --kind book --slug <next.identity.slug> --json`, construct the initial canonical Book seed with `material_slug:next.identity.slug`, and pass that Book observation. The Paper observation is never reused for the target route; the Book plan may still run Search when that exact canonical artifact is not admitted and may then rebind to a resolver-confirmed owner slug.
 
 - [ ] Rewrite `references/talk.md` around `workflows/talk.mjs`; remove stage selection and receipt interpretation from the Skill.
 
