@@ -1,6 +1,6 @@
 # Quasi Architecture
 
-date: 2026-08-01
+date: 2026-08-04
 status: current contract
 
 Quasi is optimized for agent maintenance: keep a flat monorepo, keep each
@@ -38,7 +38,7 @@ separate:
 | `quasi-download` | `book candidates|fetch`; `paper fetch|diagnose`; `accept` |
 | `quasi-extract` | `epub|text|ocr|split` text extraction and normalisation (`ocr` default engine DS OCR2, `--engine dsocr2\|tesseract`, `--layout` replacement text layer) |
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
-| `quasi-status` | read-only disk oracle: `--kind paper|book|talk --slug SLUG --json [--identity]`; `--scan --json` |
+| `quasi-status` | read-only disk oracle: `--kind paper|book|talk|author|topic --slug SLUG --json`; Translation additionally requires `--target-language TAG`; `--scan --json` |
 | `quasi-transcribe` | `run|classify|silent` talk transcript engines |
 | `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write`; `talk compress-media`; `vault resolve` |
 | `quasi-doctor` | runtime healthcheck: venv sync, core Python deps, optional external tools by profile |
@@ -73,42 +73,43 @@ Removed legacy bins:
 
 ## Workflow source and runtime
 
-`scripts/schemas/pipeline.py` is the single source of run-stage kind/stage order,
+`scripts/schemas/pipeline.py` is the single source of kind/stage order,
 operation identity (`operation`, display phase, effect, and agent), declarative
 receipt-to-context carries, and stage artifact path templates. The Python exporter
 projects `PIPELINE` into `scripts/workflows/artifact-contracts/generated.mjs` alongside
 the canonical artifact contracts, and emits `generated.d.mts` literal unions and
 interfaces from the same source. `scripts/workflows/operations/rows/*.mts` owns
-operation-specific context derivation as well as request/receipt behavior;
-`run-stage.entry.mts` supplies the shared passthrough/default base, expands manifest
-templates after row context is known, and derives both `RUN_STAGE_REGISTRY` and runtime
-chain functions. The former central context switch is gone. `scripts/build-workflows.mjs`
+operation-specific context derivation as well as request/receipt behavior. Leaf-local
+catalogs expose only the rows needed by Paper, Book, Talk, or Translation; the named
+plans own material progression, joins, and bounded repair. `run-stage.entry.mts` remains
+the compatibility dispatcher for Author and Topic, supplies the shared passthrough/default
+base, expands manifest templates after row context is known, and derives both
+`RUN_STAGE_REGISTRY` and runtime chain functions. `scripts/build-workflows.mjs`
 rejects duplicate kind/stage pairs, missing or duplicate row joins, unregistered rows,
 invalid manifest identity, and carries whose source field is not required by the owning
 receipt schema in both build and `--check` mode. The pinned esbuild dependency compiles
-the editable `.mts` layer into the committed `workflows/run-stage.mjs` at build time;
-`npm run check:workflows` also rejects a stale projection, declaration, bundle, or
+the editable `.mts` layer into committed `workflows/{run-stage,paper,book,talk,translation}.mjs`
+at build time; `npm run check:workflows` also rejects a stale projection, declaration, bundle, or
 forbidden runtime import, then runs strict `tsc --noEmit` checking over those
 TypeScript sources.
 
-Skills are the drivers. They observe exact disk state through `quasi-status`,
-normalise and coalesce identity before writers, preserve batch input order, and
-select an applicable stage from
-`Recall → Search → Acquire → Prepare → Analyse → Synthesise → Audit`.
-Without `until`, each run-stage invocation selects one descriptor row and, for
-each request unit, gives one specialist a goal, exact refs, declared capabilities,
-and a closed `quasi.stage.receipt/0.3` model-facing schema. After StructuredOutput
-validates the model-produced judgement fields and complete terminal, run-stage stamps
-the top-level single-value `const` fields and returns the full receipt. A single
-invocation may fan out within one stage when every unit writes
-a distinct exact output; prompt-identical duplicate requests are rejected. With
-`until`, run-stage walks only the registered fixed slice, stopping when a terminal
-is not complete or the owning row's cross-field completion predicate rejects it.
-Carries thread receipt evidence without filesystem access; the Paper chain passes
-`paper.prepare.selected_input` into `paper.analyse.input`. Paper Search stays a
-single dispatch because the skill owns post-Search identity judgement, so its
-chain begins at Acquire. The specialist owns method and local recovery; unknown
-writer outcomes stop instead of racing a second writer.
+`collect-material` drives each leaf with one exact pre-status and a fixed kind→entry
+mapping. A leaf entry validates its closed seed/observation/options envelope, runs from
+that testimony to one material-level terminal, and returns
+`quasi.material.result/0.1`; the Skill never selects a Stage or consumes a Stage receipt.
+Paper, Talk, and Translation dispatch sequential owned operations. Book alone uses the
+host `pipeline()` to fan out manifest-listed chapters whose exact outputs are disjoint,
+then joins before synthesis. A typed gate returns the current effective
+`{route,seed,options}`; the caller obtains fresh exact status and adds only the new
+decision. Unknown writer outcomes stop instead of racing a second writer.
+
+Inside both named plans and the compatibility entry, each descriptor row gives one
+specialist a goal, exact refs, declared capabilities, and a closed
+`quasi.stage.receipt/0.3` model-facing schema. After StructuredOutput validates the
+model-produced judgement fields and terminal, the host stamps top-level single-value
+bookkeeping consts. Compatibility `run-stage` can still dispatch one row, same-stage
+units with disjoint targets, or a registered fixed `until` slice; it does not branch,
+join, or persist state.
 
 Root `settings.json` supplies a plugin-default `subagentStatusLine`. The
 zero-dependency `scripts/subagent-statusline.py` renders only quasi task rows,
@@ -152,28 +153,31 @@ active skills.
 - `research-topic`
 - `finalise-draft`
 
-`collect-material` owns the current Paper/Book/Author/Talk/Translation entry.
+`collect-material` owns the current Paper/Book/Author/Talk/Translation entry. Its four
+leaf kinds route to named material Workflows; Author temporarily composes leaf entries
+with Author-owned `run-stage` operations until `workflows/author.mjs` lands.
 Talk-specific media normalisation is progressively disclosed from
 `skills/collect-material/references/talk.md`; it is not a second public Skill.
 `research-topic` owns the distinct iterative topic state machine while reusing
-the same material graph rather than duplicating its nodes. `finalise-draft`
+the same leaf entries and the temporary Topic compatibility operations rather than
+duplicating material logic. `finalise-draft`
 owns interactive proofreading, citation review, and bibliography closure.
 Journal has a schema but no active or archived workflow; its future entry will
 be a thin collection loop over Paper receipts.
 
-For a single Book or Paper request, `collect-material` begins from user-provided
-hints and current disk observations. One `material.search` Stage Unit gives
-`metadata-agent` both search and vault-resolution capabilities, so the
-specialist establishes the canonical identity and exact existing owner in one
-investigation; Search owns author order, year, identifiers, venue/publisher,
-access URLs, and canonical slug. Author/Topic candidate finding uses
+For a single Book or Paper request, `collect-material` passes user-provided hints and
+one exact disk observation to the fixed named entry. Its plan invokes
+`material.search`, where `metadata-agent` receives both search and vault-resolution
+capabilities and establishes canonical identity plus exact existing owner in one
+investigation. Search owns author order, year, identifiers, venue/publisher, access
+URLs, and canonical slug; the Skill only consumes the material result. Author/Topic candidate finding uses
 `discovery-agent`; Chinese-edition matching uses the deterministic
 `quasi-helpers localise scan|write` helper.
 
-For 2–32 top-level Books/Papers, the skill preserves input order, normalises
-and coalesces duplicate identities before any writer, and drives independent
-items with bounded host-level concurrency. A Paper call may own one fixed
-post-Search chain slice; every other Workflow call still owns one stage.
+For 2–32 top-level leaf materials, the skill preserves input order, coalesces only
+byte-identical known material keys before launch, and drives at most five independent
+named Workflows concurrently. Canonical owner collisions discovered after Search stay
+visible for manual resolution; there is no reservation, lock, or cleanup subsystem.
 
 Topic synthesis produces only `00-overview.md` and `01-resources.md` beside the
 user-editable `02-outline.md`; per-subquestion dossier pages are retired as a
@@ -181,21 +185,22 @@ product decision.
 
 ## Material Loops
 
-Concrete materials are thin stage pipelines, not product categories layered
-above a separate library executor. A Material Loop coordinates exact Stage
-inputs/outputs, joins producer artifacts, audits the canonical product, and
-terminates through typed `complete|needs_input|blocked|failed` edges. Stage Unit
-Agents own professional judgement; bins own deterministic effects; `sources/`,
-`processing/`, and `vault/` are the persisted result space.
+Concrete materials are named leaf Workflows, not product categories layered above a
+universal library executor. One invocation coordinates exact operation inputs/outputs,
+joins producer artifacts, audits the canonical product, and terminates through typed
+`complete|needs_input|blocked|failed` edges. Book's chapter fan-out is internal to that
+one material. Agents own professional judgement; bins own deterministic effects;
+`sources/`, `processing/`, and `vault/` are the persisted result space.
 
 Design history (RFCs, campaign plans, review records) lives in git history
 and `docs/CHANGELOG.md`; this file plus `CLAUDE.md`,
 `docs/PDF_PIPELINE.md`, `docs/SKILL_ORCHESTRATION.md`, and
 `docs/GRAPH_COLLABORATION.md` are the only maintained maintainer documents.
 
-Active skill writing follows `docs/SKILL_ORCHESTRATION.md`: Skill owns user
-intent, identity, state, and decisions; Workflow owns descriptor dispatch and
-fixed chain progression; Agent owns specialist judgement, and CLI owns deterministic writes. Active `SKILL.md`
+Active skill writing follows `docs/SKILL_ORCHESTRATION.md`: Skill owns user intent,
+request order, exact observations, and human decisions; a named leaf Workflow owns
+material identity/progression and descriptor dispatch; Agent owns specialist judgement,
+and CLI owns deterministic writes. Active `SKILL.md`
 files contain runtime instructions, not links back to maintainer docs.
 
 ## Configure options and env flow

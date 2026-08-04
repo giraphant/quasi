@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.0** (2026-08-04): **四种 leaf 材料各自成为一条完整 Workflow，Skill 不再逐阶段编排。**
+  - Paper、Book、Talk、Translation 现在分别由生成的 `workflows/{paper,book,talk,translation}.mjs` 从当前磁盘事实运行到完成或 typed gate；一条调用只拥有一个逻辑材料，只有 Book 在内部用宿主 `pipeline()` 并发互不冲突的章节。每条 bundle 只带本材料的 descriptor rows 与专业依赖，不再把全库 operation catalog 塞进同一个运行入口。
+  - `collect-material` 的 leaf 路径收敛为薄 driver：一次 exact pre-status、固定 kind→Workflow 映射、material-level terminal、完成后的 exact post-status；不同材料最多五条并发，同一已知 exact key 只合并字节完全相同的请求。不增加锁、canonical reservation、碰撞清洁、cursor 或第二份状态。Author 与 Topic 在这个中间版仍保留 `run-stage` 兼容编排，后续各自迁移。
+  - `quasi.material.result/0.1` 只向上暴露 canonical owner、exact artifacts、typed issue/gate 与 Paper→Book route。每个 leaf `needs_input` 同时返回可直接重启的 `{route,seed,options}`：调用方按 route 做 fresh status、原样放回 seed/options，并只附本次选择。Book 连续 identity→year/structure gate 不再依赖旧 decision；Translation 的 source→configuration 路径会把已验证 source 提升到 effective options，不会重复询问或引入隐藏状态。
+  - 所有 editable runtime 保持 TypeScript source-of-truth，经 `build:workflows` 生成发布 bundle；输入 parser 继续在零 Agent dispatch 前拒绝不属于该 leaf 的字段，writer unknown outcome 仍停止而不盲目重放。
+
 - **0.64.1** (2026-08-04): **章节 slot 退回纯排序身份，不再泄漏进可见标题。**
   - 0.5x descriptor-rows 重构后，`chapter.analyse` 会在 caller 没有提供章节 label 时把内部 slot 合成为 `第${slot}章`。`01`、`00a`、`99b` 本只用于 `ch{slot}-{slug}.md` 的文件系统排序，却因此变成 frontmatter、H1 与全书概览精读章节链接里的 `第01章` / `第00a章`。
   - 本轮删除 synthetic label fallback：没有 label 时，trim 后的 manifest title 逐字流入 canonical title，`identity.chapter_label` 明确为 `null`；caller 显式提供 `chapter_label` 或 `label` 时，原有的 prefix-once 行为保持不变。Chapter frontmatter 与 H1 合同文字同步改为条件式，没有改变 artifact schema 的 payload shape。
