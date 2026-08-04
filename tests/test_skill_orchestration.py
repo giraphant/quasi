@@ -33,14 +33,19 @@ def description(path: Path) -> str:
     return match.group(1).strip()
 
 
-def run_stage_registry() -> dict[str, dict[str, str]]:
+def generated_pipeline_registry() -> dict[str, dict[str, str]]:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
-    entry = ROOT / "workflows" / "run-stage.mjs"
+    entry = ROOT / "scripts" / "workflows" / "artifact-contracts" / "generated.mjs"
     script = (
-        f"import {{ RUN_STAGE_REGISTRY }} from {json.dumps(entry.as_uri())};"
-        "process.stdout.write(JSON.stringify(RUN_STAGE_REGISTRY));"
+        f"import {{ PIPELINE }} from {json.dumps(entry.as_uri())};"
+        "const registry = Object.fromEntries("
+        "Object.entries(PIPELINE).map(([kind, definition]) => ["
+        "kind, Object.fromEntries(definition.stages.map("
+        "({ stage, operation }) => [stage, operation]"
+        "))]));"
+        "process.stdout.write(JSON.stringify(registry));"
     )
     proc = subprocess.run(
         [node, "--input-type=module", "-e", script],
@@ -102,7 +107,7 @@ def test_frontmatter_descriptions_are_short_routing_hints() -> None:
 
 
 def test_every_skill_dispatched_stage_resolves_in_the_registry() -> None:
-    registry = run_stage_registry()
+    registry = generated_pipeline_registry()
     registry_stages = {
         stage for stages_by_kind in registry.values() for stage in stages_by_kind
     }
