@@ -22,6 +22,10 @@ import type {
   TopicGate,
   TopicPendingWork,
 } from "../contracts/topic.mts";
+import type {
+  AuthorResumeSeed,
+  ChildRoute,
+} from "../contracts/author.mts";
 
 export const MATERIAL_RESULT_VERSION = "quasi.material.result/0.1" as const;
 
@@ -84,8 +88,8 @@ export type HigherOrderGate =
   | TopicGate
   | {
       kind: "child";
-      route: ObservationRoute;
-      gate: DirectGate;
+      route: ChildRoute;
+      gate: LeafGate;
     };
 
 export type TypedGate = LeafGate | HigherOrderGate;
@@ -111,6 +115,17 @@ export type LeafResumeSeed =
       options: TranslationOptions;
     };
 
+export type ComposedLeafResumeSeed =
+  | Extract<LeafResumeSeed, { route: { kind: "paper" } }>
+  | Extract<LeafResumeSeed, { route: { kind: "book" } }>;
+
+export interface LeafCompositionOutcome {
+  result: MaterialResult;
+  continuation: ComposedLeafResumeSeed;
+}
+
+export type HigherOrderObservationResumeSeed = AuthorResumeSeed;
+
 export interface MaterialResultBase {
   schema_version: typeof MATERIAL_RESULT_VERSION;
   material: {
@@ -135,7 +150,24 @@ export type MaterialResult =
   | (MaterialResultBase & {
       terminal: "needs_input";
       issue: MaterialIssue;
-      gate: HigherOrderGate;
+      gate: TopicGate;
+    })
+  | (MaterialResultBase & {
+      terminal: "needs_input";
+      issue: MaterialIssue;
+      gate: {
+        kind: "child";
+        route: ChildRoute;
+        gate: LeafGate;
+      };
+      routes: ChildRoute[];
+      resume_seed: AuthorResumeSeed;
+    })
+  | (MaterialResultBase & {
+      terminal: "needs_observation";
+      issue: null;
+      routes: ObservationRoute[];
+      resume_seed: HigherOrderObservationResumeSeed;
     })
   | (MaterialResultBase & {
       terminal: "incomplete";
@@ -185,6 +217,34 @@ export const needsInputMaterialResult = (
   terminal: "needs_input",
   issue,
   gate,
+  resume_seed: resumeSeed,
+});
+
+export const needsObservationMaterialResult = (
+  seed: MaterialResultSeed,
+  routes: ObservationRoute[],
+  resumeSeed: HigherOrderObservationResumeSeed,
+): MaterialResult => ({
+  ...materialBase(seed),
+  terminal: "needs_observation",
+  issue: null,
+  routes,
+  resume_seed: resumeSeed,
+});
+
+export const higherOrderNeedsInputMaterialResult = (
+  seed: MaterialResultSeed,
+  issue: MaterialIssue,
+  route: ChildRoute,
+  gate: LeafGate,
+  routes: ChildRoute[],
+  resumeSeed: AuthorResumeSeed,
+): MaterialResult => ({
+  ...materialBase(seed),
+  terminal: "needs_input",
+  issue,
+  gate: { kind: "child", route, gate },
+  routes,
   resume_seed: resumeSeed,
 });
 

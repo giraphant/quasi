@@ -23,7 +23,8 @@ import {
   completeMaterialResult,
   needsInputMaterialResult,
   stoppedMaterialResult,
-  type LeafResumeSeed,
+  type ComposedLeafResumeSeed,
+  type LeafCompositionOutcome,
   type MaterialIssue,
   type MaterialResult,
   type MaterialResultSeed,
@@ -51,17 +52,30 @@ const resultSeed = (state: PaperState): MaterialResultSeed => ({
   },
 });
 
-const resumeSeed = (input: PaperRunInput): LeafResumeSeed => ({
-  route: {
-    kind: "paper",
-    slug:
-      input.seed.state === "provisional"
-        ? input.seed.requested_slug
-        : input.seed.material_slug,
-  },
-  seed: input.seed,
-  options: input.options,
-});
+const resumeSeed = (
+  input: PaperRunInput,
+  state: PaperState,
+): Extract<ComposedLeafResumeSeed, { route: { kind: "paper" } }> => {
+  const seed =
+    state.runtimeSlug !== null && state.identity !== null
+      ? {
+          state: "canonical" as const,
+          material_slug: state.runtimeSlug,
+          identity: state.identity,
+        }
+      : input.seed;
+  return {
+    route: {
+      kind: "paper",
+      slug:
+        seed.state === "provisional"
+          ? seed.requested_slug
+          : seed.material_slug,
+    },
+    seed,
+    options: input.options,
+  };
+};
 
 const planIssue = (
   code: string,
@@ -226,9 +240,15 @@ const auditPaper = async (
   );
 };
 
-export async function runPaperPlan(
+async function runPaperPlanResult(
   runtime: MaterialRuntime,
   input: PaperRunInput,
+  rememberContinuation: (
+    continuation: Extract<
+      ComposedLeafResumeSeed,
+      { route: { kind: "paper" } }
+    >,
+  ) => void,
 ): Promise<MaterialResult> {
   const requestedSlug =
     input.seed.state === "provisional"
@@ -245,6 +265,7 @@ export async function runPaperPlan(
       input.seed.state === "canonical" ? input.seed.identity : null,
     observation: initialObservation,
   };
+  rememberContinuation(resumeSeed(input, state));
 
   const admittedCanonical =
     input.seed.state === "canonical" &&
@@ -324,7 +345,7 @@ export async function runPaperPlan(
         resultSeed(state),
         receiptIssue(searched.receipt),
         gate,
-        resumeSeed(input),
+        resumeSeed(input, state),
       );
     }
     const searchStop = stopForOutcome(state, searched);
@@ -341,6 +362,7 @@ export async function runPaperPlan(
       input.observations.get(
         observationKey({ kind: "paper", slug: runtimeSlug }),
       ) ?? null;
+    rememberContinuation(resumeSeed(input, state));
 
     if (receipt.local_owner !== null)
       return auditPaper(runtime, input, state, null);
@@ -381,4 +403,29 @@ export async function runPaperPlan(
   if (analyseStop !== null) return analyseStop;
 
   return auditPaper(runtime, input, state, selectedInput);
+}
+
+export async function runPaperPlanForComposition(
+  runtime: MaterialRuntime,
+  input: PaperRunInput,
+): Promise<LeafCompositionOutcome> {
+  let continuation = null as Extract<
+    ComposedLeafResumeSeed,
+    { route: { kind: "paper" } }
+  > | null;
+  const result = await runPaperPlanResult(
+    runtime,
+    input,
+    (current) => {
+      continuation = current;
+    },
+  );
+  return { result, continuation: continuation! };
+}
+
+export async function runPaperPlan(
+  runtime: MaterialRuntime,
+  input: PaperRunInput,
+): Promise<MaterialResult> {
+  return (await runPaperPlanForComposition(runtime, input)).result;
 }

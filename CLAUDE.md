@@ -20,11 +20,11 @@ This file holds only the contracts a maintainer needs before editing. The detail
 
 ## Layers
 
-`skills/` (user-facing drivers) → generated `workflows/{paper,book,talk,translation}.mjs` leaf entries plus the temporary `workflows/run-stage.mjs` compatibility entry → `agents/` (goal-owning specialists) → `bin/quasi-*` (stable shell surface) → `scripts/` (deterministic capabilities; `scripts/workflows/` is the editable TypeScript source; `scripts/schemas/` is the single source of truth for artifact structure) → `scripts/core/` (minimal runtime base for path/frontmatter/json/module-loading helpers; imports nothing above itself).
+`skills/` (user-facing drivers) → generated named material entries under `workflows/` plus the temporary Topic-only `workflows/run-stage.mjs` compatibility entry → `agents/` (goal-owning specialists) → `bin/quasi-*` (stable shell surface) → `scripts/` (deterministic capabilities; `scripts/workflows/` is the editable TypeScript source; `scripts/schemas/` is the single source of truth for artifact structure) → `scripts/core/` (minimal runtime base for path/frontmatter/json/module-loading helpers; imports nothing above itself).
 
 ## Runtime contract
 
-- Skills drive. For Paper, Book, Talk, and Translation, `collect-material` observes one exact status, selects the fixed named entry by kind, consumes one material-level result, presents a typed gate when needed, and re-observes exact artifacts after completion. One named invocation owns one logical material; only Book may use the host `pipeline()` internally for disjoint chapter outputs. Author and Topic remain on the `run-stage` compatibility controller until their own composition entries land.
+- Skills drive. For Paper, Book, Talk, and Translation, `collect-material` observes one exact status, selects the fixed named entry by kind, consumes one material-level result, presents a typed gate when needed, and re-observes exact artifacts after completion. One named invocation owns one logical material; only Book may use the host `pipeline()` internally for disjoint chapter outputs. Author has its own named composition entry: it returns exact child routes for host observation, then resumes from that fresh testimony without rediscovery. Topic alone remains on the `run-stage` compatibility controller until its composition entry lands.
 - A named leaf entry parses a closed seed/observation/options envelope, chooses its material's next owned operation from current testimony, invokes specialists, performs its bounded joins and owner-correct repair, and returns `quasi.material.result/0.1`. Every leaf `needs_input` carries a typed gate plus effective `{route,seed,options}` continuation; the caller obtains fresh exact status for that route and adds at most the new decision. There is no Workflow cursor, hidden state file, or replay log.
 - `run-stage` resolves one descriptor row and, for each requested unit, composes its prompt and schema, invokes one specialist, and returns that unit's complete host-validated receipt. One invocation may fan out across units in the same stage when they write distinct exact outputs; duplicate requests are rejected. With `until`, it advances the kind's fixed sequence, evaluates each stamped receipt's terminal and the owning row's cross-field completion predicate, stops at the first receipt that is not a coherent complete, and returns all receipts in order. It does not branch, retry, join, choose stage order, or keep state across invocations.
 - The shared receipt is `quasi.stage.receipt/0.3` with a closed `terminal` union `complete|needs_input|blocked|failed`. The model produces judgement fields and the entire terminal; after validation, the host stamps every top-level single-value bookkeeping `const`, so downstream consumers still receive the full receipt shape. `complete` proves only the exact artifacts required by the next stage and requires `issue:null`; the other terminals carry one typed issue, while `needs_input` also carries concrete candidates, conflict fields, and a user question.
@@ -60,8 +60,8 @@ quasi-audit --path ...
 quasi-status --kind paper|book|talk|author|topic --slug SLUG --json
 quasi-status --kind translation --slug SLUG --target-language TAG --json
 quasi-status --scan --json
-workflows/paper.mjs | book.mjs | talk.mjs | translation.mjs
-workflows/run-stage.mjs  # Author/Topic compatibility: kind, slug, stage, context
+workflows/paper.mjs | book.mjs | talk.mjs | translation.mjs | author.mjs
+workflows/run-stage.mjs  # Topic compatibility: kind, slug, stage, context
 quasi-helpers proofread prepare|cleanup ...
 quasi-helpers citation parse|biblio|resolve|review-cards|emit-bib ...
 quasi-helpers localise scan|write ...

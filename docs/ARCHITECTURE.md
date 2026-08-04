@@ -81,14 +81,15 @@ the canonical artifact contracts, and emits `generated.d.mts` literal unions and
 interfaces from the same source. `scripts/workflows/operations/rows/*.mts` owns
 operation-specific context derivation as well as request/receipt behavior. Leaf-local
 catalogs expose only the rows needed by Paper, Book, Talk, or Translation; the named
-plans own material progression, joins, and bounded repair. `run-stage.entry.mts` remains
-the compatibility dispatcher for Author and Topic, supplies the shared passthrough/default
+plans own material progression, joins, and bounded repair. The Author plan composes the
+Paper and Book entries through explicit host-observation handshakes. `run-stage.entry.mts` remains
+the compatibility dispatcher for Topic, supplies the shared passthrough/default
 base, expands manifest templates after row context is known, and derives both
 `RUN_STAGE_REGISTRY` and runtime chain functions. `scripts/build-workflows.mjs`
 rejects duplicate kind/stage pairs, missing or duplicate row joins, unregistered rows,
 invalid manifest identity, and carries whose source field is not required by the owning
 receipt schema in both build and `--check` mode. The pinned esbuild dependency compiles
-the editable `.mts` layer into committed `workflows/{run-stage,paper,book,talk,translation}.mjs`
+the editable `.mts` layer into committed `workflows/{run-stage,paper,book,talk,translation,author}.mjs`
 at build time; `npm run check:workflows` also rejects a stale projection, declaration, bundle, or
 forbidden runtime import, then runs strict `tsc --noEmit` checking over those
 TypeScript sources.
@@ -154,8 +155,8 @@ active skills.
 - `finalise-draft`
 
 `collect-material` owns the current Paper/Book/Author/Talk/Translation entry. Its four
-leaf kinds route to named material Workflows; Author temporarily composes leaf entries
-with Author-owned `run-stage` operations until `workflows/author.mjs` lands.
+leaf kinds route to named material Workflows; the named Author Workflow composes the
+Paper and Book entries after the Skill supplies fresh exact statuses for its returned routes.
 Talk-specific media normalisation is progressively disclosed from
 `skills/collect-material/references/talk.md`; it is not a second public Skill.
 `research-topic` owns the distinct iterative topic state machine while reusing

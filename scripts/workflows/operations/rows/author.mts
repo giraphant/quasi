@@ -408,6 +408,7 @@ ${JSON.stringify(request, null, 2)}
     artifactRoles: ["canonical"],
     targetRole: "canonical",
     targetScope: "exact",
+    exactPaths: true,
     envelopeExtras: ({ materialKey }, { target }) => ({
       beforeEffect: { collection_key: materialKey },
       afterTarget: { exact_output: target, composite_debt: true },

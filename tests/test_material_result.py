@@ -15,6 +15,7 @@ SEARCH_CONTRACT_MODULE = "scripts/workflows/contracts/search.mts"
 BOOK_CONTRACT_MODULE = "scripts/workflows/contracts/book.mts"
 TALK_CONTRACT_MODULE = "scripts/workflows/contracts/talk.mts"
 TRANSLATION_CONTRACT_MODULE = "scripts/workflows/contracts/translation.mts"
+AUTHOR_CONTRACT_MODULE = "scripts/workflows/contracts/author.mts"
 
 PAPER_IDENTITY = {
     "slug": "exact-paper",
@@ -70,6 +71,20 @@ PAPER_OBSERVATION = {
         },
     },
 }
+
+
+def paper_observation_for_slug(slug: str) -> dict[str, Any]:
+    value = deepcopy(PAPER_OBSERVATION)
+    value["slug"] = slug
+    value["facts"]["source"]["path"] = f"sources/{slug}.pdf"
+    value["facts"]["prepared"][0]["path"] = (
+        f"processing/papers/{slug}/source.txt"
+    )
+    value["facts"]["prepared"][1]["path"] = (
+        f"processing/papers/{slug}/ocr.txt"
+    )
+    value["facts"]["canonical"]["path"] = f"vault/papers/{slug}.md"
+    return value
 
 
 BOOK_OBSERVATION = {
@@ -216,6 +231,61 @@ def test_book_status_parser_matches_only_the_status_producer_projection():
         "parseBookStatusObservation",
         foreign_value,
     ) is None
+
+
+def test_paper_status_parser_binds_the_status_producer_paths() -> None:
+    producer_value = deepcopy(PAPER_OBSERVATION)
+
+    assert run_workflow_export(
+        PAPER_CONTRACT_MODULE,
+        "parsePaperStatusObservation",
+        producer_value,
+    ) == producer_value
+
+    foreign_value = deepcopy(producer_value)
+    foreign_value["facts"]["prepared"][0]["path"] = (
+        "processing/papers/another-paper/source.txt"
+    )
+
+    assert run_workflow_export(
+        PAPER_CONTRACT_MODULE,
+        "parsePaperStatusObservation",
+        foreign_value,
+    ) is None
+
+
+def test_author_contract_rejects_a_foreign_canonical_path() -> None:
+    observation = {
+        "schema_version": "quasi.status/0.2",
+        "kind": "author",
+        "slug": "ada-example",
+        "identity": None,
+        "facts": {
+            "kind": "author",
+            "canonical": {
+                "path": "vault/authors/another-author.md",
+                "present": False,
+                "usable": False,
+            },
+        },
+    }
+
+    result = run_workflow_export(
+        AUTHOR_CONTRACT_MODULE,
+        "parseAuthorRunInput",
+        {
+            "seed": {
+                "slug": "ada-example",
+                "full_name": "Ada Example",
+                "topic": "exact systems",
+            },
+            "observation": observation,
+            "options": {},
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["result"]["issue"]["code"] == "material.invalid_input"
 
 
 def translation_observation(target_language: str) -> dict[str, Any]:
@@ -452,10 +522,7 @@ def test_minimal_paper_doi_seed_preserves_provisional_identity():
             "requested_slug": "request-paper-1",
             "hints": {"doi": "10.1000/provisional"},
         },
-        "observation": {
-            **deepcopy(PAPER_OBSERVATION),
-            "slug": "request-paper-1",
-        },
+        "observation": paper_observation_for_slug("request-paper-1"),
         "options": {},
     }
 
@@ -528,7 +595,7 @@ def test_canonical_observation_binds_to_material_slug():
 def test_owner_drift_keeps_material_slug_separate_from_identity_slug():
     value = valid_input()
     value["seed"]["material_slug"] = "owned-paper"
-    value["observation"]["slug"] = "owned-paper"
+    value["observation"] = paper_observation_for_slug("owned-paper")
     value["observation"]["identity"] = {
         "title": PAPER_IDENTITY["title"],
         "authors": PAPER_IDENTITY["authors"],

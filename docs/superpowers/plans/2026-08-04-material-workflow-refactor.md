@@ -811,11 +811,11 @@ git commit -m "refactor: make leaf material skill a thin workflow driver"
 
 - Create: `docs/superpowers/specs/2026-08-04-author-workflow-composition.md`
 
-- [ ] Write the focused spec before implementation. Resolve these decisions explicitly: Author has its own exact `quasi-status --kind author` pre/post observation; `author.resolve-membership` is the only dynamic membership observer; the first pass freezes a bounded, deduplicated membership and returns one automatic `needs_observation` result for all exact child routes; the Skill obtains those statuses directly and the second pass composes the frozen members without rerunning discovery. Every stable member carries only its current effective leaf `{route,seed,options}`; a nullable `decision_member` delivers one child answer once. User-facing child gates are lifted unchanged, real `blocked|failed` outcomes stop, and there is no synthetic absence, model-relayed status, whole-vault inventory, completed-prefix cursor, or writer-reconciliation probe.
+- [x] Write the focused spec before implementation. Resolve these decisions explicitly: Author has its own exact `quasi-status --kind author` pre/post observation; `author.resolve-membership` is the only dynamic membership observer; the first pass freezes a bounded, deduplicated membership and returns one automatic `needs_observation` result for all exact child routes; the Skill obtains those statuses directly and the second pass composes the frozen members without rerunning discovery. Every stable member carries only its current effective leaf `{route,seed,options}`; a nullable `decision_member` delivers one child answer once. User-facing child gates are lifted unchanged, real `blocked|failed` outcomes stop, and there is no synthetic absence, model-relayed status, whole-vault inventory, completed-prefix cursor, or writer-reconciliation probe.
 
-- [ ] Specify generic child routing: if a Paper child returns the typed Book `next`, replace that member's current leaf with the returned Book identity and request its exact status when needed. It does not reproduce the publication-type test. Paper/Book expose a narrow internal composition outcome containing their final effective continuation while their named public result stays unchanged. Completed children are keyed/coalesced by `result.material.canonical.slug`, the runtime owner slug. Specify Author synthesis/Audit ownership, exact Audit paths, and the one bounded owner-correct repair/re-Audit.
+- [x] Specify generic child routing: if a Paper child returns the typed Book `next`, replace that member's current leaf with the returned Book identity and request its exact status when needed. It does not reproduce the publication-type test. Paper/Book expose a narrow internal composition outcome containing their final effective continuation while their named public result stays unchanged. Completed children are keyed/coalesced by `result.material.canonical.slug`, the runtime owner slug. Specify Author synthesis/Audit ownership, exact Audit paths, and the one bounded owner-correct repair/re-Audit.
 
-- [ ] Obtain a fresh design review of this focused spec and resolve every blocking finding before implementation. Commit the reviewed contract separately.
+- [x] Obtain a fresh design review of this focused spec and resolve every blocking finding before implementation. Commit the reviewed contract separately.
 
 ```bash
 git add docs/superpowers/specs/2026-08-04-author-workflow-composition.md
@@ -841,9 +841,9 @@ git commit -m "docs: specify author workflow composition"
 - Modify: `tests/test_workflow_entries.py`
 - Modify: `tests/test_skill_orchestration.py`
 
-- [ ] Add failing Author tests for exact pre-run facts, discovery/membership order, the automatic batch observation result, one Book and one Paper composed through their narrow internal plan APIs, decision delivery only to the matching child, lifted child gates, generic Paper→Book routing, Synthesise/Audit, one Author synthesis repair, no child dispatch after unknown outcome, and exact Author post-complete status evidence. Include the load-bearing restart regression: P1 routes to and completes B1, later P2 gates, and the next call runs B1 directly before delivering P2's answer once.
+- [x] Add failing Author tests for exact pre-run facts, discovery/membership order, the automatic batch observation result, one Book and one Paper composed through their narrow internal plan APIs, decision delivery only to the matching child, lifted child gates, generic Paper→Book routing, Synthesise/Audit, one Author synthesis repair, no child dispatch after unknown outcome, and exact Author post-complete status evidence. Include the load-bearing restart regression: P1 routes to and completes B1, later P2 gates, and the next call runs B1 directly before delivering P2's answer once.
 
-- [ ] Implement:
+- [x] Implement:
 
 ```ts
 export async function runAuthorPlan(
@@ -854,15 +854,15 @@ export async function runAuthorPlan(
 
 Run `author.discover-books`, `author.discover-papers`, and `author.resolve-membership` in explicit sequence, then return all frozen member routes through `needs_observation`. The compose envelope requires the exact full route map and never reruns discovery. Process each member's current leaf sequentially; update that leaf from the Paper/Book composition outcome, follow a typed Book route generically, and preserve the updated member array in every later gate/observation continuation. Admit only leaf completions with `next:null` and owner-correct exact artifacts.
 
-- [ ] After all children complete, call `author.synthesise` then `author.audit`; allow one owner-correct synthesis repair and re-Audit. Paper/Book plans must not import Author code.
+- [x] After all children complete, call `author.synthesise` then `author.audit`; allow one owner-correct synthesis repair and re-Audit. Paper/Book plans must not import Author code.
 
-- [ ] Prepare Author-owned operations through its material-local catalog and the pure prepared-dispatch boundary. The Author bundle composes Paper/Book plan APIs but never imports the universal compatibility catalog.
+- [x] Prepare Author-owned operations through its material-local catalog and the pure prepared-dispatch boundary. The Author bundle composes Paper/Book plan APIs but never imports the universal compatibility catalog.
 
-- [ ] Switch Author routing in `collect-material` to `workflows/author.mjs`. Start with the exact Author observation; on `needs_observation`, run exactly the returned routes and reinvoke with the opaque resume seed. User gates return the complete refresh route set; refresh all of it, copy the typed answer, and reinvoke. Do not turn real `blocked|failed` into automatic replay. After `complete`, verify the exact Author canonical fact once.
+- [x] Switch Author routing in `collect-material` to `workflows/author.mjs`. Start with the exact Author observation; on `needs_observation`, run exactly the returned routes and reinvoke with the opaque resume seed. User gates return the complete refresh route set; refresh all of it, copy the typed answer, and reinvoke. Do not turn real `blocked|failed` into automatic replay. After `complete`, verify the exact Author canonical fact once.
 
-- [ ] Add `author` to the build table only when its plan and parser are complete.
+- [x] Add `author` to the build table only when its plan and parser are complete.
 
-- [ ] Build, test, and commit.
+- [x] Build, test, and commit. Final evidence before commit: independent correctness and simplicity reviews both passed; `npm run check:workflows` passed; an isolated full regression reported `758 passed`; `cmp -s CLAUDE.md AGENTS.md` and `git diff --check` passed.
 
 ```bash
 npm run build:workflows

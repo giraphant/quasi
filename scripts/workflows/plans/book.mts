@@ -34,7 +34,8 @@ import {
   completeMaterialResult,
   needsInputMaterialResult,
   stoppedMaterialResult,
-  type LeafResumeSeed,
+  type ComposedLeafResumeSeed,
+  type LeafCompositionOutcome,
   type MaterialIssue,
   type MaterialResult,
   type MaterialResultSeed,
@@ -77,7 +78,7 @@ const resultSeed = (state: BookState): MaterialResultSeed => ({
 const resumeSeed = (
   input: BookRunInput,
   state: BookState,
-): LeafResumeSeed => {
+): Extract<ComposedLeafResumeSeed, { route: { kind: "book" } }> => {
   const seed: BookSeed =
     state.runtimeSlug !== null && state.identity !== null
       ? {
@@ -391,9 +392,15 @@ const auditBook = async (
   );
 };
 
-export async function runBookPlan(
+async function runBookPlanResult(
   runtime: MaterialRuntime,
   input: BookRunInput,
+  rememberContinuation: (
+    continuation: Extract<
+      ComposedLeafResumeSeed,
+      { route: { kind: "book" } }
+    >,
+  ) => void,
 ): Promise<MaterialResult> {
   const formats = allowedFormats(input.options);
   const requestedSlug =
@@ -411,6 +418,7 @@ export async function runBookPlan(
       input.seed.state === "canonical" ? input.seed.identity : null,
     observation: initialObservation,
   };
+  rememberContinuation(resumeSeed(input, state));
   if (formats === null)
     return blockedMaterialResult(
       resultSeed(state),
@@ -490,6 +498,7 @@ export async function runBookPlan(
     const searchStop = stopForOutcome(state, searched);
     if (searchStop !== null) return searchStop;
     bindSearchReceipt(input, state, searched.receipt as StageReceipt);
+    rememberContinuation(resumeSeed(input, state));
   }
 
   if (finalObservedBook(state.observation, state.identity as BookIdentity)) {
@@ -554,6 +563,7 @@ export async function runBookPlan(
           const searchStop = stopForOutcome(state, searched);
           if (searchStop !== null) return searchStop;
           bindSearchReceipt(input, state, searched.receipt as StageReceipt);
+          rememberContinuation(resumeSeed(input, state));
         }
       }
     }
@@ -723,4 +733,29 @@ export async function runBookPlan(
     observedOutputs,
     currentRunOutputs,
   );
+}
+
+export async function runBookPlanForComposition(
+  runtime: MaterialRuntime,
+  input: BookRunInput,
+): Promise<LeafCompositionOutcome> {
+  let continuation = null as Extract<
+    ComposedLeafResumeSeed,
+    { route: { kind: "book" } }
+  > | null;
+  const result = await runBookPlanResult(
+    runtime,
+    input,
+    (current) => {
+      continuation = current;
+    },
+  );
+  return { result, continuation: continuation! };
+}
+
+export async function runBookPlan(
+  runtime: MaterialRuntime,
+  input: BookRunInput,
+): Promise<MaterialResult> {
+  return (await runBookPlanForComposition(runtime, input)).result;
 }

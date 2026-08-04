@@ -59,8 +59,10 @@ let pipelineCalls = 0;
 const pipelineLabels = [];
 const runtime = {
   agent: async (prompt, options) => {
-    const start = prompt.indexOf("{");
-    const request = JSON.parse(prompt.slice(start));
+    const blocks = [...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)];
+    const request = blocks.length > 0
+      ? JSON.parse(blocks.at(-1)[1])
+      : JSON.parse(prompt.slice(prompt.indexOf("{")));
     calls.push({ request, options });
     const spec = outputs.shift();
     const delay = spec && typeof spec === "object" && "__delay__" in spec
@@ -2566,4 +2568,407 @@ def test_translation_unknown_writer_stops_without_retry_or_audit() -> None:
     assert [call["request"]["operation"] for call in report["calls"]] == [
         "translation.prepare"
     ]
+    assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"
+
+
+AUTHOR_SEED = {
+    "slug": "ada-example",
+    "full_name": "Ada Example",
+    "topic": "exact systems",
+}
+
+
+def author_observation(
+    *,
+    present: bool = False,
+    usable: bool = False,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "quasi.status/0.2",
+        "kind": "author",
+        "slug": AUTHOR_SEED["slug"],
+        "identity": ({"name": AUTHOR_SEED["full_name"]} if usable else None),
+        "facts": {
+            "kind": "author",
+            "canonical": {
+                "path": f"vault/authors/{AUTHOR_SEED['slug']}.md",
+                "present": present,
+                "usable": usable,
+            },
+        },
+    }
+
+
+def paper_identity(slug: str, title: str) -> dict[str, Any]:
+    return {
+        **deepcopy(PAPER_IDENTITY),
+        "slug": slug,
+        "title": title,
+        "doi": f"10.1000/{slug}",
+    }
+
+
+def book_identity(slug: str, title: str) -> dict[str, Any]:
+    return {
+        **deepcopy(BOOK_IDENTITY),
+        "slug": slug,
+        "title": title,
+        "isbn": "9780000000042",
+    }
+
+
+def admitted_paper_observation(identity: dict[str, Any]) -> dict[str, Any]:
+    value = paper_observation(identity["slug"], canonical=True, admitted=True)
+    value["identity"] = {
+        "title": identity["title"],
+        "authors": identity["authors"],
+        "year": identity["year"],
+    }
+    return value
+
+
+def admitted_book_observation(identity: dict[str, Any]) -> dict[str, Any]:
+    value = book_observation(
+        identity["slug"],
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(True, True),
+        overview=True,
+        admitted=True,
+    )
+    value["identity"] = {
+        "title": identity["title"],
+        "authors": identity["authors"],
+        "year": identity["year"],
+    }
+    return value
+
+
+def author_member(
+    stable_route: dict[str, str],
+    current_route: dict[str, str],
+    identity: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "member_route": deepcopy(stable_route),
+        "leaf": {
+            "route": deepcopy(current_route),
+            "seed": {
+                "state": "canonical",
+                "material_slug": current_route["slug"],
+                "identity": deepcopy(identity),
+            },
+            "options": {},
+        },
+    }
+
+
+def author_compose_input(
+    members: list[dict[str, Any]],
+    observations: list[tuple[dict[str, str], dict[str, Any]]],
+    *,
+    decision_member: dict[str, str] | None = None,
+    user_decision: dict[str, Any] | None = None,
+    author_present: bool = False,
+) -> dict[str, Any]:
+    value = {
+        "observation": author_observation(
+            present=author_present,
+            usable=author_present,
+        ),
+        "resume_seed": {
+            "kind": "author",
+            "seed": deepcopy(AUTHOR_SEED),
+            "options": {},
+            "members": deepcopy(members),
+            "decision_member": deepcopy(decision_member),
+        },
+        "child_observations": [
+            {"route": deepcopy(route), "observation": deepcopy(observation)}
+            for route, observation in observations
+        ],
+    }
+    if user_decision is not None:
+        value["userDecision"] = deepcopy(user_decision)
+    return value
+
+
+def author_discovery_complete(
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "candidates": deepcopy(candidates),
+        "terminal": {"status": "complete", "issue": None},
+    }
+
+
+def author_resolve_complete(
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "output_exists": False,
+        "resolved": [
+            {
+                "kind": candidate["kind"],
+                "requested_slug": candidate["slug"],
+                "vault_slug": None,
+                "path": None,
+                "match": None,
+            }
+            for candidate in candidates
+        ],
+        "terminal": {"status": "complete", "issue": None},
+    }
+
+
+def author_synthesise_complete(action: str = "create") -> dict[str, Any]:
+    return {
+        "terminal": {"status": "complete", "issue": None, "action": action}
+    }
+
+
+def run_author(value: dict[str, Any], outputs: list[Any]) -> dict[str, Any]:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not on PATH")
+    proc = subprocess.run(
+        [
+            node,
+            "--input-type=module",
+            "-e",
+            PLAN_HARNESS,
+            json.dumps({"kind": "author", "input": value, "outputs": outputs}),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-4000:]
+    return json.loads(proc.stdout)
+
+
+def test_author_discovery_freezes_stable_deduplicated_batch_routes() -> None:
+    book = {"kind": "book", **book_identity("book-one", "Book One")}
+    paper = {"kind": "paper", **paper_identity("paper-one", "Paper One")}
+    candidates = [book, paper, deepcopy(paper)]
+    report = run_author(
+        {
+            "seed": deepcopy(AUTHOR_SEED),
+            "observation": author_observation(),
+            "options": {"maxBooks": 2, "maxPapers": 3},
+        },
+        [
+            author_discovery_complete([book]),
+            author_discovery_complete([paper, deepcopy(paper)]),
+            author_resolve_complete(candidates),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "author.discover-books",
+        "author.discover-papers",
+        "author.resolve-membership",
+    ]
+    assert [report["calls"][0]["request"]["count"], report["calls"][1]["request"]["count"]] == [2, 3]
+    assert report["pipelineCalls"] == 0
+    assert report["result"]["terminal"] == "needs_observation"
+    assert report["result"]["routes"] == [
+        {"kind": "book", "slug": "book-one"},
+        {"kind": "paper", "slug": "paper-one"},
+    ]
+    members = report["result"]["resume_seed"]["members"]
+    assert [member["member_route"] for member in members] == report["result"]["routes"]
+    assert [member["leaf"]["seed"]["identity"]["title"] for member in members] == [
+        "Book One",
+        "Paper One",
+    ]
+
+
+def test_author_coalesces_canonical_children_and_repairs_once() -> None:
+    identity = paper_identity("shared-paper", "Shared Paper")
+    current = {"kind": "paper", "slug": "shared-paper"}
+    members = [
+        author_member({"kind": "paper", "slug": "request-one"}, current, identity),
+        author_member({"kind": "paper", "slug": "request-two"}, current, identity),
+    ]
+    diagnostic = {
+        "path": "vault/authors/ada-example.md",
+        "kind": "missing-section",
+        "reason": "The overview is incomplete.",
+    }
+    report = run_author(
+        author_compose_input(
+            members,
+            [(current, admitted_paper_observation(identity))],
+        ),
+        [
+            audit_complete(),
+            author_synthesise_complete(),
+            audit_complete(escalated=[diagnostic]),
+            author_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    operations = [call["request"]["operation"] for call in report["calls"]]
+    assert operations == [
+        "paper.audit",
+        "author.synthesise",
+        "author.audit",
+        "author.synthesise",
+        "author.audit",
+    ]
+    syntheses = [
+        call["request"] for call in report["calls"]
+        if call["request"]["operation"] == "author.synthesise"
+    ]
+    assert [request["mode"] for request in syntheses] == ["create", "repair"]
+    assert len(syntheses[0]["inputs"]) == 1
+    assert syntheses[0]["inputs"][0]["title"] == "Shared Paper"
+    assert syntheses[1]["repair_diagnostics"] == [diagnostic]
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_author_paper_to_book_route_survives_a_later_paper_gate() -> None:
+    p1 = paper_identity("paper-one", "Original Paper Title")
+    p2 = paper_identity("paper-two", "Second Paper")
+    b1 = book_identity("book-one", "Rerouted Book Title")
+    p1_route = {"kind": "paper", "slug": "paper-one"}
+    p2_route = {"kind": "paper", "slug": "paper-two"}
+    p1_member = author_member(p1_route, p1_route, p1)
+    p2_member = author_member(p2_route, p2_route, p2)
+    route_to_book = {
+        "material_key": "paper:paper-one",
+        "operation": "material.search",
+        "value": {
+            "candidates": [
+                {"kind": "paper", "identity": p1},
+                {"kind": "book", "identity": b1},
+            ],
+            "conflicts": ["publication_type"],
+            "selected_candidate": {"kind": "book", "identity": b1},
+        },
+    }
+    routed = run_author(
+        author_compose_input(
+            [p1_member, p2_member],
+            [
+                (p1_route, paper_observation("paper-one")),
+                (p2_route, paper_observation("paper-two")),
+            ],
+            decision_member=p1_route,
+            user_decision=route_to_book,
+        ),
+        [],
+    )
+
+    assert routed["result"]["terminal"] == "needs_observation"
+    assert routed["result"]["routes"] == [
+        {"kind": "book", "slug": "book-one"},
+        p2_route,
+    ]
+    routed_seed = routed["result"]["resume_seed"]
+    assert routed_seed["members"][0]["member_route"] == p1_route
+    assert routed_seed["members"][0]["leaf"]["seed"]["identity"] == b1
+
+    p2_gate_receipt = search_needs_input()
+    p2_gate_receipt["terminal"]["candidates"] = [
+        {"kind": "paper", "identity": p2},
+        {"kind": "book", "identity": b1},
+    ]
+    gated = run_author(
+        author_compose_input(
+            routed_seed["members"],
+            [
+                (
+                    {"kind": "book", "slug": "book-one"},
+                    admitted_book_observation(b1),
+                ),
+                (p2_route, paper_observation("paper-two")),
+            ],
+        ),
+        [audit_complete(), p2_gate_receipt],
+    )
+
+    assert [call["request"]["operation"] for call in gated["calls"]] == [
+        "book.audit",
+        "material.search",
+    ]
+    gate_result = gated["result"]
+    assert gate_result["terminal"] == "needs_input"
+    assert gate_result["gate"]["gate"]["kind"] == "identity_conflict"
+    assert gate_result["resume_seed"]["decision_member"] == p2_route
+    assert gate_result["resume_seed"]["members"][0]["leaf"]["seed"]["identity"] == b1
+
+    gate = gate_result["gate"]["gate"]
+    decision = {
+        "material_key": gate["material_key"],
+        "operation": gate["operation"],
+        "value": {
+            "candidates": gate["candidates"],
+            "conflicts": gate["conflicts"],
+            "selected_candidate": {"kind": "paper", "identity": p2},
+        },
+    }
+    resumed = run_author(
+        author_compose_input(
+            gate_result["resume_seed"]["members"],
+            [
+                (
+                    {"kind": "book", "slug": "book-one"},
+                    admitted_book_observation(b1),
+                ),
+                (p2_route, paper_observation("paper-two")),
+            ],
+            decision_member=p2_route,
+            user_decision=decision,
+        ),
+        [
+            audit_complete(),
+            search_complete(p2, owner_slug="paper-two"),
+            audit_complete(),
+            author_synthesise_complete(),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in resumed["calls"]] == [
+        "book.audit",
+        "material.search",
+        "paper.audit",
+        "author.synthesise",
+        "author.audit",
+    ]
+    synthesis = resumed["calls"][3]["request"]
+    assert [item["title"] for item in synthesis["inputs"]] == [
+        "Rerouted Book Title",
+        "Second Paper",
+    ]
+    assert resumed["result"]["terminal"] == "complete"
+
+
+def test_author_unknown_child_outcome_stops_before_later_members_or_writers() -> None:
+    b1 = book_identity("book-one", "Book One")
+    p2 = paper_identity("paper-two", "Paper Two")
+    b1_route = {"kind": "book", "slug": "book-one"}
+    p2_route = {"kind": "paper", "slug": "paper-two"}
+    report = run_author(
+        author_compose_input(
+            [
+                author_member(b1_route, b1_route, b1),
+                author_member(p2_route, p2_route, p2),
+            ],
+            [
+                (b1_route, admitted_book_observation(b1)),
+                (p2_route, admitted_paper_observation(p2)),
+            ],
+        ),
+        ["__throw__"],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.audit"
+    ]
+    assert report["result"]["terminal"] == "blocked"
     assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"

@@ -56,6 +56,11 @@ const WORKFLOWS = [
     kind: "translation",
     validate: validateMaterialEntry,
   },
+  {
+    name: "author",
+    kind: "author",
+    validate: validateMaterialEntry,
+  },
 ].map(({ name, ...config }) => ({
   name,
   entry: join(WORKFLOW_SOURCE_ROOT, `${name}.entry.mts`),

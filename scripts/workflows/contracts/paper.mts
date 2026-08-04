@@ -170,12 +170,23 @@ export const parsePaperStatusObservation = (
   const observation = parseStatusEnvelope(value, "paper");
   if (observation === null) return null;
   const facts = observation.facts;
+  const slug = observation.slug;
+  const expectedPrepared = [
+    `processing/papers/${slug}/source.txt`,
+    `processing/papers/${slug}/ocr.txt`,
+  ];
   if (
     !exactKeys(facts, ["kind", "source", "prepared", "canonical"]) ||
     facts.kind !== "paper" ||
     !isArtifactObservation(facts.source) ||
+    facts.source.path !== `sources/${slug}.pdf` ||
     !isArtifactList(facts.prepared) ||
-    !isArtifactObservation(facts.canonical)
+    facts.prepared.length !== expectedPrepared.length ||
+    !facts.prepared.every(
+      (artifact, index) => artifact.path === expectedPrepared[index],
+    ) ||
+    !isArtifactObservation(facts.canonical) ||
+    facts.canonical.path !== `vault/papers/${slug}.md`
   )
     return null;
   return observation as unknown as PaperStatusObservation;

@@ -218,6 +218,17 @@ def test_collect_material_routes_leaf_kinds_to_generated_named_entries() -> None
             "seed_keys": ["state", "material_slug"],
             "option_keys": ["source_file", "toc_json", "toc_page_side"],
         },
+        "author": {
+            "entry": "$CLAUDE_PLUGIN_ROOT/workflows/author.mjs",
+            "required": ["seed", "observation", "options"],
+            "optional": [],
+            "seed_keys": ["slug", "full_name", "topic"],
+            "option_keys": ["maxBooks", "maxPapers"],
+            "resume_required": [
+                "observation", "resume_seed", "child_observations"
+            ],
+            "resume_optional": ["userDecision"],
+        },
     }
     for contract in manifest.values():
         entry = contract["entry"]
