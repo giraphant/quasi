@@ -867,9 +867,10 @@ def test_talk_prepare_repair_accepts_only_the_current_classification_owner(
     assert report["result"]["kind"] == "receipt"
 
 
-def test_talk_prepare_rejects_a_media_path_disguised_as_generation_evidence():
+def _dispatch_talk_prepare_artifacts(
+    artifacts: list[dict[str, Any]],
+) -> dict[str, Any]:
     slug = "exact-talk"
-    prepared = f"vault/talks/{slug}/recording.mp4"
     output = {
         "source_observation": {
             "path": f"sources/{slug}.mp3",
@@ -883,32 +884,12 @@ def test_talk_prepare_rejects_a_media_path_disguised_as_generation_evidence():
         "transcript_changed": False,
         "canonical_observation": None,
         "canonical_action": None,
-        "artifacts": [
-            {
-                "role": "transcript",
-                "path": f"vault/talks/{slug}/transcript.md",
-                "sha256": "c" * 64,
-                "size": 123,
-            },
-            {
-                "role": "prepared_media",
-                "path": prepared,
-                "sha256": "d" * 64,
-                "size": 456,
-            },
-            {
-                "role": "engine_transcript",
-                "path": prepared,
-                "sha256": "d" * 64,
-                "size": 456,
-            },
-        ],
+        "artifacts": artifacts,
         "steps": [],
         "diagnostics": [],
         "terminal": {"status": "complete", "issue": None},
     }
-
-    report = _dispatch(
+    return _dispatch(
         {
             "invocation": _invocation(
                 "talk.prepare",
@@ -924,6 +905,48 @@ def test_talk_prepare_rejects_a_media_path_disguised_as_generation_evidence():
             ),
             "model_output": output,
         }
+    )
+
+
+def test_talk_prepare_rejects_a_media_path_disguised_as_generation_evidence():
+    report = _dispatch_talk_prepare_artifacts(
+        [
+            {
+                "role": "transcript",
+                "path": "vault/talks/exact-talk/transcript.md",
+                "sha256": "c" * 64,
+                "size": 123,
+            },
+            {
+                "role": "engine_transcript",
+                "path": "vault/talks/exact-talk/recording.mp4",
+                "sha256": "d" * 64,
+                "size": 456,
+            },
+        ]
+    )
+
+    assert report["result"]["kind"] == "incoherent_complete"
+
+
+def test_talk_prepare_rejects_a_duplicate_primary_transcript_path():
+    primary = {
+        "role": "transcript",
+        "path": "vault/talks/exact-talk/transcript.md",
+        "sha256": "c" * 64,
+        "size": 123,
+    }
+    report = _dispatch_talk_prepare_artifacts(
+        [
+            primary,
+            {**primary, "sha256": "d" * 64},
+            {
+                "role": "engine_transcript",
+                "path": "processing/talks/exact-talk/transcript.soniox.srt",
+                "sha256": "e" * 64,
+                "size": 234,
+            },
+        ]
     )
 
     assert report["result"]["kind"] == "incoherent_complete"
