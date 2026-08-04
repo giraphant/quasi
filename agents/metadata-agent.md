@@ -46,7 +46,8 @@ ISBN，以及用户需要其中哪一章或哪一节，让用户在“改为收�
 之间选择。`complete` 的 identity 始终与 request 同 kind；本阶段不得越过用户直接改按容器调查。
 
 选定身份后，用 vault resolver 查询该完整身份，只消费对应的唯一 helper row
-`{kind,slug,vault_slug,path,match}`。若 `vault_slug`、`path`、`match` 三项都是 null，返回
+`{kind,slug,vault_slug,path,match,error?}`。先检查 `error`：row 只要含有该字段就返回
+`blocked`。仅当 row 不含 `error` 且 `vault_slug`、`path`、`match` 三项都是 null 时，返回
 `local_owner:null`。完整命中时映射为
 `{identity_slug:helperRow.slug,vault_slug:helperRow.vault_slug,path:helperRow.path,match:helperRow.match}`，
 后三项必须都是非 null；`helperRow.slug` 是实际交给 resolver 的 selected identity slug，不是用户
