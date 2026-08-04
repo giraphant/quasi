@@ -554,12 +554,15 @@ export const bookOperationRows: OperationRow[] = [
       );
     },
     envelope: ({ bookSlug, meta, chapter, materialKey, diagnostics }, refs) => {
-      const chapterLabel =
-        chapter.chapter_label || chapter.label || `第${chapter.slot}章`;
+      const chapterLabel: string | null =
+        chapter.chapter_label || chapter.label || null;
       const chapterTitle = String(chapter.title || "").trim();
-      const canonicalTitle = chapterTitle.startsWith(chapterLabel)
-        ? chapterTitle
-        : `${chapterLabel} ${chapterTitle}`.trim();
+      const canonicalTitle =
+        chapterLabel === null
+          ? chapterTitle
+          : chapterTitle.startsWith(chapterLabel)
+            ? chapterTitle
+            : `${chapterLabel} ${chapterTitle}`.trim();
       const authors =
         Array.isArray(chapter.authors) && chapter.authors.length
           ? chapter.authors

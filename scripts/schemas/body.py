@@ -233,7 +233,10 @@ CHAPTER_BODY = BodySchema(
         "year",
         "book",
     ],
-    h1="忠实呈现 caller identity 中的 chapter label 与 chapter title，不添加装饰性后缀",
+    h1=(
+        "忠实呈现 caller identity 中的 chapter title；chapter label 非 null 时"
+        "保留其前缀，不添加装饰性后缀"
+    ),
     metadata_lines=[
         "可写原文标题、作者和关键词；每一项必须由 input 或 caller identity 支持",
     ],

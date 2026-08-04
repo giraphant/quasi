@@ -759,7 +759,7 @@ export const PaperBodySchema = {
 |---|---|
 | `author`  | `# {name}`(例:`# Sara Ahmed`)|
 | `book`    | `# {title}`(完整书名,跟 frontmatter.title 一致)|
-| `chapter` | `# {chapter_label} {title}`(例:`# 第1章 一种地方类型`)|
+| `chapter` | `# {章节展示标题}`(无 `chapter_label` 时逐字使用 manifest title；有时以 label 前缀一次)|
 | `paper`   | `# {paper_title}`(译文或英文原标题)|
 
 **禁止形式**:

@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.64.1** (2026-08-04): **章节 slot 退回纯排序身份，不再泄漏进可见标题。**
+  - 0.5x descriptor-rows 重构后，`chapter.analyse` 会在 caller 没有提供章节 label 时把内部 slot 合成为 `第${slot}章`。`01`、`00a`、`99b` 本只用于 `ch{slot}-{slug}.md` 的文件系统排序，却因此变成 frontmatter、H1 与全书概览精读章节链接里的 `第01章` / `第00a章`。
+  - 本轮删除 synthetic label fallback：没有 label 时，trim 后的 manifest title 逐字流入 canonical title，`identity.chapter_label` 明确为 `null`；caller 显式提供 `chapter_label` 或 `label` 时，原有的 prefix-once 行为保持不变。Chapter frontmatter 与 H1 合同文字同步改为条件式，没有改变 artifact schema 的 payload shape。
+  - `chapter.analyse` envelope probe 覆盖无 label 的 `00a`、显式 `导论` label 与已有前缀三种输入，并对整个 request 断言不含 `第00a章`，防止排序码再次成为展示文本。
+
 - **0.64.0** (2026-08-04): **Stage receipt 0.3 把零信息 bookkeeping 从模型转交宿主，完整回执形状不变。**
   - 实测约 74% 的 StructuredOutput 重试只是在修复 writer 对 operation、stage、exact path 等 bookkeeping 字段的抄写。`quasi.stage.receipt/0.3` 的 model-facing schema 现在删去所有顶层 single-value `const`；模型完成 judgement fields 与整个 terminal 后，`run-stage` 才把这些确定值盖入返回回执。single、batch 与 chain 共用同一盖章边界，chain 的 terminal、carry 与 `complete()` 谓词都消费已经盖章的回执。
   - 分区规则只有一条机械判据：经 `annotateConstTypes` 后含单值 `const` 的顶层 property 必须 host-stamped，其余 enum、boolean、自由字符串和只有 item constraints 的数组必须由模型产生；27 条 kind/stage probe 逐条证明 model keys 与 stamp keys 不相交、并集严格等于 0.2 的完整字段集，且每个 stamp key 在旧 schema 中确为单值 const，因此不存在按语义误分类的判断面。

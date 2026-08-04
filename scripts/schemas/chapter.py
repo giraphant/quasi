@@ -22,7 +22,12 @@ class ChapterSchema(BaseModel):
     type: Literal["chapter"]
 
     # ─── 必填 ─────────────────────────────────────────────
-    title: Title = Field(description="章节标题(含 '第N章 XXX' 前缀)")
+    title: Title = Field(
+        description=(
+            "章节展示标题;caller 提供 chapter label 时以其为前缀,"
+            "未提供时忠实保留 manifest title"
+        )
+    )
     authors: list[Name] = Field(
         min_length=1,
         description="章作者;编纂本里可与父书 authors 不同(章节作者 != 书编者)",

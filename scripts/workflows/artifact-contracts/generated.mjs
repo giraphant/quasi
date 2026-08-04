@@ -431,7 +431,7 @@ export const CHAPTER_ARTIFACT_CONTRACT = {
   "document": {
     "additional_h2": false,
     "evidence_rules": [],
-    "h1": "忠实呈现 caller identity 中的 chapter label 与 chapter title，不添加装饰性后缀",
+    "h1": "忠实呈现 caller identity 中的 chapter title；chapter label 非 null 时保留其前缀，不添加装饰性后缀",
     "metadata_lines": [
       "可写原文标题、作者和关键词；每一项必须由 input 或 caller identity 支持"
     ],
@@ -563,7 +563,7 @@ export const CHAPTER_ARTIFACT_CONTRACT = {
           "type": "array"
         },
         "title": {
-          "description": "章节标题(含 '第N章 XXX' 前缀)",
+          "description": "章节展示标题;caller 提供 chapter label 时以其为前缀,未提供时忠实保留 manifest title",
           "maxLength": 280,
           "minLength": 2,
           "title": "Title",
@@ -635,7 +635,7 @@ export const CHAPTER_ARTIFACT_CONTRACT = {
         "type": "string"
       },
       "title": {
-        "description": "章节标题(含 '第N章 XXX' 前缀)",
+        "description": "章节展示标题;caller 提供 chapter label 时以其为前缀,未提供时忠实保留 manifest title",
         "maxLength": 280,
         "minLength": 2,
         "title": "Title",

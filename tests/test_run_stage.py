@@ -415,6 +415,68 @@ def test_chapter_analyse_requires_caller_output_observation() -> None:
     assert report["trace"] == []
 
 
+def test_chapter_analyse_keeps_manifest_title_when_label_is_missing() -> None:
+    context = stage_context("book", "analyse")
+    context["chapter"] = {
+        "slot": "00a",
+        "slug": "introduction",
+        "title": "Introduction: Politics and Ethics",
+        "filename": "ch00a-introduction.md",
+    }
+    report = run_stage(
+        {
+            "kind": "book",
+            "slug": "example-book",
+            "stage": "analyse",
+            "context": context,
+        }
+    )
+
+    request = report["direct"]["request"]
+    assert request["frontmatter_seed"]["title"] == (
+        "Introduction: Politics and Ethics"
+    )
+    assert request["identity"]["chapter_label"] is None
+    assert "第00a章" not in json.dumps(request, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    ("title", "expected_title"),
+    [
+        (
+            "Introduction: Politics and Ethics",
+            "导论 Introduction: Politics and Ethics",
+        ),
+        (
+            "导论 Introduction: Politics and Ethics",
+            "导论 Introduction: Politics and Ethics",
+        ),
+    ],
+)
+def test_chapter_analyse_prefixes_explicit_label_once(
+    title: str, expected_title: str
+) -> None:
+    context = stage_context("book", "analyse")
+    context["chapter"].update(
+        {
+            "title": title,
+            "chapter_label": "导论",
+        }
+    )
+    report = run_stage(
+        {
+            "kind": "book",
+            "slug": "example-book",
+            "stage": "analyse",
+            "context": context,
+        }
+    )
+
+    request = report["direct"]["request"]
+    assert request["frontmatter_seed"]["title"] == expected_title
+    assert request["identity"]["chapter_label"] == "导论"
+
+
 def test_paper_acquire_prompt_preserves_urls_and_real_diagnostic_capabilities() -> None:
     report = run_stage(
         {
