@@ -794,6 +794,31 @@ const requestedSlug = (raw: unknown): string | null => {
   return null;
 };
 
+const observationProvesCanonicalOwner = (
+  observation: QuasiStatusObservation,
+  identity: PaperIdentity | BookIdentity,
+): boolean => {
+  const canonical =
+    observation.kind === "paper"
+      ? observation.facts.canonical
+      : observation.kind === "book"
+        ? observation.facts.overview
+        : null;
+  const diskIdentity = observation.identity;
+  return (
+    canonical?.present === true &&
+    canonical.usable === true &&
+    isRecord(diskIdentity) &&
+    diskIdentity.title === identity.title &&
+    diskIdentity.year === identity.year &&
+    Array.isArray(diskIdentity.authors) &&
+    diskIdentity.authors.length === identity.authors.length &&
+    diskIdentity.authors.every(
+      (author, index) => author === identity.authors[index],
+    )
+  );
+};
+
 export const parseLeafMaterialInput = (
   raw: unknown,
   kind: "paper" | "book",
@@ -824,10 +849,16 @@ export const parseLeafMaterialInput = (
   const userDecision = Object.hasOwn(raw, "userDecision")
     ? parseUserDecision(raw.userDecision)
     : null;
+  const observation =
+    observations?.get(observationKey({ kind, slug: materialSlug })) ?? null;
   if (
     observations === null ||
     options === null ||
-    (Object.hasOwn(raw, "userDecision") && userDecision === null)
+    (Object.hasOwn(raw, "userDecision") && userDecision === null) ||
+    (seed.state === "canonical" &&
+      seed.material_slug !== seed.identity.slug &&
+      (observation === null ||
+        !observationProvesCanonicalOwner(observation, seed.identity)))
   )
     return invalid();
   return {

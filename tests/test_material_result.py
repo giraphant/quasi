@@ -300,8 +300,26 @@ def test_owner_drift_keeps_material_slug_separate_from_identity_slug():
     value = valid_input()
     value["seed"]["material_slug"] = "owned-paper"
     value["observation"]["slug"] = "owned-paper"
+    value["observation"]["identity"] = {
+        "title": PAPER_IDENTITY["title"],
+        "authors": PAPER_IDENTITY["authors"],
+        "year": PAPER_IDENTITY["year"],
+    }
+    value["observation"]["facts"]["canonical"] = {
+        "path": "vault/papers/owned-paper.md",
+        "present": True,
+        "usable": True,
+    }
 
     assert_parsed_seed(value, "paper", "paper:owned-paper")
+
+
+def test_owner_drift_rejects_an_empty_status_query_echo():
+    value = valid_input()
+    value["seed"]["material_slug"] = "owned-paper"
+    value["observation"]["slug"] = "owned-paper"
+
+    assert_invalid_input(parse_paper(value), "owned-paper")
 
 
 def test_unknown_seed_key_blocks_before_dispatch():
