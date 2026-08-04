@@ -230,9 +230,11 @@ git commit -m "test: centralize extraction launch sentinels"
 - Verify: `tests/test_skill_orchestration.py`
 - Verify absence: `tests/test_run_stage.py`
 
-- [ ] Check every ledger replacement test exists and passes. Confirm exact-ref/write-target ownership replaced prompt-equality duplicate checks and that Book's mixed fan-out case proves all launched chapters settle, unknown dominates a gate, and no later stage starts.
+- [ ] Check every ledger replacement test exists and passes. Confirm exact-ref/write-target ownership replaced prompt-equality duplicate checks and that Book's mixed fan-out case proves all launched chapters settle, unknown dominates blocked/failed siblings, and no later stage starts. Chapter Analyse has no user gate.
 
 - [ ] Confirm only retired syntax cases disappeared: generic kind/stage errors, `until` range validation, `units` envelope behavior, compatibility log prose, and batch error envelopes.
+
+- [ ] Audit every test added during the material-Workflow refactor, not only the retired compatibility ledger. Keep a case only when it owns one distinct public behavior, real safety/ownership boundary, or reproduced regression. Keep generic terminal/unknown mapping at the shared dispatch boundary; prefer malformed-input coverage through each public entry; delete private-parser field permutations and repeated stop/repair/binding proofs already established by a shared boundary. Record the retained behavior beside each grouped test family rather than targeting a count.
 
 - [ ] Run the Workflow slice:
 

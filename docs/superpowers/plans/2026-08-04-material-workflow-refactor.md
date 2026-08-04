@@ -4,7 +4,7 @@
 
 **Goal:** Replace the generic public `run-stage` API with named, material-oriented Workflows for Paper, Book, Talk, Translation, Author, and Topic, while keeping every specialist boundary schema-validated and making the user-facing Skills thin status/gate drivers.
 
-**Architecture:** Generated fixed-kind entries delegate to explicit TypeScript plans. Plans compose one shared operation catalog and one hardened single-unit dispatch primitive; only Book uses host `pipeline()` for intra-material chapter concurrency. Disk observations are explicit Workflow inputs, current-run receipts are trusted after host validation, and no hidden cursor, replay loop, lock service, or speculative fallback is introduced. Author and Topic compose the leaf plan APIs in one direction and request only the exact child observation that a concrete route actually needs.
+**Architecture:** Generated fixed-kind entries delegate to explicit TypeScript plans. Plans compose small material-local row sets with one hardened prepared-operation dispatch primitive; the universal catalog remains compatibility-only until retirement. Only Book uses host `pipeline()` for intra-material chapter concurrency. Disk observations are explicit Workflow inputs, current-run receipts are trusted inside the owning plan after host validation but are not part of the public MaterialResult, and no hidden cursor, replay loop, lock service, or speculative fallback is introduced. Author and Topic compose the leaf plan APIs in one direction and request only the exact child observation that a concrete route actually needs.
 
 **Tech Stack:** TypeScript 5.9, esbuild, Claude Code Dynamic Workflows, Python 3, pytest, existing JSON Schema projection and `quasi-*` CLI surface.
 
@@ -171,6 +171,7 @@ export type DirectGate =
   | {
       kind: "identity_conflict";
       operation: "material.search";
+      material_key: string;
       question: string;
       conflicts: string[];
       candidates: Array<
@@ -181,14 +182,26 @@ export type DirectGate =
   | {
       kind: "book_year";
       operation: "book.acquire";
+      material_key: string;
+      current_identity: BookIdentity;
       question: string;
       tmp_path: string;
-      year_evidence: WorkflowContext;
+      year_evidence: BookYearEvidence;
       proposed_actions: Array<"accept-current" | "use-recommended-year">;
+    }
+  | {
+      kind: "book_structure";
+      operation: "book.prepare";
+      material_key: string;
+      question: string;
+      source_path: string;
+      candidates: BookStructureCandidate[];
+      conflicts: BookStructureConflict[];
     }
   | {
       kind: "translation_source" | "translation_configuration";
       operation: "translation.prepare";
+      material_key: string;
       question: string;
       missing_fields: string[];
       candidates: TranslationCandidate[];
@@ -222,7 +235,6 @@ export interface MaterialResultBase {
     requested: RequestedMaterialIdentity;
     canonical: CanonicalMaterialIdentity | null;
   };
-  receipts: StageReceipt[];
 }
 
 export type MaterialResult =
@@ -249,13 +261,15 @@ export type MaterialResult =
     });
 ```
 
-`PaperIdentity`, `BookIdentity`, and `TranslationCandidate` are closed interfaces in `material-input.mts` matching their owning row schemas. Invalid input can therefore still return a result: `requested.slug` is `null` when no valid slug was supplied. `TypedGate` contains only gates with an active caller; there is no generic specialist-question escape hatch. `receipts` remains diagnostic data; Skills must not interpret it. `incomplete` belongs only to Topic after it has produced and audited its current bounded products but `maxRounds` leaves unseen work; it never claims saturation and returns the exact pending rows.
+`PaperIdentity`, `BookIdentity`, and `TranslationCandidate` are closed interfaces matching their owning row schemas. Invalid input can therefore still return a result: `requested.slug` is `null` when no valid slug was supplied. `TypedGate` contains only gates with an active caller; there is no generic specialist-question escape hatch. Stage receipts remain plan-local evidence and are never copied into the public MaterialResult. `incomplete` belongs only to Topic after it has produced and audited its current bounded products but `maxRounds` leaves unseen work; it never claims saturation and returns the exact pending rows.
+
+`material.canonical.slug` is the runtime material/owner slug used for exact status and child routing, not necessarily the bibliographic `identity.slug`: a Search hit uses `local_owner.vault_slug`, while a miss uses `receipt.identity.slug`. Post-status, Author/Topic coalescing, and child routes use this field. The sole unresolved disposition is Paper→Book `next`; before the Book plan establishes an owner, `material.canonical.slug` equals `next.identity.slug`, and every caller follows `next` rather than reporting completion.
 
 `MaterialIssue` may carry one typed `observation_request` only when a higher-order plan cannot safely continue a dynamically discovered child without fresh disk testimony. This is an explicit stop-and-resume seam, not a retry: the Skill runs the named leaf `quasi-status` once, adds that exact observation to the next input, and starts a new higher-order Workflow.
 
 Complete artifacts are exact and kind-specific when `next:null`: Paper canonical; Book manifest, every manifest-listed chapter canonical, and overview; Talk canonical; Translation PDF and manifest; Author canonical; Topic outline, overview, and resources. The sole `next !== null` case is a completed Paper publication-type disposition: `material.canonical` is the confirmed Book identity, `artifacts` is empty, and every caller follows the typed Book route before reporting material completion. No caller interprets the publication-type rule itself.
 
-- [ ] Implement strict shared parsing for `identity`, `observation`, `options`, and optional `userDecision`. `sparseObservations(entries)` validates every observation's kind, slug, and Translation target against its route, rejects duplicate keys, and builds the sole in-memory `SparseObservationMap`; a leaf entry wraps its one public observation as a one-row map, while Author/Topic parse `child_observations` through the same helper. Add zero-Agent-call mismatch tests. A decision envelope is `{material_key,operation,value}`; a plan applies it only when both bindings match the next owning operation. Gate-specific values retain their evidence binding: Book keeps `tmp_path`, `year_evidence`, and action; Translation keeps the candidate fingerprint and exact selected source path. If the fresh observation already proves that operation's durable output, the decision is stale and ignored. Kind-specific entry parsers add their own fields; the shared parser must not accept a universal `context` bag.
+- [ ] Implement strict shared parsing for `identity`, `observation`, `options`, and optional `userDecision`. `sparseObservations(entries)` validates every observation's kind, slug, and Translation target against its route, rejects duplicate keys, and builds the sole in-memory `SparseObservationMap`; a leaf entry wraps its one public observation as a one-row map, while Author/Topic parse `child_observations` through the same helper. Add zero-Agent-call mismatch tests. A decision envelope is `{material_key,operation,value}`; a plan applies it only when both bindings match the next owning operation. Gate-specific values retain their evidence binding: identity conflict echoes candidate/conflict sets plus exact selection; Book keeps its structure or year evidence; Translation source keeps the candidate fingerprint and exact selected source path. Translation configuration is changed out of band and has no decision value. If fresh observation proves the owning operation's durable output, a supplied decision is stale and ignored. Kind-specific entry parsers add their own fields; the shared parser must not accept a universal `context` bag.
 
 - [ ] Make `tests/workflow_harness.mjs` bundle a caller-named `.mts` source module with the repository's pinned esbuild and expose its internal named exports only inside the test process. Do not change the public Workflow ABI to make source helpers importable.
 
@@ -541,6 +555,69 @@ git add scripts/status/status.py scripts/translate/translate_commit.py scripts/w
 git commit -m "refactor: expose factual material status observations"
 ```
 
+### Task 6B: Keep leaf bundles material-local
+
+**Files:**
+
+- Create: `scripts/workflows/shared/dispatch-prepared.mts`
+- Create: `scripts/workflows/operations/prepare.mts`
+- Create: `scripts/workflows/operations/catalogs/paper.mts`
+- Create: `scripts/workflows/operations/catalogs/book.mts`
+- Create: `scripts/workflows/operations/catalogs/talk.mts`
+- Create: `scripts/workflows/operations/catalogs/translation.mts`
+- Modify: `scripts/workflows/shared/dispatch.mts`
+- Modify: `scripts/workflows/operations/catalog.mts`
+- Modify: `tests/test_workflow_dispatch.py`
+- Modify: `tests/test_workflow_bundle_abi.py`
+
+- [ ] Add one esbuild-metafile dependency test proving that a prepared-dispatch probe imports neither `operations/catalog.mts` nor any operation row, and one probe per leaf material proving that its preparer imports only Search plus that material's row modules. This is the executable independence boundary, not a snapshot of bundle text or byte size.
+
+- [ ] Move `DispatchOutcome` and `dispatchPreparedOperation()` into `dispatch-prepared.mts`, which imports only host/result/artifact types and never imports a catalog. Keep the temporary compatibility `dispatchOperation()` in `dispatch.mts`; it alone may import the universal catalog until Task 13. Do not duplicate error mapping or add another receipt validator.
+
+- [ ] Extract the row-parameterized preparation algorithm into `operations/prepare.mts`. Material-local catalog modules pass only their exact row sets: Paper = Search + Paper, Book = Search + Book, Talk = Talk, Translation = Translation. They use the generated factual operation identity projection and the same `defineOperation` path; they do not copy phase/effect/agent/artifact values or introduce hand-maintained stage sequences. A leaf plan imports its one material catalog and `dispatch-prepared.mts`, never `operations/catalog.mts` or `shared/dispatch.mts`.
+
+- [ ] Keep the compatibility catalog as a thin aggregation over the same preparer and all rows so every existing caller remains runnable. Task 13 deletes that aggregation with `run-stage`; no named Workflow gains a universal resolver.
+
+- [ ] Run, review the metafile evidence, and commit.
+
+```bash
+npm run check:workflows
+python3 -m pytest tests/test_workflow_dispatch.py tests/test_workflow_bundle_abi.py tests/test_run_stage.py -q
+git add scripts/workflows/shared/dispatch-prepared.mts scripts/workflows/shared/dispatch.mts scripts/workflows/operations/prepare.mts scripts/workflows/operations/catalog.mts scripts/workflows/operations/catalogs tests/test_workflow_dispatch.py tests/test_workflow_bundle_abi.py
+git commit -m "refactor: isolate material operation dependencies"
+```
+
+### Task 6C: Split domain contracts and narrow the public result
+
+**Files:**
+
+- Create/Modify: `scripts/workflows/contracts/paper.mts`
+- Create/Modify: `scripts/workflows/contracts/book.mts`
+- Create/Modify: `scripts/workflows/contracts/talk.mts`
+- Create/Modify: `scripts/workflows/contracts/translation.mts`
+- Create/Modify: `scripts/workflows/contracts/topic.mts`
+- Modify: `scripts/workflows/shared/material-input.mts`
+- Modify: `scripts/workflows/shared/material-result.mts`
+- Modify: `tests/test_material_result.py`
+- Modify: `tests/test_workflow_bundle_abi.py`
+
+- [ ] Move closed identities, kind-specific status facts, seed parsing, and gate/decision parsing into their owning domain contract modules. `material-input.mts` retains only genuine shared primitives: slug/language normalization where cross-kind, the UserDecision envelope, observation keys/maps, and small envelope helpers. Do not create a new framework or a barrel that makes every leaf import every domain contract.
+
+- [ ] Give Paper and Book separate public entry parsers; a named entry imports only its own parser plus shared primitives. Delete the generic `parseLeafMaterialInput` export in this task and migrate its tests to those real parser seams; it has no production caller and must not survive as a temporary Paper/Book barrel. Preserve behavior while moving code; do not add field-permutation tests.
+
+- [ ] Remove `receipts` from `MaterialResultBase` and its constructors. Plans keep validated current-run receipts only in local variables for carry, joining, and bounded repair; Skills and higher-order plans receive only material identity, terminal, issue/gate, exact artifacts, `next`, or Topic pending work. Add one public-result shape test plus one owner-drift case proving `material.canonical.slug` is the runtime vault slug while bibliographic identity remains separate, then delete receipt-shape assertions rather than replacing them with a compact trace that has no consumer.
+
+- [ ] Use esbuild metafiles to bundle each real leaf seam (`public domain parser + shared result`) and prove Paper does not pull Book/Topic/Translation contracts and vice versa. Probing an isolated contract export is insufficient because it would miss an indirect shared-result barrel. Test this boundary once; do not snapshot source layout broadly.
+
+- [ ] Run and commit.
+
+```bash
+npm run check:workflows
+python3 -m pytest tests/test_material_result.py tests/test_workflow_dispatch.py tests/test_workflow_bundle_abi.py -q
+git add scripts/workflows/contracts scripts/workflows/shared/material-input.mts scripts/workflows/shared/material-result.mts tests/test_material_result.py tests/test_workflow_bundle_abi.py
+git commit -m "refactor: keep material contracts and results narrow"
+```
+
 ### Task 7: Implement the Paper plan and entry
 
 **Files:**
@@ -551,7 +628,7 @@ git commit -m "refactor: expose factual material status observations"
 - Create: `tests/test_material_plans.py`
 - Create: `tests/test_workflow_entries.py`
 
-- [ ] Add failing Paper tests for: a provisional `title|doi` seed running Search → Acquire → Prepare → Analyse → Audit; a strict canonical seed and existing canonical observation starting at Audit; Prepare `selected_input` carry; identity-conflict decision binding; user-confirmed Paper→Book `next`; stale Search decision ignored after fresh facts advance; a resumed prepared-but-not-analysed Paper reconciling Prepare to rebuild `selected_input`; an existing canonical whose Audit requests Analyse repair reconciling Prepare first; writer unknown stop/no later dispatch; owner-correct Analyse repair followed by one re-Audit; foreign Audit path blocked.
+- [ ] Add failing Paper tests for: a provisional `title|doi` seed running Search → Acquire → Prepare → Analyse → Audit; a strict canonical seed and existing canonical observation starting at Audit; Prepare `selected_input` carry; identity-conflict exact candidate/conflict echo and selected membership; same-kind selection performing one owner-reconcile Search under the copied host key; user-confirmed Paper→Book selection producing typed `next`; stale Search decision ignored after fresh facts advance; a resumed prepared-but-not-analysed Paper reconciling Prepare to rebuild `selected_input`; an existing canonical whose Audit requests Analyse repair reconciling Prepare first; writer unknown stop/no later dispatch; owner-correct Analyse repair followed by one re-Audit; foreign Audit path blocked.
 
 - [ ] Implement:
 
@@ -562,7 +639,9 @@ export async function runPaperPlan(
 ): Promise<MaterialResult>;
 ```
 
-Choose the first applicable operation from explicit observed facts. A provisional seed always runs Search; a canonical seed skips Search only when its `material_slug` observation proves the canonical artifact admitted. A coherent Search receipt establishes the bibliographic identity, while the downstream runtime slug and observation lookup use a validated `local_owner.vault_slug` on an owner hit and `receipt.identity.slug` on a miss. Preserve identity slug and runtime owner slug as distinct facts; never rewrite one into the other. When the caller supplied a sparse observation for that runtime key, rebind to it with one in-memory `(kind,slug)` lookup and otherwise keep the explicit empty observation. Do not run a second status call inside the Workflow. Each dispatch appends its stamped receipt; the first non-complete/unknown/incoherent outcome returns immediately. Pass Prepare's validated `selected_input` directly into Analyse.
+Choose the first applicable operation from explicit observed facts. A provisional seed always runs Search; a canonical seed skips Search only when its `material_slug` observation proves the canonical artifact admitted. A coherent Search receipt establishes the bibliographic identity, while the downstream runtime slug and observation lookup use a validated `local_owner.vault_slug` on an owner hit and `receipt.identity.slug` on a miss. Preserve identity slug and runtime owner slug as distinct facts; never rewrite one into the other. When the caller supplied a sparse observation for that runtime key, rebind to it with one in-memory `(kind,slug)` lookup and otherwise keep the explicit empty observation. Do not run a second status call inside the Workflow. Keep only the stamped receipts needed as current-run local carries; the first non-complete/unknown/incoherent outcome returns a material-level stop without copying receipts into the public result. Pass Prepare's validated `selected_input` directly into Analyse.
+
+- [ ] Lift Search identity conflicts only through `parseIdentityConflictGate`. On resume, parse the exact echoed decision. A selected Paper is supplied once to a Search owner-reconciliation call under the same gate key, whose complete identity must equal the selection. A selected Book returns the typed `next` immediately; the caller starts Book with that identity and Book establishes its own owner. Invalid gate semantics stop as `workflow.incoherent_gate`; a stale/mismatched decision is not applied.
 
 - [ ] Across-run receipts do not exist. If Analyse or an Audit repair needs a Prepare carry and Prepare did not complete in this invocation, dispatch `paper.prepare` in reconcile mode first and use its new validated `selected_input`; do not guess between durable normalized/OCR files. This is stage reconciliation, not a generic retry.
 
@@ -594,7 +673,7 @@ git commit -m "feat: run one paper per workflow"
 - Modify: `tests/test_material_plans.py`
 - Modify: `tests/test_workflow_entries.py`
 
-- [ ] Add failing Book tests for: a provisional `title|isbn` seed and happy path; Book year gate with exact `current_identity/tmp_path/year_evidence/action` binding, stale-decision rejection, and `use-recommended-year` recanonicalization through Search; Book structure gate before fan-out with exact source/candidate binding; Prepare inventory fan-out; valid-manifest resume without a current-run Prepare receipt; invalid/missing manifest reconciling Prepare; missing source reconciling Acquire before Prepare; stable manifest order under out-of-order completion; overlapping exact outputs rejected before any chapter dispatch; a two-chapter observation where only the actually present output binds `reconciled/not_written`; a new chapter binds `create/written`; mixed sibling success/blocked/unknown settles all and lets unknown dominate; Synthesise/Audit never start after a failed join; one owner-correct chapter or overview repair; and a chapter newly written in this run being repaired with `mode:"repair", output_exists:true` before re-Audit.
+- [ ] Add failing Book tests for: a provisional `title|isbn` seed and happy path; same-kind identity-conflict selection performing one owner-reconcile Search; Book year gate with exact host-owned `material_key/current_identity/tmp_path/year_evidence/action` binding, single consumption, stale fresh facts, owner drift, `use-recommended-year` recanonicalization through Search, and unknown Search causing zero Acquire calls; Book structure gate before fan-out with exact key/source/candidate binding; Prepare inventory fan-out; valid-manifest resume without a current-run Prepare receipt; invalid/missing manifest reconciling Prepare; missing source reconciling Acquire before Prepare; stable manifest order under out-of-order completion; overlapping exact outputs rejected before any chapter dispatch; a two-chapter observation where only the actually present output binds `reconciled/not_written`; a new chapter binds `create/written`; mixed sibling success/blocked/unknown settles all and lets unknown dominate; Synthesise/Audit never start after a failed join; one owner-correct chapter or overview repair; and a chapter newly written in this run being repaired with `mode:"repair", output_exists:true` before re-Audit.
 
 - [ ] Implement `runBookPlan(runtime,input)` using ordinary `await` for Search/Acquire/Prepare/Synthesise/Audit. For chapters:
 
@@ -631,9 +710,9 @@ const observedChapterOutputs = new Set(
 
 Use the Prepare receipt's unique chapter inventory when Prepare completed in the current run. On resume, a valid status manifest supplies the same complete validated rows; an invalid/missing manifest requires `book.prepare` reconciliation, and a missing usable source first requires `book.acquire` reconciliation. Never derive `output_exists` from expected paths. If a new chapter unexpectedly finds an output, its Agent blocks; the plan stops for a fresh next-run status.
 
-- [ ] Join in stable chapter order after every launched call settles. Unknown dominates blocked or failed siblings; otherwise the first non-complete outcome in manifest order controls the top-level terminal. Retain successful sibling receipts. Track chapter outputs established by coherent current-run completions; an Audit escalation for one of them invokes `chapter.analyse` with `mode:"repair"` and `output_exists:true`, then performs exactly one re-Audit.
+- [ ] Join in stable chapter order after every launched call settles. Unknown dominates blocked or failed siblings; otherwise the first non-complete outcome in manifest order controls the top-level terminal. Retain successful sibling receipts only in plan-local state long enough to establish same-run outputs; do not expose them in MaterialResult. Track chapter outputs established by coherent current-run completions; an Audit escalation for one of them invokes `chapter.analyse` with `mode:"repair"` and `output_exists:true`, then performs exactly one re-Audit.
 
-- [ ] Consume only the frozen typed gates. `book.prepare` may return `book_structure` before any chapter dispatch. Validate its cross-field semantics with `parseBookStructureGate` before lifting it to the user, validate the echoed decision with `parseBookStructureDecisionValue` on resume, and stop explicitly as an incoherent gate rather than exposing invalid alternatives. Chapter Analyse has no human gate; after every launched child settles, unknown dominates blocked/failed siblings, otherwise the first manifest-order non-complete receipt controls the stop. Structurally parse a `use-recommended-year` outer decision at entry, but consume it exactly once only after the current runtime slug is known, against `book:${material_slug}`; in an owner-drift case this is the resolver-confirmed owner slug, not `current_identity.slug`. Invoke `material.search` to establish the new year and canonical slug, then thread that already-validated value internally to Acquire under the new runtime key; neither this plan nor the Skill rewrites slug text. As with Paper, a Search owner hit uses `local_owner.vault_slug` for every downstream invocation and observation lookup.
+- [ ] Consume only the frozen typed gates. `book.prepare` may return `book_structure` before any chapter dispatch. Validate its cross-field semantics with `parseBookStructureGate` before lifting it to the user, validate the echoed decision with `parseBookStructureDecisionValue` on resume, and stop explicitly as an incoherent gate rather than exposing invalid alternatives. Chapter Analyse has no human gate; after every launched child settles, unknown dominates blocked/failed siblings, otherwise the first manifest-order non-complete receipt controls the stop. Parse the outer Book-year envelope/value structurally at entry without sending it to an ordinary Search. After current identity and resolver-confirmed runtime slug are known and fresh facts have not made it stale, compare its copied gate `material_key`, operation, and current identity exactly once. `accept-current` invokes Acquire directly with unchanged identity. `use-recommended-year` invokes one readonly Search under the old owner key; any stop prevents Acquire. On coherent Search completion, take the full identity from the receipt, choose the new runtime key only from `local_owner.vault_slug` or `receipt.identity.slug`, and pass the already-validated value internally to Acquire without calling `decisionForOperation()` again. Neither plan nor Skill computes/replaces a slug. Recovery persists no partial Search result: a later run re-observes and may receive the same outer decision.
 
 - [ ] Add `book` to the build table and verify its generated public file has only `meta` plus the top-level wrapper.
 
@@ -663,9 +742,9 @@ git commit -m "feat: run one book per workflow"
 
 - [ ] Implement `runTalkPlan()` with only the receipt-defined classification branch. Use the Prepare receipt's exact same-generation transcript refs for live Analyse. Because status contains facts rather than a past receipt, a resumed run that needs classification/transcript carry reconciles `talk.prepare` first. Audit escalation routes only to the owner of its exact path and is bounded to one repair/re-Audit.
 
-- [ ] Add failing Translation tests for target normalization parity, exact target reconcile, missing source gate, different-target observation ignored, exact candidate-fingerprint plus selected-path decision binding, stale decision ignored after the requested PDF and manifest are both present, and unknown writer stop.
+- [ ] Add failing Translation tests for target normalization parity, exact target reconcile, missing source gate, different-target observation ignored, exact candidate-fingerprint plus selected-path decision binding, stale source decision ignored after the requested PDF and manifest are both present, a configuration gate carrying the exact material key but rejecting any acknowledgement decision, and unknown writer stop.
 
-- [ ] Implement `runTranslationPlan()` as one `translation.prepare` dispatch with no Audit. Version 0.1 is Paper-derived only and uses the exact key `translation:paper:${slug}:${normalizedTag}`; do not add a configurable source kind.
+- [ ] Implement `runTranslationPlan()` as one `translation.prepare` dispatch with no Audit. `translation_source` resumes with its exact fingerprint/path decision. `translation_configuration` is satisfied only by changing Configure/env out of band and restarting the same seed with fresh status; the material key is display/ownership data, not an acknowledgement token. Version 0.1 is Paper-derived only and uses the exact key `translation:paper:${slug}:${normalizedTag}`; do not add a configurable source kind.
 
 - [ ] Add both entries to the build table and verify both generated bundles execute through the host wrapper.
 
@@ -691,7 +770,7 @@ git commit -m "feat: add talk and translation workflows"
 
 - [ ] Add only structural cross-file tests that parse valid Skill frontmatter, resolve each referenced named entry to a generated file, and reject active references to `run-stage`, public `stage`, `until`, or `units` after the relevant branch migrates. Do not snapshot sentences or try to prove execution order by grepping prose.
 
-- [ ] Rewrite the leaf portion of `collect-material` to the required thin shape: validate raw hints into a provisional-or-canonical seed, known-key coalescing, one pre-run observation, fixed-entry invocation, generic typed-`next` following, material-level terminal presentation, and one post-complete observation. Retain a valid caller request key when present; otherwise assign `request-{kind}-{one-based original input ordinal}` for this invocation, and reuse `material.requested.slug` byte-for-byte on a gate resume. The Skill never runs Search itself, treats that provisional key as canonical, pads a narrow status identity, or rewrites a canonical slug/year. Keep Author compatibility prose only until Task 11. A Paper→Book route selects the Book entry by route kind; the Skill does not contain the publication-type condition.
+- [ ] Rewrite the leaf portion of `collect-material` to the required thin shape: recognize the requested kind, assign/reuse the request key, pass raw hints in the provisional seed, coalesce known keys, make one pre-run observation, invoke the fixed entry, follow generic typed `next`, present material-level terminals, and make one post-complete observation at `material.canonical.slug` (the runtime owner slug). Strict hint/identity/owner validation belongs only to the TypeScript entry parser; malformed input may launch the Workflow wrapper but must cause zero Agent dispatch. Retain a valid caller request key when present; otherwise assign `request-{kind}-{one-based original input ordinal}` for this invocation, and reuse `material.requested.slug` byte-for-byte on a gate resume. The Skill never runs Search itself, treats that provisional key as canonical, pads a narrow status identity, or rewrites a canonical slug/year. Keep Author compatibility prose only until Task 11. A Paper→Book route selects the Book entry by route kind; the Skill does not contain the publication-type condition.
 
 - [ ] Every named Workflow invocation carries exactly one observation matching its seed's `requested_slug` or `material_slug`. Before following a typed Paper→Book `next`, run one exact `quasi-status --kind book --slug <next.identity.slug> --json`, construct the initial canonical Book seed with `material_slug:next.identity.slug`, and pass that Book observation. The Paper observation is never reused for the target route; the Book plan may still run Search when that exact canonical artifact is not admitted and may then rebind to a resolver-confirmed owner slug.
 
@@ -699,7 +778,9 @@ git commit -m "feat: add talk and translation workflows"
 
 - [ ] Keep top-level bounded concurrency at five distinct known material keys. Coalesce only exact keys known before launch. Do not add semantic locks, canonicalization reservations, collision recovery, or cleanup automation; a rare post-Search collision is left visible for manual cleanup.
 
-- [ ] Document four manual/headless consumer scenarios in `docs/evals/material-skill-scenarios.md`: one ordinary leaf completion with pre/post status, one gate with a fresh-observation resume, a two-material batch preserving order, and a malformed intake with zero Workflow launch. Record commands/evidence when these scenarios are run; keep them outside the deterministic unit suite.
+- [ ] For each decision-resumed Stage gate (`identity_conflict`, `book_year`, `book_structure`, `translation_source`), construct `UserDecision` by copying `gate.material_key` and `gate.operation` byte-for-byte. Never derive a decision key from canonical identity, child route, or diagnostic data; MaterialResult exposes no Stage receipts. For `translation_configuration`, present the missing Configure fields and restart the same seed with fresh observation after configuration changes, with no decision object.
+
+- [ ] Document four manual/headless consumer scenarios in `docs/evals/material-skill-scenarios.md`: one ordinary leaf completion with pre/post status, one gate with a fresh-observation resume copying its exact material key, a two-material batch preserving order, and a malformed intake returning `material.invalid_input` with zero Agent dispatch. Record commands/evidence when these scenarios are run; keep them outside the deterministic unit suite.
 
 - [ ] Run and commit.
 
@@ -717,7 +798,7 @@ git commit -m "refactor: make leaf material skill a thin workflow driver"
 
 - [ ] Write the focused spec before implementation. Resolve these decisions explicitly: Author has its own exact `quasi-status --kind author` pre/post observation; input carries a sparse map of exact child observations accumulated only after a concrete route is known; `author.resolve-membership` is the only dynamic membership observer; a discovered child absent from that map is treated as new for this run and relies on leaf writer reconciliation; if continuation actually requires disk testimony, Author returns `blocked` with one typed `observation_request`; the Skill observes only that child and restarts Author; user-facing child gates are lifted unchanged with the exact child route; a child decision is forwarded only when its material key matches that route; there is no whole-vault inventory or Author cursor; child plans run sequentially in stable membership order.
 
-- [ ] Specify generic child routing: if a Paper child returns the typed Book `next`, Author calls `runBookPlan` with the returned identity and matching sparse observation. It does not reproduce the publication-type test. Specify Author synthesis/Audit ownership and the one bounded owner-correct repair/re-Audit.
+- [ ] Specify generic child routing: if a Paper child returns the typed Book `next`, Author calls `runBookPlan` with the returned identity and matching sparse observation. It does not reproduce the publication-type test. Completed children are keyed/coalesced by `result.material.canonical.slug`, the runtime owner slug, never by a stale bibliographic slug. Specify Author synthesis/Audit ownership and the one bounded owner-correct repair/re-Audit.
 
 - [ ] Obtain a fresh design review of this focused spec and resolve every blocking finding before implementation. Commit the reviewed contract separately.
 
@@ -732,6 +813,7 @@ git commit -m "docs: specify author workflow composition"
 
 - Create: `scripts/workflows/plans/author.mts`
 - Create: `scripts/workflows/author.entry.mts`
+- Create: `scripts/workflows/operations/catalogs/author.mts`
 - Modify: `scripts/build-workflows.mjs`
 - Modify: `skills/collect-material/SKILL.md`
 - Modify: `tests/test_material_plans.py`
@@ -749,9 +831,11 @@ export async function runAuthorPlan(
 ): Promise<MaterialResult>;
 ```
 
-Run `author.discover-books`, `author.discover-papers`, and `author.resolve-membership` in explicit sequence. Coalesce the returned membership by canonical material key. For each member, call `runBookPlan` or `runPaperPlan` with its matching sparse observation or the explicit empty observation constructor. Admit only leaf completions with `next:null`; follow a typed Book route through `runBookPlan`. A lifted gate includes the child route; it does not expose Stage ordering to the Skill. A child stop that needs disk testimony carries exactly that child's observation request; it does not trigger a vault scan.
+Run `author.discover-books`, `author.discover-papers`, and `author.resolve-membership` in explicit sequence. Coalesce the returned membership by canonical material key. For each member, call `runBookPlan` or `runPaperPlan` with its matching sparse observation or the explicit empty observation constructor. Admit only leaf completions with `next:null`, and record their `material.canonical.slug` as the owner-correct child route; follow a typed Book route through `runBookPlan`. A lifted gate includes the child route; it does not expose Stage ordering to the Skill. A child stop that needs disk testimony carries exactly that child's observation request; it does not trigger a vault scan.
 
 - [ ] After all children complete, call `author.synthesise` then `author.audit`; allow one owner-correct synthesis repair and re-Audit. Paper/Book plans must not import Author code.
+
+- [ ] Prepare Author-owned operations through its material-local catalog and the pure prepared-dispatch boundary. The Author bundle composes Paper/Book plan APIs but never imports the universal compatibility catalog.
 
 - [ ] Switch Author routing in `collect-material` to `workflows/author.mjs`. Start with the exact Author observation and an empty sparse child-observation map; on an `observation_request`, run the exact leaf status command, add its result, and restart. User gates require an answer plus a fresh exact child observation. After `complete`, verify the exact Author canonical fact once.
 
@@ -763,7 +847,7 @@ Run `author.discover-books`, `author.discover-papers`, and `author.resolve-membe
 npm run build:workflows
 npm run check:workflows
 python3 -m pytest tests/test_material_plans.py -k author tests/test_workflow_entries.py tests/test_skill_orchestration.py tests/test_status_cli.py -q
-git add scripts/build-workflows.mjs scripts/workflows/plans/author.mts scripts/workflows/author.entry.mts workflows/author.mjs skills/collect-material/SKILL.md tests
+git add scripts/build-workflows.mjs scripts/workflows/operations/catalogs/author.mts scripts/workflows/plans/author.mts scripts/workflows/author.entry.mts workflows/author.mjs skills/collect-material/SKILL.md tests
 git commit -m "feat: compose leaf workflows for authors"
 ```
 
@@ -777,7 +861,7 @@ git commit -m "feat: compose leaf workflows for authors"
 
 - [ ] Preserve the current real stopping behavior: noncanonical seeds at `maxRounds==0` produce one typed seed gate; `signal:"needs_seeds"` is a typed gate; no admitted member or available card cannot silently complete; `signal:"saturated"` is the only saturation claim; hitting `maxRounds` with unseen work returns an incomplete report carrying that work, not saturation. `seed_materials` remain part of the public input.
 
-- [ ] Define resume data without a sidecar: the exact Topic status projection supplies the current validated outline's subquestions plus observed member/card refs; `topic.steer` receives those refs and returns its newly written subquestions in the current receipt. Every candidate demand carries a validated deterministic `requested_slug`; the plan never fabricates a slug from the query. A Paper child `next` is followed generically through the Book plan. A child decision is forwarded only to the exact matching route.
+- [ ] Define resume data without a sidecar: the exact Topic status projection supplies the current validated outline's subquestions plus observed member/card refs; `topic.steer` receives those refs and returns its newly written subquestions in the current receipt. Every candidate demand carries a validated deterministic `requested_slug`; the plan never fabricates a slug from the query. A Paper child `next` is followed generically through the Book plan. Completed children are admitted under `result.material.canonical.slug`, the runtime owner slug. A child decision is forwarded only to the exact matching route.
 
 - [ ] Close the existing Talk path: a canonical Talk seed/recalled member is admitted from exact Talk status; an incomplete Talk with usable media is passed to `runTalkPlan`; an explicit Talk seed with neither canonical output nor usable media is included in the typed `topic_seed` gate. Topic never invents media identity for a recalled slug.
 
@@ -793,6 +877,7 @@ git commit -m "docs: specify topic workflow composition"
 **Files:**
 
 - Modify: `scripts/workflows/operations/rows/topic.mts`
+- Create: `scripts/workflows/operations/catalogs/topic.mts`
 - Create: `scripts/workflows/plans/topic.mts`
 - Create: `scripts/workflows/topic.entry.mts`
 - Modify: `scripts/build-workflows.mjs`
@@ -809,6 +894,8 @@ git commit -m "docs: specify topic workflow composition"
 
 - [ ] Implement `runTopicPlan(runtime,input)` by reusing existing `topic.*` rows and leaf APIs. Keep configured `maxRounds` as the only loop bound. Process children and cards in stable order with ordinary `await`; do not add a Topic fan-out scheduler.
 
+- [ ] Prepare Topic-owned operations through its material-local catalog and the pure prepared-dispatch boundary. The Topic bundle composes leaf plan APIs but never imports the universal compatibility catalog.
+
 - [ ] Rewrite `research-topic/SKILL.md` to intake/query/options, exact Topic pre-status, fixed `workflows/topic.mjs` call, exact-child observation fulfillment, typed gate presentation, exact Topic post-status, and result reporting. Present `terminal:"incomplete"` with its exact pending work and never label it saturated. Remove public stage vocabulary, scan-as-inventory, and receipt interpretation.
 
 - [ ] Add `topic` to the build table only when its plan and parser are complete.
@@ -819,7 +906,7 @@ git commit -m "docs: specify topic workflow composition"
 npm run build:workflows
 npm run check:workflows
 python3 -m pytest tests/test_material_plans.py -k topic tests/test_workflow_dispatch.py tests/test_workflow_entries.py tests/test_skill_orchestration.py tests/test_status_cli.py -q
-git add scripts/build-workflows.mjs scripts/workflows/operations/rows/topic.mts scripts/workflows/plans/topic.mts scripts/workflows/topic.entry.mts workflows/topic.mjs skills/research-topic/SKILL.md tests
+git add scripts/build-workflows.mjs scripts/workflows/operations/rows/topic.mts scripts/workflows/operations/catalogs/topic.mts scripts/workflows/plans/topic.mts scripts/workflows/topic.entry.mts workflows/topic.mjs skills/research-topic/SKILL.md tests
 git commit -m "feat: move topic orchestration into a named workflow"
 ```
 
@@ -829,6 +916,8 @@ git commit -m "feat: move topic orchestration into a named workflow"
 
 - Delete: `scripts/workflows/run-stage.entry.mts`
 - Delete: `workflows/run-stage.mjs`
+- Delete: `scripts/workflows/shared/dispatch.mts`
+- Delete: `scripts/workflows/operations/catalog.mts`
 - Modify: `scripts/build-workflows.mjs`
 - Modify: `scripts/schemas/pipeline.py`
 - Modify: `scripts/schemas/export_contracts.py`
@@ -878,7 +967,9 @@ There are no stage aliases, per-kind sequences, carries, next-operation pointers
 
 - [ ] Update `status.py` to read the narrowed evidence catalog while continuing to compute facts with its explicit Python observers. Status must not become a rule-DSL graph interpreter.
 
-- [ ] Remove `run-stage` from the build table and delete its source/generated entry. Remove only mode-specific tests and compatibility errors; retain the migrated dispatch/plan behavior. Add the retired name to quarantine only in Task 14 after maintained documents stop referring to it, so the quarantine test and its own literal do not make this commit self-failing.
+- [ ] Remove `run-stage` from the build table and delete its source/generated entry together with the compatibility-only universal catalog and `dispatchOperation()` wrapper. Named plans retain the row-parameterized preparer, their material-local catalogs, and pure `dispatchPreparedOperation()`. Remove only mode-specific tests and compatibility errors; retain migrated dispatch/plan behavior. Add the retired name to quarantine only in Task 14 after maintained documents stop referring to it, so the quarantine test and its own literal do not make this commit self-failing.
+
+- [ ] Delete `validateCompatibilityEntry`, `validatePipelineStructure`, compatibility typedefs/probes, and all `PIPELINE/RUN_STAGE_REGISTRY/STAGE_CHAINS` build validation that existed only for `run-stage` from `scripts/build-workflows.mjs`. Retain the fixed-kind `validateMaterialEntry` and public ABI/size checks.
 
 - [ ] Replace the compatibility-only ABI regression with a parameterized execution test over `paper.mjs`, `book.mjs`, `talk.mjs`, `translation.mjs`, `author.mjs`, and `topic.mjs`. Each generated bundle must execute its internal `run` through the public top-level wrapper and return the source result. The test contains no retired `run-stage` reference.
 
@@ -890,7 +981,8 @@ npm run check:workflows
 python3 -m pytest tests/test_workflow_dispatch.py tests/test_workflow_bundle_abi.py tests/test_material_plans.py tests/test_workflow_entries.py tests/test_status_cli.py tests/test_skill_orchestration.py -q
 test ! -e scripts/workflows/run-stage.entry.mts
 test ! -e workflows/run-stage.mjs
-! rg -n 'workflows/run-stage\.mjs|RUN_STAGE_REGISTRY|STAGE_CHAINS|quasi\.run-stage\.(chain|batch|error)' skills scripts/workflows workflows tests --glob '!test_dead_names.py'
+! rg -n 'workflows/run-stage\.mjs|RUN_STAGE_REGISTRY|STAGE_CHAINS|validateCompatibilityEntry|validatePipelineStructure|quasi\.run-stage\.(chain|batch|error)' scripts/build-workflows.mjs skills scripts/workflows workflows tests --glob '!test_dead_names.py'
+git add scripts/build-workflows.mjs
 git add -A scripts/workflows scripts/schemas scripts/status workflows tests
 git commit -m "refactor: retire the generic run-stage workflow"
 ```
