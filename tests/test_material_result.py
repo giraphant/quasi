@@ -12,6 +12,7 @@ INPUT_MODULE = "scripts/workflows/shared/material-input.mts"
 RESULT_MODULE = "scripts/workflows/shared/material-result.mts"
 SEARCH_CONTRACT_MODULE = "scripts/workflows/contracts/search.mts"
 BOOK_CONTRACT_MODULE = "scripts/workflows/contracts/book.mts"
+TRANSLATION_CONTRACT_MODULE = "scripts/workflows/contracts/translation.mts"
 
 PAPER_IDENTITY = {
     "slug": "exact-paper",
@@ -779,6 +780,99 @@ def test_book_structure_decision_echoes_gate_and_selects_a_member():
         "parseBookStructureDecisionValue",
         value,
         gate,
+    ) is None
+
+
+def translation_gate_receipt(kind: str) -> dict[str, Any]:
+    source_candidate = {
+        "path": "sources/exact-paper.pdf",
+        "sha256": "a" * 64,
+        "size": 1234,
+        "pages": 10,
+    }
+    if kind == "source_selection":
+        issue_code = "translation.source_selection_required"
+        missing_fields = []
+        candidates = [
+            source_candidate,
+            {
+                **source_candidate,
+                "path": "sources/exact-paper-alt.pdf",
+                "sha256": "b" * 64,
+            },
+        ]
+        candidates_fingerprint = "f" * 64
+        question = "Which source should be translated?"
+    else:
+        issue_code = "translation.configuration_required"
+        missing_fields = ["translate_api_key", "translate_model"]
+        candidates = []
+        candidates_fingerprint = None
+        question = "Which translation configuration should be used?"
+    return {
+        "operation": "translation.prepare",
+        "material_key": "translation:paper:exact-paper:zh-CN",
+        "terminal": {
+            "status": "needs_input",
+            "issue": {
+                "code": issue_code,
+                "operation": "translation.prepare",
+                "summary": "Translation needs one user decision.",
+                "user_question": question,
+                "retryable": False,
+            },
+            "gate": {
+                "kind": kind,
+                "missing_fields": missing_fields,
+                "candidates": candidates,
+                "candidates_fingerprint": candidates_fingerprint,
+            },
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("receipt_kind", "material_gate_kind"),
+    [
+        ("source_selection", "translation_source"),
+        ("configuration_required", "translation_configuration"),
+    ],
+)
+def test_translation_gate_maps_each_exact_receipt_arm(
+    receipt_kind: str,
+    material_gate_kind: str,
+):
+    receipt = translation_gate_receipt(receipt_kind)
+
+    gate = run_workflow_export(
+        TRANSLATION_CONTRACT_MODULE,
+        "parseTranslationGate",
+        receipt,
+    )
+
+    assert gate == {
+        "kind": material_gate_kind,
+        "operation": "translation.prepare",
+        "material_key": "translation:paper:exact-paper:zh-CN",
+        "question": receipt["terminal"]["issue"]["user_question"],
+        "missing_fields": receipt["terminal"]["gate"]["missing_fields"],
+        "candidates": receipt["terminal"]["gate"]["candidates"],
+        "candidates_fingerprint": receipt["terminal"]["gate"][
+            "candidates_fingerprint"
+        ],
+    }
+
+
+def test_translation_gate_rejects_issue_and_gate_kind_mismatch():
+    receipt = translation_gate_receipt("source_selection")
+    receipt["terminal"]["issue"][
+        "code"
+    ] = "translation.configuration_required"
+
+    assert run_workflow_export(
+        TRANSLATION_CONTRACT_MODULE,
+        "parseTranslationGate",
+        receipt,
     ) is None
 
 

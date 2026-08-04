@@ -7,10 +7,13 @@ import type {
   BookIdentity,
   PaperIdentity,
   QuasiStatusObservation,
-  TranslationCandidate,
 } from "./material-input.mts";
 import type { IdentityConflictGate } from "../contracts/search.mts";
 import type { BookStructureGate } from "../contracts/book.mts";
+import type {
+  TranslationConfigurationGate,
+  TranslationSourceGate,
+} from "../contracts/translation.mts";
 
 export const MATERIAL_RESULT_VERSION = "quasi.material.result/0.1" as const;
 
@@ -97,15 +100,8 @@ export type DirectGate =
       >;
     }
   | BookStructureGate
-  | {
-      kind: "translation_source" | "translation_configuration";
-      operation: "translation.prepare";
-      material_key: string;
-      question: string;
-      missing_fields: string[];
-      candidates: TranslationCandidate[];
-      candidates_fingerprint: string | null;
-    }
+  | TranslationSourceGate
+  | TranslationConfigurationGate
   | {
       kind: "topic_seed";
       operation: null;
