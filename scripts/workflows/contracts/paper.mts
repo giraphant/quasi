@@ -139,7 +139,7 @@ const parsePaperIntake = (value: unknown): PaperIntake | null => {
   return value as PaperIntake;
 };
 
-const parsePaperSeed = (value: unknown): PaperSeed | null => {
+export const parsePaperSeed = (value: unknown): PaperSeed | null => {
   if (!isRecord(value)) return null;
   if (
     value.state === "provisional" &&

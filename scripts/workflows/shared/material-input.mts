@@ -36,13 +36,14 @@ export interface QuasiStatusObservation<
 }
 
 export type ObservationRoute =
-  | { kind: "paper" | "book" | "talk"; slug: string }
+  | { kind: "paper" | "book" | "talk" | "topic"; slug: string }
   | { kind: "translation"; slug: string; target_language: string };
 
 export type ObservationKey =
   | `paper:${string}`
   | `book:${string}`
   | `talk:${string}`
+  | `topic:${string}`
   | `translation:paper:${string}:${string}`;
 
 export type SparseObservationMap<
@@ -163,12 +164,12 @@ export const parseStatusEnvelope = <TKind extends StatusKind>(
   >;
 };
 
-const parseObservationRoute = (
+export const parseObservationRoute = (
   value: unknown,
 ): ObservationRoute | null => {
   if (!isRecord(value) || !validMaterialSlug(value.slug)) return null;
   if (
-    ["paper", "book", "talk"].includes(value.kind as string) &&
+    ["paper", "book", "talk", "topic"].includes(value.kind as string) &&
     exactKeys(value, ["kind", "slug"])
   )
     return value as unknown as ObservationRoute;

@@ -1,7 +1,6 @@
 # Topic Workflow Composition Contract
 
-**Status:** Task 12A design gate. Production code does not implement this
-contract yet.
+**Status:** Implemented by Task 12B on 2026-08-04.
 
 **Goal:** Replace the Topic Skill's public Stage loop with one fixed Topic
 Workflow that composes the existing leaf plans and Topic-owned operations while
@@ -91,8 +90,6 @@ type TopicSeedMaterial =
 
 type TopicChildRoute = {kind: "paper" | "book" | "talk"; slug: string};
 
-type TopicCheckpointRoute = {kind: "topic"; slug: string};
-
 interface TopicChildObservation {
   route: TopicChildRoute;
   observation:
@@ -125,8 +122,8 @@ The parser binds before any Agent call:
 - an optional continuation to the same query, exact child route, and matching
   sparse observation required by that continuation.
 
-The shared observation union/key/parser adds
-`TopicCheckpointRoute`/`topic:${string}` solely so
+The shared observation union/key/parser adds the Topic route key
+`topic:${string}` solely so
 `needs_observation.routes` can request fresh Topic status after an ambiguous
 checkpoint. `child_observations` remains leaf-only and rejects Topic rows.
 
@@ -270,6 +267,7 @@ type TopicCheckpointAdmission =
       kind: "checkpoint_admission";
       topic: TopicQuery;
       item: "member";
+      source_route: TopicChildRoute;
       ref: {kind: "paper" | "book" | "talk"; slug: string; path: string};
       assignment: TopicAssignment | null;
     }
@@ -279,7 +277,6 @@ type TopicCheckpointAdmission =
       item: "card";
       ref: {slug: string; path: string; title: string | null};
       assignment: {subq: string};
-      fingerprint: string;
     };
 
 type TopicResumeSeed =
@@ -354,7 +351,11 @@ otherwise it remains non-evidence and is not fabricated into a leaf identity.
 its `topic` to the current query. It protects one newly admitted member/card whose
 immediately following steer checkpoint returned unknown or incoherent. Demand
 work always carries its non-null directed assignment; seed/Recall intake may use
-`assignment:null`. After fresh Topic status, flatten the projection: a non-null
+`assignment:null`. A member capsule's closed `source_route` records only the
+seed, Recall row, or directed demand route that produced the admitted ref; it is
+an origin identity, not a cursor. It lets resume skip that same invocation-local
+intake route even when a provisional Paper or Book resolves to a different
+canonical slug. After fresh Topic status, flatten the projection: a non-null
 assignment requires its exact tuple, while null needs the exact member ref under
 any schema-valid assignment. Otherwise call only `topic.steer` reconcile with
 current projected refs plus the directed ref, or the bare ref when null. Never

@@ -108,7 +108,7 @@ const parseTalkIdentity = (
   return value as unknown as TalkIdentity;
 };
 
-const parseTalkSeed = (value: unknown): TalkSeed | null => {
+export const parseTalkSeed = (value: unknown): TalkSeed | null => {
   if (
     !isRecord(value) ||
     !exactKeys(value, ["state", "material_slug", "identity"]) ||
@@ -122,7 +122,7 @@ const parseTalkSeed = (value: unknown): TalkSeed | null => {
     : { state: "canonical", material_slug: value.material_slug, identity };
 };
 
-const parseTalkOptions = (value: unknown): TalkOptions | null => {
+export const parseTalkOptions = (value: unknown): TalkOptions | null => {
   if (
     !isRecord(value) ||
     !exactKeys(value, [], ["engines", "lang", "prepare_media"])

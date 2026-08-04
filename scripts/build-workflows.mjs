@@ -61,6 +61,11 @@ const WORKFLOWS = [
     kind: "author",
     validate: validateMaterialEntry,
   },
+  {
+    name: "topic",
+    kind: "topic",
+    validate: validateMaterialEntry,
+  },
 ].map(({ name, ...config }) => ({
   name,
   entry: join(WORKFLOW_SOURCE_ROOT, `${name}.entry.mts`),
@@ -390,6 +395,15 @@ async function renderArtifactContractModule() {
     },
   );
   const contracts = JSON.parse(stdout);
+  const { stdout: topicOutlineStdout } = await execFileAsync(
+    python,
+    [exporter, "--topic-outline"],
+    {
+      cwd: ROOT,
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+  const topicOutlineSubquestions = JSON.parse(topicOutlineStdout);
   const { stdout: pipelineStdout } = await execFileAsync(
     python,
     [exporter, "--pipeline"],
@@ -417,6 +431,13 @@ async function renderArtifactContractModule() {
       2,
     )};`;
   });
+  declarations.push(
+    `export const TOPIC_OUTLINE_SUBQUESTIONS_SCHEMA = ${JSON.stringify(
+      topicOutlineSubquestions,
+      null,
+      2,
+    )};`,
+  );
   const identityNames = Object.fromEntries(
     Object.keys(pipeline).map((kind) => [
       kind,

@@ -21,11 +21,10 @@ import type {
 import type {
   TopicGate,
   TopicPendingWork,
+  TopicResumeSeed,
+  TopicChildRoute,
 } from "../contracts/topic.mts";
-import type {
-  AuthorResumeSeed,
-  ChildRoute,
-} from "../contracts/author.mts";
+import type { AuthorResumeSeed } from "../contracts/author.mts";
 
 export const MATERIAL_RESULT_VERSION = "quasi.material.result/0.1" as const;
 
@@ -88,7 +87,7 @@ export type HigherOrderGate =
   | TopicGate
   | {
       kind: "child";
-      route: ChildRoute;
+      route: TopicChildRoute;
       gate: LeafGate;
     };
 
@@ -124,7 +123,13 @@ export interface LeafCompositionOutcome {
   continuation: ComposedLeafResumeSeed;
 }
 
-export type HigherOrderObservationResumeSeed = AuthorResumeSeed;
+export type HigherOrderObservationResumeSeed =
+  | AuthorResumeSeed
+  | TopicResumeSeed;
+
+export type HigherOrderChildResumeSeed =
+  | AuthorResumeSeed
+  | Extract<TopicResumeSeed, { kind: "seed_child" | "material_work" }>;
 
 export interface MaterialResultBase {
   schema_version: typeof MATERIAL_RESULT_VERSION;
@@ -157,11 +162,11 @@ export type MaterialResult =
       issue: MaterialIssue;
       gate: {
         kind: "child";
-        route: ChildRoute;
+        route: TopicChildRoute;
         gate: LeafGate;
       };
-      routes: ChildRoute[];
-      resume_seed: AuthorResumeSeed;
+      routes: TopicChildRoute[];
+      resume_seed: HigherOrderChildResumeSeed;
     })
   | (MaterialResultBase & {
       terminal: "needs_observation";
@@ -235,10 +240,10 @@ export const needsObservationMaterialResult = (
 export const higherOrderNeedsInputMaterialResult = (
   seed: MaterialResultSeed,
   issue: MaterialIssue,
-  route: ChildRoute,
+  route: TopicChildRoute,
   gate: LeafGate,
-  routes: ChildRoute[],
-  resumeSeed: AuthorResumeSeed,
+  routes: TopicChildRoute[],
+  resumeSeed: HigherOrderChildResumeSeed,
 ): MaterialResult => ({
   ...materialBase(seed),
   terminal: "needs_input",

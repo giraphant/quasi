@@ -281,6 +281,8 @@ def stage_context(kind: str, stage: str) -> dict[str, Any]:
                 "max_items": 8,
             }
         )
+    if kind == "topic" and stage == "steer":
+        context["max_cards"] = 3
     if kind == "topic" and stage == "audit":
         context["target"] = "vault/topics/example/00-overview.md"
     if kind == "author" and stage == "synthesise":

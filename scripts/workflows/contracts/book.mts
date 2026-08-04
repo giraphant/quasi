@@ -197,7 +197,7 @@ const parseBookIntake = (value: unknown): BookIntake | null => {
   return value as BookIntake;
 };
 
-const parseBookSeed = (value: unknown): BookSeed | null => {
+export const parseBookSeed = (value: unknown): BookSeed | null => {
   if (!isRecord(value)) return null;
   if (
     value.state === "provisional" &&

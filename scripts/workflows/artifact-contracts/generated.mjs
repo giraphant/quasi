@@ -1142,6 +1142,117 @@ export const TALK_ARTIFACT_CONTRACT = {
   "schema_version": "quasi.artifact.talk/0.1"
 };
 
+export const TOPIC_OUTLINE_SUBQUESTIONS_SCHEMA = {
+  "items": {
+    "additionalProperties": false,
+    "description": "研究大纲里的一个子问题(仅 kind: outline 页携带)。",
+    "properties": {
+      "cards": {
+        "description": "证据卡 slug 表(cards/{slug}.md),与 items 平行的圈外证据通道",
+        "items": {
+          "maxLength": 80,
+          "minLength": 2,
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "type": "string"
+        },
+        "maxItems": 50,
+        "type": "array"
+      },
+      "channel": {
+        "enum": [
+          "academic",
+          "web",
+          "mixed"
+        ],
+        "type": "string"
+      },
+      "coverage": {
+        "enum": [
+          "gap",
+          "thin",
+          "covered",
+          "saturated"
+        ],
+        "type": "string"
+      },
+      "id": {
+        "maxLength": 80,
+        "minLength": 1,
+        "pattern": "^[a-z0-9][a-z0-9-]{0,79}$",
+        "type": "string"
+      },
+      "items": {
+        "items": {
+          "additionalProperties": false,
+          "description": "子问题的一个学术语料成员(持久在 outline frontmatter,跨轮跨重跑累计)。\n\n只收 vault 分析件(book/paper/talk)。圈外证据卡走 `Subquestion.cards`\n独立通道 —— 卡不是分析件,混进来会让 synth 按分析件路径去读一个不存在的产物。",
+          "properties": {
+            "kind": {
+              "enum": [
+                "book",
+                "paper",
+                "talk"
+              ],
+              "type": "string"
+            },
+            "role": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "evidence",
+                    "theory",
+                    "method",
+                    "context"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "slug": {
+              "maxLength": 80,
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,79}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "slug",
+            "role"
+          ],
+          "type": "object"
+        },
+        "maxItems": 50,
+        "type": "array"
+      },
+      "question": {
+        "maxLength": 280,
+        "minLength": 4,
+        "type": "string"
+      },
+      "theory_used": {
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "id",
+      "question",
+      "coverage",
+      "channel",
+      "theory_used",
+      "items",
+      "cards"
+    ],
+    "type": "object"
+  },
+  "maxItems": 6,
+  "minItems": 1,
+  "type": "array"
+};
+
 export const PAPER_OPERATION_IDENTITIES = [
   {
     "stage": "search",

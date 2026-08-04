@@ -13,6 +13,48 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.schemas.contracts import artifact_contract_for_type
 from scripts.schemas.pipeline import PIPELINE
+from scripts.schemas.topic import TopicSchema
+
+
+def _topic_outline_subquestions_schema() -> dict[str, object]:
+    """Return the closed producer projection derived from TopicSchema."""
+
+    root = TopicSchema.model_json_schema(mode="validation")
+    definitions = root.get("$defs", {})
+
+    def project(value: object) -> object:
+        if isinstance(value, list):
+            return [project(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        if set(value) == {"$ref"}:
+            prefix = "#/$defs/"
+            ref = value["$ref"]
+            if not isinstance(ref, str) or not ref.startswith(prefix):
+                raise ValueError(f"unsupported Topic schema ref: {ref!r}")
+            return project(definitions[ref.removeprefix(prefix)])
+        result = {
+            key: project(item)
+            for key, item in value.items()
+            if key not in {"default", "title"}
+        }
+        properties = result.get("properties")
+        if result.get("type") == "object" and isinstance(properties, dict):
+            result["required"] = list(properties)
+        return result
+
+    raw = root["properties"]["subquestions"]
+    if not isinstance(raw, dict) or not isinstance(raw.get("anyOf"), list):
+        raise ValueError("TopicSchema omitted nullable subquestions")
+    array = next(
+        branch
+        for branch in raw["anyOf"]
+        if isinstance(branch, dict) and branch.get("type") == "array"
+    )
+    projected = project(array)
+    if not isinstance(projected, dict):
+        raise ValueError("Topic subquestion projection is not an object")
+    return projected
 
 
 def _literal_union(values: list[str]) -> str:
@@ -156,6 +198,7 @@ export interface OperationDescriptor extends OperationRow {{
 
 {operation_identity_declarations}
 export const PIPELINE: Readonly<Record<KindName, KindDefinition>>;
+export const TOPIC_OUTLINE_SUBQUESTIONS_SCHEMA: JsonSchema;
 {contract_declarations}
 '''
 
@@ -165,6 +208,7 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--pipeline", action="store_true")
     mode.add_argument("--typescript", action="store_true")
+    mode.add_argument("--topic-outline", action="store_true")
     parser.add_argument("types", nargs="*")
     args = parser.parse_args()
     if args.pipeline:
@@ -184,6 +228,18 @@ def main() -> int:
         for type_name in args.types:
             artifact_contract_for_type(type_name)
         print(_typescript_declarations(args.types), end="")
+        return 0
+    if args.topic_outline:
+        if args.types:
+            parser.error("--topic-outline does not accept artifact types")
+        print(
+            json.dumps(
+                _topic_outline_subquestions_schema(),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
         return 0
     if not args.types:
         parser.error("at least one artifact type is required")

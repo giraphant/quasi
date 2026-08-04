@@ -27,7 +27,11 @@ class SubqItem(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     kind: Literal["book", "paper", "talk"]
-    slug: str = Field(min_length=2, max_length=160)
+    slug: str = Field(
+        min_length=1,
+        max_length=80,
+        pattern=r"^[a-z0-9][a-z0-9-]{0,79}$",
+    )
     role: Optional[Literal["evidence", "theory", "method", "context"]] = None
 
 
@@ -36,14 +40,19 @@ class Subquestion(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    id: str = Field(min_length=2, max_length=80, pattern=r"^[a-z0-9][a-z0-9-]*$")
+    id: str = Field(
+        min_length=1,
+        max_length=80,
+        pattern=r"^[a-z0-9][a-z0-9-]{0,79}$",
+    )
     question: str = Field(min_length=4, max_length=280)
     coverage: Literal["gap", "thin", "covered", "saturated"]
     channel: Literal["academic", "web", "mixed"] = "academic"
-    theory_used: int = 0
-    items: Optional[List[SubqItem]] = None
+    theory_used: int = Field(default=0, ge=0)
+    items: List[SubqItem] = Field(default_factory=list, max_length=50)
     cards: List[CardSlug] = Field(
         default_factory=list,
+        max_length=50,
         description="证据卡 slug 表(cards/{slug}.md),与 items 平行的圈外证据通道",
     )
 
@@ -59,7 +68,11 @@ class TopicSchema(BaseModel):
         description="页面类型: overview 综合页 / resources 资源页 / outline 研究大纲 / "
                     "card 圈外证据卡"
     )
-    subquestions: Optional[list[Subquestion]] = None
+    subquestions: Optional[list[Subquestion]] = Field(
+        default=None,
+        min_length=1,
+        max_length=6,
+    )
     history: Optional[list[str]] = None
     # 卡是从 note 迁过来的:手写卡带着 created/themes,迁移时不该为了迁移丢掉它们。
     # 只对 kind: card 开口,别的 kind 写了照样报错 —— 脊柱页没有"创建日期"这回事。
@@ -73,6 +86,9 @@ class TopicSchema(BaseModel):
         if self.kind == "outline":
             if not self.subquestions:
                 raise ValueError("outline 页必须携带非空 subquestions")
+            ids = [item.id for item in self.subquestions]
+            if len(ids) != len(set(ids)):
+                raise ValueError("outline 子问题 id 必须唯一")
         elif self.subquestions is not None or self.history is not None:
             raise ValueError("subquestions/history 只允许出现在 kind: outline 页")
         if self.kind != "card" and (self.created is not None or self.themes is not None):

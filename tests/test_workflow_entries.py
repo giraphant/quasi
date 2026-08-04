@@ -21,6 +21,7 @@ from test_material_plans import (
     canonical_translation_input,
     translation_complete,
 )
+from test_topic_plan import topic_input
 from workflow_test_support import ROOT
 
 
@@ -522,3 +523,37 @@ process.stdout.write(JSON.stringify({ result, agentCalls, pipelineCalls }));
     assert report["agentCalls"] == 3
     assert report["pipelineCalls"] == 0
     assert report["result"]["terminal"] == "needs_observation"
+
+
+def test_topic_entry_rejects_unknown_input_before_agent_dispatch() -> None:
+    value = topic_input()
+    value["cursor"] = "hidden-state"
+
+    report = _run_entry(value, "topic")
+
+    assert report["agentCalls"] == 0
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "material.invalid_input"
+
+
+def test_topic_entry_composes_only_topic_and_leaf_dependencies() -> None:
+    inputs = _bundle_inputs("scripts/workflows/topic.entry.mts")
+
+    assert "scripts/workflows/operations/catalog.mts" not in inputs
+    assert "scripts/workflows/shared/dispatch.mts" not in inputs
+    for catalog in ("topic", "paper", "book", "talk"):
+        assert f"scripts/workflows/operations/catalogs/{catalog}.mts" in inputs
+    assert "scripts/workflows/shared/dispatch-prepared.mts" in inputs
+    row_inputs = {
+        item.removeprefix("scripts/workflows/operations/rows/").removesuffix(".mts")
+        for item in inputs
+        if item.startswith("scripts/workflows/operations/rows/")
+    }
+    assert row_inputs == {"topic", "paper", "book", "talk", "search"}
+    assert inputs.isdisjoint(
+        {
+            "scripts/workflows/contracts/author.mts",
+            "scripts/workflows/contracts/translation.mts",
+            "scripts/workflows/run-stage.entry.mts",
+        }
+    )

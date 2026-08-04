@@ -149,6 +149,7 @@ def _context(**overrides: Any) -> dict[str, Any]:
         "target": "vault/topics/exact-material/00-overview.md",
         "target_language": "zh-CN",
         "max_items": 8,
+        "max_cards": 3,
         "candidates": [],
     }
     value.update(overrides)

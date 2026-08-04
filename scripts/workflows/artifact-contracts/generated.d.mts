@@ -103,6 +103,7 @@ export const TRANSLATION_OPERATION_IDENTITIES: readonly PipelineStage[];
 export const TOPIC_OPERATION_IDENTITIES: readonly PipelineStage[];
 export const AUTHOR_OPERATION_IDENTITIES: readonly PipelineStage[];
 export const PIPELINE: Readonly<Record<KindName, KindDefinition>>;
+export const TOPIC_OUTLINE_SUBQUESTIONS_SCHEMA: JsonSchema;
 export const AUTHOR_ARTIFACT_CONTRACT: ArtifactContract;
 export const PAPER_ARTIFACT_CONTRACT: ArtifactContract;
 export const CHAPTER_ARTIFACT_CONTRACT: ArtifactContract;

@@ -62,6 +62,21 @@ def collect_material_leaf_workflow_manifest() -> dict[str, dict[str, object]]:
     raise AssertionError("collect-material has no closed leaf invocation manifest")
 
 
+def research_topic_workflow_manifest() -> dict[str, object]:
+    path = ROOT / "skills" / "research-topic" / "SKILL.md"
+    text = path.read_text(encoding="utf-8")
+    for source in re.findall(r"```json\n(.*?)\n```", text, re.DOTALL):
+        try:
+            value = json.loads(source)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and set(value) == {"workflow_input"}:
+            contract = value["workflow_input"]
+            if isinstance(contract, dict):
+                return contract
+    raise AssertionError("research-topic has no closed invocation manifest")
+
+
 def generated_pipeline_registry() -> dict[str, dict[str, str]]:
     node = shutil.which("node")
     if not node:
@@ -238,9 +253,35 @@ def test_collect_material_routes_leaf_kinds_to_generated_named_entries() -> None
         assert (ROOT / relative).is_file(), entry
 
 
+def test_research_topic_routes_to_its_generated_named_entry() -> None:
+    manifest = research_topic_workflow_manifest()
+    assert manifest == {
+        "entry": "$CLAUDE_PLUGIN_ROOT/workflows/topic.mjs",
+        "required": [
+            "query", "observation", "options", "seed_materials",
+            "child_observations",
+        ],
+        "optional": ["resume"],
+        "query_keys": ["slug", "description"],
+        "option_keys": ["maxRounds", "maxCardsPerRound"],
+        "seed_kinds": ["paper", "book", "talk"],
+        "resume_required": ["resume_seed"],
+        "resume_optional": ["userDecision"],
+    }
+    entry = str(manifest["entry"]).removeprefix("$CLAUDE_PLUGIN_ROOT/")
+    assert (ROOT / entry).is_file()
+    text = (ROOT / "skills" / "research-topic" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "quasi-status --kind topic" in text
+    assert "workflows/run-stage.mjs" not in text
+    assert "--scan" not in text
+    assert 'stage:"' not in text
+
+
 def test_unmigrated_dispatching_skills_keep_the_compatibility_entry() -> None:
     for path in active_skill_files():
-        if path.parent.name == "collect-material":
+        if path.parent.name in {"collect-material", "research-topic"}:
             continue
         text = path.read_text(encoding="utf-8")
         if "Workflow(" not in text:
