@@ -366,7 +366,6 @@ def book_acquire_complete(
         "terminal": {
             "status": "complete",
             "issue": None,
-            "disposition": "created",
             "source": "publisher",
             "tmp_path": tmp_path,
             "year_evidence": evidence or book_year_evidence(),
@@ -764,7 +763,6 @@ def acquire_complete() -> dict[str, Any]:
         "terminal": {
             "status": "complete",
             "issue": None,
-            "disposition": "created",
             "source": "publisher",
         },
     }

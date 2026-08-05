@@ -430,7 +430,6 @@ def _book_acquire_output(
         "terminal": {
             "status": "complete",
             "issue": None,
-            "disposition": "created",
             "source": "publisher",
             "tmp_path": tmp_path,
             "year_evidence": evidence,
@@ -873,9 +872,9 @@ def test_acquire_terminal_fields_remain_branch_local() -> None:
             branch["properties"]["status"]["const"]: branch
             for branch in schema["properties"]["terminal"]["anyOf"]
         }
-        assert {"disposition", "source"}.issubset(
-            branches["complete"]["required"]
-        )
+        assert "source" in branches["complete"]["required"]
+        assert "disposition" not in branches["complete"]["required"]
+        assert "disposition" not in branches["complete"]["properties"]
         for status, branch in branches.items():
             if status != "complete":
                 assert "disposition" not in branch["properties"]
@@ -894,6 +893,48 @@ def test_acquire_terminal_fields_remain_branch_local() -> None:
         book_branches["needs_input"]["required"]
     )
     assert "proposed_actions" not in book_branches["complete"]["properties"]
+
+
+def test_paper_acquire_write_state_is_the_sole_effect_claim() -> None:
+    report = _dispatch(
+        {
+            "invocation": _invocation("paper.acquire"),
+            "model_output": {
+                "write_state": "written",
+                "identity_verified": True,
+                "terminal": {
+                    "status": "complete",
+                    "issue": None,
+                    "source": "existing_file",
+                },
+            },
+        }
+    )
+
+    assert report["result"]["kind"] == "receipt"
+    assert report["result"]["receipt"]["output_path"] == (
+        "sources/exact-material.pdf"
+    )
+    assert report["result"]["receipt"]["doi"] == "10.1000/exact"
+
+
+def test_paper_acquire_unknown_write_state_is_incoherent_complete() -> None:
+    report = _dispatch(
+        {
+            "invocation": _invocation("paper.acquire"),
+            "model_output": {
+                "write_state": "unknown",
+                "identity_verified": True,
+                "terminal": {
+                    "status": "complete",
+                    "issue": None,
+                    "source": "existing_file",
+                },
+            },
+        }
+    )
+
+    assert report["result"]["kind"] == "incoherent_complete"
 
 
 def test_only_operations_with_typed_gates_expose_needs_input() -> None:

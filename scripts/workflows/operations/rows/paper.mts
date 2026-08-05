@@ -57,13 +57,11 @@ export const paperOperationRows: OperationRow[] = [
         attempts: ATTEMPT_SCHEMA,
       },
     }),
-    // disposition/source describe an accepted write, so they exist only in
-    // the complete terminal; a failed run cannot echo "created" out of habit.
+    // source identifies the accepted source only on a complete terminal.
     terminalPayloads: () => ({
       complete: {
-        required: ["disposition", "source"],
+        required: ["source"],
         properties: {
-          disposition: { type: "string", enum: ["created", "reused"] },
           source: { type: "string", minLength: 1, maxLength: 200 },
         },
       },
@@ -81,10 +79,8 @@ export const paperOperationRows: OperationRow[] = [
     }),
     complete: (receipt) =>
       receipt.identity_verified === true &&
-      ((receipt.terminal.disposition === "created" &&
-        receipt.write_state === "written") ||
-        (receipt.terminal.disposition === "reused" &&
-          receipt.write_state === "not_written")),
+      (receipt.write_state === "written" ||
+        receipt.write_state === "not_written"),
     envelope: ({ slug, meta, materialKey }, { output }) => ({
       schema_version: "quasi.stage.request/0.2",
       operation: "paper.acquire",

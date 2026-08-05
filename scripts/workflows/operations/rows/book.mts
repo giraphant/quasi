@@ -258,18 +258,15 @@ export const bookOperationRows: OperationRow[] = [
         attempts: ATTEMPT_SCHEMA,
       },
     }),
-    // disposition/source describe an accepted write, so they exist only in
-    // the complete terminal; a failed run cannot echo "created" out of habit.
+    // source identifies the accepted source only on a complete terminal.
     terminalPayloads: () => ({
       complete: {
         required: [
-          "disposition",
           "source",
           "tmp_path",
           "year_evidence",
         ],
         properties: {
-          disposition: { type: "string", enum: ["created", "reused"] },
           source: { type: "string", minLength: 1, maxLength: 200 },
           tmp_path: {
             type: ["string", "null"],
@@ -314,11 +311,9 @@ export const bookOperationRows: OperationRow[] = [
         ({ path, format }: any) =>
           receipt.output_path === path && receipt.format === format,
       );
-      const dispositionCoherent =
-        (receipt.terminal.disposition === "created" &&
-          receipt.write_state === "written") ||
-        (receipt.terminal.disposition === "reused" &&
-          receipt.write_state === "not_written");
+      const writeStateCoherent =
+        receipt.write_state === "written" ||
+        receipt.write_state === "not_written";
       const evidence = parseBookYearEvidence(
         terminal.year_evidence,
       );
@@ -334,7 +329,7 @@ export const bookOperationRows: OperationRow[] = [
       return !!(
         output &&
         receipt.identity_verified === true &&
-        dispositionCoherent &&
+        writeStateCoherent &&
         evidence !== null &&
         decisionEcho
       );
