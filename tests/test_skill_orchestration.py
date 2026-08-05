@@ -73,6 +73,11 @@ def test_collect_material_has_generic_user_decision_envelope() -> None:
     assert len(assignments) == 1
     value = assignments[0].value
     assert isinstance(value, ast.Dict)
+    assert len(value.keys) == 3
+    assert all(
+        isinstance(key, ast.Constant) and isinstance(key.value, str)
+        for key in value.keys
+    )
     assert {
         key.value
         for key in value.keys
