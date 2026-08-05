@@ -401,14 +401,17 @@ def test_ocr_no_clobber_bad_collision_fails_without_overwrite(
     assert output.is_dir() if collision == "directory" else output.stat().st_size == 0
 
 
-def test_ocr_duplicate_engine_is_rejected_before_subprocess(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-):
+@pytest.fixture
+def forbid_engine_launch(monkeypatch: pytest.MonkeyPatch) -> None:
     def forbidden_call(*args, **kwargs):
         raise AssertionError("invalid args must not launch an engine")
 
     monkeypatch.setattr(extract_cli.subprocess, "call", forbidden_call)
 
+
+def test_ocr_duplicate_engine_is_rejected_before_subprocess(
+    forbid_engine_launch, capsys: pytest.CaptureFixture[str]
+):
     rc = extract_cli._run_ocr(
         EXTRACT_DIR,
         [
@@ -435,17 +438,13 @@ def test_ocr_duplicate_engine_is_rejected_before_subprocess(
         ["--no-clobber", "--no-clobber", "--json"],
         ["--layout", "--layout", "--json"],
     ],
+    ids=("json", "no-clobber", "layout"),
 )
 def test_ocr_duplicate_flags_are_rejected_before_subprocess(
-    monkeypatch: pytest.MonkeyPatch,
+    forbid_engine_launch,
     capsys: pytest.CaptureFixture[str],
     duplicate: list[str],
 ):
-    def forbidden_call(*args, **kwargs):
-        raise AssertionError("invalid args must not launch an engine")
-
-    monkeypatch.setattr(extract_cli.subprocess, "call", forbidden_call)
-
     rc = extract_cli._run_ocr(
         EXTRACT_DIR, ["in.pdf", "out.pdf", *duplicate]
     )
@@ -470,17 +469,13 @@ def test_ocr_duplicate_flags_are_rejected_before_subprocess(
             "--json",
         ],
     ],
+    ids=("unknown-option", "missing-engine-value", "duplicate-engine-spelling"),
 )
 def test_ocr_json_invalid_arguments_echo_parsed_caller_paths(
-    monkeypatch: pytest.MonkeyPatch,
+    forbid_engine_launch,
     capsys: pytest.CaptureFixture[str],
     bad_args: list[str],
 ):
-    def forbidden_call(*args, **kwargs):
-        raise AssertionError("invalid args must not launch an engine")
-
-    monkeypatch.setattr(extract_cli.subprocess, "call", forbidden_call)
-
     rc = extract_cli._run_ocr(EXTRACT_DIR, bad_args)
 
     captured = capsys.readouterr()
