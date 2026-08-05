@@ -415,6 +415,8 @@ def _book_acquire_output(
     evidence: dict[str, Any],
     *,
     tmp_path: str | None = ".quasi/temp/downloads/exact-material.pdf",
+    write_state: str = "written",
+    source: str = "publisher",
 ) -> dict[str, Any]:
     return {
         "output_path": "sources/exact-material.pdf",
@@ -423,14 +425,14 @@ def _book_acquire_output(
             "sources/exact-material.epub",
             "sources/exact-material.pdf",
         ],
-        "write_state": "written",
+        "write_state": write_state,
         "identity_verified": True,
         "isbn": "9780000000000",
         "attempts": [],
         "terminal": {
             "status": "complete",
             "issue": None,
-            "source": "publisher",
+            "source": source,
             "tmp_path": tmp_path,
             "year_evidence": evidence,
         },
@@ -1238,6 +1240,31 @@ def test_book_acquire_year_mismatch_is_incoherent_complete():
 
     assert report["agentCalls"] == 1
     assert report["result"]["kind"] == "incoherent_complete"
+
+
+@pytest.mark.parametrize(
+    ("write_state", "expected_kind"),
+    [
+        ("not_written", "receipt"),
+        ("unknown", "incoherent_complete"),
+    ],
+)
+def test_book_acquire_write_state_controls_effect_completion(
+    write_state: str,
+    expected_kind: str,
+) -> None:
+    report = _dispatch(
+        {
+            "invocation": _invocation("book.acquire"),
+            "model_output": _book_acquire_output(
+                _book_year_evidence("MATCH"),
+                write_state=write_state,
+                source="existing_file",
+            ),
+        }
+    )
+
+    assert report["result"]["kind"] == expected_kind
 
 
 def test_book_acquire_accept_current_keeps_exact_identity_and_prior_evidence():
