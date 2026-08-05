@@ -137,6 +137,7 @@ def split_by_toc(pdf_path: str, max_level: int = 1) -> list[dict]:
         chapters.append({
             'title': title,
             'start_page': start_page,
+            'end_page': end_page,
             'content': text.split('\n'),
         })
     return chapters
@@ -148,7 +149,12 @@ def find_chapter_boundaries(pages: list[tuple[int, str]], patterns: list[str]) -
     regex = re.compile(combined_pattern, re.MULTILINE)
 
     chapters = []
-    current_chapter = {'title': 'Frontmatter', 'start_page': 1, 'content': []}
+    current_chapter = {
+        'title': 'Frontmatter',
+        'start_page': 1,
+        'end_page': 1,
+        'content': [],
+    }
 
     for page_num, text in pages:
         for line in text.split('\n'):
@@ -158,9 +164,15 @@ def find_chapter_boundaries(pages: list[tuple[int, str]], patterns: list[str]) -
             if regex.match(line_stripped):
                 if current_chapter['content']:
                     chapters.append(current_chapter)
-                current_chapter = {'title': line_stripped, 'start_page': page_num, 'content': []}
+                current_chapter = {
+                    'title': line_stripped,
+                    'start_page': page_num,
+                    'end_page': page_num,
+                    'content': [],
+                }
             else:
                 current_chapter['content'].append(line)
+                current_chapter['end_page'] = page_num
 
     if current_chapter['content']:
         chapters.append(current_chapter)

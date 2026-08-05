@@ -1263,6 +1263,30 @@ def test_book_identical_rerun_reconciles_without_rewriting(tmp_path: Path):
     assert (output / "manifest.json").stat().st_mtime_ns == manifest_mtime
 
 
+def test_book_identical_rerun_rebuilds_unpaired_page_range(tmp_path: Path):
+    pdf = tmp_path / "book.pdf"
+    output = tmp_path / "chapters"
+    _book_pdf(pdf, ["one " * 20])
+    first = _run_manual(pdf, output, 1)
+    assert first.returncode == 0
+    manifest_path = output / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["chapters"][0]["end_page"] = None
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    second = _run_manual(pdf, output, 1)
+
+    receipt = json.loads(second.stdout)
+    row = receipt["chapters"][0]
+    assert second.returncode == 0, second.stderr
+    assert receipt["status"] == "ok"
+    assert receipt["disposition"] == "replaced"
+    assert row["start_page"] == row["end_page"] == 1
+
+
 def test_book_two_process_same_output_race_has_one_generation(tmp_path: Path):
     pdf = tmp_path / "book.pdf"
     output = tmp_path / "chapters"

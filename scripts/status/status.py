@@ -19,6 +19,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.schemas.operations import OPERATION_CATALOG  # noqa: E402
+from scripts.schemas.chapter_manifest import valid_chapter_page_pair  # noqa: E402
 from scripts.schemas.topic import TopicSchema  # noqa: E402
 from scripts.translate.translate_commit import (  # noqa: E402
     TranslateContractError,
@@ -231,17 +232,6 @@ def safe_chapter_filename(value: object, slot: str) -> str | None:
     return value
 
 
-def chapter_page_pair(start: object, end: object) -> bool:
-    if start is None or end is None:
-        return start is None and end is None
-    return (
-        type(start) is int
-        and type(end) is int
-        and start >= 1
-        and end >= start
-    )
-
-
 def chapter_inventory(
     root: Path, slug: str
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -281,7 +271,9 @@ def chapter_inventory(
             or SLUG.fullmatch(chapter_slug) is None
             or type(word_count) is not int
             or word_count < 0
-            or not chapter_page_pair(row.get("start_page"), row.get("end_page"))
+            or not valid_chapter_page_pair(
+                row.get("start_page"), row.get("end_page")
+            )
             or slot in seen_slots
             or filename in seen_filenames
             or chapter_slug in seen_slugs

@@ -16,10 +16,17 @@ import os
 import re
 import shutil
 import stat
+import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
+
+
+PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+from scripts.schemas.chapter_manifest import valid_chapter_page_pair  # noqa: E402
 
 
 SCHEMA_VERSION = "quasi.extract.chapters.receipt/0.1"
@@ -229,7 +236,7 @@ def load_manifest(manifest_path: Path) -> dict | None:
     return value
 
 
-def validate_manifest(manifest: dict, root: Path) -> None:
+def _validate_manifest_ownership(manifest: dict, root: Path) -> None:
     chapters = manifest.get("chapters")
     skipped = manifest.get("skipped", [])
     if not isinstance(chapters, list) or not isinstance(skipped, list):
@@ -299,10 +306,34 @@ def validate_manifest(manifest: dict, root: Path) -> None:
             )
 
 
+def validate_manifest(manifest: dict, root: Path) -> None:
+    _validate_manifest_ownership(manifest, root)
+    for row in manifest["chapters"]:
+        if not valid_chapter_page_pair(
+            row.get("start_page"), row.get("end_page")
+        ):
+            raise ChapterFailure(
+                "manifest_page_range_invalid",
+                "chapter manifest page range must be paired and ordered",
+                status="blocked",
+                outcome="unknown",
+            )
+
+
+def _manifest_is_reusable(manifest: dict, root: Path) -> bool:
+    try:
+        validate_manifest(manifest, root)
+    except ChapterFailure as exc:
+        if exc.code == "manifest_page_range_invalid":
+            return False
+        raise
+    return True
+
+
 def _owned_snapshot(manifest: dict | None, root: Path) -> dict[str, str]:
     if manifest is None:
         return {}
-    validate_manifest(manifest, root)
+    _validate_manifest_ownership(manifest, root)
     return {
         _safe_filename(row["filename"]): _sha256(root / row["filename"])
         for row in manifest["chapters"]
@@ -611,25 +642,26 @@ def commit_chapter_set(
                     previous_manifest is not None
                     and previous_manifest.get("request_fingerprint") == fingerprint
                 ):
-                    validate_manifest(previous_manifest, output_dir)
-                    return 0, _receipt(
-                        input_path=input_path,
-                        output_dir=output_dir,
-                        mode=mode,
-                        fingerprint=fingerprint,
-                        max_chapters=max_chapters,
-                        status="existing",
-                        disposition="reconciled",
-                        exit_code=0,
-                        manifest=previous_manifest,
-                        removed_files=[],
-                        previous_manifest_preserved=True,
-                        failure=None,
+                    if _manifest_is_reusable(previous_manifest, output_dir):
+                        return 0, _receipt(
+                            input_path=input_path,
+                            output_dir=output_dir,
+                            mode=mode,
+                            fingerprint=fingerprint,
+                            max_chapters=max_chapters,
+                            status="existing",
+                            disposition="reconciled",
+                            exit_code=0,
+                            manifest=previous_manifest,
+                            removed_files=[],
+                            previous_manifest_preserved=True,
+                            failure=None,
+                        )
+                else:
+                    raise ChapterFailure(
+                        "manifest_conflict",
+                        "a competing chapter generation committed before this writer acquired the lock",
                     )
-                raise ChapterFailure(
-                    "manifest_conflict",
-                    "a competing chapter generation committed before this writer acquired the lock",
-                )
             if require_previous and previous_manifest is None:
                 raise ChapterFailure(
                     "manifest_missing",
@@ -660,21 +692,21 @@ def commit_chapter_set(
                 previous_manifest is not None
                 and previous_manifest.get("request_fingerprint") == fingerprint
             ):
-                validate_manifest(previous_manifest, output_dir)
-                return 0, _receipt(
-                    input_path=input_path,
-                    output_dir=output_dir,
-                    mode=mode,
-                    fingerprint=fingerprint,
-                    max_chapters=max_chapters,
-                    status="existing",
-                    disposition="reconciled",
-                    exit_code=0,
-                    manifest=previous_manifest,
-                    removed_files=[],
-                    previous_manifest_preserved=True,
-                    failure=None,
-                )
+                if _manifest_is_reusable(previous_manifest, output_dir):
+                    return 0, _receipt(
+                        input_path=input_path,
+                        output_dir=output_dir,
+                        mode=mode,
+                        fingerprint=fingerprint,
+                        max_chapters=max_chapters,
+                        status="existing",
+                        disposition="reconciled",
+                        exit_code=0,
+                        manifest=previous_manifest,
+                        removed_files=[],
+                        previous_manifest_preserved=True,
+                        failure=None,
+                    )
 
             stage_dir = Path(
                 tempfile.mkdtemp(
