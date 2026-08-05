@@ -497,8 +497,15 @@ async function runBookPlanResult(
       return liftSearchGate(input, state, searched.receipt);
     const searchStop = stopForOutcome(state, searched);
     if (searchStop !== null) return searchStop;
-    bindSearchReceipt(input, state, searched.receipt as StageReceipt);
+    const receipt = searched.receipt as StageReceipt;
+    bindSearchReceipt(input, state, receipt);
     rememberContinuation(resumeSeed(input, state));
+    if (receipt.local_owner !== null)
+      return completeMaterialResult(
+        resultSeed(state),
+        [{ role: "overview", path: receipt.local_owner.path }],
+        null,
+      );
   }
 
   if (finalObservedBook(state.observation, state.identity as BookIdentity)) {

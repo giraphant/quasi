@@ -34,6 +34,12 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 manifest 与 hash 应匹配，ToUnicode 应可复制搜索，中文目标还要通过 coverage 证据。一个
 外观正常但正文大面积未翻译的 PDF 不算完成。
 
+Workflow 内的 Bash 可能在约两分钟截断前台或 tool-background 长命令。对
+`quasi-translate run` 和 layout OCR，只启动一个以 `nohup` 脱离宿主的 writer，把 stdout、
+stderr 写入 `.quasi/temp/` 下本次请求的临时文件并记录 PID；用每次不超过 60 秒的独立 Bash
+调用轮询，进程退出后读取 JSON receipt。宿主截断不是 backend receipt，也不是源文本层损坏的
+证据；不能据此启动 OCR 或第二个 writer。
+
 若 failure 显示源文本层破碎且 layout OCR 有现实机会修复，使用 request 的 exact recovery
 path 建立 OCR source，再从该 source 重新观察和翻译。是否继续由你根据实际诊断判断；不把
 固定次数当成业务结论。任何 writer durable outcome 不明时停止为 `blocked`，留待后续 dispatch

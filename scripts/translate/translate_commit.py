@@ -1296,6 +1296,11 @@ def run_transaction(
                 and prior.get("request_fingerprint") == request_fp
             ):
                 return prior
+            # The canonical output lock proves that no earlier transaction can
+            # still publish.  A local backend orphan can only write its private
+            # fence, so preserving that fence and starting afresh is safe.
+            if backend == "pdf2zh":
+                continue
             return run_receipt(
                 "blocked",
                 failure=operation_failure(

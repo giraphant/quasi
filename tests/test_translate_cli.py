@@ -578,7 +578,7 @@ def test_undertranslated_candidate_is_preserved_but_never_canonical(tmp_path):
     assert len(candidates) == 1
 
 
-def test_fenced_unknown_generation_never_starts_second_backend(tmp_path):
+def test_fenced_unknown_immersive_generation_never_starts_second_backend(tmp_path):
     source, source_sha = source_fixture(tmp_path)
     calls: list[str] = []
 
@@ -600,6 +600,40 @@ def test_fenced_unknown_generation_never_starts_second_backend(tmp_path):
     assert second["status"] == "blocked"
     assert second["failure"]["outcome"] == "unknown"
     assert calls == ["start"]
+
+
+def test_fenced_unknown_pdf2zh_generation_starts_fresh_backend(tmp_path):
+    source, source_sha = source_fixture(tmp_path)
+
+    def killed(source, candidate, language, work_dir, on_state):
+        on_state("backend_running", None)
+        raise KeyboardInterrupt()
+
+    with pytest.raises(KeyboardInterrupt):
+        commit.run_transaction(
+            **run_kwargs(
+                tmp_path,
+                source,
+                source_sha,
+                killed,
+                backend="pdf2zh",
+            )
+        )
+
+    calls: list[str] = []
+    second = commit.run_transaction(
+        **run_kwargs(
+            tmp_path,
+            source,
+            source_sha,
+            passing_runner(calls),
+            backend="pdf2zh",
+        )
+    )
+
+    assert second["status"] == "succeeded"
+    assert second["disposition"] == "created"
+    assert len(calls) == 1
 
 
 def test_remote_task_creation_unknown_is_persisted_and_not_replayed(tmp_path):

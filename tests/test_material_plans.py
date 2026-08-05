@@ -1171,7 +1171,35 @@ def test_book_search_lifts_only_its_closed_identity_gate() -> None:
     }
 
 
-def test_book_identity_selection_runs_one_owner_reconcile_search() -> None:
+def test_book_search_existing_owner_stops_before_acquire() -> None:
+    owner_slug = "existing-book"
+    report = run_book(
+        provisional_book_input(),
+        [
+            book_search_complete(owner_slug=owner_slug),
+            book_acquire_complete(owner_slug),
+            book_prepare_complete(owner_slug),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete(),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search"
+    ]
+    assert report["result"]["terminal"] == "complete"
+    assert report["result"]["material"]["canonical"]["slug"] == owner_slug
+    assert report["result"]["artifacts"] == [
+        {
+            "role": "overview",
+            "path": f"vault/books/{owner_slug}/00-overview.md",
+        }
+    ]
+
+
+def test_book_identity_selection_existing_owner_stops_after_reconcile_search() -> None:
     value = provisional_book_input()
     value["observation"] = book_observation(
         "request-book",
@@ -1185,12 +1213,11 @@ def test_book_identity_selection_runs_one_owner_reconcile_search() -> None:
 
     report = run_book(
         value,
-        [book_search_complete(owner_slug="request-book"), audit_complete()],
+        [book_search_complete(owner_slug="request-book")],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
         "material.search",
-        "book.audit",
     ]
     search_request = report["calls"][0]["request"]
     assert search_request["material_key"] == "book:request-book"
@@ -1357,13 +1384,13 @@ def test_book_rejects_incomplete_year_decision_before_dispatch() -> None:
     assert report["result"]["issue"]["code"] == "workflow.incoherent_gate"
 
 
-def test_book_accept_current_year_binds_owner_identity_once() -> None:
-    value = provisional_book_input("owned-book")
+def test_book_accept_current_year_binds_canonical_identity_once() -> None:
+    value = provisional_book_input()
     year_gate_receipt = book_acquire_year_gate()
     gated = run_book(
         value,
         [
-            book_search_complete(owner_slug="owned-book"),
+            book_search_complete(),
             year_gate_receipt,
         ],
     )
@@ -1377,7 +1404,7 @@ def test_book_accept_current_year_binds_owner_identity_once() -> None:
     assert gated["result"]["gate"] == {
         "kind": "book_year",
         "operation": "book.acquire",
-        "material_key": "book:owned-book",
+        "material_key": "book:exact-book",
         "current_identity": BOOK_IDENTITY,
         "question": "Which year should own this Book?",
         "tmp_path": terminal["tmp_path"],
@@ -1393,7 +1420,7 @@ def test_book_accept_current_year_binds_owner_identity_once() -> None:
         "action": "accept-current",
     }
     value["userDecision"] = {
-        "material_key": "book:owned-book",
+        "material_key": "book:exact-book",
         "operation": "book.acquire",
         "value": decision,
     }
@@ -1401,13 +1428,13 @@ def test_book_accept_current_year_binds_owner_identity_once() -> None:
     report = run_book(
         value,
         [
-            book_search_complete(owner_slug="owned-book"),
+            book_search_complete(),
             book_acquire_complete(
-                "owned-book",
+                "exact-book",
                 evidence=decision["year_evidence"],
                 tmp_path=decision["tmp_path"],
             ),
-            book_prepare_complete("owned-book"),
+            book_prepare_complete("exact-book"),
             chapter_complete(),
             chapter_complete(),
             book_synthesise_complete(),
@@ -1420,11 +1447,11 @@ def test_book_accept_current_year_binds_owner_identity_once() -> None:
     assert operations.count("material.search") == 1
     assert operations.count("book.acquire") == 1
     request = report["calls"][1]["request"]
-    assert request["material_key"] == "book:owned-book"
+    assert request["material_key"] == "book:exact-book"
     assert request["identity"] == BOOK_IDENTITY
     assert request["current_identity"] == BOOK_IDENTITY
     assert request["year_decision"] == decision
-    assert report["result"]["material"]["canonical"]["slug"] == "owned-book"
+    assert report["result"]["material"]["canonical"]["slug"] == "exact-book"
     assert report["result"]["terminal"] == "complete"
 
 
