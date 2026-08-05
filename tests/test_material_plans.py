@@ -1344,55 +1344,56 @@ def test_book_recommended_year_inner_search_gate_keeps_canonical_resume_seed() -
     }
 
 
-def test_book_acquire_lifts_the_exact_year_gate_before_prepare() -> None:
+def test_book_rejects_incomplete_year_decision_before_dispatch() -> None:
     value = canonical_book_input()
-    report = run_book(value, [book_acquire_year_gate()])
+    value["userDecision"] = {
+        "material_key": "book:exact-book",
+        "operation": "book.acquire",
+        "value": {"action": "accept-current"},
+    }
 
-    assert [call["request"]["operation"] for call in report["calls"]] == [
-        "book.acquire"
+    report = run_book(value, [])
+
+    assert report["calls"] == []
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "workflow.incoherent_gate"
+
+
+def test_book_accept_current_year_binds_owner_identity_once() -> None:
+    value = provisional_book_input("owned-book")
+    year_gate_receipt = book_acquire_year_gate()
+    gated = run_book(
+        value,
+        [
+            book_search_complete(owner_slug="owned-book"),
+            year_gate_receipt,
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in gated["calls"]] == [
+        "material.search",
+        "book.acquire",
     ]
-    terminal = book_acquire_year_gate()["terminal"]
-    assert report["result"]["terminal"] == "needs_input"
-    assert report["result"]["gate"] == {
+    terminal = year_gate_receipt["terminal"]
+    assert gated["result"]["terminal"] == "needs_input"
+    assert gated["result"]["gate"] == {
         "kind": "book_year",
         "operation": "book.acquire",
-        "material_key": "book:exact-book",
+        "material_key": "book:owned-book",
         "current_identity": BOOK_IDENTITY,
         "question": "Which year should own this Book?",
         "tmp_path": terminal["tmp_path"],
         "year_evidence": terminal["year_evidence"],
         "proposed_actions": ["accept-current", "use-recommended-year"],
     }
-    assert report["pipelineCalls"] == 0
+    assert gated["pipelineCalls"] == 0
 
-    decision = book_year_decision("accept-current")
-    value["userDecision"] = {
-        "material_key": "book:exact-book",
-        "operation": "book.acquire",
-        "value": decision,
+    decision = {
+        "current_identity": gated["result"]["gate"]["current_identity"],
+        "tmp_path": gated["result"]["gate"]["tmp_path"],
+        "year_evidence": gated["result"]["gate"]["year_evidence"],
+        "action": "accept-current",
     }
-    resumed = run_book(
-        value,
-        [
-            book_acquire_complete(
-                evidence=decision["year_evidence"],
-                tmp_path=decision["tmp_path"],
-            ),
-            book_prepare_complete(),
-            chapter_complete(),
-            chapter_complete(),
-            book_synthesise_complete("repair"),
-            audit_complete(),
-        ],
-    )
-
-    assert resumed["calls"][0]["request"]["year_decision"] == decision
-    assert resumed["result"]["terminal"] == "complete"
-
-
-def test_book_accept_current_year_binds_owner_identity_once() -> None:
-    value = provisional_book_input("owned-book")
-    decision = book_year_decision("accept-current")
     value["userDecision"] = {
         "material_key": "book:owned-book",
         "operation": "book.acquire",
@@ -1418,12 +1419,15 @@ def test_book_accept_current_year_binds_owner_identity_once() -> None:
 
     operations = [call["request"]["operation"] for call in report["calls"]]
     assert operations[:2] == ["material.search", "book.acquire"]
+    assert operations.count("material.search") == 1
+    assert operations.count("book.acquire") == 1
     request = report["calls"][1]["request"]
     assert request["material_key"] == "book:owned-book"
     assert request["identity"] == BOOK_IDENTITY
     assert request["current_identity"] == BOOK_IDENTITY
     assert request["year_decision"] == decision
     assert report["result"]["material"]["canonical"]["slug"] == "owned-book"
+    assert report["result"]["terminal"] == "complete"
 
 
 def test_book_recommended_year_search_recanonicalizes_before_one_acquire() -> None:
@@ -1606,6 +1610,17 @@ def test_book_missing_source_reconciles_acquire_before_prepare() -> None:
     assert report["calls"][0]["request"]["allowed_formats"] == ["pdf", "epub"]
 
 
+def test_book_rejects_scalar_allowed_formats_before_dispatch() -> None:
+    value = canonical_book_input()
+    value["options"] = {"allowed_formats": "epub"}
+
+    report = run_book(value, [])
+
+    assert report["calls"] == []
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "material.invalid_input"
+
+
 def test_book_pdf_prepare_lifts_structure_gate_before_any_fanout() -> None:
     report = run_book(
         canonical_book_input(source_format="pdf"),
@@ -1731,25 +1746,49 @@ def test_book_chapter_join_settles_all_and_unknown_dominates() -> None:
             "start_page": 8,
             "end_page": 9,
         },
+        {
+            "slot": "04",
+            "title": "Appendix",
+            "filename": "04_Appendix.txt",
+            "slug": "appendix",
+            "word_count": 30,
+            "start_page": 10,
+            "end_page": 11,
+        },
     ]
     value = canonical_book_input(
         manifest=True,
         inventory=inventory,
-        chapter_inputs=(True, True, True),
-        chapter_outputs=(False, False, False),
+        chapter_inputs=(True, True, True, True),
+        chapter_outputs=(False, False, False, False),
     )
+    failed = {
+        "terminal": {
+            "status": "failed",
+            "issue": {
+                "code": "chapter.analysis_failed",
+                "operation": "chapter.analyse",
+                "summary": "The exact chapter analysis failed.",
+                "user_question": None,
+                "retryable": False,
+            },
+            "action": "create",
+            "write_state": "not_written",
+        }
+    }
 
     report = run_book(
         value,
         [
             {"__delay__": 10, "__value__": chapter_blocked()},
             {"__delay__": 25, "__value__": "__throw__"},
+            {"__delay__": 5, "__value__": failed},
             {"__delay__": 0, "__value__": chapter_complete()},
         ],
     )
 
-    assert len(report["calls"]) == 3
-    assert len(report["settled"]) == 3
+    assert len(report["calls"]) == 4
+    assert len(report["settled"]) == 4
     assert all(
         call["request"]["operation"] == "chapter.analyse"
         for call in report["calls"]
@@ -1767,11 +1806,12 @@ def test_book_chapter_join_settles_all_and_unknown_dominates() -> None:
         [
             {"__delay__": 20, "__value__": first_blocked},
             {"__delay__": 0, "__value__": second_blocked},
+            failed,
             chapter_complete(),
         ],
     )
 
-    assert len(ordered["settled"]) == 3
+    assert len(ordered["settled"]) == 4
     assert ordered["result"]["issue"]["code"] == "chapter.first"
     assert all(
         call["request"]["operation"] == "chapter.analyse"

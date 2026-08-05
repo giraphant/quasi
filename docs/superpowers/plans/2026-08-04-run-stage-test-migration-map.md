@@ -645,3 +645,56 @@ rather than a separately named `test_*` function in `test_run_stage.py`.
 | Existing invariant | Replacement test | Retirement condition |
 |---|---|---|
 | generated bundle executes source `run` | `test_workflow_entries.py::test_generated_named_workflow_returns_its_source_entry_result` | replacement passes |
+
+## Task 6 completion audit
+
+The historical pre-refactor collection above remains **546 tests** at
+`e423c328`; it is not the Task 6 baseline. After Tasks 1–5, the fresh Task 6
+baseline was **695 tests**, with **161** in the Workflow-focused slice. This
+audit retires three redundant collected cases, so the expected and verified
+final counts are **692 total** and **158 focused**.
+
+The earlier `test_run_stage.py` retirement removed only compatibility modes:
+generic kind/stage selection errors, `until` range validation, `units` envelope
+behavior, compatibility-log prose, and batch error envelopes. The file remains
+absent. Task 6's exact three-case cleanup is:
+
+1. merge the standalone Book Acquire year-gate case into the owner-bound
+   accept-current public flow;
+2. remove the private translation camel-case field permutation after the public
+   translation normalization/dispatch case; and
+3. remove the private Search rejection of accept-current after the combined
+   public Book flow proves routing through Acquire.
+
+Count-neutral rewrites move private coupling to public behavior: scalar
+`options.allowed_formats` now proves zero dispatch plus
+`material.invalid_input`; an incomplete Book year-decision value proves zero
+dispatch plus `workflow.incoherent_gate`; and an ordinary Book Acquire
+`MISMATCH` complete proves `incoherent_complete` without a retired batch flag.
+The malformed year value has a valid outer decision envelope but an incoherent
+gate echo, matching the same public classification used by the other material
+plans. The chapter join now settles blocked, unknown, failed, and complete
+siblings before unknown wins, while inventory order still chooses the first
+blocked sibling when no outcome is unknown.
+
+All six rows of
+`test_generated_named_workflow_returns_its_source_entry_result` remain: the
+workflow check builds and typechecks bundles but does not execute each generated
+IIFE entry and compare it with its source entry. The shared four-terminal test,
+both null/exception unknown rows, coherence checks, exact refs and write-target
+ownership, typed gates, unknown-writer stops, malformed-entry matrices, and
+entry import-domain matrices also remain. Chapter Analyse still exposes no user
+gate.
+
+Completion evidence:
+
+- pre- and post-change `npm run check:workflows` — passed;
+- targeted new/rewritten cases, including all six generated-entry ABI rows —
+  **13 passed**;
+- `python3 -m pytest tests/test_workflow_dispatch.py tests/test_material_plans.py tests/test_workflow_entries.py tests/test_status_cli.py tests/test_skill_orchestration.py tests/test_dead_names.py -q`
+  — **158 passed**;
+- `python3 -m pytest --collect-only -q` — **692 collected**;
+- `rg -n "batch_accept_year" tests scripts/workflows workflows` — no active
+  test or runtime matches;
+- `test ! -e tests/test_run_stage.py` — passed;
+- `git diff --check` — passed.

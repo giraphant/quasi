@@ -603,22 +603,6 @@ def test_local_preparation_rejects_bad_context_before_agent_dispatch() -> None:
     assert "invalid material slug" in report["thrown"]["message"]
 
 
-def test_unexpected_preparation_error_propagates_without_agent_dispatch() -> None:
-    invocation = _invocation(
-        "book.acquire",
-        context=_context(allowedFormats="epub"),
-    )
-    report = _dispatch({"invocation": invocation, "model_output": None})
-
-    assert report == {
-        "thrown": {
-            "name": "TypeError",
-            "message": "formats.map is not a function",
-        },
-        "agentCalls": 0,
-    }
-
-
 @pytest.mark.parametrize("agent_result", ["reject", "null"])
 def test_unknown_agent_outcome_blocks_without_replay(agent_result: str) -> None:
     report = _dispatch(
@@ -1190,22 +1174,6 @@ def test_workflow_language_normalizer_matches_the_python_contract_fixture(
     )
 
 
-def test_translation_row_requires_the_internal_camel_case_target_field():
-    context = _context()
-    del context["targetLanguage"]
-    context["target_language"] = "fr-FR"
-
-    invocation = _invocation("translation.prepare", context=context)
-    invocation.pop("kind")
-    stderr = _export_failure(
-        _catalog_module("translation"),
-        "prepareOperation",
-        invocation,
-    )
-
-    assert "requires a valid target language" in stderr
-
-
 def test_book_acquire_conservatively_owns_both_possible_sources():
     assert _prepare("book.acquire")["writeTargets"] == [
         {"scope": "exact", "path": "sources/exact-material.epub"},
@@ -1213,31 +1181,13 @@ def test_book_acquire_conservatively_owns_both_possible_sources():
     ]
 
 
-def test_book_acquire_rejects_a_truthy_malformed_year_decision_before_agent():
-    report = _dispatch(
-        {
-            "invocation": _invocation(
-                "book.acquire",
-                context=_context(
-                    meta=_search_identity("book", slug="exact-book"),
-                    yearDecision={"action": "accept-current"},
-                ),
-            ),
-            "model_output": None,
-        }
-    )
-
-    assert report["agentCalls"] == 0
-    assert report["thrown"]["name"] == "InputContractError"
-
-
-def test_book_acquire_batch_flag_cannot_bypass_a_year_mismatch():
+def test_book_acquire_year_mismatch_is_incoherent_complete():
     identity = _search_identity("book", slug="exact-book")
     report = _dispatch(
         {
             "invocation": _invocation(
                 "book.acquire",
-                context=_context(meta=identity, batch_accept_year=True),
+                context=_context(meta=identity),
             ),
             "model_output": _book_acquire_output(
                 _book_year_evidence("MISMATCH")
@@ -1247,13 +1197,6 @@ def test_book_acquire_batch_flag_cannot_bypass_a_year_mismatch():
 
     assert report["agentCalls"] == 1
     assert report["result"]["kind"] == "incoherent_complete"
-    request = json.loads(
-        _prepare(
-            "book.acquire",
-            context=_context(meta=identity, batch_accept_year=True),
-        )["prompt"]
-    )
-    assert "batch_accept_year" not in request
 
 
 def test_book_acquire_accept_current_keeps_exact_identity_and_prior_evidence():
@@ -1428,23 +1371,6 @@ def test_search_owner_reconcile_requires_the_selected_identity() -> None:
 
     assert accepted["result"]["kind"] == "receipt"
     assert changed["result"]["kind"] == "incoherent_complete"
-
-
-def test_search_rejects_accept_current_year_decision_before_agent_dispatch():
-    decision = _book_year_decision("accept-current")
-    report = _dispatch(
-        {
-            "invocation": _invocation(
-                "material.search",
-                kind="book",
-                context=_context(yearDecision=decision),
-            ),
-            "model_output": None,
-        }
-    )
-
-    assert report["agentCalls"] == 0
-    assert report["thrown"]["name"] == "InputContractError"
 
 
 def test_book_year_search_requires_the_recommended_year_then_uses_owner_proof():
