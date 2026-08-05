@@ -202,6 +202,16 @@ Author → exact Author status → discover/freeze → exact child status batch
    - `needs_observation`：不展示问题；只 refresh 返回的全部 `routes`，复制 opaque resume seed，
      构造 exact child observation array 后重新调用同一 Author entry。
    - `blocked|failed`：展示 issue 与 observation request（若有）并停止；不自动改写或重发。
+
+```python
+user_decision = {
+    "material_key": gate.material_key,
+    "operation": gate.operation,
+    "value": gate_owned_value,
+}
+workflow_input["userDecision"] = user_decision
+```
+
 6. 恢复 `identity_conflict|book_year|book_structure|translation_source` 时，`UserDecision` 的
    `material_key` 与 `operation` 必须逐字复制 gate。用户只提供选择或 action；Skill 把 gate
    testimony 原样带回 owner parser 要求的完整 value：

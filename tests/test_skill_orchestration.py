@@ -6,6 +6,7 @@ and public boundaries — never the presence of specific prose sentences.
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 import re
@@ -51,6 +52,32 @@ def collect_material_leaf_workflow_manifest() -> dict[str, dict[str, object]]:
         ):
             return value["workflow_inputs"]
     raise AssertionError("collect-material has no closed leaf invocation manifest")
+
+
+def test_collect_material_has_generic_user_decision_envelope() -> None:
+    path = ROOT / "skills" / "collect-material" / "SKILL.md"
+    text = path.read_text(encoding="utf-8")
+    assignments: list[ast.Assign] = []
+    for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+        tree = ast.parse(source)
+        assignments.extend(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "user_decision"
+                for target in node.targets
+            )
+        )
+
+    assert len(assignments) == 1
+    value = assignments[0].value
+    assert isinstance(value, ast.Dict)
+    assert {
+        key.value
+        for key in value.keys
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    } == {"material_key", "operation", "value"}
 
 
 def research_topic_workflow_manifest() -> dict[str, object]:
