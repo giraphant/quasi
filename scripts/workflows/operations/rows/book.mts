@@ -43,7 +43,7 @@ const preparedArtifactSchema = {
           "normalized_chapter",
         ],
       },
-      path: { type: "string" },
+      path: { type: "string", minLength: 1, pattern: "^[^/]" },
       exists: { type: "boolean" },
       usable: { type: ["boolean", "null"] },
     },
@@ -605,9 +605,13 @@ export const bookOperationRows: OperationRow[] = [
         "quasi-extract text INPUT OUTPUT --json",
         "quasi-extract ocr INPUT OUTPUT --no-clobber --json",
         "quasi-extract epub INPUT OUTPUT_DIR --json",
-        "quasi-extract split INPUT --output-dir OUTPUT_DIR --method toc|pattern --json",
-        "quasi-extract split INPUT --output-dir OUTPUT_DIR --chapters JSON --json",
-        "quasi-extract split INPUT --output-dir OUTPUT_DIR --pages START-END --title TITLE --slot SLOT --expected-manifest-fingerprint SHA --json",
+        ...(refs.format === "pdf"
+          ? [refs.source, refs.recoverySource].flatMap((input) => [
+              `quasi-extract split ${posixSingleQuote(input)} --output-dir ${posixSingleQuote(refs.outputDir)} --method toc|pattern --json`,
+              `quasi-extract split ${posixSingleQuote(input)} --output-dir ${posixSingleQuote(refs.outputDir)} --chapters JSON --json`,
+              `quasi-extract split ${posixSingleQuote(input)} --output-dir ${posixSingleQuote(refs.outputDir)} --pages START-END --title TITLE --slot SLOT --expected-manifest-fingerprint SHA --json`,
+            ])
+          : []),
         "Read the exact source, manifest, normalized document, and manifest-listed chapter texts",
       ],
       artifact_roles: [

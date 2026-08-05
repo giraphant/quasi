@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from copy import deepcopy
@@ -1584,6 +1585,54 @@ def test_pdf_book_structure_gate_uses_direct_manual_split_specs() -> None:
     ]
     assert chapter["required"] == ["title", "start", "end"]
     assert chapter["additionalProperties"] is False
+
+
+def test_book_prepare_artifact_schema_requires_project_relative_paths() -> None:
+    prepared = _prepare(
+        "book.prepare",
+        context=_context(format="pdf", source="sources/exact-material.pdf"),
+    )
+    path_schema = prepared["options"]["schema"]["properties"]["artifacts"][
+        "items"
+    ]["properties"]["path"]
+
+    assert path_schema["minLength"] == 1
+    assert re.search(
+        path_schema["pattern"],
+        "processing/chapters/exact-material/01-opening.txt",
+    )
+    assert not re.search(
+        path_schema["pattern"],
+        "/Users/example/vault/processing/chapters/exact-material/01-opening.txt",
+    )
+
+
+def test_book_prepare_split_capabilities_bind_exact_pdf_inputs() -> None:
+    prepared = _prepare(
+        "book.prepare",
+        context=_context(format="pdf", source="sources/exact-material.pdf"),
+    )
+    request = _prompt_request(prepared["prompt"])
+    split = [
+        capability
+        for capability in request["capabilities"]
+        if capability.startswith("quasi-extract split ")
+    ]
+    source_prefix = "quasi-extract split 'sources/exact-material.pdf' "
+    recovery_prefix = (
+        "quasi-extract split "
+        "'processing/chapters/exact-material/ocr.pdf' "
+    )
+
+    assert split
+    assert any(capability.startswith(source_prefix) for capability in split)
+    assert any(capability.startswith(recovery_prefix) for capability in split)
+    assert all(
+        capability.startswith((source_prefix, recovery_prefix))
+        for capability in split
+    )
+    assert all("source.txt" not in capability for capability in split)
+    assert all("ocr.txt" not in capability for capability in split)
 
 
 def test_translation_gate_is_required_only_inside_needs_input_terminal() -> None:
