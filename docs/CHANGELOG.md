@@ -6,6 +6,7 @@ Newest first. Entries record what changed and why at the time each release shipp
   - Paper/Book Acquire 不再把一次写入效果同时编码为 `write_state` 与 `disposition`：前者现在是唯一 effect testimony，已核验的既有 source 可用 `source:"existing_file"` + `not_written` 完成，不会再因冗余字段矛盾停住。
   - Chapter manifest 的页码对规则收回 schema，并由 status 与 extractor 共用；同请求、ownership-safe 的旧单边 range manifest 会在既有锁和 manifest-last transaction 内完整重建，其他不安全或变更状态仍阻断。
   - `collect-material` 对 typed gate 使用唯一的 `{material_key, operation, value}` 决策 wrapper，避免扩张为 per-gate catalogue；不增加 retry、replay、隐藏状态、推断 end page 或书名特例。
+  - 删除未被运行时加载的 Talk reference；Talk 的入口、状态与方法合同已经分别由主 Skill、固定 Workflow、Agent 和 schema 持有，不再保留第二份薄 driver 文档。
 
 - **0.65.1** (2026-08-05): **六种材料各自拥有固定 Workflow，通用 mode engine 正式退出。**
   - Author 现在通过 fresh exact status 组合 Paper/Book leaf；Topic 通过同样的 observation handshake 组合 Paper/Book/Talk，并把 Recall、稳定顺序的有界研究轮次、每项 admission checkpoint、三份产品的 owner-correct Audit/repair 收进 `workflows/topic.mjs`。两条外层 Skill 都只传 closed envelope、opaque continuation 与 typed gate，不再维护另一份业务状态机。

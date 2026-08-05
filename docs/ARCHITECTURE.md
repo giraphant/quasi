@@ -153,8 +153,6 @@ active skills.
 `collect-material` owns the current Paper/Book/Author/Talk/Translation entry. Its four
 leaf kinds route to named material Workflows; the named Author Workflow composes the
 Paper and Book entries after the Skill supplies fresh exact statuses for its returned routes.
-Talk-specific media normalisation is progressively disclosed from
-`skills/collect-material/references/talk.md`; it is not a second public Skill.
 `research-topic` supplies exact observations and typed user decisions to the named Topic
 Workflow. That entry owns the iterative Topic state machine and composes the same leaf entries
 without duplicating material logic in the Skill. `finalise-draft`
