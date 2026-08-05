@@ -723,9 +723,16 @@ def commit_chapter_set(
                     status="failed",
                     outcome="known",
                 )
-            staged_manifest = _prepare_staged_manifest(
-                stage_dir, staged_manifest, fingerprint, initial_identity
-            )
+            try:
+                staged_manifest = _prepare_staged_manifest(
+                    stage_dir, staged_manifest, fingerprint, initial_identity
+                )
+            except ChapterFailure as exc:
+                raise ChapterFailure(
+                    exc.code,
+                    exc.message,
+                    exit_code=exc.exit_code,
+                ) from exc
 
             if _source_identity(input_path) != initial_identity:
                 raise ChapterFailure(

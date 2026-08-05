@@ -1426,27 +1426,53 @@ def test_book_publish_failure_rolls_back_files_and_preserves_manifest(
     assert (output / "01_Renamed.txt").exists() is False
 
 
-def test_book_malformed_stage_is_blocked_unknown_without_final_writes(
+def test_book_invalid_private_stage_is_failed_known_without_final_writes(
     tmp_path: Path,
 ):
     pdf = tmp_path / "book.pdf"
     output = tmp_path / "chapters"
     _book_pdf(pdf, ["one " * 20])
 
+    def build(stage: Path, _previous: dict | None) -> dict:
+        (stage / "09_Contents.txt").write_text("contents chapter", encoding="utf-8")
+        (stage / "09_Body.txt").write_text("body chapter", encoding="utf-8")
+        return {
+            "chapters": [
+                {
+                    "slot": "09",
+                    "title": "Chapter 9 (Contents)",
+                    "filename": "09_Contents.txt",
+                    "start_page": 1,
+                    "end_page": 1,
+                },
+                {
+                    "slot": "09",
+                    "title": "Chapter 9",
+                    "filename": "09_Body.txt",
+                    "start_page": 1,
+                    "end_page": 1,
+                },
+            ],
+            "skipped": [],
+        }
+
     rc, receipt = chapter_commit.commit_chapter_set(
         input_path=pdf,
         output_dir=output,
-        mode="manual",
-        options={"malformed": True},
+        mode="pattern",
+        options={"pattern": "default"},
         max_chapters=50,
-        build_stage=lambda _stage, _previous: "not a manifest",
+        build_stage=build,
     )
 
     assert rc == 1
-    assert receipt["status"] == "blocked"
+    assert receipt["status"] == "failed"
+    assert receipt["failure"]["code"] == "manifest_invalid"
+    assert receipt["failure"]["outcome"] == "known"
     assert receipt["manifest_exists"] is False
     assert receipt["manifest_fingerprint"] is None
     assert output.exists() is False
+    assert list(tmp_path.glob(".chapters.stage-*")) == []
 
 
 def test_book_output_symlink_is_rejected_without_touching_target(tmp_path: Path):
