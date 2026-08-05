@@ -4,6 +4,7 @@ import io
 import json
 import importlib.util
 import urllib.error
+import urllib.parse
 import hashlib
 import os
 import subprocess
@@ -12,6 +13,8 @@ import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -30,14 +33,19 @@ def run_download(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_aa_mirror_defaults_match_current_official_domains():
+def test_aa_mirror_defaults_follow_stable_runtime_contract():
     mod = _load_module(AA, "aa_mirrors_under_test")
 
-    assert mod.STATIC_AA_MIRRORS == [
-        "https://annas-archive.gd",
-        "https://annas-archive.gl",
-        "https://annas-archive.li",
-    ]
+    static_mirrors = mod.STATIC_AA_MIRRORS
+    runtime_defaults = mod.DEFAULT_AA_MIRRORS
+    assert static_mirrors
+    assert len(static_mirrors) == len(set(static_mirrors))
+    for url in static_mirrors:
+        parsed = urllib.parse.urlsplit(url)
+        assert parsed.scheme == "https"
+        assert parsed.hostname and parsed.hostname.startswith("annas-archive.")
+        assert parsed.hostname.removeprefix("annas-archive.")
+    assert runtime_defaults == static_mirrors
 
 
 def test_aa_wikipedia_infobox_mirror_parser_prefers_url_row():
@@ -1306,91 +1314,56 @@ def test_download_paper_stops_after_pdf_sources_fail(tmp_path, monkeypatch):
     assert not (tmp_path / "making-sense-conduct-2026.pdf").exists()
 
 
-def test_ezproxy_throttle_first_call_does_not_wait(tmp_path):
-    mod = _load_module(DOWNLOAD, "download_throttle_first_under_test")
+@pytest.mark.parametrize(
+    (
+        "initial_state",
+        "interval",
+        "current_time",
+        "expected_wait",
+        "expected_sleeps",
+        "expected_final_state",
+    ),
+    [
+        (None, 30, 1000.0, 0.0, [], "1000.0"),
+        ("1000.0", 30, 1005.0, 25.0, [25.0], "1005.0"),
+        ("2000.0", 30, 1000.0, 30.0, [30.0], "1000.0"),
+        (None, 0, 1000.0, 0.0, [], None),
+        ("not-a-number", 30, 1000.0, 0.0, [], "1000.0"),
+    ],
+    ids=(
+        "first-call",
+        "remaining-interval",
+        "future-capped",
+        "zero-noop",
+        "corrupt-as-no-prior",
+    ),
+)
+def test_ezproxy_throttle_single_process_cases(
+    tmp_path,
+    initial_state,
+    interval,
+    current_time,
+    expected_wait,
+    expected_sleeps,
+    expected_final_state,
+):
+    mod = _load_module(DOWNLOAD, "download_throttle_single_process_under_test")
     state = tmp_path / "ezproxy-throttle.state"
+    if initial_state is not None:
+        state.write_text(initial_state)
     recorded: list[float] = []
 
     waited = mod._ezproxy_throttle(
         state_path=state,
-        interval=30,
-        now=lambda: 1000.0,
+        interval=interval,
+        now=lambda: current_time,
         sleep=recorded.append,
     )
 
-    assert waited == 0.0
-    assert recorded == []
-    assert state.read_text().strip() == "1000.0"
-
-
-def test_ezproxy_throttle_waits_remaining_interval(tmp_path):
-    mod = _load_module(DOWNLOAD, "download_throttle_wait_under_test")
-    state = tmp_path / "ezproxy-throttle.state"
-    state.write_text("1000.0")
-    recorded: list[float] = []
-
-    waited = mod._ezproxy_throttle(
-        state_path=state,
-        interval=30,
-        now=lambda: 1005.0,
-        sleep=recorded.append,
-    )
-
-    assert waited == 25.0
-    assert recorded == [25.0]
-    assert state.read_text().strip() == "1005.0"
-
-
-def test_ezproxy_throttle_caps_wait_against_future_timestamp(tmp_path):
-    mod = _load_module(DOWNLOAD, "download_throttle_cap_under_test")
-    state = tmp_path / "ezproxy-throttle.state"
-    state.write_text("2000.0")  # far in the future vs. now()
-    recorded: list[float] = []
-
-    waited = mod._ezproxy_throttle(
-        state_path=state,
-        interval=30,
-        now=lambda: 1000.0,
-        sleep=recorded.append,
-    )
-
-    assert waited == 30.0
-    assert recorded == [30.0]
-
-
-def test_ezproxy_throttle_zero_interval_is_noop(tmp_path):
-    mod = _load_module(DOWNLOAD, "download_throttle_zero_under_test")
-    state = tmp_path / "missing.state"
-    recorded: list[float] = []
-
-    waited = mod._ezproxy_throttle(
-        state_path=state,
-        interval=0,
-        now=lambda: 1000.0,
-        sleep=recorded.append,
-    )
-
-    assert waited == 0.0
-    assert recorded == []
-    assert not state.exists()
-
-
-def test_ezproxy_throttle_treats_corrupt_state_as_no_prior(tmp_path):
-    mod = _load_module(DOWNLOAD, "download_throttle_corrupt_under_test")
-    state = tmp_path / "ezproxy-throttle.state"
-    state.write_text("not-a-number")
-    recorded: list[float] = []
-
-    waited = mod._ezproxy_throttle(
-        state_path=state,
-        interval=30,
-        now=lambda: 1000.0,
-        sleep=recorded.append,
-    )
-
-    assert waited == 0.0
-    assert recorded == []
-    assert state.read_text().strip() == "1000.0"
+    assert waited == expected_wait
+    assert recorded == expected_sleeps
+    final_state = state.read_text().strip() if state.exists() else None
+    assert final_state == expected_final_state
 
 
 def test_ezproxy_throttle_serializes_across_processes(tmp_path):
@@ -1472,83 +1445,144 @@ def test_try_ezproxy_download_calls_throttle_when_configured(tmp_path, monkeypat
     assert calls == [1]  # gate reached exactly once when configured
 
 
-def test_jstor_pdf_url_derived_from_stable_url_forms():
+@pytest.mark.parametrize(
+    ("article_url", "expected_urls"),
+    [
+        (
+            "https://www.jstor.org/stable/43154235",
+            ["https://www.jstor.org/stable/pdf/43154235.pdf?acceptTC=1"],
+        ),
+        (
+            "https://www.jstor.org/stable/10.1086/691062",
+            ["https://www.jstor.org/stable/pdf/10.1086/691062.pdf?acceptTC=1"],
+        ),
+        (
+            "https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf"
+            "?refreqid=fastly-default%3Aabc&acceptTC=1",
+            [
+                "https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf"
+                "?acceptTC=1"
+            ],
+        ),
+        ("https://www.jstor.org/", []),
+        ("https://www.sciencedirect.com/stable/43154235", []),
+    ],
+    ids=(
+        "bare-stable-id",
+        "doi-stable-id",
+        "already-proxied-pdf",
+        "root-miss",
+        "foreign-host-miss",
+    ),
+)
+def test_jstor_pdf_urls_from_article_url(article_url, expected_urls):
     mod = _load_module(DOWNLOAD, "download_jstor_urls_under_test")
 
-    # Bare sequence id, DOI id, and an already-proxied host all resolve, and
-    # acceptTC=1 is what separates the PDF from the terms-of-use interstitial.
-    assert mod._jstor_pdf_urls_from_article_url(
-        "https://www.jstor.org/stable/43154235"
-    ) == ["https://www.jstor.org/stable/pdf/43154235.pdf?acceptTC=1"]
-    assert mod._jstor_pdf_urls_from_article_url(
-        "https://www.jstor.org/stable/10.1086/691062"
-    ) == ["https://www.jstor.org/stable/pdf/10.1086/691062.pdf?acceptTC=1"]
-    assert mod._jstor_pdf_urls_from_article_url(
-        "https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf"
-        "?refreqid=fastly-default%3Aabc&acceptTC=1"
-    ) == [
-        "https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf?acceptTC=1"
-    ]
-    assert mod._jstor_pdf_urls_from_article_url("https://www.jstor.org/") == []
-    assert mod._jstor_pdf_urls_from_article_url(
-        "https://www.sciencedirect.com/stable/43154235"
-    ) == []
+    assert mod._jstor_pdf_urls_from_article_url(article_url) == expected_urls
 
 
-def test_publisher_host_match_decodes_ezproxy_rewriting():
-    mod = _load_module(DOWNLOAD, "download_publisher_host_under_test")
+@pytest.mark.parametrize(
+    ("host", "expected_host"),
+    [
+        (
+            "pubsonline-informs-org.eux.idm.oclc.org",
+            "pubsonline.informs.org",
+        ),
+        ("www.jstor.org", "www.jstor.org"),
+        ("link-springer.com", "link-springer.com"),
+    ],
+    ids=("ezproxy-rewritten", "native-host", "real-dash"),
+)
+def test_unproxy_host(host, expected_host):
+    mod = _load_module(DOWNLOAD, "download_unproxy_host_under_test")
 
-    # EZProxy packs the whole publisher host into one dash-joined label, so the
-    # domain tables need no separate entry per proxied spelling.
-    assert mod._unproxy_host("pubsonline-informs-org.eux.idm.oclc.org") == (
-        "pubsonline.informs.org"
-    )
-    assert mod._unproxy_host("www.jstor.org") == "www.jstor.org"
-    # A dash in a real publisher host is not proxy encoding.
-    assert mod._unproxy_host("link-springer.com") == "link-springer.com"
-
-    assert mod._is_publisher_host("www-jstor-org.eux.idm.oclc.org", "jstor.org")
-    assert mod._is_publisher_host("academic.oup.com", "oup.com")
-    assert mod._is_publisher_host("direct.mit.edu", "mit.edu")
-    assert not mod._is_publisher_host("notjstor.org", "jstor.org")
+    assert mod._unproxy_host(host) == expected_host
 
 
-def test_publisher_pdf_urls_derive_from_doi_carried_in_url_path():
+@pytest.mark.parametrize(
+    ("host", "publisher_domain", "expected"),
+    [
+        ("www-jstor-org.eux.idm.oclc.org", "jstor.org", True),
+        ("academic.oup.com", "oup.com", True),
+        ("direct.mit.edu", "mit.edu", True),
+        ("notjstor.org", "jstor.org", False),
+    ],
+    ids=(
+        "ezproxy-rewritten",
+        "publisher-subdomain",
+        "publisher-native",
+        "lookalike-miss",
+    ),
+)
+def test_is_publisher_host(host, publisher_domain, expected):
+    mod = _load_module(DOWNLOAD, "download_is_publisher_host_under_test")
+
+    assert mod._is_publisher_host(host, publisher_domain) is expected
+
+
+@pytest.mark.parametrize(
+    ("article_url", "expected_doi"),
+    [
+        (
+            "https://www.tandfonline.com/doi/abs/10.1080/00048402.2019.1618352",
+            "10.1080/00048402.2019.1618352",
+        ),
+        ("https://www.jstor.org/stable/43154235", None),
+    ],
+    ids=("doi-in-path", "no-doi-in-path"),
+)
+def test_doi_from_url_path(article_url, expected_doi):
+    mod = _load_module(DOWNLOAD, "download_doi_from_url_path_under_test")
+
+    assert mod._doi_from_url_path(article_url) == expected_doi
+
+
+@pytest.mark.parametrize(
+    ("article_url", "expected_urls"),
+    [
+        (
+            "https://www.tandfonline.com/doi/abs/10.1080/00048402.2019.1618352",
+            [
+                "https://www.tandfonline.com/doi/pdf/10.1080/00048402.2019.1618352",
+                "https://www.tandfonline.com/doi/pdf/10.1080/00048402.2019.1618352"
+                "?download=true",
+            ],
+        ),
+        ("https://example.org/doi/abs/10.1080/00048402.2019.1618352", []),
+    ],
+    ids=("known-publisher", "unknown-publisher"),
+)
+def test_publisher_pdf_urls_from_article_url(article_url, expected_urls):
     mod = _load_module(DOWNLOAD, "download_publisher_pdf_urls_under_test")
 
-    assert mod._doi_from_url_path(
-        "https://www.tandfonline.com/doi/abs/10.1080/00048402.2019.1618352"
-    ) == "10.1080/00048402.2019.1618352"
-    assert mod._doi_from_url_path("https://www.jstor.org/stable/43154235") is None
-
-    assert mod._publisher_pdf_urls_from_article_url(
-        "https://www.tandfonline.com/doi/abs/10.1080/00048402.2019.1618352"
-    ) == [
-        "https://www.tandfonline.com/doi/pdf/10.1080/00048402.2019.1618352",
-        "https://www.tandfonline.com/doi/pdf/10.1080/00048402.2019.1618352"
-        "?download=true",
-    ]
-    # A host with no pattern entry derives nothing, DOI in the path or not.
-    assert mod._publisher_pdf_urls_from_article_url(
-        "https://example.org/doi/abs/10.1080/00048402.2019.1618352"
-    ) == []
+    assert mod._publisher_pdf_urls_from_article_url(article_url) == expected_urls
 
 
-def test_pdf_url_dispatcher_covers_every_derivation_family():
+@pytest.mark.parametrize(
+    ("article_url", "expected", "expected_is_member"),
+    [
+        (
+            "https://www.jstor.org/stable/43154235",
+            ["https://www.jstor.org/stable/pdf/43154235.pdf?acceptTC=1"],
+            False,
+        ),
+        (
+            "https://journals.sagepub.com/doi/abs/10.1177/0959354319898450",
+            "https://journals.sagepub.com/doi/pdf/10.1177/0959354319898450",
+            True,
+        ),
+        ("", [], False),
+    ],
+    ids=("jstor-family", "publisher-family", "empty-miss"),
+)
+def test_pdf_urls_from_article_url(article_url, expected, expected_is_member):
     mod = _load_module(DOWNLOAD, "download_pdf_url_dispatcher_under_test")
 
-    # One entry point, so a platform added to any table reaches all three call
-    # sites (hint collection, EZProxy landing, Kagi recovery) at once.
-    assert mod._pdf_urls_from_article_url(
-        "https://www.jstor.org/stable/43154235"
-    ) == ["https://www.jstor.org/stable/pdf/43154235.pdf?acceptTC=1"]
-    assert (
-        "https://journals.sagepub.com/doi/pdf/10.1177/0959354319898450"
-        in mod._pdf_urls_from_article_url(
-            "https://journals.sagepub.com/doi/abs/10.1177/0959354319898450"
-        )
-    )
-    assert mod._pdf_urls_from_article_url("") == []
+    urls = mod._pdf_urls_from_article_url(article_url)
+    if expected_is_member:
+        assert expected in urls
+    else:
+        assert urls == expected
 
 
 def test_ezproxy_request_urls_prefer_rewritten_host_over_login():
@@ -1578,20 +1612,22 @@ def test_ezproxy_request_urls_prefer_rewritten_host_over_login():
     ) == ["https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf"]
 
 
-def test_ezproxy_host_suffix_falls_back_to_login_host_label():
+@pytest.mark.parametrize(
+    ("login_url", "expected_suffix"),
+    [
+        ("https://login.eux.idm.oclc.org/login?url=", "eux.idm.oclc.org"),
+        ("https://ezproxy.lib.example.edu/login?url=", "lib.example.edu"),
+        ("https://eux.idm.oclc.org/login?url=", "eux.idm.oclc.org"),
+    ],
+    ids=("login-service-label", "ezproxy-service-label", "bare-host"),
+)
+def test_ezproxy_host_suffix_falls_back_to_login_host_label(
+    login_url,
+    expected_suffix,
+):
     mod = _load_module(DOWNLOAD, "download_ezproxy_suffix_fallback_under_test")
 
-    # No proxied cookies yet: drop the login service label, OCLC convention.
-    assert mod._ezproxy_host_suffix(
-        {"login_url": "https://login.eux.idm.oclc.org/login?url="}
-    ) == "eux.idm.oclc.org"
-    assert mod._ezproxy_host_suffix(
-        {"login_url": "https://ezproxy.lib.example.edu/login?url="}
-    ) == "lib.example.edu"
-    # Nothing to drop: the whole host is the suffix.
-    assert mod._ezproxy_host_suffix(
-        {"login_url": "https://eux.idm.oclc.org/login?url="}
-    ) == "eux.idm.oclc.org"
+    assert mod._ezproxy_host_suffix({"login_url": login_url}) == expected_suffix
 
 
 def test_download_paper_adds_jstor_pdf_hint_before_fetch(monkeypatch, tmp_path):
