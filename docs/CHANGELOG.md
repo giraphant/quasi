@@ -2,7 +2,7 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
-- **Unreleased** (2026-08-04): **六种材料各自拥有固定 Workflow，通用 mode engine 正式退出。**
+- **0.65.1** (2026-08-05): **六种材料各自拥有固定 Workflow，通用 mode engine 正式退出。**
   - Author 现在通过 fresh exact status 组合 Paper/Book leaf；Topic 通过同样的 observation handshake 组合 Paper/Book/Talk，并把 Recall、稳定顺序的有界研究轮次、每项 admission checkpoint、三份产品的 owner-correct Audit/repair 收进 `workflows/topic.mjs`。两条外层 Skill 都只传 closed envelope、opaque continuation 与 typed gate，不再维护另一份业务状态机。
   - 删除无调用者的 `run-stage` source/bundle、universal catalog、dispatch wrapper，以及 single/batch/until compatibility mode。非公共 catalog 直接命名为 `scripts/schemas/operations.py`，其中 25 项事实型 `OPERATION_CATALOG` 只保存 operation 的 eligible kinds、phase、effect、Agent 与 artifact templates；不再保存阶段顺序、carry、alias、chain 或 next pointer。
   - 测试不为退休机制保留兼容博物馆：删除 88 项 mode tests 和重复 bundle harness，只迁移 chapter output testimony、Paper Acquire URL/diagnose、Stage host-stamp partition、四 terminal、Acquire branch-local fields 等仍承重的因果边界。六个生成 bundle 共用一个参数化 ABI harness；Topic 的恢复、gate、checkpoint 与去重仍由 18 条端到端因果 journey 保护。
