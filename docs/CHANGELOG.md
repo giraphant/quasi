@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.3** (2026-08-05): **一次性旧 Chapter manifest 迁移退出运行时。**
+  - 撤回 0.65.2 为单边页码旧 manifest 添加的自动重建分支：已有 manifest 只要不满足当前成对页码契约，extractor 就以 `manifest_page_range_invalid` 阻断并保持原文件，不再绕过完整校验进入 staged replacement。
+  - 当前 TOC / pattern producer 继续写出完整 `start_page` / `end_page`，status 与 Workflow 继续使用同一条严格谓词；变化只删除历史产物的永久兼容路径。旧 generation 若确实存在，作为一次性数据清理后从 exact source 重跑。
+
 - **0.65.2** (2026-08-05): **三处已验证的 Workflow 摩擦点回到各自 owner。**
   - Paper/Book Acquire 不再把一次写入效果同时编码为 `write_state` 与 `disposition`：前者现在是唯一 effect testimony，已核验的既有 source 可用 `source:"existing_file"` + `not_written` 完成，不会再因冗余字段矛盾停住。
   - Chapter manifest 的页码对规则收回 schema，并由 status 与 extractor 共用；同请求、ownership-safe 的旧单边 range manifest 会在既有锁和 manifest-last transaction 内完整重建，其他不安全或变更状态仍阻断。
