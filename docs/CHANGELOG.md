@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.4** (2026-08-05): **Book Prepare 的三个边界回到已知事实。**
+  - 一次真实运行已经从 PDF TOC 正确发布 11 章，却因 specialist 把 `artifacts[].path` 回显为绝对路径而被 Workflow 判成 `incoherent_complete`。Book Prepare 的 StructuredOutput 现在直接要求非空 project-relative artifact path，让 provider 在同一输出回合修正 bookkeeping；host 仍按 exact refs 做最终成员校验，不偷偷转换路径。
+  - 删除该 generation 后的下一次运行把 `source.txt` 误作 `quasi-extract split` 输入，pattern 因同时命中目录与正文的 Chapter 9 产生重复 slot。Book Prepare request 现在只把 exact accepted PDF 与 OCR recovery PDF 渲染为 split 的位置参数；normalized text 仍可供阅读，但不再伪装成切分来源。
+  - 私有 staging manifest 在 publish 前被校验拒绝时，durable outcome 明确是未发布，因此回执改为 `failed/known`；既有 canonical manifest 的损坏仍保持 `blocked/unknown`。没有新增重试、兼容读取、清理命令、隐藏状态或书名特例，也没有放松 duplicate-slot / manifest 校验。
+
 - **0.65.3** (2026-08-05): **一次性旧 Chapter manifest 迁移退出运行时。**
   - 撤回 0.65.2 为单边页码旧 manifest 添加的自动重建分支：已有 manifest 只要不满足当前成对页码契约，extractor 就以 `manifest_page_range_invalid` 阻断并保持原文件，不再绕过完整校验进入 staged replacement。
   - 当前 TOC / pattern producer 继续写出完整 `start_page` / `end_page`，status 与 Workflow 继续使用同一条严格谓词；变化只删除历史产物的永久兼容路径。旧 generation 若确实存在，作为一次性数据清理后从 exact source 重跑。
