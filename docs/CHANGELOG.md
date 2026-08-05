@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.5** (2026-08-05): **已处理的 Book 不再重进章节管道，本地翻译不再被死 generation 永久锁住。**
+  - Book Search 一旦给出已有 canonical owner，固定 Workflow 直接返回该 overview，不再继续 Acquire、Prepare 和 Audit。此前 Giddens 案例表面上停在旧 Chapter manifest，真正的问题是最初查重已经认出本地成品却仍继续处理；本轮把停止点放回 Search 的 owner testimony，不增加旧 manifest 兼容或自动清理。
+  - pdf2zh 的本地 writer 被宿主截断后只可能继续写自己的 fenced staging；新的 transaction 取得 canonical output lock 时，旧 transaction 已不可能发布。因此同请求的无 receipt fence 现在保留作诊断但不再阻止本地重启；远程 Immersive 的未知任务仍然阻断，避免重复创建和计费。
+  - Workflow 内 Bash 实测会在约两分钟截断长命令，即使调用方设置更长 timeout 或 tool-background。Translation Agent 现在以一个脱离宿主的进程运行翻译与 layout OCR，用短轮询等待真实 JSON receipt；宿主超时不再被误判成文本层损坏并触发 OCR 或第二个 writer。
+
 - **0.65.4** (2026-08-05): **Book Prepare 的三个边界回到已知事实。**
   - 一次真实运行已经从 PDF TOC 正确发布 11 章，却因 specialist 把 `artifacts[].path` 回显为绝对路径而被 Workflow 判成 `incoherent_complete`。Book Prepare 的 StructuredOutput 现在直接要求非空 project-relative artifact path，让 provider 在同一输出回合修正 bookkeeping；host 仍按 exact refs 做最终成员校验，不偷偷转换路径。
   - 删除该 generation 后的下一次运行把 `source.txt` 误作 `quasi-extract split` 输入，pattern 因同时命中目录与正文的 Chapter 9 产生重复 slot。Book Prepare request 现在只把 exact accepted PDF 与 OCR recovery PDF 渲染为 split 的位置参数；normalized text 仍可供阅读，但不再伪装成切分来源。
