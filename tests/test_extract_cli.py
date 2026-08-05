@@ -1263,7 +1263,7 @@ def test_book_identical_rerun_reconciles_without_rewriting(tmp_path: Path):
     assert (output / "manifest.json").stat().st_mtime_ns == manifest_mtime
 
 
-def test_book_identical_rerun_rebuilds_unpaired_page_range(tmp_path: Path):
+def test_book_identical_rerun_rejects_unpaired_page_range(tmp_path: Path):
     pdf = tmp_path / "book.pdf"
     output = tmp_path / "chapters"
     _book_pdf(pdf, ["one " * 20])
@@ -1276,15 +1276,19 @@ def test_book_identical_rerun_rebuilds_unpaired_page_range(tmp_path: Path):
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    manifest_before = manifest_path.read_bytes()
+    chapter_path = next(output.glob("*.txt"))
+    chapter_before = chapter_path.read_bytes()
 
     second = _run_manual(pdf, output, 1)
 
     receipt = json.loads(second.stdout)
-    row = receipt["chapters"][0]
-    assert second.returncode == 0, second.stderr
-    assert receipt["status"] == "ok"
-    assert receipt["disposition"] == "replaced"
-    assert row["start_page"] == row["end_page"] == 1
+    assert second.returncode == 1
+    assert receipt["status"] == "blocked"
+    assert receipt["failure"]["code"] == "manifest_page_range_invalid"
+    assert receipt["previous_manifest_preserved"] is True
+    assert manifest_path.read_bytes() == manifest_before
+    assert chapter_path.read_bytes() == chapter_before
 
 
 def test_book_two_process_same_output_race_has_one_generation(tmp_path: Path):
