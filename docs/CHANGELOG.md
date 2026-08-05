@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.2** (2026-08-05): **三处已验证的 Workflow 摩擦点回到各自 owner。**
+  - Paper/Book Acquire 不再把一次写入效果同时编码为 `write_state` 与 `disposition`：前者现在是唯一 effect testimony，已核验的既有 source 可用 `source:"existing_file"` + `not_written` 完成，不会再因冗余字段矛盾停住。
+  - Chapter manifest 的页码对规则收回 schema，并由 status 与 extractor 共用；同请求、ownership-safe 的旧单边 range manifest 会在既有锁和 manifest-last transaction 内完整重建，其他不安全或变更状态仍阻断。
+  - `collect-material` 对 typed gate 使用唯一的 `{material_key, operation, value}` 决策 wrapper，避免扩张为 per-gate catalogue；不增加 retry、replay、隐藏状态、推断 end page 或书名特例。
+
 - **0.65.1** (2026-08-05): **六种材料各自拥有固定 Workflow，通用 mode engine 正式退出。**
   - Author 现在通过 fresh exact status 组合 Paper/Book leaf；Topic 通过同样的 observation handshake 组合 Paper/Book/Talk，并把 Recall、稳定顺序的有界研究轮次、每项 admission checkpoint、三份产品的 owner-correct Audit/repair 收进 `workflows/topic.mjs`。两条外层 Skill 都只传 closed envelope、opaque continuation 与 typed gate，不再维护另一份业务状态机。
   - 删除无调用者的 `run-stage` source/bundle、universal catalog、dispatch wrapper，以及 single/batch/until compatibility mode。非公共 catalog 直接命名为 `scripts/schemas/operations.py`，其中 25 项事实型 `OPERATION_CATALOG` 只保存 operation 的 eligible kinds、phase、effect、Agent 与 artifact templates；不再保存阶段顺序、carry、alias、chain 或 next pointer。
