@@ -687,6 +687,7 @@ def _raise_if_ezproxy_login_page(final_url, login_url, content, history_len=0, h
 PUBLISHER_PDF_PATTERNS = [
     ("sagepub.com",          "/doi/pdf/{doi}"),
     ("oup.com",              "/doi/pdf/{doi}"),
+    ("wiley.com",            "/doi/pdf/{doi}"),
     ("wiley.com",            "/doi/pdfdirect/{doi}"),
     ("wiley.com",            "/doi/pdfdirect/{doi}?download=true"),
     ("tandfonline.com",      "/doi/pdf/{doi}"),
@@ -2065,6 +2066,7 @@ def find_wayback_url(doi):
         pdf_urls.append(f"https://www.journals.uchicago.edu/doi/pdf/{doi}")
         pdf_urls.append(f"https://www.journals.uchicago.edu/doi/pdf/{doi}?download=true")
     elif doi.startswith(("10.1002/", "10.1111/")):
+        pdf_urls.append(f"https://onlinelibrary.wiley.com/doi/pdf/{doi}")
         pdf_urls.append(f"https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}")
         pdf_urls.append(f"https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}?download=true")
     elif doi.startswith("10.1093/"):
@@ -2178,8 +2180,10 @@ _PUBLISHER_DIRECT_URLS = [
     ("10.1080/",  "https://www.tandfonline.com/doi/pdf/{doi}?download=true"),
     ("10.1177/",  "https://journals.sagepub.com/doi/pdf/{doi}"),
     ("10.1093/",  "https://academic.oup.com/doi/pdf/{doi}"),
+    ("10.1002/",  "https://onlinelibrary.wiley.com/doi/pdf/{doi}"),
     ("10.1002/",  "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}"),
     ("10.1002/",  "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}?download=true"),
+    ("10.1111/",  "https://onlinelibrary.wiley.com/doi/pdf/{doi}"),
     ("10.1111/",  "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}"),
     ("10.1111/",  "https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}?download=true"),
     ("10.1007/",  "https://link.springer.com/content/pdf/{doi}.pdf"),

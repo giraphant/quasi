@@ -639,6 +639,36 @@ def test_annualreviews_doi_has_ezproxy_and_direct_pdf_routes():
     ]
 
 
+def test_wiley_legacy_doi_prefers_crossref_pdf_route():
+    mod = _load_module(DOWNLOAD, "download_wiley_legacy_routes_under_test")
+    doi = "10.1111/j.2041-6962.1988.tb00448.x"
+    final_url = (
+        "https://onlinelibrary-wiley-com.eux.idm.oclc.org/doi/"
+        "10.1111/j.2041-6962.1988.tb00448.x"
+    )
+
+    proxied = mod._publisher_pdf_urls_from_article_url(final_url)
+    direct = [
+        pattern.format(doi=doi, suffix=doi.split("/", 1)[-1])
+        for prefix, pattern in mod._PUBLISHER_DIRECT_URLS
+        if doi.startswith(prefix)
+    ]
+
+    expected = [
+        f"https://onlinelibrary.wiley.com/doi/pdf/{doi}",
+        f"https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}",
+        f"https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}?download=true",
+    ]
+    assert proxied == [
+        url.replace(
+            "onlinelibrary.wiley.com",
+            "onlinelibrary-wiley-com.eux.idm.oclc.org",
+        )
+        for url in expected
+    ]
+    assert direct == expected
+
+
 def test_sciencedirect_article_url_detection_accepts_native_and_ezproxy_urls():
     mod = _load_module(DOWNLOAD, "download_sciencedirect_url_under_test")
 
