@@ -99,8 +99,9 @@ Paper, Talk, and Translation dispatch sequential owned operations. Book alone us
 host `pipeline()` to fan out manifest-listed chapters whose exact outputs are disjoint,
 then joins before synthesis. Any named entry may return `needs_observation` with exact
 routes and an opaque continuation; the Skill refreshes those routes and reinvokes that
-same entry while observations advance, stopping after two consecutive unchanged recovery
-observations for the same routes. A typed gate returns the current effective
+same entry. The complete returned status observations for the same routes advance only
+when they differ byte-for-byte; it stops after two consecutive byte-for-byte identical
+recovery observations. A typed gate returns the current effective
 `{route,seed,options}`; the caller obtains fresh exact status and adds only the new
 decision. Unknown writer outcomes stop instead of racing a second writer.
 

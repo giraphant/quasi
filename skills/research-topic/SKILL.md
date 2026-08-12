@@ -102,9 +102,10 @@ intake → exact Topic status → fixed Topic Workflow
    `child_observations` 为空，然后调用 `workflows/topic.mjs`。
 2. `needs_observation`：逐条运行返回 route 的 fresh exact status。Topic route 替换顶层
    `observation`；Paper/Book/Talk route 形成按 route 绑定的 `child_observations`。逐字复制
-   `resume_seed`，再次调用同一入口；不问用户、不附 decision。requested observations 有推进则继续；
-   相同 routes 的连续两次 recovery observations 都不变时，停止并报告最后的 typed result 与 exact
-   status。Skill 不检查材料或内部进度，也不引入 fingerprint、counter 或 retry controller。
+   `resume_seed`，再次调用同一入口；不问用户、不附 decision。对相同返回 routes 的完整 status
+   observations 逐字节比较：只有字节不同才算推进并继续；连续两次 recovery observations 字节完全
+   相同则停止，并报告最后的 typed result 与 exact status。Skill 不检查材料或内部进度，也不引入
+   fingerprint、counter 或 retry controller。
 3. child `needs_input`：只展示内层 gate 的 question、candidates、conflicts 与 evidence。用户回答后，
    重新运行结果所列全部 exact routes 和 Topic status；复制 opaque continuation，并按内层 gate
    原样 testimony 构造唯一的 typed `userDecision`。`material_key` 与 `operation` 逐字复制；

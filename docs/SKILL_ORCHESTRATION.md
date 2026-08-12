@@ -75,9 +75,10 @@ The public result is `quasi.material.result/0.1`:
 
 - `complete` — verify its exact canonical artifacts with fresh status;
 - `needs_observation` — fetch only the returned routes and reinvoke the same
-  entry with the unchanged continuation while observations advance; after two
-  consecutive unchanged recovery observations for the same routes, stop and
-  report the last typed result and exact status;
+  entry with the unchanged continuation; complete returned status observations
+  for the same routes advance only when they differ byte-for-byte; after two
+  consecutive byte-for-byte identical recovery observations, stop and report
+  the last typed result and exact status;
 - `needs_input` — present the typed gate, refresh its routes, and attach only the
   gate-owned decision;
 - `incomplete` — report Topic's ordered bounded pending work without calling it

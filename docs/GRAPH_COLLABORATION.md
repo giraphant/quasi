@@ -61,8 +61,9 @@ still running is provider-level correction, not a new operation dispatch.
 - Author composes Paper and Book plans. Topic composes Paper, Book, and Talk
   plans plus Topic-owned rows. Any named Workflow may request fresh exact host
   observations through `needs_observation`; the Skill copies the opaque continuation
-  back unchanged while observations advance, then stops after two consecutive unchanged
-  recovery observations for the same routes.
+  back unchanged. Complete returned status observations for the same routes advance only
+  when they differ byte-for-byte; it stops after two consecutive byte-for-byte identical
+  recovery observations.
 - Unknown writer outcomes stop. A `needs_observation` recovery refreshes status for the
   same Workflow; it never blindly replays the writer.
 - A Skill may run different top-level material Workflows concurrently after

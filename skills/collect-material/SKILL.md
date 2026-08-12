@@ -204,9 +204,10 @@ Author → exact Author status → discover/freeze → exact child status batch
    - `needs_observation`：不展示问题；对返回的每条 `routes` 做 fresh exact status，逐字复制 opaque
      `resume_seed`，并重新调用同一 named Workflow。direct leaf 用
      `resume_seed.{seed,options}` 与一条 fresh route observation 重建普通 closed input；Author 保持
-     exact child observation array 的 composed input。requested observations 有推进则继续；相同
-     routes 的连续两次 recovery observations 都不变时，停止并报告最后的 typed result 与 exact
-     status。Skill 不检查章节或其它内部进度，也不引入 fingerprint、counter 或 retry controller。
+     exact child observation array 的 composed input。对相同返回 routes 的完整 status observations
+     逐字节比较：只有字节不同才算推进并继续；连续两次 recovery observations 字节完全相同则停止，
+     并报告最后的 typed result 与 exact status。Skill 不检查章节或其它内部进度，也不引入
+     fingerprint、counter 或 retry controller。
    - `blocked|failed`：展示 issue 与 observation request（若有）并停止；不自动改写或重发。
 
 ```python
