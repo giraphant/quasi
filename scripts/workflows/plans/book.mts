@@ -449,9 +449,7 @@ async function runBookPlanResult(
 
   const admittedCanonical =
     input.seed.state === "canonical" &&
-    ((input.userDecision === null &&
-      input.seed.material_slug === input.seed.identity.slug) ||
-      bookObservationAdmitsIdentity(initialObservation, input.seed.identity));
+    bookObservationAdmitsIdentity(initialObservation, input.seed.identity);
   const searchKey = `book:${requestedSlug}`;
   const matchedDecision =
     input.userDecision?.material_key === searchKey &&

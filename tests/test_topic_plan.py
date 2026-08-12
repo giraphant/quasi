@@ -17,6 +17,8 @@ from test_material_plans import (
     audit_complete,
     book_observation,
     book_prepare_structure_gate,
+    book_search_complete,
+    book_search_needs_input,
     book_structure_decision,
     paper_observation,
     prepare_complete,
@@ -652,12 +654,14 @@ def test_topic_zero_bound_gates_provisional_seed_but_runs_canonical_book() -> No
         ),
         [
             recall_complete(),
+            book_search_complete(),
             book_prepare_structure_gate(),
         ],
     )
 
     assert [call["request"]["operation"] for call in canonical["calls"]] == [
         "topic.recall",
+        "material.search",
         "book.prepare",
     ]
     assert canonical["result"]["terminal"] == "needs_input"
@@ -681,9 +685,14 @@ def test_topic_lifts_partial_book_observation_request() -> None:
             seeds=[book_seed()],
             children=[(route, observation)],
         ),
-        [recall_complete(), "__throw__"],
+        [recall_complete(), book_search_complete(), "__throw__"],
     )
 
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "topic.recall",
+        "material.search",
+        "chapter.analyse",
+    ]
     assert report["result"]["terminal"] == "needs_observation"
     assert report["result"]["routes"] == [route]
     assert report["result"]["resume_seed"]["leaf"]["route"] == route
@@ -741,7 +750,7 @@ def test_topic_explicit_seed_keeps_effective_leaf_and_never_replays_after_gates(
     }
 
     book_status = book_observation("exact-book", source_format="pdf", admitted=True)
-    structure_gated = run_topic(
+    book_gated = run_topic(
         topic_input(
             observation=starting,
             seeds=[paper_seed()],
@@ -751,11 +760,39 @@ def test_topic_explicit_seed_keeps_effective_leaf_and_never_replays_after_gates(
             ],
             resume={"resume_seed": routed["result"]["resume_seed"]},
         ),
-        [recall_complete(), book_prepare_structure_gate()],
+        [recall_complete(), book_search_needs_input()],
+    )
+    first_book_gate = book_gated["result"]["gate"]["gate"]
+    assert first_book_gate["kind"] == "identity_conflict"
+    first_book_leaf = deepcopy(book_gated["result"]["resume_seed"]["leaf"])
+
+    book_decision = {
+        "material_key": first_book_gate["material_key"],
+        "operation": first_book_gate["operation"],
+        "value": {
+            "candidates": first_book_gate["candidates"],
+            "conflicts": first_book_gate["conflicts"],
+            "selected_candidate": first_book_gate["candidates"][0],
+        },
+    }
+    structure_gated = run_topic(
+        topic_input(
+            observation=starting,
+            seeds=[paper_seed()],
+            children=[
+                ({"kind": "paper", "slug": "exact-paper"}, paper_observation("exact-paper")),
+                ({"kind": "book", "slug": "exact-book"}, book_status),
+            ],
+            resume={
+                "resume_seed": book_gated["result"]["resume_seed"],
+                "userDecision": book_decision,
+            },
+        ),
+        [recall_complete(), book_search_complete(), book_prepare_structure_gate()],
     )
 
     assert structure_gated["result"]["gate"]["gate"]["kind"] == "book_structure"
-    assert structure_gated["result"]["resume_seed"]["leaf"] == routed["result"]["resume_seed"]["leaf"]
+    assert structure_gated["result"]["resume_seed"]["leaf"] == first_book_leaf
     assert structure_gated["result"]["resume_seed"]["member_route"] == {
         "kind": "paper", "slug": "exact-paper"
     }

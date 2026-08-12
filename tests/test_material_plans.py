@@ -1891,9 +1891,15 @@ def test_book_fresh_status_dispatches_only_unusable_chapters() -> None:
     )
     report = run_book(
         value,
-        [chapter_complete(), book_synthesise_complete(), audit_complete()],
+        [
+            book_search_complete(),
+            chapter_complete(),
+            book_synthesise_complete(),
+            audit_complete(),
+        ],
     )
 
+    assert report["calls"][0]["request"]["operation"] == "material.search"
     chapter_calls = [
         call for call in report["calls"]
         if call["request"]["operation"] == "chapter.analyse"
@@ -3120,9 +3126,13 @@ def test_author_lifts_partial_book_observation_request() -> None:
             [author_member(route, route, identity)],
             [(route, observation)],
         ),
-        ["__throw__"],
+        [book_search_complete(identity), "__throw__"],
     )
 
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search",
+        "chapter.analyse",
+    ]
     assert report["result"]["terminal"] == "needs_observation"
     assert report["result"]["routes"] == [route]
     assert report["result"]["resume_seed"]["members"][0]["leaf"]["route"] == route
