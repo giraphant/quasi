@@ -363,6 +363,19 @@ const composeChildren = async (
       member.leaf = outcome.continuation as AuthorLeafContinuation;
       const result = outcome.result;
 
+      if (result.terminal === "needs_observation") {
+        const continuation = resumeSeed(
+          input.resumeSeed.seed,
+          input.resumeSeed.options,
+          members,
+          decisionMember,
+        );
+        return needsObservationMaterialResult(
+          resultSeed(input.resumeSeed.seed),
+          uniqueRoutes(members),
+          continuation,
+        );
+      }
       if (result.terminal === "needs_input") {
         if (
           !("resume_seed" in result) ||

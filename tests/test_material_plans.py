@@ -3097,3 +3097,32 @@ def test_author_unknown_child_outcome_stops_before_later_members_or_writers() ->
     ]
     assert report["result"]["terminal"] == "blocked"
     assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"
+
+
+def test_author_lifts_partial_book_observation_request() -> None:
+    identity = book_identity("book-one", "Book One")
+    route = {"kind": "book", "slug": "book-one"}
+    observation = book_observation(
+        "book-one",
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(True, False),
+        overview=False,
+        admitted=True,
+    )
+    observation["identity"] = {
+        "title": identity["title"],
+        "authors": identity["authors"],
+        "year": identity["year"],
+    }
+    report = run_author(
+        author_compose_input(
+            [author_member(route, route, identity)],
+            [(route, observation)],
+        ),
+        ["__throw__"],
+    )
+
+    assert report["result"]["terminal"] == "needs_observation"
+    assert report["result"]["routes"] == [route]
+    assert report["result"]["resume_seed"]["members"][0]["leaf"]["route"] == route

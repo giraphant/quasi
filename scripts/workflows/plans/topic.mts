@@ -589,6 +589,15 @@ const processLeafContinuation = async (
   const outcome = await runLeaf(runtime, input, continuation.leaf, userDecision);
   let current = updatedLeafContinuation(continuation, outcome.leaf);
   const result = outcome.result;
+  if (result.terminal === "needs_observation")
+    return {
+      result: needsObservationMaterialResult(
+        resultSeed(input),
+        [current.leaf.route],
+        current,
+      ),
+      receipt: null,
+    };
   if (result.terminal === "needs_input") {
     if (
       !("resume_seed" in result) ||
