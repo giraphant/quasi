@@ -332,7 +332,9 @@ git commit -m "fix: lift book recovery through compositions"
 - Consumes: any valid `needs_observation` MaterialResult with exact `routes` and opaque `resume_seed`.
 - Produces: fresh exact observations passed back to the same named Workflow; a user-visible stop after two consecutive unchanged recovery observations.
 
-- [ ] **Step 1: Run the existing orchestration contract tests before documentation changes**
+- [ ] **Step 1: Record the observed RED behavior and run existing contracts**
+
+Use the reported 13-input/11-output Book incident as the pre-change pressure scenario: the Workflow returned a typed stop and the outer Agent reported the Book pending instead of obtaining fresh status and resuming the two missing chapters. Record that concrete behavior as the Skill RED evidence; do not invent an additional synthetic failure.
 
 Run:
 
@@ -340,7 +342,7 @@ Run:
 pytest tests/test_skill_orchestration.py tests/test_material_result.py -q
 ```
 
-Expected: PASS. These tests protect headings, shared terminal names, and cross-file contract coherence without snapshotting prose.
+Expected: PASS. These tests protect headings, shared terminal names, and cross-file contract coherence without snapshotting prose; the production incident supplies the behavior-level RED.
 
 - [ ] **Step 2: Generalize the Skill rule in prose**
 
@@ -370,6 +372,17 @@ pytest tests/test_dead_names.py tests/test_skill_orchestration.py tests/test_mat
 ```
 
 Expected: PASS.
+
+Then pressure-test the edited executing Skill in a fresh Agent context with this exact scenario:
+
+```text
+A Book Workflow returns needs_observation with one exact Book route and an
+opaque Book resume_seed after 11/13 chapter outputs are usable. No user gate is
+present. State exactly what the Skill main process does next. Then the same
+route status is byte-for-byte unchanged twice. State where it stops.
+```
+
+Expected behavior: it runs fresh exact status without asking the user, copies the opaque leaf continuation into the same Book entry, repeats while observations advance, and stops after the second consecutive unchanged recovery observation. The answer must not inspect chapter identities or propose a retry controller.
 
 - [ ] **Step 5: Commit Task 3 hunks only**
 
