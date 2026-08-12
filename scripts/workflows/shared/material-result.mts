@@ -115,6 +115,10 @@ export type HigherOrderObservationResumeSeed =
   | AuthorResumeSeed
   | TopicResumeSeed;
 
+export type ObservationResumeSeed =
+  | LeafResumeSeed
+  | HigherOrderObservationResumeSeed;
+
 export type HigherOrderChildResumeSeed =
   | AuthorResumeSeed
   | Extract<TopicResumeSeed, { kind: "seed_child" | "material_work" }>;
@@ -160,7 +164,7 @@ export type MaterialResult =
       terminal: "needs_observation";
       issue: null;
       routes: ObservationRoute[];
-      resume_seed: HigherOrderObservationResumeSeed;
+      resume_seed: ObservationResumeSeed;
     })
   | (MaterialResultBase & {
       terminal: "incomplete";
@@ -216,7 +220,7 @@ export const needsInputMaterialResult = (
 export const needsObservationMaterialResult = (
   seed: MaterialResultSeed,
   routes: ObservationRoute[],
-  resumeSeed: HigherOrderObservationResumeSeed,
+  resumeSeed: ObservationResumeSeed,
 ): MaterialResult => ({
   ...materialBase(seed),
   terminal: "needs_observation",

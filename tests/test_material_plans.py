@@ -1818,8 +1818,10 @@ def test_book_chapter_join_settles_all_and_unknown_dominates() -> None:
         call["request"]["operation"] == "chapter.analyse"
         for call in report["calls"]
     )
-    assert report["result"]["terminal"] == "blocked"
-    assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"
+    assert report["result"]["terminal"] == "needs_observation"
+    assert report["result"]["routes"] == [
+        {"kind": "book", "slug": "exact-book"}
+    ]
     assert report["remaining"] == 0
 
     first_blocked = chapter_blocked()
@@ -1842,6 +1844,64 @@ def test_book_chapter_join_settles_all_and_unknown_dominates() -> None:
         call["request"]["operation"] == "chapter.analyse"
         for call in ordered["calls"]
     )
+
+
+def test_book_unknown_chapter_requests_fresh_book_observation() -> None:
+    value = canonical_book_input(
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(False, False),
+    )
+    report = run_book(value, [chapter_complete(), "__throw__"])
+
+    assert report["result"]["terminal"] == "needs_observation"
+    assert report["result"]["routes"] == [
+        {"kind": "book", "slug": "exact-book"}
+    ]
+    assert report["result"]["resume_seed"] == {
+        "route": {"kind": "book", "slug": "exact-book"},
+        "seed": value["seed"],
+        "options": {},
+    }
+
+
+def test_book_incoherent_chapter_requests_fresh_book_observation() -> None:
+    value = canonical_book_input(
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(False, False),
+    )
+    report = run_book(
+        value,
+        [chapter_complete(), chapter_complete(reconciled=True)],
+    )
+
+    assert report["result"]["terminal"] == "needs_observation"
+    assert report["result"]["routes"] == [
+        {"kind": "book", "slug": "exact-book"}
+    ]
+
+
+def test_book_fresh_status_dispatches_only_unusable_chapters() -> None:
+    value = canonical_book_input(
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(True, False),
+        overview=False,
+    )
+    report = run_book(
+        value,
+        [chapter_complete(), book_synthesise_complete(), audit_complete()],
+    )
+
+    chapter_calls = [
+        call for call in report["calls"]
+        if call["request"]["operation"] == "chapter.analyse"
+    ]
+    assert [call["request"]["output"]["path"] for call in chapter_calls] == [
+        "vault/books/exact-book/ch02-closing.md"
+    ]
+    assert report["result"]["terminal"] == "complete"
 
 
 def test_book_repairs_a_newly_written_chapter_once_then_reaudits() -> None:

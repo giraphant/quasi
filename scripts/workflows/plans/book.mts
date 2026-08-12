@@ -32,6 +32,7 @@ import type { MaterialRuntime } from "../shared/host-runtime.mts";
 import {
   blockedMaterialResult,
   completeMaterialResult,
+  needsObservationMaterialResult,
   needsInputMaterialResult,
   stoppedMaterialResult,
   type ComposedLeafResumeSeed,
@@ -448,7 +449,9 @@ async function runBookPlanResult(
 
   const admittedCanonical =
     input.seed.state === "canonical" &&
-    bookObservationAdmitsIdentity(initialObservation, input.seed.identity);
+    ((input.userDecision === null &&
+      input.seed.material_slug === input.seed.identity.slug) ||
+      bookObservationAdmitsIdentity(initialObservation, input.seed.identity));
   const searchKey = `book:${requestedSlug}`;
   const matchedDecision =
     input.userDecision?.material_key === searchKey &&
@@ -687,29 +690,43 @@ async function runBookPlanResult(
     meta: state.identity,
     materialKey: `book:${slug}`,
   };
-  const preparedChapters = chapters.map((chapter) =>
-    prepareOperation({
-      operation: "chapter.analyse",
-      slug,
-      label: `${slug}:analyse:${chapter.slug}`,
-      context: {
-        ...common,
-        chapter,
-        outputExists: observedOutputs.has(
-          bookChapterOutputPath(slug, chapter),
-        ),
-      },
-    }),
-  );
+  rememberContinuation(resumeSeed(input, state));
+  const preparedChapters = chapters
+    .filter((chapter) => {
+      const observedChapter = state.observation?.facts.chapters.find(
+        ({ output }) => output.path === bookChapterOutputPath(slug, chapter),
+      );
+      return observedChapter?.output.usable !== true;
+    })
+    .map((chapter) =>
+      prepareOperation({
+        operation: "chapter.analyse",
+        slug,
+        label: `${slug}:analyse:${chapter.slug}`,
+        context: {
+          ...common,
+          chapter,
+          outputExists: observedOutputs.has(
+            bookChapterOutputPath(slug, chapter),
+          ),
+        },
+      }),
+    );
   const outcomes = await runtime.pipeline(
     preparedChapters,
     (operation) => dispatchPreparedOperation(runtime, operation),
   );
-  const unknown = outcomes.find(
-    (outcome) => outcome.kind === "unknown_outcome",
+  const observationRequired = outcomes.find(
+    (outcome) =>
+      outcome.kind === "unknown_outcome" ||
+      outcome.kind === "incoherent_complete",
   );
-  if (unknown !== undefined)
-    return blockedMaterialResult(resultSeed(state), unknown.issue);
+  if (observationRequired !== undefined)
+    return needsObservationMaterialResult(
+      resultSeed(state),
+      [{ kind: "book", slug }],
+      resumeSeed(input, state),
+    );
   for (const outcome of outcomes) {
     const stop = stopForOutcome(state, outcome);
     if (stop !== null) return stop;
