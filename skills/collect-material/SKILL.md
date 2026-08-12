@@ -95,7 +95,7 @@ seed；严格 hint、identity、owner 与路径验证只由 TypeScript entry par
 `quasi.material.result/0.1`。Skill 不保存 cursor、内部结果列表或第二份材料状态。
 
 - `complete`：`issue:null`，带 canonical material、exact artifacts、以及 nullable typed `next`。
-- `needs_observation`：只用于高阶组合，带 exact `routes` 与 opaque `resume_seed`；自动补观察，不问用户。
+- `needs_observation`：带 exact `routes` 与 opaque `resume_seed`；自动补观察，不问用户。
 - `needs_input`：leaf 带 leaf-owned `resume_seed{route,seed,options}`；Author 带原样 child gate、完整
   refresh routes 与 opaque Author resume seed。展示后停止这条材料。
 - `blocked|failed`：展示 typed issue 后停止；不自动重放 writer。
@@ -155,9 +155,11 @@ workflow_input = {
 }
 ```
 
-当 Author 返回 `needs_observation` 时，Skill 只按 `routes` 并发运行 exact Paper/Book status，
-保持 route 绑定和顺序，并用 `{observation, resume_seed, child_observations}` 重新调用 Author。
-`resume_seed` 始终逐字复制，不在 Skill 中展开或修改 membership。
+`needs_observation` 时，Skill 对每条返回 route 运行 fresh exact status，并把 `resume_seed`
+逐字复制后重新调用同一 named Workflow。direct leaf resume 从
+`resume_seed.{seed,options}` 和一条 fresh route observation 重建其普通 closed input；Author
+保持 `{observation, resume_seed, child_observations}` 的 composed input，并保持 route 绑定和顺序。
+Skill 不展开或修改 opaque seed，也不解释 membership。
 
 ## 工作流
 
@@ -199,8 +201,12 @@ Author → exact Author status → discover/freeze → exact child status batch
      Translation 的 `target_language` 逐字取自 route。Author 只展示外层 child gate 内的问题，
      收到答案后 refresh 返回的全部 `routes`，复制 opaque resume seed，并只附一个 typed decision。
      不要复用原 seed 或自行重建 canonical identity。
-   - `needs_observation`：不展示问题；只 refresh 返回的全部 `routes`，复制 opaque resume seed，
-     构造 exact child observation array 后重新调用同一 Author entry。
+   - `needs_observation`：不展示问题；对返回的每条 `routes` 做 fresh exact status，逐字复制 opaque
+     `resume_seed`，并重新调用同一 named Workflow。direct leaf 用
+     `resume_seed.{seed,options}` 与一条 fresh route observation 重建普通 closed input；Author 保持
+     exact child observation array 的 composed input。requested observations 有推进则继续；相同
+     routes 的连续两次 recovery observations 都不变时，停止并报告最后的 typed result 与 exact
+     status。Skill 不检查章节或其它内部进度，也不引入 fingerprint、counter 或 retry controller。
    - `blocked|failed`：展示 issue 与 observation request（若有）并停止；不自动改写或重发。
 
 ```python
@@ -230,10 +236,11 @@ workflow_input["userDecision"] = user_decision
 ## 断点续跑
 
 普通重跑从用户输入重新构造初始 seed；leaf gate 重跑只消费该次 `needs_input` 返回的
-`resume_seed`。Author 的 observation 或 gate 重跑按返回的完整 routes 做 fresh status，并把
-opaque capsule 原样放回同一 named Workflow；只有 gate 重跑附本次一个新 decision。它是 caller-owned one-shot
-continuation，不是 JS cursor、旧 receipt、specialist trace、decision log 或第二份材料状态。
-未知 writer/Audit outcome 保持 stopped；不要把文件存在重新解释成 clean success。
+`resume_seed`。任何当前 `needs_observation` 或 Author gate 重跑按返回的完整 routes 做 fresh
+status，并把 opaque capsule 原样放回同一 named Workflow；只有 gate 重跑附本次一个新 decision。
+它是 caller-owned one-shot continuation，不是 JS cursor、旧 receipt、specialist trace、decision
+log 或第二份材料状态。未知 writer/Audit outcome 保持 stopped；不要把文件存在重新解释成 clean
+success，也不要盲重放 writer。
 
 ## 输出
 

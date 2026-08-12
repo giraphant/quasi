@@ -68,14 +68,16 @@ workflows/topic.mjs
 ```
 
 Paper, Book, Talk, and Translation receive a closed seed/options envelope plus
-one exact status observation. Author and Topic may additionally return exact
-routes for host observation and an opaque one-item continuation.
+one exact status observation. Any named entry may return exact routes for host
+observation and an opaque one-item continuation.
 
 The public result is `quasi.material.result/0.1`:
 
 - `complete` — verify its exact canonical artifacts with fresh status;
 - `needs_observation` — fetch only the returned routes and reinvoke the same
-  entry with the unchanged continuation;
+  entry with the unchanged continuation while observations advance; after two
+  consecutive unchanged recovery observations for the same routes, stop and
+  report the last typed result and exact status;
 - `needs_input` — present the typed gate, refresh its routes, and attach only the
   gate-owned decision;
 - `incomplete` — report Topic's ordered bounded pending work without calling it
@@ -117,9 +119,10 @@ inside a Workflow, using one host pipeline over disjoint chapter outputs. Topic
 uses stable sequential work with immediate outline checkpoints; Author composes
 its frozen child list sequentially.
 
-Unknown writer outcomes stop the invocation. Resume begins with fresh exact
-status and, only when returned, the current opaque continuation. Do not add
-automatic retry, lock, reservation, completed-prefix, or replay machinery.
+Unknown writer outcomes stop the invocation. A `needs_observation` result is not an
+unknown writer outcome: the Skill resumes it with fresh exact status and the current
+opaque continuation, but never blindly replays a writer. Do not add automatic retry,
+lock, reservation, completed-prefix, or replay machinery.
 
 ## Review checklist
 

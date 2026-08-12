@@ -97,7 +97,10 @@ that testimony to one material-level terminal, and returns
 `quasi.material.result/0.1`; the Skill never selects a Stage or consumes a Stage receipt.
 Paper, Talk, and Translation dispatch sequential owned operations. Book alone uses the
 host `pipeline()` to fan out manifest-listed chapters whose exact outputs are disjoint,
-then joins before synthesis. A typed gate returns the current effective
+then joins before synthesis. Any named entry may return `needs_observation` with exact
+routes and an opaque continuation; the Skill refreshes those routes and reinvokes that
+same entry while observations advance, stopping after two consecutive unchanged recovery
+observations for the same routes. A typed gate returns the current effective
 `{route,seed,options}`; the caller obtains fresh exact status and adds only the new
 decision. Unknown writer outcomes stop instead of racing a second writer.
 
