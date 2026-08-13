@@ -37,6 +37,16 @@ def frontmatter(path: Path) -> dict[str, object]:
     return value
 
 
+def markdown_table_row(path: Path, label: str) -> str:
+    match = re.search(
+        rf"^\|\s*{re.escape(label)}\s*\|\s*(.*?)\s*\|$",
+        path.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert match, f"{path} has no table row for {label}"
+    return match.group(1)
+
+
 def collect_material_leaf_workflow_manifest() -> dict[str, dict[str, object]]:
     path = ROOT / "skills" / "collect-material" / "SKILL.md"
     text = path.read_text(encoding="utf-8")
@@ -179,6 +189,16 @@ def test_webpage_agent_exposes_only_read_and_bash() -> None:
     path = ROOT / "agents" / "webpage-agent.md"
     assert path.is_file()
     assert frontmatter(path)["tools"] == "Read, Bash"
+
+
+def test_webpage_public_documentation_limits_capture_to_macos_11_or_newer() -> None:
+    capability = markdown_table_row(ROOT / "README.md", "`collect-material`")
+    assert "公共网页" in capability
+    assert re.search(r"macOS\s+11\+", capability)
+
+    cli = markdown_table_row(ROOT / "docs" / "ARCHITECTURE.md", "`quasi-webpage`")
+    assert "capture" in cli
+    assert re.search(r"macOS\s+11\+", cli)
 
 
 def test_collect_material_routes_leaf_kinds_to_generated_named_entries() -> None:

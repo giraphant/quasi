@@ -12,7 +12,7 @@ PDF 翻译、讲座转写和草稿定稿。
 
 | Skill | 用途 |
 |---|---|
-| `collect-material` | 保存一个公共网页;收集并分析一本书 / 一篇论文 / 一位作者 / 一场讲座;处理已有 PDF;PDF 翻译 |
+| `collect-material` | 保存一个公共网页（捕获仅支持 macOS 11+）;收集并分析一本书 / 一篇论文 / 一位作者 / 一场讲座;处理已有 PDF;PDF 翻译 |
 | `research-topic` | 界定一个研究主题并迭代研究:vault 召回、文献发现、网络证据卡、研究大纲与综合 |
 | `finalise-draft` | 草稿定稿:逐节校对、引文语境审查、生成 references.bib |
 

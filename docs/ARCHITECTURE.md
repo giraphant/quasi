@@ -40,7 +40,7 @@ separate:
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
 | `quasi-status` | read-only disk oracle: `--kind paper|book|talk|author|topic|webpage --slug SLUG --json`; Translation additionally requires `--target-language TAG`; `--scan --json` |
 | `quasi-transcribe` | `run|classify|silent` talk transcript engines |
-| `quasi-webpage` | `inspect|capture|extract` one exact public webpage |
+| `quasi-webpage` | `inspect|capture|extract` one exact public webpage; capture requires macOS 11+ |
 | `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write`; `talk compress-media`; `vault resolve` |
 | `quasi-doctor` | runtime healthcheck: venv sync, core Python deps, optional external tools by profile |
 | `quasi-translate` | configured `immersive|pdf2zh` PDF translation; shared alternating-page, TOC, ToUnicode, and coverage contract |
