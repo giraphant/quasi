@@ -238,6 +238,11 @@ def _webpage_row(
 
 
 def _resolve_webpage(root: Path, item: dict[str, Any], slug: str) -> dict[str, Any]:
+    if WEBPAGE_SLUG.fullmatch(slug) is None:
+        return _webpage_row(
+            slug=slug, vault_slug=None, path=None, root=root, suggested_slug=None,
+            error="webpage slug must be canonical ASCII kebab (1..80 characters)",
+        )
     raw_url = item.get("url")
     try:
         url = normalize_web_url(raw_url) if isinstance(raw_url, str) else None

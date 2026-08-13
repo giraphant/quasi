@@ -515,3 +515,18 @@ def test_webpage_resolver_suggests_deterministic_slug_for_different_owner(tmp_pa
 
     assert row["vault_slug"] is None
     assert row["suggested_slug"] == "proposed-slug-2476c9de"
+
+
+def test_webpage_resolver_rejects_an_unsafe_requested_slug(tmp_path: Path) -> None:
+    (row,) = run_resolve(
+        tmp_path,
+        [{"kind": "webpage", "slug": "../escape", "url": "https://example.org/page"}],
+    )["resolved"]
+
+    assert row["kind"] == "webpage"
+    assert row["slug"] == "../escape"
+    assert row["vault_slug"] is None
+    assert row["path"] is None
+    assert row["match"] is None
+    assert row["suggested_slug"] is None
+    assert "error" in row

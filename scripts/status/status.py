@@ -23,6 +23,7 @@ if str(PLUGIN_ROOT) not in sys.path:
 from scripts.schemas.operations import OPERATION_CATALOG  # noqa: E402
 from scripts.schemas.chapter_manifest import valid_chapter_page_pair  # noqa: E402
 from scripts.schemas.topic import TopicSchema  # noqa: E402
+from scripts.schemas.webpage import WebpageSchema  # noqa: E402
 from scripts.translate.translate_commit import (  # noqa: E402
     TranslateContractError,
     output_paths,
@@ -223,21 +224,18 @@ def webpage_frontmatter_identity(
     slug: str, frontmatter: dict[str, Any] | None
 ) -> dict[str, str] | None:
     """Project a valid Webpage canonical identity, defaulting an omitted site to host."""
-    if not isinstance(frontmatter, dict) or frontmatter.get("type") != "webpage":
-        return None
-    title = frontmatter.get("title")
-    raw_url = frontmatter.get("url")
-    if not isinstance(title, str) or not title.strip() or not isinstance(raw_url, str):
+    try:
+        webpage = WebpageSchema.model_validate(frontmatter)
+    except (TypeError, ValueError):
         return None
     try:
-        url = normalize_web_url(raw_url)
+        url = normalize_web_url(webpage.url)
     except ValueError:
         return None
-    raw_site = frontmatter.get("site")
-    site = raw_site.strip() if isinstance(raw_site, str) else ""
+    site = webpage.site or ""
     if not site:
         site = urlsplit(url).hostname or ""
-    return webpage_identity(slug, title, url, site)
+    return webpage_identity(slug, webpage.title, url, site)
 
 
 def _frontmatter_captured_at(value: Any) -> str | None:
@@ -680,6 +678,28 @@ def children(directory: Path) -> list[Path]:
         return []
 
 
+def safe_contained_directory(root: Path, path: Path) -> bool:
+    """Require every named scan ancestor to be a real directory inside root."""
+    try:
+        relative_path = path.relative_to(root)
+    except ValueError:
+        return False
+    current = root
+    for part in relative_path.parts:
+        current /= part
+        try:
+            mode = current.lstat().st_mode
+        except OSError:
+            return False
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            return False
+    try:
+        path.resolve(strict=True).relative_to(root.resolve(strict=True))
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def valid_slug(value: str) -> bool:
     return SLUG.fullmatch(value) is not None
 
@@ -750,6 +770,8 @@ def scan_status(root: Path) -> dict[str, Any]:
         (root / "vault" / "webpages", "webpage.md"),
         (root / "processing" / "webpages", "source.md"),
     ):
+        if not safe_contained_directory(root, directory):
+            continue
         for entry in children(directory):
             if not valid_slug(entry.name):
                 continue

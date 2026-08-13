@@ -74,3 +74,49 @@ Result: `47 passed` (the same five third-party warnings).
 None. The test runner emits five unrelated Python runtime deprecation warnings
 from installed binary dependencies; they are present on both RED and GREEN
 runs and do not originate in this change.
+
+## Fix round 1
+
+Addressed exactly the three reviewer findings:
+
+- Webpage resolver now rejects a requested slug that fails the existing
+  canonical-kebab regex, returning a closed error row with no suggestion.
+- Canonical Webpage frontmatter is now validated by `WebpageSchema` before it
+  can supply identity or pass coherence; strict typed optional fields and
+  forbidden extras therefore make the artifact unusable.
+- Webpage scan roots must now have a contained, no-symlink directory ancestry
+  before enumeration, so external artifacts behind a symlinked root are not
+  discovered.
+
+### RED
+
+Before the fixes, I ran:
+
+```sh
+CLAUDE_PLUGIN_DATA=/private/tmp/quasi-sdd-webpage-data /private/tmp/quasi-sdd-webpage-data/.venv/bin/python -m pytest tests/test_vault_resolve.py tests/test_status_cli.py -q -k 'unsafe_requested_slug or outside_the_webpage_schema or symlinked_webpage_root'
+```
+
+Result: `3 failed, 47 deselected` (plus the same five third-party warnings).
+The failures were the expected assertion failures: `../escape` was suggested,
+an unknown canonical frontmatter field remained usable, and a symlinked
+`vault/webpages` root exposed an external webpage scan row.
+
+### GREEN
+
+Focused command after the fixes:
+
+```sh
+CLAUDE_PLUGIN_DATA=/private/tmp/quasi-sdd-webpage-data /private/tmp/quasi-sdd-webpage-data/.venv/bin/python -m pytest tests/test_vault_resolve.py tests/test_status_cli.py -q -k 'unsafe_requested_slug or outside_the_webpage_schema or symlinked_webpage_root'
+```
+
+Result: `3 passed, 47 deselected` (the same five warnings).
+
+Full relevant verification:
+
+```sh
+CLAUDE_PLUGIN_DATA=/private/tmp/quasi-sdd-webpage-data /private/tmp/quasi-sdd-webpage-data/.venv/bin/python -m pytest tests/test_vault_resolve.py tests/test_status_cli.py -q
+git diff --check
+```
+
+Result: `50 passed`; `git diff --check` passed. The five third-party warnings
+remain deferred as requested.

@@ -172,6 +172,45 @@ def test_webpage_status_keeps_snapshot_identity_when_canonical_disagrees(tmp_pat
     assert payload["identity"]["url"] == "https://example.org/page"
 
 
+def test_webpage_status_rejects_canonical_frontmatter_outside_the_webpage_schema(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "example-org-page"
+    write_webarchive(
+        project / "vault" / "webpages" / slug / "snapshot.webarchive",
+        url="https://example.org/page",
+    )
+    canonical = project / "vault" / "webpages" / slug / "webpage.md"
+    for invalid_field in ("authors: Ada", "unknown: value"):
+        write(
+            canonical,
+            webpage_canonical(url="https://example.org/page").replace(
+                "captured_at: 2026-08-13T12:34:56Z\n---",
+                f"captured_at: 2026-08-13T12:34:56Z\n{invalid_field}\n---",
+            ),
+        )
+
+        payload = json.loads(run_status(project, "--kind", "webpage", "--slug", slug, "--json").stdout)
+
+        assert payload["facts"]["canonical"]["present"] is True
+        assert payload["facts"]["canonical"]["usable"] is False
+
+
+def test_status_scan_rejects_a_symlinked_webpage_root(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    external = tmp_path / "external-webpages"
+    write_webarchive(
+        external / "escaped-page" / "snapshot.webarchive",
+        url="https://example.org/escaped",
+    )
+    (project / "vault").mkdir()
+    (project / "vault" / "webpages").symlink_to(external, target_is_directory=True)
+
+    payload = json.loads(run_status(project, "--scan", "--json").stdout)
+
+    assert not [item for item in payload["items"] if item["kind"] == "webpage"]
+
+
 def test_empty_paper_status_is_one_closed_factual_observation(tmp_path: Path):
     project = tmp_path / "project"
     project.mkdir()
