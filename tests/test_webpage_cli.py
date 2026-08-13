@@ -2,10 +2,20 @@ from __future__ import annotations
 
 import plistlib
 import re
+import shutil
+import sys
+from hashlib import sha256
+from datetime import datetime, timezone
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from importlib import import_module
 from pathlib import Path
+from threading import Thread
 
 import pytest
+
+pytestmark = pytest.mark.filterwarnings(
+    r"ignore:urllib3 v2 only supports OpenSSL 1\.1\.1\+.*"
+)
 
 def webarchive_fixture_bytes(
     url: str,
@@ -45,6 +55,13 @@ def load_webarchive_module():
         return import_module("scripts.webpage.webarchive")
     except ModuleNotFoundError:
         pytest.fail("WebArchive capability package has not been implemented")
+
+
+def load_webpage_module():
+    try:
+        return import_module("scripts.webpage.webpage")
+    except ModuleNotFoundError:
+        pytest.fail("Webpage command capability has not been implemented")
 
 
 @pytest.mark.parametrize(
@@ -177,3 +194,163 @@ def test_webarchive_heading_nesting_leaves_fenced_code_unchanged() -> None:
     assert load_webarchive_module().nest_markdown_headings(markdown) == (
         "### Main\n#### Sub\n```python\n# literal\n## also literal\n```\n###### Deep\n"
     )
+
+
+def test_capture_publishes_verified_archive_with_capture_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    webpage = load_webpage_module()
+    output = tmp_path / "snapshot.webarchive"
+
+    def fake_capture(url: str, staging: Path):
+        staging.write_bytes(
+            webarchive_fixture_bytes(
+                url,
+                "<html><head><title>Example</title></head><body><main><p>"
+                "Saved page text.</p></main></body></html>",
+            )
+        )
+        return webpage.NativeResult(url, "Example", "example.org")
+
+    monkeypatch.setattr(webpage, "run_native_capture", fake_capture)
+
+    result = webpage.capture(
+        "https://example.org/",
+        "https://example.org/",
+        output,
+    )
+
+    assert result["schema_version"] == "quasi.webpage.capture/0.1"
+    assert result["status"] == "complete"
+    assert result["output_path"] == str(output)
+    assert result["final_url"] == "https://example.org/"
+    assert result["title"] == "Example"
+    assert result["site"] == "example.org"
+    assert result["write_state"] == "written"
+    assert result["size"] == output.stat().st_size
+    assert result["sha256"] == sha256(output.read_bytes()).hexdigest()
+    captured_at = datetime.fromisoformat(result["captured_at"].replace("Z", "+00:00"))
+    assert captured_at.tzinfo == timezone.utc
+    assert output.stat().st_mtime == captured_at.timestamp()
+
+
+def test_capture_final_url_mismatch_does_not_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    webpage = load_webpage_module()
+    output = tmp_path / "snapshot.webarchive"
+
+    def fake_capture(_url: str, staging: Path):
+        staging.write_bytes(
+            webarchive_fixture_bytes(
+                "https://other.example/",
+                "<html><body><main><p>Other text.</p></main></body></html>",
+            )
+        )
+        return webpage.NativeResult("https://other.example/", "Other", "Other")
+
+    monkeypatch.setattr(webpage, "run_native_capture", fake_capture)
+
+    result = webpage.capture(
+        "https://example.org/",
+        "https://example.org/",
+        output,
+    )
+
+    assert result["status"] == "failed"
+    assert result["issue"]["code"] == "webpage.capture_identity_changed"
+    assert not output.exists()
+
+
+def test_capture_never_overwrites_existing_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    webpage = load_webpage_module()
+    output = tmp_path / "snapshot.webarchive"
+    output.write_bytes(b"existing archive")
+
+    def forbidden_capture(_url: str, _staging: Path):
+        raise AssertionError("native capture must not run for an existing output")
+
+    monkeypatch.setattr(webpage, "run_native_capture", forbidden_capture)
+
+    result = webpage.capture(
+        "https://example.org/",
+        "https://example.org/",
+        output,
+    )
+
+    assert result["status"] == "failed"
+    assert result["issue"]["code"] == "webpage.output_exists"
+    assert output.read_bytes() == b"existing archive"
+
+
+def test_extract_command_exposes_saved_webarchive_projection(tmp_path: Path) -> None:
+    webpage = load_webpage_module()
+    snapshot = write_webarchive_fixture(
+        tmp_path,
+        url="https://example.org/saved",
+        html="<html><head><title>Saved</title></head><body><main><p>"
+        "Projection text from the snapshot.</p></main></body></html>",
+    )
+    output = tmp_path / "source.md"
+
+    result = webpage.extract(snapshot, output)
+
+    assert result == {
+        "schema_version": "quasi.webpage.extract/0.1",
+        "status": "complete",
+        "snapshot_path": str(snapshot),
+        "output_path": str(output),
+        "final_url": "https://example.org/saved",
+        "title": "Saved",
+        "site": "example.org",
+        "sha256": sha256(output.read_bytes()).hexdigest(),
+        "size": output.stat().st_size,
+        "write_state": "written",
+    }
+    assert "Projection text from the snapshot." in output.read_text()
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or shutil.which("swiftc") is None,
+    reason="requires macOS WebKit and swiftc",
+)
+def test_command_capture_smoke_preserves_loopback_subresources(tmp_path: Path) -> None:
+    webpage = load_webpage_module()
+    (tmp_path / "fixture.html").write_text(
+        "<html><head><title>Local fixture</title><link rel=\"stylesheet\" "
+        "href=\"/fixture.css\"></head><body><main><p>Local fixture content"
+        "</p><img src=\"/pixel.gif\"></main></body></html>",
+        encoding="utf-8",
+    )
+    (tmp_path / "fixture.css").write_text("body { color: black; }", encoding="utf-8")
+    (tmp_path / "pixel.gif").write_bytes(
+        b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02L\x01\x00;"
+    )
+
+    class QuietHandler(SimpleHTTPRequestHandler):
+        def log_message(self, _format: str, *_args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        lambda *args: QuietHandler(*args, directory=str(tmp_path)),
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/fixture.html"
+        inspected = webpage.inspect(url)
+        assert inspected["status"] == "complete"
+        captured = webpage.capture(url, inspected["final_url"], tmp_path / "snapshot.webarchive")
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+    assert captured["status"] == "complete"
+    archive = load_webarchive_module().read_webarchive(tmp_path / "snapshot.webarchive")
+    assert archive.url == inspected["final_url"]
+    assert "Local fixture content" in archive.html
+    assert any(url.endswith("/fixture.css") for url in archive.subresource_urls)
