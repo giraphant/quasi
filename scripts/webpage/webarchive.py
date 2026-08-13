@@ -88,7 +88,11 @@ class _MetadataParser(HTMLParser):
             self._in_title = True
         elif tag.lower() == "meta":
             attributes = {key.lower(): value for key, value in attrs}
-            if attributes.get("property", "").lower() == "og:site_name":
+            property_value = attributes.get("property")
+            if (
+                isinstance(property_value, str)
+                and property_value.lower() == "og:site_name"
+            ):
                 self.site = attributes.get("content") or self.site
 
     def handle_endtag(self, tag: str) -> None:

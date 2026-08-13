@@ -100,6 +100,26 @@ def test_webarchive_extraction_uses_saved_main_resource(tmp_path: Path) -> None:
     assert not re.search(r"^#{1,2} ", output.read_text(), re.MULTILINE)
 
 
+def test_webarchive_ignores_valueless_meta_property(tmp_path: Path) -> None:
+    snapshot = write_webarchive_fixture(
+        tmp_path,
+        url="https://example.org/page",
+        html="""<html><head><title>Saved title</title><meta property></head>
+        <body><main><p>This text remains extractable.</p></main></body></html>""",
+    )
+    output = tmp_path / "source.md"
+    capability = load_webarchive_module()
+
+    document = capability.read_webarchive(snapshot)
+    result = capability.extract_webarchive(snapshot, output)
+
+    assert document.title == "Saved title"
+    assert document.site == "example.org"
+    assert result.title == "Saved title"
+    assert result.site == "example.org"
+    assert "This text remains extractable." in output.read_text()
+
+
 def test_webarchive_rejects_a_credentialed_saved_url(tmp_path: Path) -> None:
     snapshot = write_webarchive_fixture(
         tmp_path,
