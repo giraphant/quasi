@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.6** (2026-08-13): **Book 的未知章节结果会先重新观察，再只补尚未完成的章节。**
+  - Chapter pipeline 遇到 `unknown_outcome` 或 receipt 跨字段不一致时，Book 返回 exact `needs_observation`；`collect-material` 对指定 route 重新运行 `quasi-status`，原样带回 continuation，并再次进入同一 Workflow。Author 与 Topic 只负责透传这个请求，不各自复制恢复控制器。
+  - 新观察只派发 `usable !== true` 的章节，已有 11/13 时只补剩余两章；相同 routes 的完整状态连续两次逐字节不变才停止。恢复不会在同一次 invocation 中盲重放未知 writer；无 overview 身份证据时仍先运行 `material.search`，避免为断点续跑放宽身份校验。
+  - Wiley 的旧 DOI 现在优先尝试 `/doi/pdf/{doi}`，再回退到 `pdfdirect`，覆盖旧文章只在兼容 PDF 路径可下载的情况。
+
 - **0.65.5** (2026-08-05): **已处理的 Book 不再重进章节管道，本地翻译不再被死 generation 永久锁住。**
   - Book Search 一旦给出已有 canonical owner，固定 Workflow 直接返回该 overview，不再继续 Acquire、Prepare 和 Audit。此前 Giddens 案例表面上停在旧 Chapter manifest，真正的问题是最初查重已经认出本地成品却仍继续处理；本轮把停止点放回 Search 的 owner testimony，不增加旧 manifest 兼容或自动清理。
   - pdf2zh 的本地 writer 被宿主截断后只可能继续写自己的 fenced staging；新的 transaction 取得 canonical output lock 时，旧 transaction 已不可能发布。因此同请求的无 receipt fence 现在保留作诊断但不再阻止本地重启；远程 Immersive 的未知任务仍然阻断，避免重复创建和计费。
