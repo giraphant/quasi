@@ -198,3 +198,50 @@ uncooperative metadata timeout still returns the exact closed timeout result.
 Only native terminal settlement, its test-only contention seam, the focused
 test, and this report section changed. Publication and staging behavior are
 unchanged.
+
+## Fix round 3 — executable CLI shim
+
+### Cause and change
+
+`bin/quasi-webpage` was tracked as mode `100644`, unlike the active
+`bin/quasi-*` shims. Direct invocation of the documented bare command therefore
+failed with permission denied on POSIX. This round changes only its tracked file
+mode to `100755`; the shim content and all production logic are unchanged.
+
+### TDD evidence
+
+RED command against `78ad9af` before the mode correction:
+
+```bash
+CLAUDE_PLUGIN_DATA=/private/tmp/quasi-sdd-webpage-data /private/tmp/quasi-sdd-webpage-data/.venv/bin/python -m pytest tests/test_webpage_cli.py -q -k 'quasi_webpage_shim_is_publicly_executable_on_posix'
+```
+
+Outcome: `1 failed, 18 deselected in 0.04s`. The collected POSIX test observed
+mode `0644` and failed because none of the public execute bits were set.
+
+GREEN focused command after `chmod 755 bin/quasi-webpage`:
+
+```bash
+CLAUDE_PLUGIN_DATA=/private/tmp/quasi-sdd-webpage-data /private/tmp/quasi-sdd-webpage-data/.venv/bin/python -m pytest tests/test_webpage_cli.py -q -k 'quasi_webpage_shim_is_publicly_executable_on_posix'
+```
+
+Outcome: `1 passed, 18 deselected in 0.03s`.
+
+### Final verification
+
+```bash
+CLAUDE_PLUGIN_DATA=/private/tmp/quasi-sdd-webpage-data /private/tmp/quasi-sdd-webpage-data/.venv/bin/python -m pytest tests/test_webpage_cli.py -q
+bash -n bin/quasi-webpage
+git diff --check
+git diff --summary
+```
+
+Outcome: `19 passed in 4.82s`; shell syntax and whitespace checks succeeded.
+`git diff --summary` reported exactly `mode change 100644 => 100755
+bin/quasi-webpage`.
+
+### Scope review
+
+Only the POSIX executable-bit regression test, this report section, and the
+tracked mode change are included. README and architecture documentation were
+not touched.

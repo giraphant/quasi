@@ -5,6 +5,7 @@ import os
 import plistlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -66,6 +67,14 @@ def load_webpage_module():
         return import_module("scripts.webpage.webpage")
     except ModuleNotFoundError:
         pytest.fail("Webpage command capability has not been implemented")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable bits are unavailable")
+def test_quasi_webpage_shim_is_publicly_executable_on_posix() -> None:
+    shim = Path("bin/quasi-webpage")
+
+    assert shim.is_file()
+    assert stat.S_IMODE(shim.stat().st_mode) & 0o111 == 0o111
 
 
 @pytest.mark.parametrize(
