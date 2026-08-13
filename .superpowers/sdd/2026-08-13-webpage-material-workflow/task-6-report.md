@@ -119,3 +119,52 @@ Generated outputs:
 ## Concerns
 
 None.
+
+## Fix round 1: regenerate prepared text after a new snapshot
+
+The review found that Capture could replace a missing snapshot while an older
+`source.md` remained usable in the entry observation. Prepare then reconciled
+that stale projection instead of regenerating it from the newly captured
+WebArchive, and Analyse could stamp the new `captured_at` over old content.
+
+### RED
+
+Added the exact `snapshot=false, prepared=true, canonical=true` journey and
+ran it against `b15d16f`:
+
+```sh
+python3 -m pytest tests/test_webpage_plan.py -q -k 'new_snapshot_invalidates'
+```
+
+Result: `1 failed, 14 deselected`. The collected assertion showed Prepare's
+`output_observation.usable` was `true` instead of the required `false`.
+Capture, Prepare, Analyse, and Audit were already dispatched in the correct
+order, so the failure isolated the stale projection's write/reconcile branch.
+
+### Fix
+
+When this invocation created the snapshot, `prepareForAnalysis` now passes the
+existing prepared observation with its exact path and `present` value intact
+but forces `usable:false`. This selects the existing Prepare row's writer
+branch and regenerates `source.md`. All other durable-skip behavior is
+unchanged; no general invalidation mechanism was added.
+
+### GREEN and verification
+
+```sh
+python3 -m pytest tests/test_webpage_plan.py -q -k 'new_snapshot_invalidates'
+# 1 passed, 14 deselected
+
+python3 -m pytest tests/test_webpage_plan.py -q
+# 15 passed
+
+npm run build:workflows
+python3 -m pytest tests/test_material_result.py tests/test_webpage_plan.py tests/test_workflow_entries.py -q -k 'webpage'
+# 32 passed, 83 deselected
+
+npm run check:workflows
+git diff --check
+```
+
+All verification commands exited successfully. The generated change is
+limited to `workflows/webpage.mjs`. No concerns remain.

@@ -157,7 +157,9 @@ const prepareForAnalysis = async (
     snapshotObservation: snapshotCreated
       ? { path: snapshotPath, present: true, usable: true }
       : input.observation.facts.snapshot,
-    outputObservation: input.observation.facts.prepared,
+    outputObservation: snapshotCreated
+      ? { ...input.observation.facts.prepared, usable: false }
+      : input.observation.facts.prepared,
   });
   const stop = stopForOutcome(slug, prepared, true, identity);
   if (stop !== null) return stop;

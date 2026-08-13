@@ -263,6 +263,33 @@ def test_webpage_empty_status_runs_linear_pipeline() -> None:
     ]
 
 
+def test_webpage_new_snapshot_invalidates_an_older_prepared_projection() -> None:
+    report = run_webpage(
+        canonical_webpage_input(prepared=True, canonical=True),
+        [
+            capture_complete(),
+            prepare_complete(),
+            analyse_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    assert operation_names(report) == [
+        "webpage.capture",
+        "webpage.prepare",
+        "webpage.analyse",
+        "webpage.audit",
+    ]
+    prepare_request = report["calls"][1]["request"]
+    assert prepare_request["output_observation"] == {
+        "path": f"processing/webpages/{SLUG}/source.md",
+        "present": True,
+        "usable": False,
+    }
+    assert report["calls"][2]["request"]["mode"] == "repair"
+    assert report["result"]["terminal"] == "complete"
+
+
 @pytest.mark.parametrize(
     ("input_value", "outputs", "expected_operations"),
     [
