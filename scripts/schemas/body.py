@@ -32,6 +32,7 @@ BlockKind = Literal[
     "definition-list",    # **term**: description
     "h3-project-tabs",    # H2 下分 H3,H3 是 project 子节(reader 渲染为 tabs)
     "h3-sections",        # H2 下分 H3,H3 是原文小节(reader 渲染为流式 sub-headings)
+    "freeform",           # 已知 H2 内任意非空 Markdown 形状
     "mixed",              # 容忍混合,长期靠 autofix 收敛
 ]
 
@@ -448,6 +449,29 @@ TALK_BODY = BodySchema(
                 "时间戳取自 transcript,反引号必须按字面保留在输出里(播放器定位依赖它);"
                 "超过一小时用 `[h:mm:ss]`"
             ),
+        ),
+    ],
+)
+
+
+WEBPAGE_BODY = BodySchema(
+    type_name="webpage",
+    artifact_schema_version="quasi.artifact.webpage/0.1",
+    path_pattern="vault/webpages/{slug}/webpage.md",
+    identity_fields=["title", "url", "site"],
+    h1="使用 frontmatter.title",
+    sections=[
+        BodySection(
+            h2="Summary",
+            kind="paragraph",
+            required=True,
+            description="简要说明页面内容、论点及其知识库价值",
+        ),
+        BodySection(
+            h2="Content",
+            kind="freeform",
+            required=True,
+            description="逐字保留 source.md 的完整清洗后正文；内部标题从 H3 开始",
         ),
     ],
 )

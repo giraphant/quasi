@@ -596,6 +596,35 @@ export const TranscriptSchema = z.object({
 - frontmatter 只允许 `type` / `title` / `talk`
 - 正文自由格式,不校验 H2 schema
 
+---
+
+### 3.11 `webpage`
+
+已捕获 HTTP(S) 网页的语义分析页，原始快照与清洗正文由工作流保存，
+不进入 frontmatter。
+
+```ts
+export const WebpageSchema = z.object({
+  type:        z.literal('webpage'),
+  title:       Title,
+  url:         WebURL,                 // credential-free HTTP(S) URL
+  captured_at: DateTime,                // UTC, whole-second precision
+  authors:     z.array(Name).optional(),
+  published:   Date.optional(),
+  site:        ShortString.optional(),
+  themes:      z.array(z.string()).optional(),
+  topics:      z.array(z.string()).optional(),
+  rating:      Rating.optional(),
+}).strict();
+```
+
+**规则**:
+- canonical path: `vault/webpages/{slug}/webpage.md`
+- `url` 只接受不含凭据的 `http` 或 `https` URL；canonical URL normalization 属于 capture capability
+- `captured_at` 必须为 UTC 且精确至秒
+- 正文先写一个 H1，再按顺序包含必填 `## Summary` 与 `## Content`；`Content` 可保留原始页面的内部 Markdown 结构，内部标题从 H3 开始
+- `snapshot`、`format`、`sha256`、`bytes` 等技术采集字段不属于网页的语义 frontmatter
+
 ## 4. Body Schemas(正文结构 schema)
 
 ### 4.1 概念
@@ -605,7 +634,7 @@ vault 中每个文件除了 frontmatter("硬属性"),还有正文 markdown("软�
 
 - H2 标题即"判别符"(类似 frontmatter `type` 字段)
 - H2 之下的 markdown 内容有**期望的 block 形状**(`kind`):`paragraph` / `bullet-list` /
-  `numbered-list` / `table` / `blockquote-list` / `definition-list` / `h3-project-tabs`
+  `numbered-list` / `table` / `blockquote-list` / `definition-list` / `h3-project-tabs` / `freeform`
 - lint 只检查 **(a) 必填 H2 存在 (b) 形状匹配**,**不查字数 / 语义**
 - reader 可按 kind **类型化渲染**:table 显示交互表;blockquote 显示引用卡片;
   bullet-list 显示可点击 chips
@@ -621,6 +650,7 @@ type BlockKind =
   | 'blockquote-list'        // 多个 `> quote`
   | 'definition-list'        // **term**: description 模式
   | 'h3-project-tabs'        // H2 下分 H3,每个 H3 是一个 project 子节(reader 渲染为 tabs)
+  | 'freeform'               // 已知 H2 内任意非空 Markdown 形状
   | 'mixed';                 // 杂(暂时容忍,长期靠 autofix 收敛)
 ```
 

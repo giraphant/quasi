@@ -260,6 +260,14 @@ def check_body(body: str, body_schema: BodySchema) -> list[dict]:
                     "expected": expected,
                     "detected": detected,
                 })
+        elif expected == "freeform":
+            if detected == "empty":
+                violations.append({
+                    "kind": "block_kind_mismatch",
+                    "h2": section.h2,
+                    "expected": expected,
+                    "detected": detected,
+                })
         elif detected not in (expected, "empty"):
             violations.append({
                 "kind": ("block_kind_mismatch_soft" if detected == "mixed"

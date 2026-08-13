@@ -14,6 +14,7 @@ from .paper import PaperSchema
 from .talk import TalkSchema
 from .topic import TopicSchema
 from .transcript import TranscriptSchema
+from .webpage import WebpageSchema
 from .body import (
     BlockKind,
     BodySection,
@@ -28,6 +29,7 @@ from .body import (
     TALK_BODY,
     TOPIC_BODY,
     TRANSCRIPT_BODY,
+    WEBPAGE_BODY,
 )
 from .registry import (
     TYPE_REGISTRY,
@@ -45,12 +47,12 @@ __all__ = [
     # frontmatter schemas
     "AuthorSchema", "BookSchema", "ChapterSchema",
     "ImageSchema", "JournalSchema", "NoteSchema", "PaperSchema",
-    "TalkSchema", "TopicSchema", "TranscriptSchema",
+    "TalkSchema", "TopicSchema", "TranscriptSchema", "WebpageSchema",
     # body
     "BlockKind", "BodySection", "BodySchema",
     "AUTHOR_BODY", "BOOK_BODY", "CHAPTER_BODY",
     "IMAGE_BODY", "JOURNAL_BODY", "NOTE_BODY", "PAPER_BODY",
-    "TALK_BODY", "TOPIC_BODY", "TRANSCRIPT_BODY",
+    "TALK_BODY", "TOPIC_BODY", "TRANSCRIPT_BODY", "WEBPAGE_BODY",
     # registry
     "TYPE_REGISTRY", "TYPE_ALIASES", "DEPRECATED_TYPE_ALIASES",
     "canonical_type", "deprecated_canonical_type", "schema_for_type",

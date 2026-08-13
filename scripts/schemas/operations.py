@@ -1,6 +1,44 @@
 """Canonical operation identity and artifact templates."""
 
 OPERATION_CATALOG = {
+    "webpage.identify": {
+        "kinds": ["webpage"],
+        "phase": "Search",
+        "effect": "readonly",
+        "agent": "quasi:webpage-agent",
+        "artifacts": {},
+    },
+    "webpage.capture": {
+        "kinds": ["webpage"],
+        "phase": "Acquire",
+        "effect": "writer",
+        "agent": "quasi:webpage-agent",
+        "artifacts": {"snapshot": "vault/webpages/{slug}/snapshot.webarchive"},
+    },
+    "webpage.prepare": {
+        "kinds": ["webpage"],
+        "phase": "Prepare",
+        "effect": "writer",
+        "agent": "quasi:webpage-agent",
+        "artifacts": {
+            "snapshot": "vault/webpages/{slug}/snapshot.webarchive",
+            "output": "processing/webpages/{slug}/source.md",
+        },
+    },
+    "webpage.analyse": {
+        "kinds": ["webpage"],
+        "phase": "Analyse",
+        "effect": "writer",
+        "agent": "quasi:analyse-agent",
+        "artifacts": {"output": "vault/webpages/{slug}/webpage.md"},
+    },
+    "webpage.audit": {
+        "kinds": ["webpage"],
+        "phase": "Audit",
+        "effect": "writer",
+        "agent": "quasi:audit-agent",
+        "artifacts": {"target": "vault/webpages/{slug}/webpage.md"},
+    },
     "material.search": {
         "kinds": ["paper", "book"],
         "phase": "Search",

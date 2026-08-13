@@ -15,6 +15,7 @@ from .paper import PaperSchema
 from .talk import TalkSchema
 from .topic import TopicSchema
 from .transcript import TranscriptSchema
+from .webpage import WebpageSchema
 from .body import (
     BodySchema,
     AUTHOR_BODY,
@@ -27,6 +28,7 @@ from .body import (
     TALK_BODY,
     TOPIC_BODY,
     TRANSCRIPT_BODY,
+    WEBPAGE_BODY,
 )
 
 
@@ -41,6 +43,7 @@ TYPE_REGISTRY: dict[str, tuple[Type[BaseModel], BodySchema]] = {
     "talk":       (TalkSchema,       TALK_BODY),
     "topic":      (TopicSchema,      TOPIC_BODY),
     "transcript": (TranscriptSchema, TRANSCRIPT_BODY),
+    "webpage":   (WebpageSchema,   WEBPAGE_BODY),
 }
 
 
