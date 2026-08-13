@@ -147,3 +147,54 @@ succeeded.
 Only the native timeout mechanism, its Python watchdog removal, the focused
 native test seam, and this report changed. No capture publication behavior,
 fallback, retry, background worker, or workflow/status surface was broadened.
+
+## Fix round 2 — single terminal settlement
+
+### Cause and change
+
+The round-1 `DispatchWorkItem.cancel()` call was not serialized with the
+deadline work item starting. If the deadline began as `loadOnce` completed,
+both paths could write JSON, producing duplicate or interleaved terminal output
+before the timeout exits.
+
+`TerminalArbiter` is the sole terminal boundary now. It guards a settled flag
+with `NSLock`; timeout, success, typed failure, and unexpected failure all call
+`settle`. The winner alone emits one JSON object and, for a failure, exits
+nonzero. A losing timeout cannot write after a successful settlement, and a
+losing successful/failed continuation cannot write after the independently
+executing timeout has settled. This preserves the round-1 full-operation
+deadline without detached work, a retry, or an added background process.
+
+The test-only `terminal-race` mode starts concurrent success and timeout
+contenders behind the same semaphore. It is compiled only with
+`QUASI_WEBPAGE_TESTING` and does not affect the production helper surface.
+
+### TDD evidence
+
+RED command against `a01a5cf` before changing production code:
+
+```bash
+CLAUDE_PLUGIN_DATA=/private/tmp/quasi-sdd-webpage-data /private/tmp/quasi-sdd-webpage-data/.venv/bin/python -m pytest tests/test_webpage_cli.py -q -k 'terminal_race'
+```
+
+Outcome: `1 failed, 17 deselected in 1.01s`. The focused collected test invoked
+the test-only `terminal-race` seam, but the current helper rejected it with
+`webpage.invalid_arguments` and exit code 2. The assertion requiring a single
+success (0) or timeout (1) terminal failed, proving the current helper had no
+contended terminal settlement boundary.
+
+GREEN focused command:
+
+```bash
+CLAUDE_PLUGIN_DATA=/private/tmp/quasi-sdd-webpage-data /private/tmp/quasi-sdd-webpage-data/.venv/bin/python -m pytest tests/test_webpage_cli.py -q -k 'terminal_race or native_timeout_wins'
+```
+
+Outcome: `2 passed, 16 deselected in 2.11s`. The forced concurrent contenders
+produce exactly one parseable JSON line with the matching exit status, and the
+uncooperative metadata timeout still returns the exact closed timeout result.
+
+### Scope review
+
+Only native terminal settlement, its test-only contention seam, the focused
+test, and this report section changed. Publication and staging behavior are
+unchanged.

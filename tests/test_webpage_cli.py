@@ -427,3 +427,55 @@ def test_native_timeout_wins_when_metadata_never_returns(tmp_path: Path) -> None
         "code": "webpage.capture_timeout",
         "message": "page capture exceeded 60 seconds",
     }
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or shutil.which("swiftc") is None,
+    reason="requires macOS WebKit and swiftc",
+)
+def test_native_terminal_race_emits_exactly_one_terminal_json(tmp_path: Path) -> None:
+    binary = tmp_path / "webpage-terminal-race-test"
+    subprocess.run(
+        [
+            shutil.which("swiftc"),
+            "-D",
+            "QUASI_WEBPAGE_TESTING",
+            "-O",
+            "-parse-as-library",
+            "-framework",
+            "WebKit",
+            "scripts/webpage/webpage_capture.swift",
+            "-o",
+            str(binary),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    completed = subprocess.run(
+        [str(binary), "terminal-race"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+
+    lines = completed.stdout.splitlines()
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    if payload["status"] == "complete":
+        assert completed.returncode == 0
+        assert payload == {
+            "status": "complete",
+            "final_url": "https://example.org/",
+            "title": "Race success",
+            "site": "example.org",
+        }
+    else:
+        assert completed.returncode == 1
+        assert payload == {
+            "status": "failed",
+            "code": "webpage.capture_timeout",
+            "message": "page capture exceeded 60 seconds",
+        }

@@ -61,6 +61,25 @@ final class NavigationObserver: NSObject, WKNavigationDelegate {
 
 @main
 struct WebpageCapture {
+    final class TerminalArbiter {
+        private let lock = NSLock()
+        private var settled = false
+
+        func settle<T: Encodable>(_ payload: T, exitCode: Int) {
+            lock.lock()
+            guard !settled else {
+                lock.unlock()
+                return
+            }
+            settled = true
+            lock.unlock()
+            WebpageCapture.emit(payload)
+            if exitCode != 0 {
+                exit(Int32(exitCode))
+            }
+        }
+    }
+
     static func emit<T: Encodable>(_ payload: T) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -130,15 +149,15 @@ struct WebpageCapture {
         return 60_000
     }
 
-    static func timeoutWorkItem() -> DispatchWorkItem {
+    static func timeoutWorkItem(_ terminal: TerminalArbiter) -> DispatchWorkItem {
         let timeout = DispatchWorkItem {
-            emit(
+            terminal.settle(
                 ErrorPayload(
                     code: "webpage.capture_timeout",
                     message: "page capture exceeded 60 seconds"
-                )
+                ),
+                exitCode: 1
             )
-            exit(1)
         }
         DispatchQueue.main.asyncAfter(
             deadline: .now() + .milliseconds(deadlineMilliseconds()),
@@ -147,8 +166,53 @@ struct WebpageCapture {
         return timeout
     }
 
+    #if QUASI_WEBPAGE_TESTING
+    static func runTerminalRace() {
+        let terminal = TerminalArbiter()
+        let contenders = DispatchGroup()
+        let start = DispatchSemaphore(value: 0)
+        contenders.enter()
+        DispatchQueue.global().async {
+            start.wait()
+            terminal.settle(
+                ResultPayload(
+                    status: "complete",
+                    final_url: "https://example.org/",
+                    title: "Race success",
+                    site: "example.org",
+                    staging_path: nil
+                ),
+                exitCode: 0
+            )
+            contenders.leave()
+        }
+        contenders.enter()
+        DispatchQueue.global().async {
+            start.wait()
+            terminal.settle(
+                ErrorPayload(
+                    code: "webpage.capture_timeout",
+                    message: "page capture exceeded 60 seconds"
+                ),
+                exitCode: 1
+            )
+            contenders.leave()
+        }
+        start.signal()
+        start.signal()
+        contenders.wait()
+        exit(0)
+    }
+    #endif
+
     static func main() async {
         let arguments = CommandLine.arguments
+        #if QUASI_WEBPAGE_TESTING
+        if arguments.count == 2 && arguments[1] == "terminal-race" {
+            runTerminalRace()
+            return
+        }
+        #endif
         guard arguments.count == 3 || arguments.count == 4 else {
             emit(ErrorPayload(code: "webpage.invalid_arguments", message: "usage: webpage_capture inspect URL | capture URL STAGING_PATH"))
             exit(2)
@@ -164,20 +228,22 @@ struct WebpageCapture {
             emit(ErrorPayload(code: "webpage.invalid_arguments", message: "capture requires one staging path"))
             exit(2)
         }
-        let timeout = timeoutWorkItem()
+        let terminal = TerminalArbiter()
+        let timeout = timeoutWorkItem(terminal)
         do {
             let staging = mode == "capture" ? URL(fileURLWithPath: arguments[3]) : nil
             let result = try await loadOnce(url: url, staging: staging)
             timeout.cancel()
-            emit(result)
+            terminal.settle(result, exitCode: 0)
         } catch let error as HelperError {
             timeout.cancel()
-            emit(ErrorPayload(code: error.code, message: error.message))
-            exit(1)
+            terminal.settle(ErrorPayload(code: error.code, message: error.message), exitCode: 1)
         } catch {
             timeout.cancel()
-            emit(ErrorPayload(code: "webpage.capture_failed", message: error.localizedDescription))
-            exit(1)
+            terminal.settle(
+                ErrorPayload(code: "webpage.capture_failed", message: error.localizedDescription),
+                exitCode: 1
+            )
         }
     }
 }
