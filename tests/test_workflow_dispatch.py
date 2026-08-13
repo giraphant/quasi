@@ -162,6 +162,70 @@ def _context(**overrides: Any) -> dict[str, Any]:
 
 
 OPERATION_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
+    "webpage.identify": (
+        "webpage",
+        _context(
+            requestedUrl="https://example.org/requested",
+            localOwner=None,
+        ),
+    ),
+    "webpage.capture": (
+        "webpage",
+        _context(
+            identity={
+                "slug": "exact-material",
+                "title": "Exact page",
+                "url": "https://example.org/final",
+                "site": "Example",
+            },
+            snapshotObservation={
+                "path": "vault/webpages/exact-material/snapshot.webarchive",
+                "present": False,
+                "usable": False,
+            },
+        ),
+    ),
+    "webpage.prepare": (
+        "webpage",
+        _context(
+            snapshotObservation={
+                "path": "vault/webpages/exact-material/snapshot.webarchive",
+                "present": True,
+                "usable": True,
+            },
+            outputObservation={
+                "path": "processing/webpages/exact-material/source.md",
+                "present": False,
+                "usable": False,
+            },
+        ),
+    ),
+    "webpage.analyse": (
+        "webpage",
+        _context(
+            identity={
+                "slug": "exact-material",
+                "title": "Exact page",
+                "url": "https://example.org/final",
+                "site": "Example",
+            },
+            capturedAt="2026-08-13T12:34:56Z",
+            inputObservation={
+                "path": "processing/webpages/exact-material/source.md",
+                "sha256": "a" * 64,
+                "size": 42,
+            },
+            outputObservation={
+                "path": "vault/webpages/exact-material/webpage.md",
+                "exists": False,
+                "usable": False,
+            },
+        ),
+    ),
+    "webpage.audit": (
+        "webpage",
+        _context(target="vault/webpages/exact-material/webpage.md"),
+    ),
     "material.search": ("paper", _context()),
     "paper.acquire": ("paper", _context()),
     "paper.prepare": ("paper", _context()),
@@ -710,6 +774,173 @@ def test_local_catalogs_preserve_each_operation_identity_and_schema_partition():
             statuses.update(_terminal_statuses(prepared))
 
     assert statuses == {"complete", "needs_input", "blocked", "failed"}
+
+
+def test_webpage_descriptor_catalog_has_one_owned_output_per_producer() -> None:
+    catalog_path = ROOT / "scripts/workflows/operations/catalogs/webpage.mts"
+    assert catalog_path.is_file()
+
+    assert _prepare("webpage.identify")["writeTargets"] == []
+    assert _prepare("webpage.capture")["writeTargets"] == [
+        {
+            "scope": "exact",
+            "path": "vault/webpages/exact-material/snapshot.webarchive",
+        }
+    ]
+    assert _prepare("webpage.prepare")["writeTargets"] == [
+        {
+            "scope": "exact",
+            "path": "processing/webpages/exact-material/source.md",
+        }
+    ]
+    assert _prepare("webpage.analyse")["writeTargets"] == [
+        {
+            "scope": "exact",
+            "path": "vault/webpages/exact-material/webpage.md",
+        }
+    ]
+
+
+def test_webpage_identify_binds_an_optional_owner_to_the_returned_identity() -> None:
+    catalog_path = ROOT / "scripts/workflows/operations/catalogs/webpage.mts"
+    assert catalog_path.is_file()
+
+    matching = _dispatch(
+        {
+            "invocation": _invocation("webpage.identify"),
+            "model_output": {
+                "identity": {
+                    "slug": "exact-material",
+                    "title": "Exact page",
+                    "url": "https://example.org/final",
+                    "site": "Example",
+                },
+                "local_owner": {
+                    "slug": "exact-material",
+                    "path": "vault/webpages/exact-material/snapshot.webarchive",
+                },
+                "terminal": {"status": "complete", "issue": None},
+            },
+        }
+    )
+    mismatched = _dispatch(
+        {
+            "invocation": _invocation("webpage.identify"),
+            "model_output": {
+                "identity": {
+                    "slug": "exact-material",
+                    "title": "Exact page",
+                    "url": "https://example.org/final",
+                    "site": "Example",
+                },
+                "local_owner": {
+                    "slug": "other-owner",
+                    "path": "vault/webpages/other-owner/webpage.md",
+                },
+                "terminal": {"status": "complete", "issue": None},
+            },
+        }
+    )
+
+    assert matching["result"]["kind"] == "receipt"
+    assert mismatched["result"]["kind"] == "incoherent_complete"
+
+
+def test_webpage_capture_receipt_binds_the_exact_snapshot_and_capture_evidence() -> None:
+    catalog_path = ROOT / "scripts/workflows/operations/catalogs/webpage.mts"
+    assert catalog_path.is_file()
+
+    prepared = _prepare("webpage.capture")
+    schema = prepared["options"]["schema"]
+    assert schema["properties"]["title"]["minLength"] == 1
+    assert schema["properties"]["site"]["minLength"] == 1
+    assert schema["properties"]["captured_at"]["pattern"].endswith("Z$")
+    assert schema["properties"]["sha256"]["pattern"] == "^[a-f0-9]{64}$"
+    assert schema["properties"]["size"] == {"type": "integer", "minimum": 1}
+    assert prepared["stampedValues"] == {
+        "schema_version": "quasi.stage.receipt/0.3",
+        "operation": "webpage.capture",
+        "stage": "Acquire",
+        "material_key": "webpage:exact-material",
+        "effect": "writer",
+        "attempt": 1,
+        "snapshot_path": "vault/webpages/exact-material/snapshot.webarchive",
+        "final_url": "https://example.org/final",
+        "write_state": "written",
+    }
+
+
+@pytest.mark.parametrize(
+    ("output_usable", "write_state"),
+    [(False, "written"), (True, "not_written")],
+)
+def test_webpage_prepare_binds_observed_artifacts_and_its_single_effect_claim(
+    output_usable: bool,
+    write_state: str,
+) -> None:
+    catalog_path = ROOT / "scripts/workflows/operations/catalogs/webpage.mts"
+    assert catalog_path.is_file()
+
+    context = _context(
+        snapshotObservation={
+            "path": "vault/webpages/exact-material/snapshot.webarchive",
+            "present": True,
+            "usable": True,
+        },
+        outputObservation={
+            "path": "processing/webpages/exact-material/source.md",
+            "present": output_usable,
+            "usable": output_usable,
+        },
+    )
+    prepared = _prepare("webpage.prepare", context=context)
+    schema = prepared["options"]["schema"]
+    assert schema["properties"]["source_sha256"]["pattern"] == "^[a-f0-9]{64}$"
+    assert schema["properties"]["source_size"] == {"type": "integer", "minimum": 1}
+    assert prepared["stampedValues"]["snapshot_path"] == (
+        "vault/webpages/exact-material/snapshot.webarchive"
+    )
+    assert prepared["stampedValues"]["output_path"] == (
+        "processing/webpages/exact-material/source.md"
+    )
+    assert prepared["stampedValues"]["write_state"] == write_state
+    assert prepared["stampedValues"]["content_ready"] is True
+
+
+def test_webpage_analyse_receives_the_exact_projection_and_semantic_seed() -> None:
+    catalog_path = ROOT / "scripts/workflows/operations/catalogs/webpage.mts"
+    assert catalog_path.is_file()
+
+    request = _prompt_request(_prepare("webpage.analyse")["prompt"])
+    assert request["input"] == {
+        "role": "normalized_text",
+        "path": "processing/webpages/exact-material/source.md",
+        "sha256": "a" * 64,
+        "size": 42,
+    }
+    assert request["output"] == {
+        "role": "canonical",
+        "path": "vault/webpages/exact-material/webpage.md",
+    }
+    assert request["artifact_contract"]["artifact_type"] == "webpage"
+    assert request["frontmatter_seed"] == {
+        "type": "webpage",
+        "title": "Exact page",
+        "url": "https://example.org/final",
+        "site": "Example",
+        "captured_at": "2026-08-13T12:34:56Z",
+    }
+
+
+def test_webpage_audit_targets_only_the_canonical_page() -> None:
+    catalog_path = ROOT / "scripts/workflows/operations/catalogs/webpage.mts"
+    assert catalog_path.is_file()
+
+    request = _prompt_request(_prepare("webpage.audit")["prompt"])
+    assert request["target"] == {
+        "role": "canonical",
+        "path": "vault/webpages/exact-material/webpage.md",
+    }
 
 
 def test_material_search_stage_terminal_union_has_four_closed_branches() -> None:

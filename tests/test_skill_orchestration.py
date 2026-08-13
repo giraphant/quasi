@@ -175,6 +175,12 @@ def test_frontmatter_descriptions_are_nonempty_single_line_strings() -> None:
         assert "\n" not in value and "\r" not in value, path
 
 
+def test_webpage_agent_exposes_only_read_and_bash() -> None:
+    path = ROOT / "agents" / "webpage-agent.md"
+    assert path.is_file()
+    assert frontmatter(path)["tools"] == "Read, Bash"
+
+
 def test_collect_material_routes_leaf_kinds_to_generated_named_entries() -> None:
     manifest = collect_material_leaf_workflow_manifest()
     assert manifest == {

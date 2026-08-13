@@ -75,6 +75,7 @@ const ARTIFACT_CONTRACTS = [
   { type: "chapter", exportName: "CHAPTER_ARTIFACT_CONTRACT" },
   { type: "book", exportName: "BOOK_ARTIFACT_CONTRACT" },
   { type: "talk", exportName: "TALK_ARTIFACT_CONTRACT" },
+  { type: "webpage", exportName: "WEBPAGE_ARTIFACT_CONTRACT" },
 ];
 
 const generatedArtifactContractModule =

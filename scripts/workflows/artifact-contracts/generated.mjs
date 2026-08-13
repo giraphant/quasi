@@ -1142,6 +1142,189 @@ export const TALK_ARTIFACT_CONTRACT = {
   "schema_version": "quasi.artifact.talk/0.1"
 };
 
+export const WEBPAGE_ARTIFACT_CONTRACT = {
+  "artifact_type": "webpage",
+  "document": {
+    "additional_h2": false,
+    "evidence_rules": [],
+    "h1": "使用 frontmatter.title",
+    "metadata_lines": [],
+    "section_order": [
+      "Summary",
+      "Content"
+    ],
+    "sections": [
+      {
+        "description": "简要说明页面内容、论点及其知识库价值",
+        "h2": "Summary",
+        "kind": "paragraph",
+        "required": true
+      },
+      {
+        "description": "逐字保留 source.md 的完整清洗后正文；内部标题从 H3 开始",
+        "h2": "Content",
+        "kind": "freeform",
+        "required": true
+      }
+    ]
+  },
+  "frontmatter": {
+    "field_order": [
+      "type",
+      "title",
+      "url",
+      "captured_at",
+      "authors",
+      "published",
+      "site",
+      "themes",
+      "topics",
+      "rating"
+    ],
+    "json_schema": {
+      "additionalProperties": false,
+      "description": "The semantic metadata for one captured webpage.",
+      "properties": {
+        "authors": {
+          "items": {
+            "maxLength": 120,
+            "minLength": 2,
+            "type": "string"
+          },
+          "title": "Authors",
+          "type": "array"
+        },
+        "captured_at": {
+          "format": "date-time",
+          "title": "Captured At",
+          "type": "string"
+        },
+        "published": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Published"
+        },
+        "rating": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rating"
+        },
+        "site": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 2,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Site"
+        },
+        "themes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Themes",
+          "type": "array"
+        },
+        "title": {
+          "maxLength": 280,
+          "minLength": 2,
+          "title": "Title",
+          "type": "string"
+        },
+        "topics": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Topics",
+          "type": "array"
+        },
+        "type": {
+          "const": "webpage",
+          "title": "Type",
+          "type": "string"
+        },
+        "url": {
+          "maxLength": 2048,
+          "minLength": 8,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "title",
+        "url",
+        "captured_at"
+      ],
+      "title": "WebpageSchema",
+      "type": "object"
+    }
+  },
+  "identity": {
+    "fields": [
+      "title",
+      "url",
+      "site"
+    ],
+    "properties": {
+      "site": {
+        "anyOf": [
+          {
+            "maxLength": 200,
+            "minLength": 2,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Site"
+      },
+      "title": {
+        "maxLength": 280,
+        "minLength": 2,
+        "title": "Title",
+        "type": "string"
+      },
+      "url": {
+        "maxLength": 2048,
+        "minLength": 8,
+        "title": "Url",
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "url"
+    ]
+  },
+  "path_pattern": "vault/webpages/{slug}/webpage.md",
+  "schema_version": "quasi.artifact.webpage/0.1"
+};
+
 export const TOPIC_OUTLINE_SUBQUESTIONS_SCHEMA = {
   "items": {
     "additionalProperties": false,
@@ -1254,6 +1437,60 @@ export const TOPIC_OUTLINE_SUBQUESTIONS_SCHEMA = {
 };
 
 export const OPERATION_CATALOG = {
+  "webpage.identify": {
+    "kinds": [
+      "webpage"
+    ],
+    "phase": "Search",
+    "effect": "readonly",
+    "agent": "quasi:webpage-agent",
+    "artifacts": {}
+  },
+  "webpage.capture": {
+    "kinds": [
+      "webpage"
+    ],
+    "phase": "Acquire",
+    "effect": "writer",
+    "agent": "quasi:webpage-agent",
+    "artifacts": {
+      "snapshot": "vault/webpages/{slug}/snapshot.webarchive"
+    }
+  },
+  "webpage.prepare": {
+    "kinds": [
+      "webpage"
+    ],
+    "phase": "Prepare",
+    "effect": "writer",
+    "agent": "quasi:webpage-agent",
+    "artifacts": {
+      "snapshot": "vault/webpages/{slug}/snapshot.webarchive",
+      "output": "processing/webpages/{slug}/source.md"
+    }
+  },
+  "webpage.analyse": {
+    "kinds": [
+      "webpage"
+    ],
+    "phase": "Analyse",
+    "effect": "writer",
+    "agent": "quasi:analyse-agent",
+    "artifacts": {
+      "output": "vault/webpages/{slug}/webpage.md"
+    }
+  },
+  "webpage.audit": {
+    "kinds": [
+      "webpage"
+    ],
+    "phase": "Audit",
+    "effect": "writer",
+    "agent": "quasi:audit-agent",
+    "artifacts": {
+      "target": "vault/webpages/{slug}/webpage.md"
+    }
+  },
   "material.search": {
     "kinds": [
       "paper",
