@@ -2,7 +2,7 @@
 
 > 仿佛读过、仿佛想过、仿佛写过。
 
-Claude Code 的学术阅读插件:用自然语言把书、论文、讲座和研究主题收进一个本地
+Claude Code 的学术阅读插件:用自然语言把书、论文、网页、讲座和研究主题收进一个本地
 vault——检索元数据、获取全文、抽取成可读文本、逐章分析、跨材料综合,并支持
 PDF 翻译、讲座转写和草稿定稿。
 
@@ -12,11 +12,11 @@ PDF 翻译、讲座转写和草稿定稿。
 
 | Skill | 用途 |
 |---|---|
-| `collect-material` | 收集并分析一本书 / 一篇论文 / 一位作者 / 一场讲座;处理已有 PDF;PDF 翻译 |
+| `collect-material` | 保存一个公共网页;收集并分析一本书 / 一篇论文 / 一位作者 / 一场讲座;处理已有 PDF;PDF 翻译 |
 | `research-topic` | 界定一个研究主题并迭代研究:vault 召回、文献发现、网络证据卡、研究大纲与综合 |
 | `finalise-draft` | 草稿定稿:逐节校对、引文语境审查、生成 references.bib |
 
-例如:「帮我收一下 Galison 的 Image and Logic」「把这个 PDF 翻译成中文」
+例如:「保存这个网页 https://example.org/article」「帮我收一下 Galison 的 Image and Logic」「把这个 PDF 翻译成中文」
 「围绕 tacit knowledge 建一个研究主题」。
 
 单本书/论文只给题名也可以:可见的 metadata 专家会先核定 DOI/ISBN、作者顺序、
@@ -64,9 +64,9 @@ OCR 依赖;扫描书的恢复质量取决于上表的可选依赖是否可用。
 quasi 把当前工作目录当作项目根,产物落在四个目录:
 
 ```text
-vault/        # 阅读产物:books/ papers/ authors/ talks/ topics/ drafts/
+vault/        # 阅读产物:books/ papers/ webpages/ authors/ talks/ topics/ drafts/
 sources/      # 已接受的源文件
-processing/   # 可检查的中间产物:chapters/ translations/ talks/
+processing/   # 可检查的中间产物:chapters/ translations/ talks/ webpages/
 .quasi/       # 编排状态、缓存、审计输出
 ```
 

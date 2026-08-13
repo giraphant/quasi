@@ -230,6 +230,14 @@ def test_collect_material_routes_leaf_kinds_to_generated_named_entries() -> None
             ],
             "resume_optional": ["userDecision"],
         },
+        "webpage": {
+            "entry": "$CLAUDE_PLUGIN_ROOT/workflows/webpage.mjs",
+            "required": ["seed", "observation", "options"],
+            "optional": [],
+            "seed_keys": ["state", "url"],
+            "option_keys": [],
+            "initial_observation": None,
+        },
     }
     for contract in manifest.values():
         entry = contract["entry"]
@@ -237,6 +245,61 @@ def test_collect_material_routes_leaf_kinds_to_generated_named_entries() -> None
         relative = entry.removeprefix("$CLAUDE_PLUGIN_ROOT/")
         assert relative != entry
         assert (ROOT / relative).is_file(), entry
+
+
+def test_collect_material_transports_a_webpage_url_without_an_initial_observation() -> None:
+    path = ROOT / "skills" / "collect-material" / "SKILL.md"
+    assignments: list[ast.Assign] = []
+    for source in re.findall(r"```python\n(.*?)\n```", path.read_text(encoding="utf-8"), re.DOTALL):
+        tree = ast.parse(source)
+        assignments.extend(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "workflow_input"
+                for target in node.targets
+            )
+        )
+
+    envelopes = [
+        assignment.value
+        for assignment in assignments
+        if isinstance(assignment.value, ast.Dict)
+        and any(
+            isinstance(key, ast.Constant) and key.value == "seed"
+            and isinstance(value, ast.Dict)
+            and any(
+                isinstance(seed_key, ast.Constant) and seed_key.value == "url"
+                for seed_key in value.keys
+            )
+            for key, value in zip(assignment.value.keys, assignment.value.values)
+        )
+    ]
+    assert len(envelopes) == 1
+
+    envelope = envelopes[0]
+    assert isinstance(envelope, ast.Dict)
+    fields = {
+        key.value: value
+        for key, value in zip(envelope.keys, envelope.values)
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+    assert set(fields) == {"seed", "observation", "options"}
+    assert isinstance(fields["seed"], ast.Dict)
+    seed = {
+        key.value: value
+        for key, value in zip(fields["seed"].keys, fields["seed"].values)
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+    assert isinstance(seed.get("state"), ast.Constant)
+    assert seed["state"].value == "provisional"
+    assert isinstance(seed.get("url"), ast.Name)
+    assert seed["url"].id == "exact_url"
+    assert isinstance(fields["observation"], ast.Constant)
+    assert fields["observation"].value is None
+    assert isinstance(fields["options"], ast.Dict)
+    assert fields["options"].keys == []
 
 
 def test_research_topic_routes_to_its_generated_named_entry() -> None:

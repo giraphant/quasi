@@ -38,8 +38,9 @@ separate:
 | `quasi-download` | `book candidates|fetch`; `paper fetch|diagnose`; `accept` |
 | `quasi-extract` | `epub|text|ocr|split` text extraction and normalisation (`ocr` default engine DS OCR2, `--engine dsocr2\|tesseract`, `--layout` replacement text layer) |
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
-| `quasi-status` | read-only disk oracle: `--kind paper|book|talk|author|topic --slug SLUG --json`; Translation additionally requires `--target-language TAG`; `--scan --json` |
+| `quasi-status` | read-only disk oracle: `--kind paper|book|talk|author|topic|webpage --slug SLUG --json`; Translation additionally requires `--target-language TAG`; `--scan --json` |
 | `quasi-transcribe` | `run|classify|silent` talk transcript engines |
+| `quasi-webpage` | `inspect|capture|extract` one exact public webpage |
 | `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write`; `talk compress-media`; `vault resolve` |
 | `quasi-doctor` | runtime healthcheck: venv sync, core Python deps, optional external tools by profile |
 | `quasi-translate` | configured `immersive|pdf2zh` PDF translation; shared alternating-page, TOC, ToUnicode, and coverage contract |
@@ -70,6 +71,7 @@ Removed legacy bins:
 - `scripts/proofread/proofread.py`: deterministic proofread setup/cleanup only.
 - `scripts/doctor/doctor.py`: runtime healthcheck for venv sync, core Python deps, and optional system tools by profile.
 - `scripts/translate/immersive_translate.py` and `pdf2zh_translate.py`: interchangeable PDF translation backends behind the `quasi-translate` shim. Both run `tounicode.py` repair followed by `coverage.py` acceptance; DS OCR2/MinerU are recovery dependencies only after `Under-translated`, not pdf2zh startup requirements.
+- `scripts/webpage/webpage.py`: exact public-URL inspection, snapshot capture, and extraction behind the `quasi-webpage` shim.
 
 ## Workflow source and runtime
 
@@ -81,18 +83,20 @@ canonical artifact contracts and emits matching declarations. It contains no sta
 order, carry, alias, or next-operation graph.
 
 `scripts/workflows/operations/rows/*.mts` owns operation-specific context derivation and
-request/receipt behavior. Six material-local catalogs expose only the rows needed by
-Paper, Book, Talk, Translation, Author, or Topic. Their named plans own progression,
+request/receipt behavior. Seven material-local catalogs expose only the rows needed by
+Paper, Book, Talk, Translation, Author, Topic, or Webpage. Their named plans own progression,
 joins, checkpoints, and bounded repair; Author and Topic compose leaf plans through
 explicit host-observation handshakes. `scripts/build-workflows.mjs` verifies each fixed
 entry's metadata and `materialKind`, generated-artifact currency, and bundle ABI,
 imports, and size. Focused pytest checks prove operation-catalog/local-row alignment.
 The pinned esbuild dependency compiles the editable `.mts` entries into the
-committed `workflows/{paper,book,talk,translation,author,topic}.mjs` bundles;
+committed `workflows/{paper,book,talk,translation,author,topic,webpage}.mjs` bundles;
 `npm run check:workflows` also runs strict `tsc --noEmit`.
 
 `collect-material` drives each leaf with one exact pre-status and a fixed kind→entry
-mapping. A leaf entry validates its closed seed/observation/options envelope, runs from
+mapping, except that an initial Webpage URL has no canonical route: it starts with the
+closed provisional URL seed and `observation:null`, then Collect observes the exact
+returned Webpage route before resuming. A leaf entry validates its closed seed/observation/options envelope, runs from
 that testimony to one material-level terminal, and returns
 `quasi.material.result/0.1`; the Skill never selects a Stage or consumes a Stage receipt.
 Paper, Talk, and Translation dispatch sequential owned operations. Book alone uses the
@@ -133,6 +137,7 @@ so unrelated subagents retain Claude Code's default row.
 | `citecheck-agent` | citation manifest prepared by `quasi-helpers` |
 | `transcribe-agent` | `quasi-transcribe` capabilities → Talk Prepare Stage |
 | `translate-agent` | `quasi-translate` + optional layout OCR → Translation Prepare Stage |
+| `webpage-agent` | `quasi-webpage` + vault resolve → Webpage identity, snapshot, and source projection |
 
 ### Write ownership
 
@@ -144,6 +149,7 @@ so unrelated subagents retain Claude Code's default row.
 - `webcard-agent` turns one topic `web_task` into one evidence card at the caller-named `vault/topics/{slug}/cards/{card-slug}.md`; it writes nothing else, and returns `status: empty` rather than writing a card it could not verify. Cards travel on their own `cards` channel (outline `subquestions[].cards`, synth `card_paths`) and never enter the `book|paper|talk` corpus table.
 - `audit-agent` runs `quasi-audit --path`; it may apply local mechanical fixes but does not own workflow state.
 - `transcribe-agent` and `translate-agent` own Talk and Translation Prepare with the same terminal shape, preserving media reconciliation and fenced-generation publication contracts.
+- `webpage-agent` owns exact-URL inspection, `vault/webpages/{slug}/snapshot.webarchive`, and `processing/webpages/{slug}/source.md`; `analyse-agent` owns `vault/webpages/{slug}/webpage.md` and `audit-agent` owns its mechanical repair.
 
 Deprecated agents live under `deprecated/agents/` and must not be dispatched by
 active skills.
@@ -154,7 +160,7 @@ active skills.
 - `research-topic`
 - `finalise-draft`
 
-`collect-material` owns the current Paper/Book/Author/Talk/Translation entry. Its four
+`collect-material` owns the current Paper/Book/Author/Talk/Translation/Webpage entry. Its five
 leaf kinds route to named material Workflows; the named Author Workflow composes the
 Paper and Book entries after the Skill supplies fresh exact statuses for its returned routes.
 `research-topic` supplies exact observations and typed user decisions to the named Topic
@@ -172,6 +178,14 @@ investigation. Search owns author order, year, identifiers, venue/publisher, acc
 URLs, and canonical slug; the Skill only consumes the material result. Author/Topic candidate finding uses
 `discovery-agent`; Chinese-edition matching uses the deterministic
 `quasi-helpers localise scan|write` helper.
+
+For a Webpage request, Collect accepts an exact public URL only when the user wants to
+preserve that webpage itself; a URL explicitly given as a Paper or Book clue keeps that
+kind. The first named invocation transports `{seed:{state:"provisional",url},
+observation:null,options:{}}`. Its `needs_observation` result supplies the canonical
+Webpage route for the existing direct-leaf exact-status pump. A complete result is
+reported only after fresh Webpage status proves its snapshot, prepared, and canonical
+refs equal, present, and usable.
 
 For 2–32 top-level leaf materials, the skill preserves input order, coalesces only
 byte-identical known material keys before launch, and drives at most five independent

@@ -65,11 +65,14 @@ workflows/talk.mjs
 workflows/translation.mjs
 workflows/author.mjs
 workflows/topic.mjs
+workflows/webpage.mjs
 ```
 
 Paper, Book, Talk, and Translation receive a closed seed/options envelope plus
-one exact status observation. Any named entry may return exact routes for host
-observation and an opaque one-item continuation.
+one exact status observation. Webpage is the sole initial exception: Collect transports
+its exact public URL in a provisional seed with `observation:null`; the entry returns a
+canonical route that Collect observes before the existing direct-leaf resume. Any named
+entry may return exact routes for host observation and an opaque one-item continuation.
 
 The public result is `quasi.material.result/0.1`:
 
@@ -115,7 +118,10 @@ boundaries, not as proxies for professional judgement.
 ## Concurrency and recovery
 
 `collect-material` may run up to its documented number of distinct top-level
-material keys concurrently. One named Workflow owns each key. Only Book fans out
+material keys concurrently. One named Workflow owns each key. Webpage's provisional
+URL intake is followed by the same direct-leaf exact-status resume: copy its opaque
+`resume_seed.{seed,options}` byte-for-byte, use the returned canonical route observation,
+and retain the two unchanged-observation stop rule. Only Book fans out
 inside a Workflow, using one host pipeline over disjoint chapter outputs. Topic
 uses stable sequential work with immediate outline checkpoints; Author composes
 its frozen child list sequentially.
