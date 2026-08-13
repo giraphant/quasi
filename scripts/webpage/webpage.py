@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,11 @@ except ImportError:  # Python 3.9 remains supported by the plugin bootstrap.
     from typing_extensions import TypeAlias
 
 from .webarchive import extract_webarchive, normalize_web_url, read_webarchive
+from .paths import (
+    create_output_parents,
+    require_output_file,
+    trusted_project_root,
+)
 
 
 @dataclass(frozen=True)
@@ -78,33 +84,73 @@ def _ensure_native_binary() -> Path:
     source = _native_source()
     binary = _native_binary()
     try:
-        if binary.exists() and binary.stat().st_mtime >= source.stat().st_mtime:
+        source_mtime = source.stat().st_mtime
+        mode = binary.lstat().st_mode
+        if (
+            stat.S_ISREG(mode)
+            and binary.stat().st_size > 0
+            and os.access(binary, os.X_OK)
+            and binary.stat().st_mtime >= source_mtime
+        ):
             return binary
+    except FileNotFoundError:
+        pass
     except OSError as exc:
         raise WebpageCommandError("webpage.capture_unavailable", str(exc)) from exc
-    binary.parent.mkdir(parents=True, exist_ok=True)
     try:
-        completed = subprocess.run(
-            [
-                swiftc,
-                "-O",
-                "-parse-as-library",
-                "-framework",
-                "WebKit",
-                str(source),
-                "-o",
-                str(binary),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False,
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, stage_name = tempfile.mkstemp(
+            prefix=f".{binary.name}.compile-", dir=str(binary.parent)
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        os.close(descriptor)
+        stage = Path(stage_name)
+        stage.unlink()
+    except OSError as exc:
         raise WebpageCommandError("webpage.capture_unavailable", str(exc)) from exc
-    if completed.returncode != 0 or not binary.exists():
-        detail = completed.stderr.strip() or "swiftc could not compile the WebKit helper"
-        raise WebpageCommandError("webpage.capture_unavailable", detail)
+    try:
+        try:
+            completed = subprocess.run(
+                [
+                    swiftc,
+                    "-O",
+                    "-parse-as-library",
+                    "-framework",
+                    "WebKit",
+                    str(source),
+                    "-o",
+                    str(stage),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise WebpageCommandError("webpage.capture_unavailable", str(exc)) from exc
+        try:
+            stage_info = stage.lstat()
+            valid_stage = (
+                completed.returncode == 0
+                and stat.S_ISREG(stage_info.st_mode)
+                and stage_info.st_size > 0
+                and os.access(stage, os.X_OK)
+            )
+        except OSError:
+            valid_stage = False
+        if not valid_stage:
+            detail = completed.stderr.strip() or "swiftc could not compile the WebKit helper"
+            raise WebpageCommandError("webpage.capture_unavailable", detail)
+        try:
+            _fsync_file(stage)
+            os.replace(stage, binary)
+            _fsync_directory(binary.parent)
+        except OSError as exc:
+            raise WebpageCommandError("webpage.capture_unavailable", str(exc)) from exc
+    finally:
+        try:
+            stage.unlink()
+        except FileNotFoundError:
+            pass
     return binary
 
 
@@ -212,13 +258,20 @@ def capture(url: str, expected_final_url: str, output: Path) -> dict[str, object
 
     schema = "quasi.webpage.capture/0.1"
     try:
+        root = trusted_project_root()
         requested_url = normalize_web_url(url)
         expected_url = normalize_web_url(expected_final_url)
-        if output.exists():
+        try:
+            safe_output = require_output_file(root, output, existing=False)
+        except FileExistsError:
             return _failure(schema, "webpage.output_exists", "snapshot output already exists")
-        output.parent.mkdir(parents=True, exist_ok=True)
+        create_output_parents(root, safe_output)
+        try:
+            safe_output = require_output_file(root, safe_output, existing=False)
+        except FileExistsError:
+            return _failure(schema, "webpage.output_exists", "snapshot output already exists")
         descriptor, stage_name = tempfile.mkstemp(
-            prefix=f".{output.name}.capture-", dir=str(output.parent)
+            prefix=f".{safe_output.name}.capture-", dir=str(safe_output.parent)
         )
         os.close(descriptor)
         staging = Path(stage_name)
@@ -226,7 +279,7 @@ def capture(url: str, expected_final_url: str, output: Path) -> dict[str, object
         try:
             native = run_native_capture(requested_url, staging)
             archive = read_webarchive(staging)
-            native_url, title, site = _metadata(native)
+            native_url, _native_title, _native_site = _metadata(native)
             if archive.url != expected_url or native_url != expected_url:
                 return _failure(
                     schema,
@@ -238,18 +291,18 @@ def capture(url: str, expected_final_url: str, output: Path) -> dict[str, object
             os.utime(staging, ns=(captured_epoch * 1_000_000_000,) * 2)
             _fsync_file(staging)
             try:
-                os.link(staging, output)
+                os.link(staging, safe_output)
             except FileExistsError:
                 return _failure(schema, "webpage.output_exists", "snapshot output already exists")
-            _fsync_directory(output.parent)
-            payload = output.read_bytes()
+            _fsync_directory(safe_output.parent)
+            payload = safe_output.read_bytes()
             return {
                 "schema_version": schema,
                 "status": "complete",
                 "output_path": str(output),
                 "final_url": native_url,
-                "title": title,
-                "site": site,
+                "title": archive.title,
+                "site": archive.site,
                 "captured_at": captured.isoformat().replace("+00:00", "Z"),
                 "sha256": hashlib.sha256(payload).hexdigest(),
                 "size": len(payload),
@@ -266,12 +319,21 @@ def capture(url: str, expected_final_url: str, output: Path) -> dict[str, object
         return _failure(schema, "webpage.capture_failed", str(exc))
 
 
-def extract(snapshot: Path, output: Path) -> dict[str, object]:
+def extract(
+    snapshot: Path,
+    output: Path,
+    *,
+    replace_existing: bool = False,
+) -> dict[str, object]:
     """Expose Task 2's snapshot-only projection under the command receipt."""
 
     schema = "quasi.webpage.extract/0.1"
     try:
-        result = extract_webarchive(snapshot, output)
+        result = extract_webarchive(
+            snapshot,
+            output,
+            replace_existing=replace_existing,
+        )
         return {
             "schema_version": schema,
             "status": "complete",
@@ -302,6 +364,7 @@ def main(argv: list[str] | None = None) -> int:
     extract_parser = subparsers.add_parser("extract")
     extract_parser.add_argument("--snapshot", required=True)
     extract_parser.add_argument("--output", required=True)
+    extract_parser.add_argument("--replace-existing", action="store_true")
     extract_parser.add_argument("--json", action="store_true", required=True)
     arguments = parser.parse_args(argv)
     if arguments.command == "inspect":
@@ -309,7 +372,11 @@ def main(argv: list[str] | None = None) -> int:
     elif arguments.command == "capture":
         result = capture(arguments.url, arguments.expected_final_url, Path(arguments.output))
     else:
-        result = extract(Path(arguments.snapshot), Path(arguments.output))
+        result = extract(
+            Path(arguments.snapshot),
+            Path(arguments.output),
+            replace_existing=arguments.replace_existing,
+        )
     print(json.dumps(result, sort_keys=True))
     return 0 if result["status"] == "complete" else 1
 

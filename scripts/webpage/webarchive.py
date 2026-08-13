@@ -14,6 +14,13 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
+from .paths import (
+    create_output_parents,
+    require_input_file,
+    require_output_file,
+    trusted_project_root,
+)
+
 
 @dataclass(frozen=True)
 class WebArchiveDocument:
@@ -80,20 +87,26 @@ class _MetadataParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self._in_title = False
+        self._title_seen = False
         self._title_parts: list[str] = []
         self.site = ""
+        self._site_seen = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag.lower() == "title":
+        if tag.lower() == "title" and not self._title_seen:
+            self._title_seen = True
             self._in_title = True
         elif tag.lower() == "meta":
             attributes = {key.lower(): value for key, value in attrs}
             property_value = attributes.get("property")
             if (
-                isinstance(property_value, str)
+                not self._site_seen
+                and isinstance(property_value, str)
                 and property_value.lower() == "og:site_name"
             ):
-                self.site = attributes.get("content") or self.site
+                self._site_seen = True
+                content = attributes.get("content")
+                self.site = content if isinstance(content, str) else ""
 
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() == "title":
@@ -212,7 +225,7 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _publish_no_clobber(output: Path, payload: bytes) -> None:
+def _publish(output: Path, payload: bytes, *, replace_existing: bool) -> None:
     descriptor, stage_name = tempfile.mkstemp(
         prefix=".{}.stage-".format(output.name), dir=str(output.parent)
     )
@@ -222,7 +235,10 @@ def _publish_no_clobber(output: Path, payload: bytes) -> None:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.link(stage, output)
+        if replace_existing:
+            os.replace(stage, output)
+        else:
+            os.link(stage, output)
         _fsync_directory(output.parent)
     finally:
         try:
@@ -231,17 +247,27 @@ def _publish_no_clobber(output: Path, payload: bytes) -> None:
             pass
 
 
-def extract_webarchive(snapshot: Path, output: Path) -> ExtractionResult:
-    """Extract saved HTML only and publish Markdown without replacement."""
+def extract_webarchive(
+    snapshot: Path,
+    output: Path,
+    *,
+    replace_existing: bool = False,
+) -> ExtractionResult:
+    """Extract saved HTML and publish under one explicit publication mode."""
 
-    document = read_webarchive(snapshot)
+    root = trusted_project_root()
+    safe_snapshot = require_input_file(root, snapshot)
+    safe_output = require_output_file(root, output, existing=replace_existing)
+    create_output_parents(root, safe_output)
+    safe_output = require_output_file(root, safe_output, existing=replace_existing)
+    document = read_webarchive(safe_snapshot)
     from trafilatura import extract
 
     markdown = extract(document.html, url=document.url, output_format="markdown")
     if not markdown or not markdown.strip():
         raise ValueError("WebArchive has no extractable article text")
     payload = nest_markdown_headings(markdown).encode("utf-8")
-    _publish_no_clobber(output, payload)
+    _publish(safe_output, payload, replace_existing=replace_existing)
     return ExtractionResult(
         url=document.url,
         title=document.title,

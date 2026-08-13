@@ -15,12 +15,21 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from importlib import import_module
 from pathlib import Path
 from threading import Thread
+from types import SimpleNamespace
 
 import pytest
 
 pytestmark = pytest.mark.filterwarnings(
     r"ignore:urllib3 v2 only supports OpenSSL 1\.1\.1\+.*"
 )
+
+
+@pytest.fixture(autouse=True)
+def _webpage_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
 
 def webarchive_fixture_bytes(
     url: str,
@@ -121,7 +130,10 @@ def test_webarchive_extraction_uses_saved_main_resource(tmp_path: Path) -> None:
     )
     output = tmp_path / "source.md"
 
-    result = load_webarchive_module().extract_webarchive(snapshot, output)
+    try:
+        result = load_webarchive_module().extract_webarchive(snapshot, output)
+    except Exception as exc:  # RED must report the missing publication behavior as an assertion.
+        pytest.fail(f"nested Webpage publication failed: {exc}")
 
     assert result.url == "https://example.org/page"
     assert result.title == "Saved title"
@@ -201,6 +213,70 @@ def test_webarchive_extraction_does_not_clobber_existing_output(tmp_path: Path) 
     assert output.read_text() == "existing output\n"
 
 
+def test_webarchive_extraction_creates_the_missing_nested_output_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    snapshot = write_webarchive_fixture(
+        project,
+        url="https://example.org/page",
+        html="<html><body><main><p>Fresh nested projection text.</p></main></body></html>",
+    )
+    output = project / "processing" / "webpages" / "nested-page" / "source.md"
+
+    try:
+        result = load_webpage_module().extract(snapshot, output)
+    except Exception as exc:  # RED must report missing publication as an assertion.
+        pytest.fail(f"nested Webpage publication failed: {exc}")
+
+    assert result["status"] == "complete"
+    assert result["output_path"] == str(output)
+    assert output.read_text(encoding="utf-8").strip() == "Fresh nested projection text."
+
+
+def test_webarchive_explicit_replacement_atomically_changes_a_safe_existing_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    snapshot = write_webarchive_fixture(
+        project,
+        url="https://example.org/page",
+        html="<html><body><main><p>Projection from the fresh snapshot.</p></main></body></html>",
+    )
+    output = project / "processing" / "webpages" / "saved-page" / "source.md"
+    output.parent.mkdir(parents=True)
+    output.write_text("stale projection\n", encoding="utf-8")
+    webpage = load_webpage_module()
+    capability = load_webarchive_module()
+    real_replace = capability.os.replace
+    replacements: list[tuple[Path, Path]] = []
+
+    def observed_replace(source: str | Path, target: str | Path) -> None:
+        replacements.append((Path(source), Path(target)))
+        real_replace(source, target)
+
+    monkeypatch.setattr(capability.os, "replace", observed_replace)
+
+    try:
+        result = webpage.extract(snapshot, output, replace_existing=True)
+    except Exception as exc:  # RED must report the missing replacement API as an assertion.
+        pytest.fail(f"explicit Webpage replacement failed: {exc}")
+
+    assert output.read_text(encoding="utf-8").strip() == (
+        "Projection from the fresh snapshot."
+    )
+    assert replacements
+    assert replacements == [(replacements[0][0], output)]
+    assert replacements[0][0].parent == output.parent
+    assert result["sha256"] == sha256(output.read_bytes()).hexdigest()
+
+
 def test_webarchive_heading_nesting_leaves_fenced_code_unchanged() -> None:
     markdown = "# Main\n## Sub\n```python\n# literal\n## also literal\n```\n###### Deep\n"
 
@@ -245,6 +321,36 @@ def test_capture_publishes_verified_archive_with_capture_metadata(
     captured_at = datetime.fromisoformat(result["captured_at"].replace("Z", "+00:00"))
     assert captured_at.tzinfo == timezone.utc
     assert output.stat().st_mtime == captured_at.timestamp()
+
+
+def test_capture_returns_saved_archive_metadata_not_divergent_native_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    webpage = load_webpage_module()
+    output = project / "vault" / "webpages" / "saved-page" / "snapshot.webarchive"
+
+    def fake_capture(url: str, staging: Path):
+        staging.write_bytes(
+            webarchive_fixture_bytes(
+                url,
+                "<html><head><title>Saved archive title</title>"
+                '<meta property="og:site_name" content="Saved archive site"></head>'
+                "<body><main><p>Saved page text.</p></main></body></html>",
+            )
+        )
+        return webpage.NativeResult(url, "Divergent native title", "Divergent native site")
+
+    monkeypatch.setattr(webpage, "run_native_capture", fake_capture)
+
+    result = webpage.capture("https://example.org/", "https://example.org/", output)
+
+    assert result["status"] == "complete"
+    assert result["title"] == "Saved archive title"
+    assert result["site"] == "Saved archive site"
 
 
 def test_capture_final_url_mismatch_does_not_publish(
@@ -323,6 +429,164 @@ def test_extract_command_exposes_saved_webarchive_projection(tmp_path: Path) -> 
         "write_state": "written",
     }
     assert "Projection text from the snapshot." in output.read_text()
+
+
+def test_saved_html_metadata_latches_the_first_title_and_site_elements(
+    tmp_path: Path,
+) -> None:
+    snapshot = write_webarchive_fixture(
+        tmp_path,
+        url="https://example.org/page",
+        html=(
+            "<html><head><title>First title</title><title>Later title</title>"
+            '<meta property="og:site_name" content="First site">'
+            '<meta property="og:site_name" content="Later site"></head></html>'
+        ),
+    )
+
+    document = load_webarchive_module().read_webarchive(snapshot)
+
+    assert document.title == "First title"
+    assert document.site == "First site"
+
+
+def test_saved_html_empty_first_metadata_falls_back_without_using_later_elements(
+    tmp_path: Path,
+) -> None:
+    snapshot = write_webarchive_fixture(
+        tmp_path,
+        url="https://example.org/page",
+        html=(
+            "<html><head><title></title><title>Later title</title>"
+            '<meta property="og:site_name" content="">'
+            '<meta property="og:site_name" content="Later site"></head></html>'
+        ),
+    )
+
+    document = load_webarchive_module().read_webarchive(snapshot)
+
+    assert document.title == "https://example.org/page"
+    assert document.site == "example.org"
+
+
+@pytest.mark.parametrize("command", ["capture", "extract"])
+@pytest.mark.parametrize("boundary", ["outside", "symlink"])
+def test_webpage_writers_reject_outside_or_unsafe_publication_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    boundary: str,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    webpage = load_webpage_module()
+    snapshot = write_webarchive_fixture(
+        project,
+        url="https://example.org/page",
+        html="<html><body><main><p>Safe snapshot input.</p></main></body></html>",
+    )
+    if boundary == "outside":
+        output = external / ("snapshot.webarchive" if command == "capture" else "source.md")
+    else:
+        route = project / ("vault" if command == "capture" else "processing") / "webpages"
+        route.parent.mkdir(parents=True, exist_ok=True)
+        route.symlink_to(external, target_is_directory=True)
+        (external / "unsafe-page").mkdir()
+        output = route / "unsafe-page" / (
+            "snapshot.webarchive" if command == "capture" else "source.md"
+        )
+
+    if command == "capture":
+        def forbidden_capture(_url: str, _staging: Path):
+            raise AssertionError("unsafe output must be rejected before native capture")
+
+        monkeypatch.setattr(webpage, "run_native_capture", forbidden_capture)
+        result = webpage.capture("https://example.org/", "https://example.org/", output)
+    else:
+        result = webpage.extract(snapshot, output)
+
+    assert result["status"] == "failed"
+    assert not output.exists()
+
+
+def test_failed_native_compile_preserves_cached_binary_and_uses_a_unique_sibling_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    webpage = load_webpage_module()
+    source = tmp_path / "webpage_capture.swift"
+    source.write_text("source", encoding="utf-8")
+    binary = tmp_path / "bin" / "quasi-webpage-webkit"
+    binary.parent.mkdir()
+    binary.write_bytes(b"known-good-binary")
+    binary.chmod(0o755)
+    os.utime(binary, (1, 1))
+    os.utime(source, (2, 2))
+    compile_targets: list[Path] = []
+
+    def failed_compile(arguments: list[str], **_kwargs: object):
+        target = Path(arguments[arguments.index("-o") + 1])
+        compile_targets.append(target)
+        target.write_bytes(b"partial")
+        return SimpleNamespace(returncode=1, stderr="compiler failed")
+
+    monkeypatch.setattr(webpage.sys, "platform", "darwin")
+    monkeypatch.setattr(webpage, "_macos_11_or_newer", lambda: True)
+    monkeypatch.setattr(webpage, "_native_source", lambda: source)
+    monkeypatch.setattr(webpage, "_native_binary", lambda: binary)
+    monkeypatch.setattr(webpage.shutil, "which", lambda _name: "/usr/bin/swiftc")
+    monkeypatch.setattr(webpage.subprocess, "run", failed_compile)
+
+    with pytest.raises(webpage.WebpageCommandError, match="compiler failed"):
+        webpage._ensure_native_binary()
+
+    assert binary.read_bytes() == b"known-good-binary"
+    assert stat.S_IMODE(binary.stat().st_mode) & 0o111
+    assert len(compile_targets) == 1
+    assert compile_targets[0] != binary
+    assert compile_targets[0].parent == binary.parent
+    assert not compile_targets[0].exists()
+
+
+def test_successful_native_compile_atomically_publishes_a_complete_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    webpage = load_webpage_module()
+    source = tmp_path / "webpage_capture.swift"
+    source.write_text("source", encoding="utf-8")
+    binary = tmp_path / "bin" / "quasi-webpage-webkit"
+    replacements: list[tuple[Path, Path]] = []
+    real_replace = webpage.os.replace
+
+    def successful_compile(arguments: list[str], **_kwargs: object):
+        target = Path(arguments[arguments.index("-o") + 1])
+        target.write_bytes(b"complete-binary")
+        target.chmod(0o755)
+        return SimpleNamespace(returncode=0, stderr="")
+
+    def observed_replace(source_path: str | Path, target_path: str | Path) -> None:
+        replacements.append((Path(source_path), Path(target_path)))
+        real_replace(source_path, target_path)
+
+    monkeypatch.setattr(webpage.sys, "platform", "darwin")
+    monkeypatch.setattr(webpage, "_macos_11_or_newer", lambda: True)
+    monkeypatch.setattr(webpage, "_native_source", lambda: source)
+    monkeypatch.setattr(webpage, "_native_binary", lambda: binary)
+    monkeypatch.setattr(webpage.shutil, "which", lambda _name: "/usr/bin/swiftc")
+    monkeypatch.setattr(webpage.subprocess, "run", successful_compile)
+    monkeypatch.setattr(webpage.os, "replace", observed_replace)
+
+    result = webpage._ensure_native_binary()
+
+    assert result == binary
+    assert binary.read_bytes() == b"complete-binary"
+    assert stat.S_IMODE(binary.stat().st_mode) & 0o111
+    assert replacements
+    assert replacements == [(replacements[0][0], binary)]
+    assert replacements[0][0].parent == binary.parent
 
 
 @pytest.mark.skipif(

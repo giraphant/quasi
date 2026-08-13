@@ -8,6 +8,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from scripts.status import status as status_module
 
 
@@ -209,6 +211,28 @@ def test_status_scan_rejects_a_symlinked_webpage_root(tmp_path: Path):
     payload = json.loads(run_status(project, "--scan", "--json").stdout)
 
     assert not [item for item in payload["items"] if item["kind"] == "webpage"]
+
+
+@pytest.mark.parametrize("route_root", ["vault", "processing"])
+def test_exact_webpage_status_errors_on_an_unsafe_route_ancestor(
+    tmp_path: Path, route_root: str
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    slug = "unsafe-page"
+    route = project / route_root / "webpages" / slug
+    route.parent.mkdir(parents=True)
+    route.symlink_to(external, target_is_directory=True)
+
+    result = run_status(project, "--kind", "webpage", "--slug", slug, "--json")
+
+    assert result.returncode != 0
+    payload = json.loads(result.stdout)
+    assert payload["schema_version"] == "quasi.status.error/0.1"
+    assert payload["error"]["code"] == "invalid_invocation"
+    assert "symlink" in payload["error"]["message"]
 
 
 def test_empty_paper_status_is_one_closed_factual_observation(tmp_path: Path):

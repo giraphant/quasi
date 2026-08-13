@@ -530,3 +530,54 @@ def test_webpage_resolver_rejects_an_unsafe_requested_slug(tmp_path: Path) -> No
     assert row["match"] is None
     assert row["suggested_slug"] is None
     assert "error" in row
+
+
+@pytest.mark.parametrize("route_root", ["vault", "processing"])
+def test_webpage_resolver_rejects_an_unsafe_proposed_route(
+    tmp_path: Path, route_root: str
+) -> None:
+    external = tmp_path / "external"
+    external.mkdir()
+    route = tmp_path / route_root / "webpages" / "proposed-slug"
+    route.parent.mkdir(parents=True)
+    route.symlink_to(external, target_is_directory=True)
+
+    (row,) = run_resolve(
+        tmp_path,
+        [{"kind": "webpage", "slug": "proposed-slug", "url": "https://example.org/page"}],
+    )["resolved"]
+
+    assert row["vault_slug"] is None
+    assert row["path"] is None
+    assert row["suggested_slug"] is None
+    assert "error" in row
+
+
+@pytest.mark.parametrize("route_root", ["vault", "processing"])
+def test_webpage_resolver_rejects_an_unsafe_same_url_owner_route(
+    tmp_path: Path, route_root: str
+) -> None:
+    external = tmp_path / "external"
+    external.mkdir()
+    if route_root == "vault":
+        write_webpage(external, "owner", "https://example.org/page")
+        owner = tmp_path / "vault" / "webpages" / "owner"
+        owner.parent.mkdir(parents=True)
+        owner.symlink_to(external / "vault" / "webpages" / "owner", target_is_directory=True)
+        requested_slug = "owner"
+    else:
+        write_webpage(tmp_path, "owner", "https://example.org/page")
+        owner = tmp_path / "processing" / "webpages" / "owner"
+        owner.parent.mkdir(parents=True)
+        owner.symlink_to(external, target_is_directory=True)
+        requested_slug = "proposed-slug"
+
+    (row,) = run_resolve(
+        tmp_path,
+        [{"kind": "webpage", "slug": requested_slug, "url": "https://example.org/page"}],
+    )["resolved"]
+
+    assert row["vault_slug"] is None
+    assert row["path"] is None
+    assert row["suggested_slug"] is None
+    assert "error" in row

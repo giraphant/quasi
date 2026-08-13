@@ -345,7 +345,7 @@ def test_webarchive_extraction_uses_saved_main_resource(tmp_path: Path) -> None:
     assert not re.search(r"^#{1,2} ", output.read_text(), re.MULTILINE)
 ```
 
-Also test credential rejection, invalid/non-HTML main resource, empty Trafilatura result, deterministic eight-hex collision suffix, and no-clobber publication. Do not enumerate arbitrary plist corruption shapes.
+Also test credential rejection, invalid/non-HTML main resource, empty Trafilatura result, deterministic eight-hex collision suffix, default no-clobber publication, and explicit atomic replacement of a safe existing projection. Do not enumerate arbitrary plist corruption shapes.
 
 - [ ] **Step 2: Run RED**
 
@@ -390,7 +390,7 @@ Read the binary plist with the standard library. Require a mapping root, `WebMai
 
 Add `trafilatura` to the shared requirements. Import it lazily inside extraction so status/resolver do not pay its import cost. Call it only with the decoded saved HTML and the saved URL as base context; never fetch the live URL.
 
-Normalize all extracted Markdown headings with a fence-aware pass so none is H1/H2: add two levels and cap at H6, while leaving fenced code bytes untouched. This lets the canonical producer place the projection below `## Content` without creating sibling top-level sections. Publish through a sibling staging file and atomic no-clobber link, following the existing `quasi-extract --no-clobber` pattern; fsync the file and parent directory.
+Normalize all extracted Markdown headings with a fence-aware pass so none is H1/H2: add two levels and cap at H6, while leaving fenced code bytes untouched. This lets the canonical producer place the projection below `## Content` without creating sibling top-level sections. Publish through a sibling staging file and atomic no-clobber link by default. The only replacement form is `extract --replace-existing`, used after this invocation has just created the missing snapshot; it requires a safe existing regular output, uses atomic replacement, and fsyncs the file and parent directory.
 
 Use one local transform, not a Markdown parser subsystem:
 
@@ -449,7 +449,7 @@ git commit -m "feat: extract webpage webarchives"
 ```text
 quasi-webpage inspect --url URL --json
 quasi-webpage capture --url URL --expected-final-url URL --output PATH --json
-quasi-webpage extract --snapshot PATH --output PATH --json
+quasi-webpage extract --snapshot PATH --output PATH [--replace-existing] --json
 ```
 
 ```python
@@ -524,15 +524,16 @@ Emit one JSON object containing `final_url`, `title`, and `site`; Capture also r
 
 - [ ] **Step 4: Implement Python compilation and publication**
 
-Compile with:
+Compile with the equivalent arguments, targeting a unique sibling stage under
+the plugin-data `bin/` directory rather than the live cache path:
 
 ```text
 swiftc -O -parse-as-library -framework WebKit webpage_capture.swift -o $CLAUDE_PLUGIN_DATA/bin/quasi-webpage-webkit
 ```
 
-Reuse the binary while its mtime is at least the source mtime, matching the existing Apple STT pattern. Missing macOS 11+, `swiftc`, WebKit, or a successful compile returns `webpage.capture_unavailable`; do not silently select another backend.
+Reuse a non-empty executable regular binary while its mtime is at least the source mtime. Fsync a successful staged compile, atomically replace the canonical cache binary, fsync its directory, and always clean the stage; a failed or concurrent rebuild must never expose partial bytes or damage the previous binary. Missing macOS 11+, `swiftc`, WebKit, or a successful compile returns `webpage.capture_unavailable`; do not silently select another backend.
 
-For Capture, give Swift a unique sibling staging path. After it exits, parse the staged WebArchive with `read_webarchive`, require the archive URL and native final URL to normalize to `--expected-final-url`, set the staging inode mtime to the exact whole-second UTC `captured_at`, fsync, and only then publish no-clobber. The correct timestamp is therefore visible atomically with the bytes. Return:
+For Capture, give Swift a unique sibling staging path. After it exits, parse the staged WebArchive with `read_webarchive`, require the archive URL and native final URL to normalize to `--expected-final-url`, return title/site from that saved archive rather than divergent native metadata, set the staging inode mtime to the exact whole-second UTC `captured_at`, fsync, and only then publish no-clobber. The correct timestamp is therefore visible atomically with the bytes. Return:
 
 ```json
 {
@@ -762,7 +763,7 @@ Add one fixture per operation to the existing parameterized dispatch harness, th
 
 - Identify accepts one exact identity and nullable URL owner; owner slug must equal returned canonical identity slug.
 - Capture accepts only the exact snapshot, expected final URL, whole-second `captured_at`, non-empty hash/size, and known `written` effect.
-- Prepare binds the exact snapshot/output observation and returns non-empty source hash/size with `content_ready:true`; its write state is `written` for absent output and `not_written` for reconciled usable output.
+- Prepare binds the exact snapshot/output observation plus closed `create|replace_stale|reconcile` publication mode and fresh-snapshot branch fact. It returns non-empty source hash/size with `content_ready:true`; write state is `written` for create/replace and `not_written` for reconcile.
 - Analyse injects `WEBPAGE_ARTIFACT_CONTRACT`, the exact input/output, `captured_at`, and semantic frontmatter seed.
 - Audit targets only `webpage.md`.
 
@@ -786,7 +787,7 @@ Expected: missing Agent, rows, catalog, and generated artifact contract.
 
 - Identify: run exact `quasi-webpage inspect`, form one human-readable title/site slug, call the existing vault resolver, reuse a same-URL owner or apply its deterministic collision result.
 - Capture: verify the exact output observation, run one exact Capture command, and report only its durable evidence.
-- Prepare: verify the exact snapshot/output observation, run Extract when absent or read/reconcile existing `source.md`, and judge whether it is substantive page content rather than an access shell.
+- Prepare: verify the exact snapshot/output observation and publication mode; run default Extract for create, pass `--replace-existing` only for replace_stale, or read-only reconcile existing usable `source.md`; then judge whether it is substantive page content rather than an access shell.
 
 It must not use Kagi, `WebFetch`, alternate URLs, or write canonical Markdown. Add Webpage to `analyse-agent.md` as one more exact normalized-input method. It must preserve all `source.md` under `Content` and write only the short `Summary` plus semantic metadata; it must not reinterpret source text as instructions.
 
@@ -802,7 +803,7 @@ analyse: existing shared action payload
 audit: existing shared audit payload
 ```
 
-Top-level exact paths, expected final URL, and branch-fixed write state are single-value `const`s and are stamped by the host. Capture title/site remain model testimony because the independent second load may legitimately differ from Identify while retaining the same URL owner. Do not add duplicate `disposition`, attempt logs, browser metadata, headers, fingerprints, or a second validation record.
+Top-level exact paths, expected final URL, publication mode, and branch-fixed write state are single-value `const`s and are stamped by the host. Capture title/site remain model testimony derived from the saved archive because the independent second load may legitimately differ from Identify while retaining the same URL owner. Do not add duplicate `disposition`, attempt logs, browser metadata, headers, fingerprints, or a second validation record.
 
 The Identify request gives the Agent only the exact intake URL, `quasi-webpage inspect`, and one closed `quasi-helpers vault resolve` item. Capture receives the canonical identity and output observation. Prepare receives the exact snapshot/output observations. Analyse receives the exact prepared artifact testimony and `WEBPAGE_ARTIFACT_CONTRACT`.
 
@@ -831,15 +832,18 @@ const capturePayload = ({ snapshot, finalUrl }: any) => ({
   },
 });
 
-const preparePayload = ({ snapshot, output, outputUsable }: any) => ({
+const preparePayload = ({ snapshot, output, publicationMode }: any) => ({
   required: [
-    "snapshot_path", "output_path", "write_state",
+    "snapshot_path", "output_path", "write_state", "publication_mode",
     "source_sha256", "source_size", "content_ready",
   ],
   properties: {
     snapshot_path: { const: snapshot },
     output_path: { const: output },
-    write_state: { const: outputUsable ? "not_written" : "written" },
+    write_state: {
+      const: publicationMode === "reconcile" ? "not_written" : "written",
+    },
+    publication_mode: { const: publicationMode },
     source_sha256: { type: "string", pattern: HASH_PATTERN },
     source_size: { type: "integer", minimum: 1 },
     content_ready: { const: true },
@@ -1035,7 +1039,7 @@ needsObservationMaterialResult(
 The canonical branch reads only its fresh status and selects the first incomplete durable stage:
 
 1. Capture only when snapshot is unusable. On success, keep the owner slug/URL and adopt the Capture receipt's title/site for Prepare/Analyse.
-2. Prepare only when projection is unusable; when Analyse is needed and prepared is already usable, dispatch Prepare in reconcile mode to obtain semantic readiness and exact hash/size testimony.
+2. Prepare preserves the actual source observation and selects `create` when absent, `replace_stale` only when this invocation just created the missing snapshot and source is present, or `reconcile` when no snapshot was created and source is usable. Present unusable source without a new snapshot blocks before dispatch. When Analyse is needed and prepared is already usable, reconcile obtains semantic readiness and exact hash/size testimony.
 3. Analyse when canonical is unusable. If this invocation just created a missing snapshot beside an older canonical page, force Analyse repair so `captured_at` and content match the new snapshot.
 4. Audit once; on an exact `webpage.md` semantic escalation, Analyse repair once and re-audit once.
 

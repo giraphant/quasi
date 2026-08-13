@@ -198,6 +198,8 @@ OPERATION_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
                 "present": False,
                 "usable": False,
             },
+            publicationMode="create",
+            snapshotCreated=False,
         ),
     ),
     "webpage.analyse": (
@@ -871,11 +873,20 @@ def test_webpage_capture_receipt_binds_the_exact_snapshot_and_capture_evidence()
 
 
 @pytest.mark.parametrize(
-    ("output_usable", "write_state"),
-    [(False, "written"), (True, "not_written")],
+    ("publication_mode", "snapshot_created", "present", "usable", "write_state"),
+    [
+        ("create", False, False, False, "written"),
+        ("create", True, False, False, "written"),
+        ("replace_stale", True, True, False, "written"),
+        ("replace_stale", True, True, True, "written"),
+        ("reconcile", False, True, True, "not_written"),
+    ],
 )
 def test_webpage_prepare_binds_observed_artifacts_and_its_single_effect_claim(
-    output_usable: bool,
+    publication_mode: str,
+    snapshot_created: bool,
+    present: bool,
+    usable: bool,
     write_state: str,
 ) -> None:
     catalog_path = ROOT / "scripts/workflows/operations/catalogs/webpage.mts"
@@ -889,9 +900,11 @@ def test_webpage_prepare_binds_observed_artifacts_and_its_single_effect_claim(
         },
         outputObservation={
             "path": "processing/webpages/exact-material/source.md",
-            "present": output_usable,
-            "usable": output_usable,
+            "present": present,
+            "usable": usable,
         },
+        publicationMode=publication_mode,
+        snapshotCreated=snapshot_created,
     )
     prepared = _prepare("webpage.prepare", context=context)
     schema = prepared["options"]["schema"]
@@ -904,7 +917,59 @@ def test_webpage_prepare_binds_observed_artifacts_and_its_single_effect_claim(
         "processing/webpages/exact-material/source.md"
     )
     assert prepared["stampedValues"]["write_state"] == write_state
+    assert prepared["stampedValues"]["publication_mode"] == publication_mode
     assert prepared["stampedValues"]["content_ready"] is True
+    request = _prompt_request(prepared["prompt"])
+    assert request["publication_mode"] == publication_mode
+    assert request["snapshot_created"] is snapshot_created
+    assert request["output_observation"] == {
+        "path": "processing/webpages/exact-material/source.md",
+        "present": present,
+        "usable": usable,
+    }
+
+
+@pytest.mark.parametrize(
+    ("publication_mode", "snapshot_created", "present", "usable"),
+    [
+        ("create", False, False, True),
+        ("create", False, True, False),
+        ("replace_stale", False, True, True),
+        ("replace_stale", True, False, False),
+        ("reconcile", True, True, True),
+        ("reconcile", False, True, False),
+    ],
+)
+def test_webpage_prepare_rejects_incoherent_publication_modes(
+    publication_mode: str,
+    snapshot_created: bool,
+    present: bool,
+    usable: bool,
+) -> None:
+    context = _context(
+        snapshotObservation={
+            "path": "vault/webpages/exact-material/snapshot.webarchive",
+            "present": True,
+            "usable": True,
+        },
+        outputObservation={
+            "path": "processing/webpages/exact-material/source.md",
+            "present": present,
+            "usable": usable,
+        },
+        publicationMode=publication_mode,
+        snapshotCreated=snapshot_created,
+    )
+
+    invocation = _invocation("webpage.prepare", context=context)
+    invocation.pop("kind")
+    stderr = _export_failure(
+        _catalog_module("webpage"),
+        "prepareOperation",
+        invocation,
+    )
+
+    assert "InputContractError" in stderr
 
 
 def test_webpage_analyse_receives_the_exact_projection_and_semantic_seed() -> None:

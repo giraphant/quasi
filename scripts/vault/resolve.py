@@ -50,6 +50,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.core import print_json, project_root, read_frontmatter  # noqa: E402
 from scripts.localise.localise import normalise_isbn  # noqa: E402
 from scripts.webpage.webarchive import collision_slug, normalize_web_url, read_webarchive  # noqa: E402
+from scripts.webpage.paths import webpage_route_state  # noqa: E402
 
 
 WEBPAGE_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,79}\Z")
@@ -175,17 +176,24 @@ def _directory_state(root: Path, path: Path) -> str:
     return "safe"
 
 
-def _webpage_owners(root: Path) -> tuple[dict[str, list[tuple[str, Path]]], dict[str, str]]:
+def _webpage_owners(
+    root: Path,
+) -> tuple[
+    dict[str, list[tuple[str, Path]]],
+    dict[str, str],
+    set[str],
+]:
     """Read only safe Webpage directories into normalized URL ownership rows."""
     directory = root / "vault" / "webpages"
     if _directory_state(root, directory) != "safe":
-        return {}, {}
+        return {}, {}, set()
     by_url: dict[str, list[tuple[str, Path]]] = {}
     slug_urls: dict[str, str] = {}
+    unsafe_urls: set[str] = set()
     try:
         entries = sorted(directory.iterdir(), key=lambda path: path.name)
     except OSError:
-        return {}, {}
+        return {}, {}, set()
     for entry in entries:
         slug = entry.name
         if WEBPAGE_SLUG.fullmatch(slug) is None or _directory_state(root, entry) != "safe":
@@ -210,9 +218,12 @@ def _webpage_owners(root: Path) -> tuple[dict[str, list[tuple[str, Path]]], dict
             if url:
                 evidence = snapshot
         if url is not None and evidence is not None:
+            if webpage_route_state(root, slug) != "safe":
+                unsafe_urls.add(url)
+                continue
             by_url.setdefault(url, []).append((slug, evidence))
             slug_urls[slug] = url
-    return by_url, slug_urls
+    return by_url, slug_urls, unsafe_urls
 
 
 def _webpage_row(
@@ -257,7 +268,18 @@ def _resolve_webpage(root: Path, item: dict[str, Any], slug: str) -> dict[str, A
             error="webpage url must be a non-empty string",
         )
 
-    by_url, slug_urls = _webpage_owners(root)
+    if webpage_route_state(root, slug) != "safe":
+        return _webpage_row(
+            slug=slug, vault_slug=None, path=None, root=root, suggested_slug=None,
+            error="webpage route or ancestor is symlink/non-directory",
+        )
+
+    by_url, slug_urls, unsafe_urls = _webpage_owners(root)
+    if url in unsafe_urls:
+        return _webpage_row(
+            slug=slug, vault_slug=None, path=None, root=root, suggested_slug=None,
+            error="webpage owner route or ancestor is symlink/non-directory",
+        )
     owners = by_url.get(url, [])
     if len(owners) > 1:
         return _webpage_row(
@@ -266,6 +288,11 @@ def _resolve_webpage(root: Path, item: dict[str, Any], slug: str) -> dict[str, A
         )
     if owners:
         owner_slug, evidence = owners[0]
+        if webpage_route_state(root, owner_slug) != "safe":
+            return _webpage_row(
+                slug=slug, vault_slug=None, path=None, root=root, suggested_slug=None,
+                error="webpage owner route or ancestor is symlink/non-directory",
+            )
         return _webpage_row(
             slug=slug, vault_slug=owner_slug, path=evidence, root=root,
             suggested_slug=owner_slug,
@@ -274,7 +301,10 @@ def _resolve_webpage(root: Path, item: dict[str, Any], slug: str) -> dict[str, A
     if slug in slug_urls and slug_urls[slug] != url:
         suggestion = collision_slug(slug, url)
         suggested_path = root / "vault" / "webpages" / suggestion
-        if _directory_state(root, suggested_path) != "missing":
+        if (
+            webpage_route_state(root, suggestion) != "safe"
+            or _directory_state(root, suggested_path) != "missing"
+        ):
             return _webpage_row(
                 slug=slug, vault_slug=None, path=None, root=root, suggested_slug=None,
                 error="hash-suffixed webpage slug is already occupied",

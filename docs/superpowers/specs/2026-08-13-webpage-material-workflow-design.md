@@ -201,7 +201,7 @@ A new stable shell surface exposes three closed commands:
 ```text
 quasi-webpage inspect --url URL --json
 quasi-webpage capture --url URL --expected-final-url URL --output PATH --json
-quasi-webpage extract --snapshot PATH --output PATH --json
+quasi-webpage extract --snapshot PATH --output PATH [--replace-existing] --json
 ```
 
 The Python-facing shim follows the existing bootstrap convention. On macOS it
@@ -229,9 +229,12 @@ known no-write `webpage.capture_identity_changed` failure. It does not publish
 under the previously selected owner or silently derive another route.
 
 `capture` calls `createWebArchiveData`, stages the bytes beside the exact
-output, and atomically publishes one non-empty WebArchive. The helper records
-the published file's capture timestamp in its JSON receipt. Navigation or
-capture failure leaves the canonical output unchanged.
+output, and atomically publishes one non-empty WebArchive. It validates both
+the native and saved-archive final URLs, but returns title and site parsed from
+the first matching elements in the saved main document so its testimony agrees
+with status. The helper records the published file's capture timestamp in its
+JSON receipt. Navigation or capture failure leaves the canonical output
+unchanged.
 
 Inspect and capture intentionally perform separate page loads. This small cost
 keeps identity read-only, establishes the final output route before a writer
@@ -244,6 +247,13 @@ list, obtains the main HTML resource, and runs deterministic main-content
 extraction to Markdown. It never revisits the live URL and never executes page
 scripts. The resulting UTF-8 Markdown is staged and atomically published to
 `processing/webpages/<slug>/source.md`.
+
+Snapshot and canonical material remain non-refreshable. Extract is no-clobber
+by default; the sole replacement authority is a closed `replace_stale` Prepare
+request after this same invocation has just published the previously missing
+snapshot. That mode atomically replaces the observed deterministic projection
+so it cannot remain stale beside the new evidence. An already-present unusable
+projection without that fresh-snapshot fact blocks before any writer.
 
 Main-content extraction uses Trafilatura over the saved main HTML. It is a
 normal Python dependency installed by the shared plugin bootstrap, not a
@@ -295,9 +305,9 @@ observation and remains the canonical semantic value.
 At each entry the plan selects only the first incomplete stage:
 
 - usable snapshot skips Capture;
-- usable prepared Markdown prevents a Prepare writer, but the Prepare Agent
-  still reads and reconciles it before Analyse so structural existence is not
-  mistaken for semantic readiness;
+- usable prepared Markdown selects a read-only Prepare reconciliation unless
+  this invocation has just created the missing snapshot; that fresh snapshot
+  narrowly authorizes replacement of the now-stale deterministic projection;
 - usable canonical Markdown skips Analyse; and
 - a complete current invocation still requires its audit receipt because audit
   has no durable status signal.
@@ -339,8 +349,9 @@ redirects, and slug collisions have deterministic resolutions.
 - A schema-valid specialist `blocked` result, including an exact-ref mismatch,
   remains `blocked`; it is not reinterpreted as observation recovery.
 - A schema-valid specialist failure is not automatically replayed.
-- An existing usable snapshot is never overwritten. Same-URL intake reuses the
-  existing material.
+- An existing usable snapshot and canonical page are never refreshed. Same-URL
+  intake reuses the existing material; only the just-created-snapshot rule may
+  replace its stale deterministic `source.md` projection.
 
 There is no Chrome, MHTML, Monolith, WARC, PDF, raw-HTML, or alternate-provider
 fallback.
@@ -372,8 +383,9 @@ receipts.
    fields do not enter frontmatter.
 2. Helper tests cover URL normalization, resolver zero/one/multiple-hit
    behavior, collision suffixing, binary WebArchive main-resource extraction,
-   Capture final-URL mismatch, atomic no-clobber publication, and readable
-   Markdown projection using local fixtures.
+   Capture final-URL mismatch, atomic default no-clobber publication, explicit
+   fresh-snapshot replacement, and readable Markdown projection using local
+   fixtures.
 3. A macOS-gated integration smoke test loads a local fixture page in the
    offscreen WKWebView, captures a WebArchive, and proves its main resource and
    local subresource are present. Unit tests do not require public network.
@@ -399,7 +411,8 @@ This phase does not:
 - capture authenticated sessions, the user's current browser tab, or Safari
   cookies;
 - support non-macOS capture;
-- maintain recapture history, versions, refresh, or overwrite policy;
+- maintain recapture history, versions, refresh, or a general overwrite policy
+  beyond the one just-created-snapshot projection replacement above;
 - guarantee infinite-scroll, click-revealed, or arbitrarily late asynchronous
   content;
 - add a PDF, screenshot, video, or separate image description;

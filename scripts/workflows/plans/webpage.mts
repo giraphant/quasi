@@ -144,6 +144,8 @@ interface PreparedCarry {
   size: number;
 }
 
+type PublicationMode = "create" | "replace_stale" | "reconcile";
+
 const prepareForAnalysis = async (
   runtime: MaterialRuntime,
   slug: string,
@@ -152,14 +154,28 @@ const prepareForAnalysis = async (
   snapshotCreated: boolean,
 ): Promise<PreparedCarry | MaterialResult> => {
   const snapshotPath = `vault/webpages/${slug}/snapshot.webarchive`;
+  const outputObservation = input.observation.facts.prepared;
+  let publicationMode: PublicationMode;
+  if (!outputObservation.present) publicationMode = "create";
+  else if (snapshotCreated) publicationMode = "replace_stale";
+  else if (outputObservation.usable) publicationMode = "reconcile";
+  else
+    return blockedMaterialResult(
+      resultSeed(slug),
+      planIssue(
+        "webpage.prepared_unusable_without_fresh_snapshot",
+        "webpage.prepare",
+        "The existing Webpage source projection is unusable and no snapshot was created by this invocation to authorize its replacement.",
+      ),
+    );
   const prepared = await dispatch(runtime, "webpage.prepare", slug, {
     materialKey: `webpage:${slug}`,
     snapshotObservation: snapshotCreated
       ? { path: snapshotPath, present: true, usable: true }
       : input.observation.facts.snapshot,
-    outputObservation: snapshotCreated
-      ? { ...input.observation.facts.prepared, usable: false }
-      : input.observation.facts.prepared,
+    outputObservation,
+    publicationMode,
+    snapshotCreated,
   });
   const stop = stopForOutcome(slug, prepared, true, identity);
   if (stop !== null) return stop;

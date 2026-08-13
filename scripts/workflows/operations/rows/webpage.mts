@@ -31,6 +31,8 @@ interface WebpageIdentity {
   site: string;
 }
 
+type PublicationMode = "create" | "replace_stale" | "reconcile";
+
 const record = (value: unknown, name: string): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new InputContractError(`${name} must be an object`);
@@ -58,7 +60,8 @@ const artifactObservation = (
   if (
     row.path !== expectedPath ||
     present === null ||
-    typeof row.usable !== "boolean"
+    typeof row.usable !== "boolean" ||
+    (row.usable && !present)
   )
     throw new InputContractError(`${name} must bind its exact artifact path`);
   return {
@@ -127,6 +130,7 @@ const preparePayload = (refs: WorkflowContext): WorkflowContext => ({
     "snapshot_path",
     "output_path",
     "write_state",
+    "publication_mode",
     "source_sha256",
     "source_size",
     "content_ready",
@@ -134,7 +138,10 @@ const preparePayload = (refs: WorkflowContext): WorkflowContext => ({
   properties: {
     snapshot_path: { const: refs.snapshot },
     output_path: { const: refs.output },
-    write_state: { const: refs.outputUsable ? "not_written" : "written" },
+    write_state: {
+      const: refs.publicationMode === "reconcile" ? "not_written" : "written",
+    },
+    publication_mode: { const: refs.publicationMode },
     source_sha256: { type: "string", pattern: HASH_PATTERN },
     source_size: { type: "integer", minimum: 1 },
     content_ready: { const: true },
@@ -245,6 +252,34 @@ export const webpageOperationRows: OperationRow[] = [
     context: (rawContext, base) => {
       const snapshot = `vault/webpages/${base.slug}/snapshot.webarchive`;
       const output = `processing/webpages/${base.slug}/source.md`;
+      const outputObservation = artifactObservation(
+        rawContext.outputObservation,
+        output,
+        "outputObservation",
+      );
+      const publicationMode = rawContext.publicationMode;
+      const snapshotCreated = rawContext.snapshotCreated;
+      if (
+        !["create", "replace_stale", "reconcile"].includes(
+          publicationMode as string,
+        ) ||
+        typeof snapshotCreated !== "boolean"
+      )
+        throw new InputContractError(
+          "webpage.prepare requires a closed publication mode and snapshot branch fact",
+        );
+      const coherent =
+        (publicationMode === "create" && !outputObservation.present) ||
+        (publicationMode === "replace_stale" &&
+          snapshotCreated &&
+          outputObservation.present) ||
+        (publicationMode === "reconcile" &&
+          !snapshotCreated &&
+          outputObservation.usable);
+      if (!coherent)
+        throw new InputContractError(
+          "webpage.prepare publication mode disagrees with the observed output and snapshot branch",
+        );
       return {
         ...base,
         snapshotObservation: artifactObservation(
@@ -252,19 +287,25 @@ export const webpageOperationRows: OperationRow[] = [
           snapshot,
           "snapshotObservation",
         ),
-        outputObservation: artifactObservation(
-          rawContext.outputObservation,
-          output,
-          "outputObservation",
-        ),
+        outputObservation,
+        publicationMode: publicationMode as PublicationMode,
+        snapshotCreated,
       };
     },
-    refs: ({ snapshot, output, snapshotObservation, outputObservation }) => ({
+    refs: ({
       snapshot,
       output,
       snapshotObservation,
       outputObservation,
-      outputUsable: outputObservation.usable,
+      publicationMode,
+      snapshotCreated,
+    }) => ({
+      snapshot,
+      output,
+      snapshotObservation,
+      outputObservation,
+      publicationMode,
+      snapshotCreated,
     }),
     writeTargets: ({ output }) => [{ scope: "exact", path: output }],
     payloadProperties: preparePayload,
@@ -279,11 +320,17 @@ export const webpageOperationRows: OperationRow[] = [
         "Produce or reconcile one substantive Markdown projection from the exact saved WebArchive.",
       snapshot_observation: refs.snapshotObservation,
       output_observation: refs.outputObservation,
+      publication_mode: refs.publicationMode,
+      snapshot_created: refs.snapshotCreated,
       refs: { snapshot: refs.snapshot, output: refs.output },
-      capabilities: [
-        "quasi-webpage extract --snapshot PATH --output PATH --json",
-        "Read the exact source Markdown projection",
-      ],
+      capabilities:
+        refs.publicationMode === "create"
+          ? ["quasi-webpage extract --snapshot PATH --output PATH --json"]
+          : refs.publicationMode === "replace_stale"
+            ? [
+                "quasi-webpage extract --snapshot PATH --output PATH --replace-existing --json",
+              ]
+            : ["Read the exact source Markdown projection"],
     }),
   },
   {

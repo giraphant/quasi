@@ -34,6 +34,12 @@ from scripts.webpage.webarchive import (  # noqa: E402
     normalize_web_url,
     read_webarchive,
 )
+from scripts.webpage.paths import (  # noqa: E402
+    WebpagePathError,
+    path_state,
+    require_safe_webpage_routes,
+    trusted_root,
+)
 
 
 STATUS_VERSION = "quasi.status/0.2"
@@ -169,14 +175,35 @@ def canonical_observation(
 
 def _regular_nonempty_artifact(root: Path, path: Path) -> dict[str, Any]:
     """Observe one exact Webpage artifact without admitting symlinks as regular files."""
-    observation = artifact_observation(root, path)
+    state = path_state(root, path)
+    observation = {
+        "path": relative(root, path),
+        "present": state != "missing",
+        "usable": False,
+    }
+    if state != "regular":
+        return observation
     try:
-        mode = path.lstat().st_mode
+        info = path.stat()
+        if info.st_size <= 0:
+            return observation
+        with path.open("rb") as handle:
+            handle.read(1)
     except OSError:
         return observation
-    if not stat.S_ISREG(mode):
-        observation["usable"] = False
+    observation["usable"] = True
     return observation
+
+
+def webpage_canonical_observation(
+    root: Path, path: Path
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Observe canonical Webpage Markdown without following an unsafe leaf."""
+
+    observation = _regular_nonempty_artifact(root, path)
+    frontmatter = parse_frontmatter(path) if observation["usable"] else None
+    observation["usable"] = frontmatter is not None
+    return observation, frontmatter
 
 
 def webpage_snapshot_observation(
@@ -332,12 +359,17 @@ def paper_status(root: Path, slug: str) -> dict[str, Any]:
 
 
 def webpage_status(root: Path, slug: str) -> dict[str, Any]:
+    root = trusted_root(root)
+    try:
+        require_safe_webpage_routes(root, slug)
+    except WebpagePathError as exc:
+        raise InvocationError(str(exc)) from exc
     snapshot_path = artifact_path(root, "webpage.capture", "snapshot", slug=slug)
     prepared_path = artifact_path(root, "webpage.prepare", "output", slug=slug)
     canonical_path = artifact_path(root, "webpage.analyse", "output", slug=slug)
     snapshot, document = webpage_snapshot_observation(root, snapshot_path)
     prepared = utf8_markdown_observation(root, prepared_path)
-    canonical, frontmatter = canonical_observation(root, canonical_path)
+    canonical, frontmatter = webpage_canonical_observation(root, canonical_path)
     captured_at = snapshot_captured_at(snapshot_path) if document else None
     snapshot_identity = (
         webpage_identity(slug, document.title, document.url, document.site)

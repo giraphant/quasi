@@ -22,8 +22,12 @@ IDENTITY = {
 }
 
 
-def artifact(path: str, usable: bool) -> dict[str, Any]:
-    return {"path": path, "present": usable, "usable": usable}
+def artifact(path: str, usable: bool, *, present: bool | None = None) -> dict[str, Any]:
+    return {
+        "path": path,
+        "present": usable if present is None else present,
+        "usable": usable,
+    }
 
 
 def webpage_observation(
@@ -31,6 +35,7 @@ def webpage_observation(
     snapshot: bool = False,
     prepared: bool = False,
     canonical: bool = False,
+    prepared_present: bool | None = None,
     identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     observed_identity = identity
@@ -47,7 +52,9 @@ def webpage_observation(
                 f"vault/webpages/{SLUG}/snapshot.webarchive", snapshot
             ),
             "prepared": artifact(
-                f"processing/webpages/{SLUG}/source.md", prepared
+                f"processing/webpages/{SLUG}/source.md",
+                prepared,
+                present=prepared_present,
             ),
             "canonical": artifact(
                 f"vault/webpages/{SLUG}/webpage.md", canonical
@@ -70,6 +77,7 @@ def canonical_webpage_input(
     snapshot: bool = False,
     prepared: bool = False,
     canonical: bool = False,
+    prepared_present: bool | None = None,
 ) -> dict[str, Any]:
     return {
         "seed": {
@@ -81,6 +89,7 @@ def canonical_webpage_input(
             snapshot=snapshot,
             prepared=prepared,
             canonical=canonical,
+            prepared_present=prepared_present,
         ),
         "options": {},
     }
@@ -284,10 +293,54 @@ def test_webpage_new_snapshot_invalidates_an_older_prepared_projection() -> None
     assert prepare_request["output_observation"] == {
         "path": f"processing/webpages/{SLUG}/source.md",
         "present": True,
-        "usable": False,
+        "usable": True,
     }
+    assert prepare_request["publication_mode"] == "replace_stale"
     assert report["calls"][2]["request"]["mode"] == "repair"
     assert report["result"]["terminal"] == "complete"
+
+
+def test_webpage_new_snapshot_with_absent_projection_requests_create() -> None:
+    report = run_webpage(
+        canonical_webpage_input(),
+        [capture_complete(), prepare_complete(), analyse_complete(), audit_complete()],
+    )
+
+    prepare_request = report["calls"][1]["request"]
+    assert prepare_request["publication_mode"] == "create"
+    assert prepare_request["output_observation"] == artifact(
+        f"processing/webpages/{SLUG}/source.md", False
+    )
+
+
+def test_webpage_existing_usable_projection_requests_reconcile() -> None:
+    report = run_webpage(
+        canonical_webpage_input(snapshot=True, prepared=True),
+        [prepare_complete(), analyse_complete(), audit_complete()],
+    )
+
+    prepare_request = report["calls"][0]["request"]
+    assert prepare_request["publication_mode"] == "reconcile"
+    assert prepare_request["output_observation"] == artifact(
+        f"processing/webpages/{SLUG}/source.md", True
+    )
+
+
+def test_webpage_existing_unusable_projection_without_new_snapshot_blocks_before_writer() -> None:
+    report = run_webpage(
+        canonical_webpage_input(
+            snapshot=True,
+            prepared=False,
+            prepared_present=True,
+        ),
+        [],
+    )
+
+    assert operation_names(report) == []
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == (
+        "webpage.prepared_unusable_without_fresh_snapshot"
+    )
 
 
 @pytest.mark.parametrize(
