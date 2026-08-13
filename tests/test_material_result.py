@@ -16,6 +16,7 @@ BOOK_CONTRACT_MODULE = "scripts/workflows/contracts/book.mts"
 TALK_CONTRACT_MODULE = "scripts/workflows/contracts/talk.mts"
 TRANSLATION_CONTRACT_MODULE = "scripts/workflows/contracts/translation.mts"
 AUTHOR_CONTRACT_MODULE = "scripts/workflows/contracts/author.mts"
+WEBPAGE_CONTRACT_MODULE = "scripts/workflows/contracts/webpage.mts"
 
 PAPER_IDENTITY = {
     "slug": "exact-paper",
@@ -39,6 +40,47 @@ BOOK_IDENTITY = {
     "category": "monograph",
     "confidence": "high",
 }
+
+WEBPAGE_IDENTITY = {
+    "slug": "example-org-page",
+    "title": "Example page",
+    "url": "https://example.org/page",
+    "site": "Example",
+}
+
+
+def webpage_observation(
+    *,
+    slug: str = "example-org-page",
+    identity: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "quasi.status/0.2",
+        "kind": "webpage",
+        "slug": slug,
+        "identity": deepcopy(identity),
+        "facts": {
+            "kind": "webpage",
+            "snapshot": {
+                "path": f"vault/webpages/{slug}/snapshot.webarchive",
+                "present": identity is not None,
+                "usable": identity is not None,
+            },
+            "prepared": {
+                "path": f"processing/webpages/{slug}/source.md",
+                "present": False,
+                "usable": False,
+            },
+            "canonical": {
+                "path": f"vault/webpages/{slug}/webpage.md",
+                "present": False,
+                "usable": False,
+            },
+            "captured_at": (
+                "2026-08-13T12:34:56Z" if identity is not None else None
+            ),
+        },
+    }
 
 PAPER_OBSERVATION = {
     "schema_version": "quasi.status/0.2",
@@ -483,6 +525,183 @@ def assert_invalid_input(
             },
         },
     }
+
+
+def parse_webpage(value: Any) -> dict[str, Any]:
+    return run_workflow_export(
+        WEBPAGE_CONTRACT_MODULE,
+        "parseWebpageRunInput",
+        value,
+    )
+
+
+def test_webpage_provisional_input_is_the_exact_readonly_intake_shape() -> None:
+    value = {
+        "seed": {"state": "provisional", "url": "https://example.org/page"},
+        "observation": None,
+        "options": {},
+    }
+
+    assert parse_webpage(value) == {
+        "ok": True,
+        "value": {
+            "mode": "identify",
+            "seed": value["seed"],
+            "options": {},
+        },
+    }
+
+    with_writer_observation = deepcopy(value)
+    with_writer_observation["observation"] = webpage_observation()
+    assert parse_webpage(with_writer_observation)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ftp://example.org/page",
+        "https://user:secret@example.org/page",
+        "https://@example.org/page",
+        "https://example.org/page\nnext",
+    ],
+)
+def test_webpage_provisional_input_rejects_non_public_http_url(url: str) -> None:
+    result = parse_webpage(
+        {
+            "seed": {"state": "provisional", "url": url},
+            "observation": None,
+            "options": {},
+        }
+    )
+
+    assert result["ok"] is False
+
+
+def test_webpage_canonical_input_adopts_same_url_observed_metadata() -> None:
+    observed_identity = {
+        **WEBPAGE_IDENTITY,
+        "title": "Title from capture",
+        "url": "HTTPS://EXAMPLE.ORG:443/page#fragment",
+        "site": "Captured site",
+    }
+    value = {
+        "seed": {
+            "state": "canonical",
+            "material_slug": "example-org-page",
+            "identity": deepcopy(WEBPAGE_IDENTITY),
+        },
+        "observation": webpage_observation(identity=observed_identity),
+        "options": {},
+    }
+
+    parsed = parse_webpage(value)
+
+    assert parsed["ok"] is True
+    assert parsed["value"]["mode"] == "process"
+    assert parsed["value"]["effectiveIdentity"] == {
+        **WEBPAGE_IDENTITY,
+        "title": "Title from capture",
+        "site": "Captured site",
+    }
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value["observation"].update({"slug": "other-page"}),
+        lambda value: value["observation"]["identity"].update(
+            {"slug": "other-page"}
+        ),
+        lambda value: value["observation"]["identity"].update(
+            {"url": "https://example.org/other"}
+        ),
+        lambda value: value["observation"]["facts"]["prepared"].update(
+            {"path": "processing/webpages/other-page/source.md"}
+        ),
+        lambda value: value["observation"]["facts"].update(
+            {"captured_at": "2026-08-13T12:34:56.123Z"}
+        ),
+        lambda value: value["options"].update({"cursor": "hidden-state"}),
+    ],
+)
+def test_webpage_canonical_input_rejects_non_owner_status(mutate) -> None:
+    value = {
+        "seed": {
+            "state": "canonical",
+            "material_slug": "example-org-page",
+            "identity": deepcopy(WEBPAGE_IDENTITY),
+        },
+        "observation": webpage_observation(identity=WEBPAGE_IDENTITY),
+        "options": {},
+    }
+    mutate(value)
+
+    assert parse_webpage(value)["ok"] is False
+
+
+def test_webpage_route_key_and_resume_seed_remain_leaf_only() -> None:
+    route = {"kind": "webpage", "slug": "example-org-page"}
+    assert run_workflow_export(INPUT_MODULE, "parseObservationRoute", route) == route
+    assert run_workflow_export(INPUT_MODULE, "observationKey", route) == (
+        "webpage:example-org-page"
+    )
+
+    seed = {
+        "material": {
+            "requested": {"kind": "webpage", "slug": None},
+            "canonical": {"kind": "webpage", "slug": "example-org-page"},
+        }
+    }
+    resume_seed = {
+        "route": route,
+        "seed": {
+            "state": "canonical",
+            "material_slug": "example-org-page",
+            "identity": deepcopy(WEBPAGE_IDENTITY),
+        },
+        "options": {},
+    }
+
+    result = run_workflow_export(
+        RESULT_MODULE,
+        "needsObservationMaterialResult",
+        seed,
+        [route],
+        resume_seed,
+    )
+    assert result["resume_seed"] == resume_seed
+    assert "gate" not in result
+
+
+def test_webpage_complete_result_carries_all_three_exact_artifact_roles() -> None:
+    artifacts = [
+        {
+            "role": "snapshot",
+            "path": "vault/webpages/example-org-page/snapshot.webarchive",
+        },
+        {
+            "role": "normalized_text",
+            "path": "processing/webpages/example-org-page/source.md",
+        },
+        {
+            "role": "canonical",
+            "path": "vault/webpages/example-org-page/webpage.md",
+        },
+    ]
+    result = run_workflow_export(
+        RESULT_MODULE,
+        "completeMaterialResult",
+        {
+            "material": {
+                "requested": {"kind": "webpage", "slug": None},
+                "canonical": {"kind": "webpage", "slug": "example-org-page"},
+            }
+        },
+        artifacts,
+        None,
+    )
+
+    assert result["artifacts"] == artifacts
 
 
 @pytest.mark.parametrize("value", [None, [], "paper", 42])

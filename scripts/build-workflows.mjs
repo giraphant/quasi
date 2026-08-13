@@ -34,6 +34,11 @@ const WORKFLOWS = [
     validate: validateMaterialEntry,
   },
   {
+    name: "webpage",
+    kind: "webpage",
+    validate: validateMaterialEntry,
+  },
+  {
     name: "translation",
     kind: "translation",
     validate: validateMaterialEntry,

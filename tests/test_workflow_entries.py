@@ -18,6 +18,10 @@ from test_material_plans import (
     translation_complete,
 )
 from test_topic_plan import recall_complete, topic_input
+from test_webpage_plan import (
+    audit_complete as webpage_audit_complete,
+    canonical_webpage_input,
+)
 from workflow_test_support import (
     run_generated_workflow,
     run_workflow_entry,
@@ -25,7 +29,15 @@ from workflow_test_support import (
 )
 
 
-ENTRIES = ("paper", "book", "talk", "translation", "author", "topic")
+ENTRIES = (
+    "paper",
+    "book",
+    "talk",
+    "translation",
+    "author",
+    "topic",
+    "webpage",
+)
 
 
 def _entry_input(entry: str) -> dict[str, Any]:
@@ -47,6 +59,8 @@ def _entry_input(entry: str) -> dict[str, Any]:
             "observation": author_observation(),
             "options": {},
         }
+    if entry == "webpage":
+        return canonical_webpage_input(snapshot=True, prepared=True, canonical=True)
     return topic_input()
 
 
@@ -63,6 +77,8 @@ def _abi_case(entry: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             author_discovery_complete([]),
             author_resolve_complete([book]),
         ]
+    if entry == "webpage":
+        return value, [webpage_audit_complete()]
     value["options"]["maxRounds"] = 0
     return value, [recall_complete()]
 
@@ -98,6 +114,7 @@ def test_named_entries_reject_unknown_input_before_agent_dispatch(entry: str) ->
             {"topic", "paper", "book", "talk", "search"},
             {"topic", "paper", "book", "talk", "search"},
         ),
+        ("webpage", {"webpage"}, {"webpage"}, {"webpage"}),
     ],
 )
 def test_named_entries_import_only_their_composed_operation_domains(

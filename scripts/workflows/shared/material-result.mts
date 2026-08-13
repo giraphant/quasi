@@ -25,6 +25,7 @@ import type {
   TopicChildRoute,
 } from "../contracts/topic.mts";
 import type { AuthorResumeSeed } from "../contracts/author.mts";
+import type { WebpageSeed } from "../contracts/webpage.mts";
 
 export const MATERIAL_RESULT_VERSION = "quasi.material.result/0.1" as const;
 
@@ -32,6 +33,7 @@ export type MaterialKind =
   | "paper"
   | "book"
   | "talk"
+  | "webpage"
   | "translation"
   | "author"
   | "topic";
@@ -50,6 +52,7 @@ export interface CanonicalMaterialIdentity {
 export interface ExactArtifactRef {
   role:
     | "source"
+    | "snapshot"
     | "normalized_text"
     | "manifest"
     | "chapter"
@@ -91,6 +94,11 @@ export type LeafResumeSeed =
       route: { kind: "book"; slug: string };
       seed: BookSeed;
       options: Readonly<Record<string, unknown>>;
+    }
+  | {
+      route: { kind: "webpage"; slug: string };
+      seed: Extract<WebpageSeed, { state: "canonical" }>;
+      options: Readonly<Record<string, never>>;
     }
   | {
       route: {
