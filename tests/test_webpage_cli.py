@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
+import os
 import plistlib
 import re
 import shutil
+import subprocess
 import sys
+import time
 from hashlib import sha256
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -354,3 +358,72 @@ def test_command_capture_smoke_preserves_loopback_subresources(tmp_path: Path) -
     assert archive.url == inspected["final_url"]
     assert "Local fixture content" in archive.html
     assert any(url.endswith("/fixture.css") for url in archive.subresource_urls)
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or shutil.which("swiftc") is None,
+    reason="requires macOS WebKit and swiftc",
+)
+def test_native_timeout_wins_when_metadata_never_returns(tmp_path: Path) -> None:
+    binary = tmp_path / "webpage-timeout-test"
+    source = Path("scripts/webpage/webpage_capture.swift")
+    subprocess.run(
+        [
+            shutil.which("swiftc"),
+            "-D",
+            "QUASI_WEBPAGE_TESTING",
+            "-O",
+            "-parse-as-library",
+            "-framework",
+            "WebKit",
+            str(source),
+            "-o",
+            str(binary),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (tmp_path / "fixture.html").write_text(
+        "<html><head><title>Timeout fixture</title></head><body>ready</body></html>",
+        encoding="utf-8",
+    )
+
+    class QuietHandler(SimpleHTTPRequestHandler):
+        def log_message(self, _format: str, *_args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        lambda *args: QuietHandler(*args, directory=str(tmp_path)),
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        environment = {
+            **os.environ,
+            "QUASI_WEBPAGE_TEST_STALL": "metadata",
+            "QUASI_WEBPAGE_TEST_TIMEOUT_MS": "100",
+        }
+        started = time.monotonic()
+        completed = subprocess.run(
+            [str(binary), "inspect", f"http://127.0.0.1:{server.server_port}/fixture.html"],
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+    assert elapsed < 3
+    assert completed.returncode != 0
+    assert json.loads(completed.stdout) == {
+        "status": "failed",
+        "code": "webpage.capture_timeout",
+        "message": "page capture exceeded 60 seconds",
+    }

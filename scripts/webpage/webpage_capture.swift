@@ -34,24 +34,10 @@ final class NavigationObserver: NSObject, WKNavigationDelegate {
         guard continuation == nil else {
             throw HelperError(code: "webpage.navigation_failed", message: "navigation already active")
         }
-        try await withTaskCancellationHandler(operation: {
-            try await withCheckedThrowingContinuation { continuation in
-                self.continuation = continuation
-                _ = webView.load(request)
-            }
-        }, onCancel: {
-            Task { @MainActor in
-                webView.stopLoading()
-                self.finish(
-                    .failure(
-                        HelperError(
-                            code: "webpage.capture_timeout",
-                            message: "page capture exceeded 60 seconds"
-                        )
-                    )
-                )
-            }
-        })
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            _ = webView.load(request)
+        }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -83,6 +69,11 @@ struct WebpageCapture {
     }
 
     static func metadata(from webView: WKWebView) async throws -> (String, String) {
+        #if QUASI_WEBPAGE_TESTING
+        if ProcessInfo.processInfo.environment["QUASI_WEBPAGE_TEST_STALL"] == "metadata" {
+            await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+        }
+        #endif
         let script = "JSON.stringify({title: document.title || '', site: (document.querySelector('meta[property=\\\"og:site_name\\\"]') || {}).content || ''})"
         guard let raw = try await webView.evaluateJavaScript(script) as? String,
               let data = raw.data(using: .utf8),
@@ -129,21 +120,31 @@ struct WebpageCapture {
         )
     }
 
-    static func timedLoad(url: URL, staging: URL?) async throws -> ResultPayload {
-        try await withThrowingTaskGroup(of: ResultPayload.self) { group in
-            group.addTask { @MainActor in
-                try await loadOnce(url: url, staging: staging)
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: 60_000_000_000)
-                throw HelperError(code: "webpage.capture_timeout", message: "page capture exceeded 60 seconds")
-            }
-            guard let first = try await group.next() else {
-                throw HelperError(code: "webpage.capture_failed", message: "page capture did not start")
-            }
-            group.cancelAll()
-            return first
+    static func deadlineMilliseconds() -> Int {
+        #if QUASI_WEBPAGE_TESTING
+        if let raw = ProcessInfo.processInfo.environment["QUASI_WEBPAGE_TEST_TIMEOUT_MS"],
+           let milliseconds = Int(raw), milliseconds > 0 {
+            return milliseconds
         }
+        #endif
+        return 60_000
+    }
+
+    static func timeoutWorkItem() -> DispatchWorkItem {
+        let timeout = DispatchWorkItem {
+            emit(
+                ErrorPayload(
+                    code: "webpage.capture_timeout",
+                    message: "page capture exceeded 60 seconds"
+                )
+            )
+            exit(1)
+        }
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(deadlineMilliseconds()),
+            execute: timeout
+        )
+        return timeout
     }
 
     static func main() async {
@@ -163,13 +164,18 @@ struct WebpageCapture {
             emit(ErrorPayload(code: "webpage.invalid_arguments", message: "capture requires one staging path"))
             exit(2)
         }
+        let timeout = timeoutWorkItem()
         do {
             let staging = mode == "capture" ? URL(fileURLWithPath: arguments[3]) : nil
-            emit(try await timedLoad(url: url, staging: staging))
+            let result = try await loadOnce(url: url, staging: staging)
+            timeout.cancel()
+            emit(result)
         } catch let error as HelperError {
+            timeout.cancel()
             emit(ErrorPayload(code: error.code, message: error.message))
             exit(1)
         } catch {
+            timeout.cancel()
             emit(ErrorPayload(code: "webpage.capture_failed", message: error.localizedDescription))
             exit(1)
         }

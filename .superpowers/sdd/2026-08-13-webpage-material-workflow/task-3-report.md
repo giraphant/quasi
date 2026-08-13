@@ -82,3 +82,68 @@ succeeded. The integration test used only a `ThreadingHTTPServer` bound to
 None. The local smoke initially required the permitted unsandboxed runner only
 because this execution sandbox forbids binding a loopback server; the completed
 test remained strictly local.
+
+## Fix round 1 — total timeout
+
+### Cause and change
+
+The first implementation used a structured task-group race. Its timeout child
+could cancel the WebKit work task, but task-group scope still waited for an
+uncooperative `evaluateJavaScript` or `createWebArchiveData` continuation.
+Python also imposed a second 65-second subprocess watchdog that could become
+the surfaced failure instead of the helper's closed timeout receipt.
+
+The helper now schedules one main-queue deadline before all navigation,
+settling, metadata, and archive work. The deadline emits exactly
+`{"status":"failed","code":"webpage.capture_timeout","message":"page capture exceeded 60 seconds"}`
+and exits nonzero independently of any WebKit continuation returning. Successful
+and ordinary failed operations cancel that scheduled deadline. The Python
+native invocation has no timeout argument, leaving the helper deadline as the
+only operational deadline.
+
+The test-only Swift build defines `QUASI_WEBPAGE_TESTING`, where a metadata
+seam can intentionally await a continuation that never resumes and a 100 ms
+deadline is selected. This has no effect in the production compile.
+
+### TDD evidence
+
+RED command against `49c4081` before changing production code:
+
+```bash
+CLAUDE_PLUGIN_DATA=/private/tmp/quasi-sdd-webpage-data /private/tmp/quasi-sdd-webpage-data/.venv/bin/python -m pytest tests/test_webpage_cli.py -q -k 'native_timeout_wins'
+```
+
+Outcome: `1 failed, 16 deselected in 2.19s`. The focused collected test set
+the intended metadata stall environment, but the current helper completed with
+return code 0; the assertion `assert completed.returncode != 0` failed. This
+was the expected behavioral RED: the old helper had neither the test stall seam
+nor a deadline able to win over an uncooperative metadata continuation.
+
+GREEN focused command:
+
+```bash
+CLAUDE_PLUGIN_DATA=/private/tmp/quasi-sdd-webpage-data /private/tmp/quasi-sdd-webpage-data/.venv/bin/python -m pytest tests/test_webpage_cli.py -q -k 'native_timeout_wins'
+```
+
+Outcome after the implementation and final cleanup: `1 passed, 16 deselected
+in 1.17s`. The subprocess returned within its 3-second test guard, with a
+nonzero exit and the exact closed `webpage.capture_timeout` JSON object.
+
+### Final verification
+
+```bash
+CLAUDE_PLUGIN_DATA=/private/tmp/quasi-sdd-webpage-data /private/tmp/quasi-sdd-webpage-data/.venv/bin/python -m pytest tests/test_webpage_cli.py -q
+bash -n bin/quasi-webpage
+swiftc -O -parse-as-library -framework WebKit scripts/webpage/webpage_capture.swift -o /private/tmp/quasi-sdd-webpage-data/bin/quasi-webpage-webkit-final
+git diff --check
+```
+
+Outcome: `17 passed in 4.34s`; the original loopback capture smoke remains in
+the full test file. Shell syntax, Swift compilation, and whitespace validation
+succeeded.
+
+### Scope review
+
+Only the native timeout mechanism, its Python watchdog removal, the focused
+native test seam, and this report changed. No capture publication behavior,
+fallback, retry, background worker, or workflow/status surface was broadened.

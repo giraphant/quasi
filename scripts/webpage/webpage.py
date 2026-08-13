@@ -118,7 +118,6 @@ def _run_native(mode: str, url: str, staging: Path | None = None) -> NativeResul
             arguments,
             capture_output=True,
             text=True,
-            timeout=65,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
