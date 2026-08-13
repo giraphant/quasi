@@ -118,6 +118,12 @@ Implement `WebpageSchema` with `extra="forbid"` and strict fields. Parse `publis
 The effective model shape is:
 
 ```python
+WebURL = Annotated[
+    str,
+    StringConstraints(min_length=8, max_length=2048, strip_whitespace=True),
+]
+
+
 class WebpageSchema(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -131,6 +137,30 @@ class WebpageSchema(BaseModel):
     themes: list[str] = Field(default_factory=list)
     topics: list[str] = Field(default_factory=list)
     rating: Rating | None = None
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError("url must be a credential-free HTTP(S) URL")
+        return value
+
+    @field_validator("captured_at")
+    @classmethod
+    def validate_captured_at(cls, value: datetime) -> datetime:
+        if (
+            value.tzinfo is None
+            or value.utcoffset() != timedelta(0)
+            or value.microsecond != 0
+        ):
+            raise ValueError("captured_at must be UTC at whole-second precision")
+        return value
 ```
 
 - [ ] **Step 4: Add the body contract without weakening other artifacts**
@@ -232,9 +262,56 @@ git commit -m "feat: define webpage artifact contract"
 - `read_webarchive(path: Path) -> WebArchiveDocument`
 - `extract_webarchive(snapshot: Path, output: Path) -> ExtractionResult`
 
+```python
+@dataclass(frozen=True)
+class ExtractionResult:
+    url: str
+    title: str
+    site: str
+    output_path: Path
+    sha256: str
+    size: int
+```
+
 - [ ] **Step 1: Write failing pure capability tests**
 
-Build binary plist fixtures in the test with `plistlib.dumps(..., fmt=plistlib.FMT_BINARY)`. Cover only the load-bearing cases:
+Build binary plist fixtures in the test with one exact helper:
+
+```python
+def webarchive_fixture_bytes(
+    url: str,
+    html: str,
+    subresource_urls: tuple[str, ...] = (),
+) -> bytes:
+    return plistlib.dumps(
+        {
+            "WebMainResource": {
+                "WebResourceData": html.encode("utf-8"),
+                "WebResourceURL": url,
+                "WebResourceMIMEType": "text/html",
+                "WebResourceTextEncodingName": "UTF-8",
+            },
+            "WebSubresources": [
+                {
+                    "WebResourceData": b"fixture",
+                    "WebResourceURL": item,
+                    "WebResourceMIMEType": "text/plain",
+                }
+                for item in subresource_urls
+            ],
+            "WebSubframeArchives": [],
+        },
+        fmt=plistlib.FMT_BINARY,
+    )
+
+
+def write_webarchive_fixture(tmp_path: Path, *, url: str, html: str) -> Path:
+    path = tmp_path / "snapshot.webarchive"
+    path.write_bytes(webarchive_fixture_bytes(url, html))
+    return path
+```
+
+Cover only the load-bearing cases:
 
 ```python
 @pytest.mark.parametrize(
@@ -315,6 +392,31 @@ Add `trafilatura` to the shared requirements. Import it lazily inside extraction
 
 Normalize all extracted Markdown headings with a fence-aware pass so none is H1/H2: add two levels and cap at H6, while leaving fenced code bytes untouched. This lets the canonical producer place the projection below `## Content` without creating sibling top-level sections. Publish through a sibling staging file and atomic no-clobber link, following the existing `quasi-extract --no-clobber` pattern; fsync the file and parent directory.
 
+Use one local transform, not a Markdown parser subsystem:
+
+```python
+def nest_markdown_headings(text: str) -> str:
+    output: list[str] = []
+    fence_char = ""
+    fence_len = 0
+    for line in text.splitlines():
+        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if marker:
+            token = marker.group(1)
+            if not fence_char:
+                fence_char, fence_len = token[0], len(token)
+            elif token[0] == fence_char and len(token) >= fence_len:
+                fence_char, fence_len = "", 0
+            output.append(line)
+            continue
+        heading = None if fence_char else re.match(r"^(#{1,6})(\s+.+)$", line)
+        if heading:
+            level = min(6, len(heading.group(1)) + 2)
+            line = "#" * level + heading.group(2)
+        output.append(line)
+    return "\n".join(output).strip() + "\n"
+```
+
 - [ ] **Step 6: Install the declared dependency, verify GREEN, and commit**
 
 Run the shared bootstrap so the test interpreter has the new declared dependency, then run:
@@ -348,6 +450,18 @@ git commit -m "feat: extract webpage webarchives"
 quasi-webpage inspect --url URL --json
 quasi-webpage capture --url URL --expected-final-url URL --output PATH --json
 quasi-webpage extract --snapshot PATH --output PATH --json
+```
+
+```python
+@dataclass(frozen=True)
+class NativeResult:
+    final_url: str
+    title: str
+    site: str
+
+
+InspectRunner: TypeAlias = Callable[[str], NativeResult]
+CaptureRunner: TypeAlias = Callable[[str, Path], NativeResult]
 ```
 
 - [ ] **Step 1: Write failing command-contract tests**
@@ -479,9 +593,11 @@ git commit -m "feat: capture webpage webarchives"
 **Interfaces:**
 
 - Resolver item: `{kind:"webpage",slug,url}`
+- Resolver Webpage row: existing common ownership fields plus `suggested_slug:string|null`
 - Status route: `quasi-status --kind webpage --slug SLUG --json`
 - Status facts: `kind`, `snapshot`, `prepared`, `canonical`, `captured_at`
 - Status identity: `null | {slug,title,url,site}`
+- Status-private helpers: `webpage_snapshot_observation(root,path) -> (artifact, document|null)`, `utf8_markdown_observation(root,path) -> artifact`, `snapshot_captured_at(path) -> str`, `webpage_identity(slug,title,url,site) -> dict`, `webpage_frontmatter_identity(slug,fm) -> dict|null`, and `webpage_artifacts_cohere(snapshot_identity,captured_at,canonical_identity,fm) -> bool`
 
 - [ ] **Step 1: Write failing resolver tests**
 
@@ -496,6 +612,7 @@ assert row == {
     "vault_slug": "existing-owner",
     "path": "vault/webpages/existing-owner/snapshot.webarchive",
     "match": "url",
+    "suggested_slug": "existing-owner",
 }
 ```
 
@@ -537,11 +654,61 @@ Expected: Webpage kind is rejected or absent.
 
 For Webpage only, build one normalized-URL index over safe `vault/webpages/<slug>/` directories. Prefer a readable canonical frontmatter URL; when canonical is absent/unusable, read the WebArchive main resource URL. Resolve URL before exact slug so a proposed slug cannot steal an owner with another URL. Return zero/one/multiple results without choosing among duplicates.
 
+The Webpage branch returns this closed shape on every non-error row:
+
+```python
+{
+    "kind": "webpage",
+    "slug": requested_slug,
+    "vault_slug": owner_slug,
+    "path": owner_evidence_path,
+    "match": "url" if owner_slug else None,
+    "suggested_slug": owner_slug or admitted_new_slug,
+}
+```
+
+For duplicate URL owners or an occupied hash-suffixed path, set all three owner/suggestion fields to `None` and add one `error` string, following the resolver's existing error-row convention.
+
 If no URL owner exists and the proposed slug belongs to another URL, return the `collision_slug()` suggestion after proving that suffixed path is not already another owner. Keep Book/Paper/Talk/Author behavior byte-for-byte unchanged.
 
 - [ ] **Step 5: Add the exact status observer**
 
-Implement `webpage_status(root, slug)` by expanding operation-catalog paths. Use specialized observations:
+Implement the public function:
+
+```python
+def webpage_status(root: Path, slug: str) -> dict[str, Any]:
+    snapshot_path = artifact_path(root, "webpage.capture", "snapshot", slug=slug)
+    prepared_path = artifact_path(root, "webpage.prepare", "output", slug=slug)
+    canonical_path = artifact_path(root, "webpage.analyse", "output", slug=slug)
+    snapshot, document = webpage_snapshot_observation(root, snapshot_path)
+    prepared = utf8_markdown_observation(root, prepared_path)
+    canonical, frontmatter = canonical_observation(root, canonical_path)
+    captured_at = snapshot_captured_at(snapshot_path) if document else None
+    snapshot_identity = (
+        webpage_identity(slug, document.title, document.url, document.site)
+        if document else None
+    )
+    canonical_identity = webpage_frontmatter_identity(slug, frontmatter)
+    if document and not webpage_artifacts_cohere(
+        snapshot_identity, captured_at, canonical_identity, frontmatter
+    ):
+        canonical["usable"] = False
+    return {
+        "schema_version": STATUS_VERSION,
+        "kind": "webpage",
+        "slug": slug,
+        "identity": snapshot_identity or canonical_identity,
+        "facts": {
+            "kind": "webpage",
+            "snapshot": snapshot,
+            "prepared": prepared,
+            "canonical": canonical,
+            "captured_at": captured_at,
+        },
+    }
+```
+
+Use specialized observations:
 
 - snapshot usable = regular non-empty file + parseable WebArchive + non-empty HTML main resource;
 - prepared usable = regular non-empty UTF-8 Markdown;
@@ -639,6 +806,49 @@ Top-level exact paths, expected final URL, and branch-fixed write state are sing
 
 The Identify request gives the Agent only the exact intake URL, `quasi-webpage inspect`, and one closed `quasi-helpers vault resolve` item. Capture receives the canonical identity and output observation. Prepare receives the exact snapshot/output observations. Analyse receives the exact prepared artifact testimony and `WEBPAGE_ARTIFACT_CONTRACT`.
 
+Build the two writer payloads directly from the caller observation so effect testimony has one value:
+
+```ts
+const HASH_PATTERN = "^[a-f0-9]{64}$";
+
+const capturePayload = ({ snapshot, finalUrl }: any) => ({
+  required: [
+    "snapshot_path", "final_url", "write_state",
+    "title", "site", "captured_at", "sha256", "size",
+  ],
+  properties: {
+    snapshot_path: { const: snapshot },
+    final_url: { const: finalUrl },
+    write_state: { const: "written" },
+    title: { type: "string", minLength: 1, maxLength: 500 },
+    site: { type: "string", minLength: 1, maxLength: 200 },
+    captured_at: {
+      type: "string",
+      pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+    },
+    sha256: { type: "string", pattern: HASH_PATTERN },
+    size: { type: "integer", minimum: 1 },
+  },
+});
+
+const preparePayload = ({ snapshot, output, outputUsable }: any) => ({
+  required: [
+    "snapshot_path", "output_path", "write_state",
+    "source_sha256", "source_size", "content_ready",
+  ],
+  properties: {
+    snapshot_path: { const: snapshot },
+    output_path: { const: output },
+    write_state: { const: outputUsable ? "not_written" : "written" },
+    source_sha256: { type: "string", pattern: HASH_PATTERN },
+    source_size: { type: "integer", minimum: 1 },
+    content_ready: { const: true },
+  },
+});
+```
+
+The actual row functions use typed `WorkflowContext`, not `any`; the fragments above show the complete JSON payload fields and branch values rather than defining a second shared abstraction.
+
 - [ ] **Step 5: Generate the contract projection and existing bundles**
 
 Add:
@@ -693,6 +903,20 @@ type WebpageSeed =
       state: "canonical";
       material_slug: string;
       identity: { slug: string; title: string; url: string; site: string };
+    };
+
+type WebpageRunInput =
+  | {
+      mode: "identify";
+      seed: Extract<WebpageSeed, { state: "provisional" }>;
+      options: Readonly<Record<string, never>>;
+    }
+  | {
+      mode: "process";
+      seed: Extract<WebpageSeed, { state: "canonical" }>;
+      observation: WebpageStatusObservation;
+      effectiveIdentity: WebpageIdentity;
+      options: Readonly<Record<string, never>>;
     };
 ```
 
@@ -785,8 +1009,20 @@ Validate the three exact paths and UTC whole-second timestamp. If status identit
 The provisional branch dispatches Identify with the internal bookkeeping slug `webpage-intake`; it never writes. On complete, use a same-URL local owner when present and immediately return:
 
 ```ts
+const resultSeed = (
+  canonicalSlug: string | null,
+): MaterialResultSeed => ({
+  material: {
+    requested: { kind: "webpage", slug: null },
+    canonical:
+      canonicalSlug === null
+        ? null
+        : { kind: "webpage", slug: canonicalSlug },
+  },
+});
+
 needsObservationMaterialResult(
-  resultSeed({ requestedSlug: null, canonicalSlug: identity.slug }),
+  resultSeed(identity.slug),
   [{ kind: "webpage", slug: identity.slug }],
   {
     route: { kind: "webpage", slug: identity.slug },
