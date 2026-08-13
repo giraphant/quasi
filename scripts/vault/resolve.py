@@ -49,6 +49,10 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 
 from scripts.core import print_json, project_root, read_frontmatter  # noqa: E402
 from scripts.localise.localise import normalise_isbn  # noqa: E402
+from scripts.webpage.webarchive import collision_slug, normalize_web_url, read_webarchive  # noqa: E402
+
+
+WEBPAGE_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,79}\Z")
 
 
 def normalise_doi(raw: Any) -> str | None:
@@ -146,6 +150,138 @@ def _product_state(root: Path, path: Path) -> str:
     return "safe"
 
 
+def _directory_state(root: Path, path: Path) -> str:
+    """Return safe|missing|unsafe for a directory without following symlinks."""
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return "unsafe"
+
+    current = root
+    for part in relative.parts:
+        current /= part
+        try:
+            mode = current.lstat().st_mode
+        except FileNotFoundError:
+            return "missing"
+        except OSError:
+            return "unsafe"
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            return "unsafe"
+    try:
+        path.resolve(strict=True).relative_to(root.resolve(strict=True))
+    except (OSError, ValueError):
+        return "unsafe"
+    return "safe"
+
+
+def _webpage_owners(root: Path) -> tuple[dict[str, list[tuple[str, Path]]], dict[str, str]]:
+    """Read only safe Webpage directories into normalized URL ownership rows."""
+    directory = root / "vault" / "webpages"
+    if _directory_state(root, directory) != "safe":
+        return {}, {}
+    by_url: dict[str, list[tuple[str, Path]]] = {}
+    slug_urls: dict[str, str] = {}
+    try:
+        entries = sorted(directory.iterdir(), key=lambda path: path.name)
+    except OSError:
+        return {}, {}
+    for entry in entries:
+        slug = entry.name
+        if WEBPAGE_SLUG.fullmatch(slug) is None or _directory_state(root, entry) != "safe":
+            continue
+        canonical = entry / "webpage.md"
+        snapshot = entry / "snapshot.webarchive"
+        url: str | None = None
+        evidence: Path | None = None
+        if _product_state(root, canonical) == "safe":
+            try:
+                raw = (read_frontmatter(canonical).frontmatter or {}).get("url")
+                url = normalize_web_url(raw) if isinstance(raw, str) else None
+            except (OSError, ValueError):
+                url = None
+            if url:
+                evidence = canonical
+        if url is None and _product_state(root, snapshot) == "safe":
+            try:
+                url = read_webarchive(snapshot).url
+            except (OSError, ValueError):
+                url = None
+            if url:
+                evidence = snapshot
+        if url is not None and evidence is not None:
+            by_url.setdefault(url, []).append((slug, evidence))
+            slug_urls[slug] = url
+    return by_url, slug_urls
+
+
+def _webpage_row(
+    *,
+    slug: str,
+    vault_slug: str | None,
+    path: Path | None,
+    root: Path,
+    suggested_slug: str | None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "kind": "webpage",
+        "slug": slug,
+        "vault_slug": vault_slug,
+        "path": str(path.relative_to(root)) if path is not None else None,
+        "match": "url" if vault_slug is not None else None,
+        "suggested_slug": suggested_slug,
+    }
+    if error is not None:
+        row["error"] = error
+    return row
+
+
+def _resolve_webpage(root: Path, item: dict[str, Any], slug: str) -> dict[str, Any]:
+    raw_url = item.get("url")
+    try:
+        url = normalize_web_url(raw_url) if isinstance(raw_url, str) else None
+    except ValueError as exc:
+        return _webpage_row(
+            slug=slug, vault_slug=None, path=None, root=root, suggested_slug=None,
+            error=str(exc),
+        )
+    if url is None:
+        return _webpage_row(
+            slug=slug, vault_slug=None, path=None, root=root, suggested_slug=None,
+            error="webpage url must be a non-empty string",
+        )
+
+    by_url, slug_urls = _webpage_owners(root)
+    owners = by_url.get(url, [])
+    if len(owners) > 1:
+        return _webpage_row(
+            slug=slug, vault_slug=None, path=None, root=root, suggested_slug=None,
+            error="multiple webpage owners have the same URL",
+        )
+    if owners:
+        owner_slug, evidence = owners[0]
+        return _webpage_row(
+            slug=slug, vault_slug=owner_slug, path=evidence, root=root,
+            suggested_slug=owner_slug,
+        )
+
+    if slug in slug_urls and slug_urls[slug] != url:
+        suggestion = collision_slug(slug, url)
+        suggested_path = root / "vault" / "webpages" / suggestion
+        if _directory_state(root, suggested_path) != "missing":
+            return _webpage_row(
+                slug=slug, vault_slug=None, path=None, root=root, suggested_slug=None,
+                error="hash-suffixed webpage slug is already occupied",
+            )
+        return _webpage_row(
+            slug=slug, vault_slug=None, path=None, root=root, suggested_slug=suggestion,
+        )
+    return _webpage_row(
+        slug=slug, vault_slug=None, path=None, root=root, suggested_slug=slug,
+    )
+
+
 def _index(root: Path, kind: str) -> tuple[dict[str, str], dict[str, list[tuple[str, set[str], bool]]]]:
     """vault 扫一遍 → ({标识符: slug}, {标题键: [(slug, 作者姓, 是否去副标题键)]})。一趟扫盘建两个索引。
 
@@ -200,10 +336,14 @@ def resolve(root: Path, items: list[dict]) -> dict:
     for item in items:
         kind = (item.get("kind") or "book").strip()
         slug = (item.get("slug") or "").strip()
-        if kind not in ("book", "paper", "talk", "author") or not slug:
+        if kind not in ("book", "paper", "talk", "author", "webpage") or not slug:
             resolved.append({"kind": kind, "slug": slug, "vault_slug": None,
                              "path": None, "match": None,
-                             "error": "kind must be book|paper|talk|author and slug non-empty"})
+                             "error": "kind must be book|paper|talk|author|webpage and slug non-empty"})
+            continue
+
+        if kind == "webpage":
+            resolved.append(_resolve_webpage(root, item, slug))
             continue
 
         # 1. 精确路径。Agent 后续会写这些 lexical paths，所以 symlink/non-regular

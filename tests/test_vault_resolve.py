@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import plistlib
 import subprocess
 import sys
 from pathlib import Path
@@ -62,6 +63,36 @@ def write_talk(project: Path, slug: str) -> None:
         "---\ntype: talk\ntitle: A Talk\ndate: 2026-07-30\n---\n\n",
         encoding="utf-8",
     )
+
+
+def write_webarchive(project: Path, slug: str, url: str, title: str = "Saved title") -> Path:
+    path = project / "vault" / "webpages" / slug / "snapshot.webarchive"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        plistlib.dumps(
+            {
+                "WebMainResource": {
+                    "WebResourceData": f"<title>{title}</title>".encode("utf-8"),
+                    "WebResourceURL": url,
+                    "WebResourceMIMEType": "text/html",
+                    "WebResourceTextEncodingName": "UTF-8",
+                }
+            },
+            fmt=plistlib.FMT_BINARY,
+        )
+    )
+    return path
+
+
+def write_webpage(project: Path, slug: str, url: str) -> Path:
+    path = project / "vault" / "webpages" / slug / "webpage.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"---\ntype: webpage\ntitle: Saved title\nurl: {url}\n"
+        "captured_at: 2026-08-13T12:34:56Z\n---\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 @pytest.fixture()
@@ -405,3 +436,82 @@ def test_book_identifier_index_skips_symlinked_overview(tmp_path: Path) -> None:
     assert item["vault_slug"] is None
     assert item["path"] is None
     assert item["match"] is None
+
+
+def test_webpage_resolver_observes_no_url_owner(tmp_path: Path) -> None:
+    (row,) = run_resolve(
+        tmp_path,
+        [{"kind": "webpage", "slug": "proposed-slug", "url": "https://example.org/page"}],
+    )["resolved"]
+
+    assert row == {
+        "kind": "webpage",
+        "slug": "proposed-slug",
+        "vault_slug": None,
+        "path": None,
+        "match": None,
+        "suggested_slug": "proposed-slug",
+    }
+
+
+def test_webpage_resolver_uses_canonical_url_owner(tmp_path: Path) -> None:
+    write_webpage(tmp_path, "existing-owner", "https://EXAMPLE.org:443/page#fragment")
+
+    (row,) = run_resolve(
+        tmp_path,
+        [{"kind": "webpage", "slug": "proposed-slug", "url": "https://example.org/page"}],
+    )["resolved"]
+
+    assert row == {
+        "kind": "webpage",
+        "slug": "proposed-slug",
+        "vault_slug": "existing-owner",
+        "path": "vault/webpages/existing-owner/webpage.md",
+        "match": "url",
+        "suggested_slug": "existing-owner",
+    }
+
+
+def test_webpage_resolver_uses_snapshot_only_url_owner(tmp_path: Path) -> None:
+    write_webarchive(tmp_path, "existing-owner", "https://example.org/page")
+
+    (row,) = run_resolve(
+        tmp_path,
+        [{"kind": "webpage", "slug": "proposed-slug", "url": "https://example.org/page"}],
+    )["resolved"]
+
+    assert row == {
+        "kind": "webpage",
+        "slug": "proposed-slug",
+        "vault_slug": "existing-owner",
+        "path": "vault/webpages/existing-owner/snapshot.webarchive",
+        "match": "url",
+        "suggested_slug": "existing-owner",
+    }
+
+
+def test_webpage_resolver_refuses_duplicate_url_owners(tmp_path: Path) -> None:
+    write_webpage(tmp_path, "first-owner", "https://example.org/page")
+    write_webarchive(tmp_path, "second-owner", "https://example.org/page")
+
+    (row,) = run_resolve(
+        tmp_path,
+        [{"kind": "webpage", "slug": "proposed-slug", "url": "https://example.org/page"}],
+    )["resolved"]
+
+    assert row["vault_slug"] is None
+    assert row["path"] is None
+    assert row["suggested_slug"] is None
+    assert "error" in row
+
+
+def test_webpage_resolver_suggests_deterministic_slug_for_different_owner(tmp_path: Path) -> None:
+    write_webpage(tmp_path, "proposed-slug", "https://example.org/other")
+
+    (row,) = run_resolve(
+        tmp_path,
+        [{"kind": "webpage", "slug": "proposed-slug", "url": "https://example.org/page"}],
+    )["resolved"]
+
+    assert row["vault_slug"] is None
+    assert row["suggested_slug"] == "proposed-slug-2476c9de"

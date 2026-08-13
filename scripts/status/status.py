@@ -10,8 +10,10 @@ import re
 import stat
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -25,6 +27,11 @@ from scripts.translate.translate_commit import (  # noqa: E402
     TranslateContractError,
     output_paths,
     validate_language,
+)
+from scripts.webpage.webarchive import (  # noqa: E402
+    WebArchiveDocument,
+    normalize_web_url,
+    read_webarchive,
 )
 
 
@@ -159,6 +166,115 @@ def canonical_observation(
     return observation, frontmatter
 
 
+def _regular_nonempty_artifact(root: Path, path: Path) -> dict[str, Any]:
+    """Observe one exact Webpage artifact without admitting symlinks as regular files."""
+    observation = artifact_observation(root, path)
+    try:
+        mode = path.lstat().st_mode
+    except OSError:
+        return observation
+    if not stat.S_ISREG(mode):
+        observation["usable"] = False
+    return observation
+
+
+def webpage_snapshot_observation(
+    root: Path, path: Path
+) -> tuple[dict[str, Any], WebArchiveDocument | None]:
+    """Observe a saved WebArchive and its parseable main resource only."""
+    observation = _regular_nonempty_artifact(root, path)
+    if not observation["usable"]:
+        return observation, None
+    try:
+        document = read_webarchive(path)
+    except (OSError, ValueError):
+        observation["usable"] = False
+        return observation, None
+    if not document.html.strip():
+        observation["usable"] = False
+        return observation, None
+    return observation, document
+
+
+def utf8_markdown_observation(root: Path, path: Path) -> dict[str, Any]:
+    """Observe a non-empty regular UTF-8 Markdown projection."""
+    observation = _regular_nonempty_artifact(root, path)
+    if not observation["usable"]:
+        return observation
+    try:
+        path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        observation["usable"] = False
+    return observation
+
+
+def snapshot_captured_at(path: Path) -> str:
+    """Project an immutable snapshot mtime as a UTC whole-second timestamp."""
+    value = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    return value.replace(microsecond=0).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def webpage_identity(slug: str, title: str, url: str, site: str) -> dict[str, str]:
+    """Return the closed identity row used for snapshot and canonical evidence."""
+    return {"slug": slug, "title": title, "url": url, "site": site}
+
+
+def webpage_frontmatter_identity(
+    slug: str, frontmatter: dict[str, Any] | None
+) -> dict[str, str] | None:
+    """Project a valid Webpage canonical identity, defaulting an omitted site to host."""
+    if not isinstance(frontmatter, dict) or frontmatter.get("type") != "webpage":
+        return None
+    title = frontmatter.get("title")
+    raw_url = frontmatter.get("url")
+    if not isinstance(title, str) or not title.strip() or not isinstance(raw_url, str):
+        return None
+    try:
+        url = normalize_web_url(raw_url)
+    except ValueError:
+        return None
+    raw_site = frontmatter.get("site")
+    site = raw_site.strip() if isinstance(raw_site, str) else ""
+    if not site:
+        site = urlsplit(url).hostname or ""
+    return webpage_identity(slug, title, url, site)
+
+
+def _frontmatter_captured_at(value: Any) -> str | None:
+    """Normalize YAML's timestamp scalar or its textual form to UTC seconds."""
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.microsecond:
+            return None
+        return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    if not isinstance(value, str):
+        return None
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+    return value
+
+
+def webpage_artifacts_cohere(
+    snapshot_identity: dict[str, str] | None,
+    captured_at: str | None,
+    canonical_identity: dict[str, str] | None,
+    frontmatter: dict[str, Any] | None,
+) -> bool:
+    """Require canonical Webpage identity and capture provenance to agree exactly."""
+    if canonical_identity is None or not isinstance(frontmatter, dict):
+        return False
+    canonical_captured_at = _frontmatter_captured_at(frontmatter.get("captured_at"))
+    if canonical_captured_at is None:
+        return False
+    if snapshot_identity is None:
+        return True
+    return (
+        canonical_identity == snapshot_identity
+        and canonical_captured_at == captured_at
+    )
+
+
 def frontmatter_identity(frontmatter: dict[str, Any] | None) -> dict[str, Any] | None:
     """Project only canonical identity fields, preserving parsed disk values."""
 
@@ -213,6 +329,38 @@ def paper_status(root: Path, slug: str) -> dict[str, Any]:
             "source": artifact_observation(root, source),
             "prepared": [artifact_observation(root, path) for path in prepared],
             "canonical": canonical_fact,
+        },
+    )
+
+
+def webpage_status(root: Path, slug: str) -> dict[str, Any]:
+    snapshot_path = artifact_path(root, "webpage.capture", "snapshot", slug=slug)
+    prepared_path = artifact_path(root, "webpage.prepare", "output", slug=slug)
+    canonical_path = artifact_path(root, "webpage.analyse", "output", slug=slug)
+    snapshot, document = webpage_snapshot_observation(root, snapshot_path)
+    prepared = utf8_markdown_observation(root, prepared_path)
+    canonical, frontmatter = canonical_observation(root, canonical_path)
+    captured_at = snapshot_captured_at(snapshot_path) if document else None
+    snapshot_identity = (
+        webpage_identity(slug, document.title, document.url, document.site)
+        if document
+        else None
+    )
+    canonical_identity = webpage_frontmatter_identity(slug, frontmatter)
+    if not webpage_artifacts_cohere(
+        snapshot_identity, captured_at, canonical_identity, frontmatter
+    ):
+        canonical["usable"] = False
+    return status_payload(
+        "webpage",
+        slug,
+        snapshot_identity or (canonical_identity if canonical["usable"] else None),
+        {
+            "kind": "webpage",
+            "snapshot": snapshot,
+            "prepared": prepared,
+            "canonical": canonical,
+            "captured_at": captured_at,
         },
     )
 
@@ -545,6 +693,7 @@ def scan_status(root: Path) -> dict[str, Any]:
         "book": set(),
         "talk": set(),
         "topic": set(),
+        "webpage": set(),
     }
     scan_slug = "scan-root"
     for directory, kind, suffix in (
@@ -596,6 +745,24 @@ def scan_status(root: Path) -> dict[str, Any]:
             if valid_slug(name):
                 discovered[kind].add(name)
 
+    for directory, filename in (
+        (root / "vault" / "webpages", "snapshot.webarchive"),
+        (root / "vault" / "webpages", "webpage.md"),
+        (root / "processing" / "webpages", "source.md"),
+    ):
+        for entry in children(directory):
+            if not valid_slug(entry.name):
+                continue
+            try:
+                if not stat.S_ISDIR(entry.lstat().st_mode):
+                    continue
+                artifact = entry / filename
+                if not stat.S_ISREG(artifact.lstat().st_mode):
+                    continue
+            except OSError:
+                continue
+            discovered["webpage"].add(entry.name)
+
     source_directory = artifact_path(
         root, "paper.acquire", "output", slug=scan_slug
     ).parent
@@ -632,6 +799,8 @@ def material_status(
 ) -> dict[str, Any]:
     if kind == "paper":
         return paper_status(root, slug)
+    if kind == "webpage":
+        return webpage_status(root, slug)
     if kind == "book":
         return book_status(root, slug)
     if kind == "talk":
@@ -650,7 +819,7 @@ def material_status(
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = StatusArgumentParser(add_help=True, prog="quasi-status")
     parser.add_argument(
-        "--kind", choices=("paper", "book", "talk", "translation", "author", "topic")
+        "--kind", choices=("paper", "book", "talk", "translation", "author", "topic", "webpage")
     )
     parser.add_argument("--slug")
     parser.add_argument("--target-language")

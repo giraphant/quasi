@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import plistlib
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.status import status as status_module
@@ -40,6 +42,134 @@ def frontmatter(kind: str, fields: str = "") -> str:
 
 def observation(path: str, *, present: bool, usable: bool) -> dict[str, object]:
     return {"path": path, "present": present, "usable": usable}
+
+
+def write_webarchive(path: Path, *, url: str, title: str = "Saved title", site: str = "Example Site") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        plistlib.dumps(
+            {
+                "WebMainResource": {
+                    "WebResourceData": (
+                        f"<html><head><title>{title}</title>"
+                        f'<meta property="og:site_name" content="{site}"></head></html>'
+                    ).encode("utf-8"),
+                    "WebResourceURL": url,
+                    "WebResourceMIMEType": "text/html",
+                    "WebResourceTextEncodingName": "UTF-8",
+                }
+            },
+            fmt=plistlib.FMT_BINARY,
+        )
+    )
+    stamp = datetime(2026, 8, 13, 12, 34, 56, tzinfo=timezone.utc).timestamp()
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def webpage_canonical(*, url: str, title: str = "Saved title", site: str = "Example Site") -> str:
+    return frontmatter(
+        "webpage",
+        f"title: {title}\nurl: {url}\nsite: {site}\n"
+        "captured_at: 2026-08-13T12:34:56Z\n",
+    )
+
+
+def test_empty_webpage_status_is_one_closed_factual_observation(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    slug = "example-org-page"
+
+    result = run_status(project, "--kind", "webpage", "--slug", slug, "--json")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "schema_version": "quasi.status/0.2",
+        "kind": "webpage",
+        "slug": slug,
+        "identity": None,
+        "facts": {
+            "kind": "webpage",
+            "snapshot": observation(f"vault/webpages/{slug}/snapshot.webarchive", present=False, usable=False),
+            "prepared": observation(f"processing/webpages/{slug}/source.md", present=False, usable=False),
+            "canonical": observation(f"vault/webpages/{slug}/webpage.md", present=False, usable=False),
+            "captured_at": None,
+        },
+    }
+
+
+def test_webpage_status_observes_snapshot_only_progress(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "example-org-page"
+    write_webarchive(
+        project / "vault" / "webpages" / slug / "snapshot.webarchive",
+        url="https://example.org/page",
+    )
+
+    payload = json.loads(run_status(project, "--kind", "webpage", "--slug", slug, "--json").stdout)
+
+    assert payload["facts"]["snapshot"] == observation(
+        f"vault/webpages/{slug}/snapshot.webarchive", present=True, usable=True
+    )
+    assert payload["facts"]["captured_at"] == "2026-08-13T12:34:56Z"
+    assert payload["identity"] == {
+        "slug": slug, "title": "Saved title", "url": "https://example.org/page", "site": "Example Site"
+    }
+
+
+def test_webpage_status_observes_prepared_utf8_markdown(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "example-org-page"
+    write(project / "processing" / "webpages" / slug / "source.md", "Prepared source")
+
+    payload = json.loads(run_status(project, "--kind", "webpage", "--slug", slug, "--json").stdout)
+
+    assert payload["facts"]["prepared"] == observation(
+        f"processing/webpages/{slug}/source.md", present=True, usable=True
+    )
+
+
+def test_webpage_status_observes_coherent_canonical_completion(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "example-org-page"
+    snapshot_path = project / "vault" / "webpages" / slug / "snapshot.webarchive"
+    source_path = project / "processing" / "webpages" / slug / "source.md"
+    canonical_path = project / "vault" / "webpages" / slug / "webpage.md"
+    write_webarchive(snapshot_path, url="https://example.org/page")
+    write(source_path, "Prepared source")
+    write(canonical_path, webpage_canonical(url="https://example.org/page"))
+
+    payload = json.loads(run_status(project, "--kind", "webpage", "--slug", slug, "--json").stdout)
+
+    assert payload["facts"] == {
+        "kind": "webpage",
+        "snapshot": observation(snapshot_path.relative_to(project).as_posix(), present=True, usable=True),
+        "prepared": observation(source_path.relative_to(project).as_posix(), present=True, usable=True),
+        "canonical": observation(canonical_path.relative_to(project).as_posix(), present=True, usable=True),
+        "captured_at": "2026-08-13T12:34:56Z",
+    }
+    assert payload["identity"] == {
+        "slug": slug, "title": "Saved title", "url": "https://example.org/page", "site": "Example Site"
+    }
+
+
+def test_webpage_status_keeps_snapshot_identity_when_canonical_disagrees(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "example-org-page"
+    write_webarchive(
+        project / "vault" / "webpages" / slug / "snapshot.webarchive",
+        url="https://example.org/page",
+    )
+    write(
+        project / "vault" / "webpages" / slug / "webpage.md",
+        webpage_canonical(url="https://example.org/other"),
+    )
+
+    payload = json.loads(run_status(project, "--kind", "webpage", "--slug", slug, "--json").stdout)
+
+    assert payload["facts"]["canonical"]["present"] is True
+    assert payload["facts"]["canonical"]["usable"] is False
+    assert payload["identity"]["url"] == "https://example.org/page"
 
 
 def test_empty_paper_status_is_one_closed_factual_observation(tmp_path: Path):
@@ -552,6 +682,28 @@ def test_status_scan_is_compact_sorted_and_deduplicated(tmp_path: Path):
             {"kind": "talk", "slug": "talk-scan"},
         ],
     }
+
+
+def test_status_scan_discovers_one_safe_webpage_slug_from_each_artifact_root(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    write_webarchive(
+        project / "vault" / "webpages" / "snapshot-root" / "snapshot.webarchive",
+        url="https://example.org/snapshot",
+    )
+    write(project / "processing" / "webpages" / "prepared-root" / "source.md", "Prepared source")
+    write(
+        project / "vault" / "webpages" / "canonical-root" / "webpage.md",
+        webpage_canonical(url="https://example.org/canonical"),
+    )
+
+    payload = json.loads(run_status(project, "--scan", "--json").stdout)
+
+    assert [item for item in payload["items"] if item["kind"] == "webpage"] == [
+        {"kind": "webpage", "slug": "canonical-root"},
+        {"kind": "webpage", "slug": "prepared-root"},
+        {"kind": "webpage", "slug": "snapshot-root"},
+    ]
 
 
 def test_target_language_is_rejected_for_scan(tmp_path: Path):
