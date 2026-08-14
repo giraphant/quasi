@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 import time
 from contextlib import suppress
@@ -23,6 +24,9 @@ DDOS_GUARD_INDICATORS = (
     "complete the manual check to continue",
     "could not verify your browser automatically",
 )
+_VALID_MD5_LINK = re.compile(
+    r'''href\s*=\s*["'][^"']*/md5/[A-Fa-f0-9]{32}(?:[/?#][^"']*)?["']''',
+)
 
 
 def _is_challenge(title: str, body: str) -> bool:
@@ -33,13 +37,7 @@ def _is_challenge(title: str, body: str) -> bool:
 def _looks_like_settled_search(current_url: str, body: str, html: str) -> bool:
     if "/search" not in current_url:
         return False
-    lowered = html.lower()
-    return (
-        "/md5/" in lowered
-        or "no files found" in lowered
-        or "search results" in lowered
-        or len(body.strip()) >= 200
-    )
+    return bool(_VALID_MD5_LINK.search(html)) or "no files found." in body.lower()
 
 
 async def _read_page(page):

@@ -22,6 +22,10 @@ DOWNLOAD = PLUGIN_ROOT / "scripts" / "download" / "download.py"
 COOKIECLOUD = PLUGIN_ROOT / "scripts" / "download" / "cookiecloud.py"
 AA = PLUGIN_ROOT / "scripts" / "download" / "aa.py"
 AA_BROWSER = PLUGIN_ROOT / "scripts" / "download" / "aa_browser.py"
+AA_HOMEPAGE_HTML = """
+<html><head><title>Anna's Archive</title></head>
+<body><form action="/search"><input name="q"></form></body></html>
+"""
 
 
 def run_download(*args: str) -> subprocess.CompletedProcess[str]:
@@ -70,7 +74,7 @@ def test_aa_wikipedia_infobox_mirror_parser_prefers_url_row():
     ]
 
 
-def test_aa_reachability_rejects_200_parking_page_without_anna(monkeypatch):
+def test_aa_reachability_rejects_live_shape_anna_parking_page(monkeypatch):
     mod = _load_module(AA, "aa_parking_page_under_test")
     calls: list[tuple[str, str, int]] = []
 
@@ -86,13 +90,39 @@ def test_aa_reachability_rejects_200_parking_page_without_anna(monkeypatch):
         calls.append((method, url, timeout))
         return SimpleNamespace(
             status_code=200,
-            text="<html><title>This domain is for sale</title></html>",
+            text="""
+            <html><title>annas-archive.li</title><body>
+              <h1>annas-archive.li</h1>
+              <p>Find information, resources and relevant links for annas-archive.li.</p>
+              <p>This domain may be for sale.</p>
+            </body></html>
+            """,
         )
 
     monkeypatch.setattr(mod, "_request", fake_request)
 
     assert mod._first_reachable_mirror(["https://annas-archive.gd"]) is None
     assert calls == [("GET", "https://annas-archive.gd", 10)]
+
+
+def test_aa_reachability_scans_large_localised_homepage_for_search_form(monkeypatch):
+    mod = _load_module(AA, "aa_large_homepage_under_test")
+    homepage = (
+        "<html><head><title>Anna’s Archive</title></head><body>"
+        + ("<span>language</span>" * 8000)
+        + '<form action="/search" method="get"><input name="q"></form>'
+        + "</body></html>"
+    )
+
+    monkeypatch.setattr(
+        mod,
+        "_request",
+        lambda *_args, **_kwargs: SimpleNamespace(status_code=200, text=homepage),
+    )
+
+    assert mod._first_reachable_mirror(["https://annas-archive.pk"]) == (
+        "https://annas-archive.pk"
+    )
 
 
 def test_aa_search_reports_ddos_guard_challenge(monkeypatch):
@@ -215,6 +245,43 @@ def test_aa_search_combines_multiple_formats_in_one_request(monkeypatch):
     ]
 
 
+def test_aa_search_rejects_unrecognised_page_instead_of_reporting_zero(monkeypatch):
+    mod = _load_module(AA, "aa_incomplete_search_under_test")
+    incomplete_html = """
+    <html><head><title>Search results</title></head><body>
+      <nav>This navigation shell is deliberately long enough to look loaded.</nav>
+      <main><a href="/md5/not-a-real-md5">Results are still loading</a></main>
+    </body></html>
+    """
+
+    monkeypatch.setattr(mod, "load_aa_config", lambda: {"donator_key": "configured"})
+    monkeypatch.setattr(
+        mod,
+        "get_aa_base_url",
+        lambda config: "https://annas-archive.pk",
+    )
+    monkeypatch.setattr(
+        mod,
+        "_request",
+        lambda _method, url, **_kwargs: SimpleNamespace(
+            status_code=200,
+            url=url,
+            headers={},
+            text=incomplete_html,
+        ),
+    )
+
+    result = mod.search_aa("example")
+
+    assert result == {
+        "success": False,
+        "source": "anna_archive",
+        "count": 0,
+        "results": [],
+        "error": "aa_search_page_incomplete",
+    }
+
+
 def test_aa_browser_fallback_is_bounded_and_uses_named_temp_output(
     tmp_path,
     monkeypatch,
@@ -277,6 +344,32 @@ def test_aa_browser_runs_headless_without_virtual_display():
         "lang": "en",
         "incognito": True,
     }
+
+
+def test_aa_browser_settles_only_on_valid_results_or_explicit_empty_state():
+    mod = _load_module(AA_BROWSER, "aa_browser_settled_page_under_test")
+    search_url = "https://annas-archive.pk/search?q=example"
+
+    assert not mod._looks_like_settled_search(
+        search_url,
+        "Search results " + ("navigation " * 100),
+        "<html><body>Search results are loading</body></html>",
+    )
+    assert not mod._looks_like_settled_search(
+        search_url,
+        "Search results",
+        '<a href="/md5/not-a-real-md5">loading</a>',
+    )
+    assert mod._looks_like_settled_search(
+        search_url,
+        "One result",
+        '<a href="/md5/0123456789abcdef0123456789abcdef">book</a>',
+    )
+    assert mod._looks_like_settled_search(
+        search_url,
+        "No files found.",
+        "<main>No files found.</main>",
+    )
 
 
 def test_book_candidates_exposes_aa_failure_code(monkeypatch, capsys):
@@ -396,7 +489,7 @@ def test_aa_base_url_uses_live_last_good_before_other_discovery(tmp_path, monkey
         headers=None,
     ):
         calls.append((method, url, timeout))
-        return SimpleNamespace(status_code=200, text="Anna's Archive")
+        return SimpleNamespace(status_code=200, text=AA_HOMEPAGE_HTML)
 
     monkeypatch.setattr(mod, "_aa_mirror_cache_path", lambda: cache_path)
     monkeypatch.setattr(mod, "_request", fake_request)
@@ -434,7 +527,7 @@ def test_aa_base_url_prefers_wikipedia_mirror_before_static_seed(tmp_path, monke
         headers=None,
     ):
         calls.append((method, url, timeout))
-        return SimpleNamespace(status_code=200, text="Anna's Archive")
+        return SimpleNamespace(status_code=200, text=AA_HOMEPAGE_HTML)
 
     monkeypatch.setattr(mod, "_aa_mirror_cache_path", lambda: cache_path)
     monkeypatch.setattr(mod, "_request", fake_request)

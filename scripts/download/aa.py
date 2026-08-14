@@ -49,10 +49,19 @@ DEFAULT_AA_MIRRORS = list(STATIC_AA_MIRRORS)
 AA_MIRROR_CACHE_TTL = 60 * 60 * 24 * 7
 WIKIPEDIA_AA_URL = "https://en.wikipedia.org/wiki/Anna%27s_Archive"
 _MIRROR_RE = re.compile(r"https://annas-archive\.[a-z0-9-]+/?", re.IGNORECASE)
+_AA_MD5_PATH_RE = re.compile(r"(?:^|/)md5/([A-Fa-f0-9]{32})(?:$|/)")
+_AA_PARKING_MARKERS = (
+    "this domain may be for sale",
+    "this domain is for sale",
+    "find information, resources and relevant links for",
+    "buy this domain",
+    "domain parking",
+)
 AA_BROWSER_SCRIPT = Path(__file__).with_name("aa_browser.py")
 AA_BROWSER_CHALLENGE_TIMEOUT = 75
 AA_BROWSER_PROCESS_TIMEOUT = 120
 AA_BROWSER_MAX_HTML_BYTES = 16 * 1024 * 1024
+AA_HOMEPAGE_FINGERPRINT_CHARS = 512 * 1024
 
 HEADERS_BROWSER = {
     "User-Agent": (
@@ -286,7 +295,9 @@ def _first_reachable_mirror(mirrors):
     for mirror in _dedupe_mirrors(mirrors):
         try:
             r = _request("GET", mirror, timeout=10)
-            if r.status_code < 400 and "anna" in r.text[:20000].lower():
+            if r.status_code < 400 and _looks_like_aa_homepage(
+                r.text[:AA_HOMEPAGE_FINGERPRINT_CHARS]
+            ):
                 return mirror
             if r.status_code >= 400:
                 last_error = f"HTTP {r.status_code}"
@@ -297,6 +308,23 @@ def _first_reachable_mirror(mirrors):
         if last_error:
             print(f"  {mirror} -- unreachable: {last_error}", file=sys.stderr)
     return None
+
+
+def _looks_like_aa_homepage(html_text):
+    """Recognise the real AA homepage and reject hostname-echoing parking pages."""
+    lowered = str(html_text or "").lower()
+    if any(marker in lowered for marker in _AA_PARKING_MARKERS):
+        return False
+    if "anna's archive" not in lowered and "anna’s archive" not in lowered:
+        return False
+    if not _HAS_BS4:
+        return False
+    soup = BeautifulSoup(html_text, "html.parser")
+    for element in soup.find_all(["a", "form"]):
+        target = element.get("href") or element.get("action") or ""
+        if urllib.parse.urlparse(target).path == "/search":
+            return True
+    return False
 
 
 def get_aa_base_url(config):
@@ -343,10 +371,8 @@ def _parse_aa_div_results(soup):
     results = []
     for link in soup.find_all("a", href=True):
         href = link["href"]
-        if "/md5/" not in href:
-            continue
-        md5 = href.split("/md5/")[-1].split("?")[0].split("#")[0]
-        if not md5 or len(md5) < 10:
+        md5 = _aa_md5_from_href(href)
+        if not md5:
             continue
         text = link.get_text(separator=" ", strip=True)
         results.append({
@@ -360,6 +386,17 @@ def _parse_aa_div_results(soup):
             "size": "",
         })
     return results
+
+
+def _aa_md5_from_href(href):
+    path = urllib.parse.urlparse(str(href or "")).path.rstrip("/")
+    match = _AA_MD5_PATH_RE.search(path)
+    return match.group(1).lower() if match else ""
+
+
+def _is_explicit_aa_no_results(soup):
+    page_text = " ".join(soup.get_text(" ", strip=True).lower().split())
+    return "no files found." in page_text or page_text.endswith("no files found")
 
 
 def _is_ddos_guard_challenge(response):
@@ -549,11 +586,14 @@ def search_aa(query, fmt="pdf", lang=None, limit=5):
             cells = row.find_all("td")
             if len(cells) < 10:
                 continue
-            links = row.find_all("a")
-            if not links:
-                continue
-            href = links[0].get("href", "")
-            md5 = href.split("/")[-1] if href else ""
+            md5 = next(
+                (
+                    candidate
+                    for link in row.find_all("a", href=True)
+                    if (candidate := _aa_md5_from_href(link.get("href", "")))
+                ),
+                "",
+            )
             if not md5:
                 continue
             results.append({
@@ -566,6 +606,15 @@ def search_aa(query, fmt="pdf", lang=None, limit=5):
                 "format": _aa_cell_text(cells, 9).lower(),
                 "size": _aa_cell_text(cells, 10),
             })
+
+    if not results and not _is_explicit_aa_no_results(soup):
+        return {
+            "success": False,
+            "source": "anna_archive",
+            "count": 0,
+            "results": [],
+            "error": "aa_search_page_incomplete",
+        }
 
     return {
         "success": True,

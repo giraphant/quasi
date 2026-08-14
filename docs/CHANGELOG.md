@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.9** (2026-08-15): **Anna 的停放镜像与半加载搜索页不再制造假零候选。**
+  - 镜像健康检查不再只凭响应正文出现 `anna` 就放行：停放页标志会被拒绝，真实首页必须同时带 Anna's Archive 身份与 `/search` 控件；指纹窗口覆盖当前本地化首页中靠后的搜索表单，同时保持有界。
+  - Headless Chromium 只在出现合法 32 位 `/md5/` 结果链接或明确的 `No files found` 空态时认定页面稳定；解析器使用同一类证据，普通页面或尚未完成的搜索壳返回 `aa_search_page_incomplete`，不再报告 `success: true, count: 0`。
+  - 同一 Distinction 题名、作者、年份与 PDF 查询连续两次均返回 10 个候选，首项为 Harvard University Press 1984、34.1MB PDF；停车页、长本地化首页、半加载页、合法结果及明确空态均有回归覆盖。
+
 - **0.65.8** (2026-08-14): **Book 候选搜索不再把允许的 EPUB 静默降成 PDF-only。**
   - `quasi-download book candidates --format` 现在可按偏好顺序重复；未显式限制时与 Book Workflow 一致地使用 `epub → pdf`。多个格式合并为 Anna 的一次 `ext` 过滤请求，只执行一次 DDoS-Guard headless browser challenge，不另起 per-format cascade。
   - download-agent 必须把 request 的全部 `allowed_formats` 传给这一次候选命令；CLI 仍原样返回 Anna 的 candidate 顺序，后续 fetch/identity/year 核验预算不变。此前完整题名可以命中 EPUB、却因命令默认 PDF 而错误返回 `book.download_failed` 的路径得到回归覆盖；同一 Dante 查询现在直接返回目标 EPUB。
