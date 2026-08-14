@@ -61,7 +61,10 @@ Removed legacy bins:
   `localisations.zh` sidecar candidates.
 - `scripts/download/download.py`: acquisition by DOI/URL/MD5, diagnostics, and accept
   into `sources/`. AA file search remains in `scripts/download/aa.py` because it is
-  acquisition discovery, not metadata search.
+  acquisition discovery, not metadata search. Its normal path is HTTP-only; a confirmed
+  DDoS-Guard response invokes the bounded `scripts/download/aa_browser.py` helper through
+  `uvx`, executes the site's JavaScript in isolated Chromium, and returns settled HTML to
+  the same parser.
 - `scripts/extract/extract.py`: unified extraction dispatcher.
 - `scripts/audit/audit.py`: agent-facing typecheck wrapper. It always runs
   mechanical autofix, then typecheck, then residual issue classification, and

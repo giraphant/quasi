@@ -14,7 +14,10 @@ Returns the legacy {success, source, count, results} dict — caller
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 from pathlib import Path
@@ -46,6 +49,10 @@ DEFAULT_AA_MIRRORS = list(STATIC_AA_MIRRORS)
 AA_MIRROR_CACHE_TTL = 60 * 60 * 24 * 7
 WIKIPEDIA_AA_URL = "https://en.wikipedia.org/wiki/Anna%27s_Archive"
 _MIRROR_RE = re.compile(r"https://annas-archive\.[a-z0-9-]+/?", re.IGNORECASE)
+AA_BROWSER_SCRIPT = Path(__file__).with_name("aa_browser.py")
+AA_BROWSER_CHALLENGE_TIMEOUT = 75
+AA_BROWSER_PROCESS_TIMEOUT = 120
+AA_BROWSER_MAX_HTML_BYTES = 16 * 1024 * 1024
 
 HEADERS_BROWSER = {
     "User-Agent": (
@@ -355,6 +362,79 @@ def _parse_aa_div_results(soup):
     return results
 
 
+def _is_ddos_guard_challenge(response):
+    """Return whether an AA search response is a DDoS-Guard browser gate."""
+    headers = getattr(response, "headers", {}) or {}
+    server = str(headers.get("server", "")).lower()
+    text = str(getattr(response, "text", "") or "").lower()
+    final_url = str(getattr(response, "url", "") or "").lower()
+    body_has_challenge = (
+        "ddos-guard" in text
+        and ("checking your browser" in text or "challenge" in text)
+    )
+    redirected_to_check = "check=1" in final_url
+    return "ddos-guard" in server and (body_has_challenge or redirected_to_check)
+
+
+def _fetch_aa_with_browser(url):
+    """Execute Anna's JS challenge in an isolated Chromium process.
+
+    The plugin venv still supports Python 3.9, while the pinned browser helper
+    evolves faster. Run it through uvx/Python 3.12 only after a confirmed
+    DDoS-Guard response so ordinary searches keep their cheap HTTP path.
+    """
+    uvx = shutil.which("uvx")
+    if not uvx:
+        print("  Anna browser fallback unavailable: uvx not found", file=sys.stderr)
+        return ""
+
+    temp_root = Path.cwd() / ".quasi" / "temp"
+    try:
+        temp_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="aa-browser-", dir=str(temp_root)) as temp_dir:
+            output_path = Path(temp_dir) / "search.html"
+            command = [
+                uvx,
+                "--python",
+                "3.12",
+                "--from",
+                "seleniumbase==4.51.11",
+                "--with",
+                "python-socks",
+                "python",
+                str(AA_BROWSER_SCRIPT),
+                "--url",
+                url,
+                "--output",
+                str(output_path),
+                "--timeout",
+                str(AA_BROWSER_CHALLENGE_TIMEOUT),
+            ]
+            print("  Anna is checking the browser; waiting for the page...", file=sys.stderr)
+            proc = subprocess.run(
+                command,
+                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=AA_BROWSER_PROCESS_TIMEOUT,
+                check=False,
+            )
+            if proc.returncode != 0 or not output_path.is_file():
+                detail = (proc.stderr or "").strip().splitlines()
+                if detail:
+                    print(f"  Anna browser fallback failed: {detail[-1]}", file=sys.stderr)
+                return ""
+            if output_path.stat().st_size > AA_BROWSER_MAX_HTML_BYTES:
+                print("  Anna browser fallback returned an oversized page", file=sys.stderr)
+                return ""
+            return output_path.read_text(encoding="utf-8")
+    except subprocess.TimeoutExpired:
+        print("  Anna browser fallback timed out", file=sys.stderr)
+    except (OSError, UnicodeError) as e:
+        print(f"  Anna browser fallback failed: {e}", file=sys.stderr)
+    return ""
+
+
 def search_aa(query, fmt="pdf", lang=None, limit=5):
     """Search Anna's Archive by title/author, return candidate list.
 
@@ -415,7 +495,19 @@ def search_aa(query, fmt="pdf", lang=None, limit=5):
             "results": [],
         }
 
-    if r.status_code != 200:
+    response_text = r.text
+    if _is_ddos_guard_challenge(r):
+        browser_html = _fetch_aa_with_browser(url)
+        if not browser_html:
+            return {
+                "success": False,
+                "source": "anna_archive",
+                "count": 0,
+                "results": [],
+                "error": "ddos_guard_challenge",
+            }
+        response_text = browser_html
+    elif r.status_code != 200:
         return {
             "success": False,
             "source": "anna_archive",
@@ -423,7 +515,7 @@ def search_aa(query, fmt="pdf", lang=None, limit=5):
             "results": [],
         }
 
-    soup = BeautifulSoup(r.text, "html.parser")
+    soup = BeautifulSoup(response_text, "html.parser")
     title_tag = soup.find("title")
     if title_tag and "just a moment" in title_tag.get_text().lower():
         return {

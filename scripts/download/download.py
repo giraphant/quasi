@@ -2786,14 +2786,17 @@ def _cmd_book_candidates(args) -> int:
         print("book candidates: need --query or --title/--author", file=sys.stderr)
         return 2
     result = search_aa(query, fmt=args.format, lang=args.lang, limit=args.limit)
-    print_json({
+    payload = {
         "status": "ok" if result.get("success") else "failed",
         "kind": "book",
         "query": query,
         "source": result.get("source", "anna_archive"),
         "count": result.get("count", 0),
         "candidates": result.get("results", []),
-    })
+    }
+    if result.get("error"):
+        payload["error"] = result["error"]
+    print_json(payload)
     return 0 if result.get("success") else 1
 
 

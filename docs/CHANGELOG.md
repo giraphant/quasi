@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.7** (2026-08-14): **Webpage 成为可恢复材料；Anna 候选搜索会在挑战时安静使用 headless 浏览器。**
+  - Webpage 从 exact public URL 开始，经 capture、extract、analyse、audit 形成独立的 snapshot、prepared source 与 canonical page；固定 Workflow 只通过 fresh exact status 恢复，不为网页另造 cursor 或隐藏状态。
+  - Anna 的普通候选搜索仍先走廉价 HTTP；只有响应被明确识别为 DDoS-Guard JavaScript challenge 时，才通过 `uvx` 启动隔离、无窗口的 SeleniumBase Chromium，等待页面稳定后把 HTML 交回同一个解析器。挑战限时 75 秒、辅助进程限时 120 秒，缺少 `uvx`、浏览器失败或页面未稳定均 fail closed，并保留机器可读的 `ddos_guard_challenge`。
+  - CookieCloud 继续只服务 EZProxy；Anna 路径不把浏览器 Cookie 当成挑战解法。真实 Gatsby 查询在 headless 模式下返回三个 PDF 候选，覆盖 SOCKS 代理环境所需的 `python-socks` 也随隔离环境加载。
+
 - **0.65.6** (2026-08-13): **Book 的未知章节结果会先重新观察，再只补尚未完成的章节。**
   - Chapter pipeline 遇到 `unknown_outcome` 或 receipt 跨字段不一致时，Book 返回 exact `needs_observation`；`collect-material` 对指定 route 重新运行 `quasi-status`，原样带回 continuation，并再次进入同一 Workflow。Author 与 Topic 只负责透传这个请求，不各自复制恢复控制器。
   - 新观察只派发 `usable !== true` 的章节，已有 11/13 时只补剩余两章；相同 routes 的完整状态连续两次逐字节不变才停止。恢复不会在同一次 invocation 中盲重放未知 writer；无 overview 身份证据时仍先运行 `material.search`，避免为断点续跑放宽身份校验。

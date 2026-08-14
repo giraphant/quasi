@@ -21,6 +21,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 DOWNLOAD = PLUGIN_ROOT / "scripts" / "download" / "download.py"
 COOKIECLOUD = PLUGIN_ROOT / "scripts" / "download" / "cookiecloud.py"
 AA = PLUGIN_ROOT / "scripts" / "download" / "aa.py"
+AA_BROWSER = PLUGIN_ROOT / "scripts" / "download" / "aa_browser.py"
 
 
 def run_download(*args: str) -> subprocess.CompletedProcess[str]:
@@ -92,6 +93,192 @@ def test_aa_reachability_rejects_200_parking_page_without_anna(monkeypatch):
 
     assert mod._first_reachable_mirror(["https://annas-archive.gd"]) is None
     assert calls == [("GET", "https://annas-archive.gd", 10)]
+
+
+def test_aa_search_reports_ddos_guard_challenge(monkeypatch):
+    mod = _load_module(AA, "aa_ddos_guard_under_test")
+    challenge = SimpleNamespace(
+        status_code=403,
+        url="https://annas-archive.pk/search?q=example&check=1",
+        headers={"server": "ddos-guard", "content-type": "text/html"},
+        text="""
+        <html>
+          <head><title>DDoS-Guard</title></head>
+          <body>Checking your browser before accessing annas-archive.pk.</body>
+        </html>
+        """,
+    )
+
+    monkeypatch.setattr(mod, "load_aa_config", lambda: {"donator_key": "configured"})
+    monkeypatch.setattr(
+        mod,
+        "get_aa_base_url",
+        lambda config: "https://annas-archive.pk",
+    )
+    monkeypatch.setattr(mod, "_request", lambda *args, **kwargs: challenge)
+    browser_calls: list[str] = []
+    monkeypatch.setattr(
+        mod,
+        "_fetch_aa_with_browser",
+        lambda url: browser_calls.append(url) or "",
+        raising=False,
+    )
+
+    result = mod.search_aa("example")
+
+    assert result["success"] is False
+    assert result["count"] == 0
+    assert result["results"] == []
+    assert result["error"] == "ddos_guard_challenge"
+    assert browser_calls == [
+        "https://annas-archive.pk/search?index=&page=1&display=table"
+        "&acc=aa_download&acc=external_download&ext=pdf&q=example"
+    ]
+
+
+def test_aa_search_parses_browser_page_after_ddos_guard_challenge(monkeypatch):
+    mod = _load_module(AA, "aa_ddos_guard_browser_under_test")
+    challenge = SimpleNamespace(
+        status_code=403,
+        url="https://annas-archive.pk/search?q=example&check=1",
+        headers={"server": "ddos-guard", "content-type": "text/html"},
+        text="<title>DDoS-Guard</title><body>Checking your browser</body>",
+    )
+    solved_html = """
+    <html><body>
+      <a href="/md5/0123456789abcdef0123456789abcdef">Example Book</a>
+    </body></html>
+    """
+
+    monkeypatch.setattr(mod, "load_aa_config", lambda: {"donator_key": "configured"})
+    monkeypatch.setattr(
+        mod,
+        "get_aa_base_url",
+        lambda config: "https://annas-archive.pk",
+    )
+    monkeypatch.setattr(mod, "_request", lambda *args, **kwargs: challenge)
+    browser_calls: list[str] = []
+    monkeypatch.setattr(
+        mod,
+        "_fetch_aa_with_browser",
+        lambda url: browser_calls.append(url) or solved_html,
+        raising=False,
+    )
+
+    result = mod.search_aa("example")
+
+    assert result["success"] is True
+    assert result["count"] == 1
+    assert result["results"] == [
+        {
+            "md5": "0123456789abcdef0123456789abcdef",
+            "title": "Example Book",
+            "author": "",
+            "publisher": "",
+            "year": "",
+            "language": "",
+            "format": "",
+            "size": "",
+        }
+    ]
+    assert len(browser_calls) == 1
+
+
+def test_aa_browser_fallback_is_bounded_and_uses_named_temp_output(
+    tmp_path,
+    monkeypatch,
+):
+    mod = _load_module(AA, "aa_browser_process_under_test")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/bin/uvx")
+    observed = {}
+
+    def fake_run(command, **kwargs):
+        observed["command"] = command
+        observed["kwargs"] = kwargs
+        output_index = command.index("--output") + 1
+        output = Path(command[output_index])
+        output.write_text("<html><a href='/md5/abc'>book</a></html>", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+
+    html = mod._fetch_aa_with_browser("https://annas-archive.pk/search?q=example")
+
+    assert html == "<html><a href='/md5/abc'>book</a></html>"
+    assert observed["command"][:9] == [
+        "/usr/bin/uvx",
+        "--python",
+        "3.12",
+        "--from",
+        "seleniumbase==4.51.11",
+        "--with",
+        "python-socks",
+        "python",
+        str(mod.AA_BROWSER_SCRIPT),
+    ]
+    assert observed["kwargs"]["timeout"] == mod.AA_BROWSER_PROCESS_TIMEOUT
+    assert not list((tmp_path / ".quasi" / "temp").glob("aa-browser-*"))
+
+
+def test_aa_browser_fallback_fails_closed_without_uvx(monkeypatch):
+    mod = _load_module(AA, "aa_browser_no_uvx_under_test")
+    monkeypatch.setattr(mod.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        mod.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("browser helper must not start without uvx")
+        ),
+    )
+
+    assert mod._fetch_aa_with_browser("https://annas-archive.pk/search?q=example") == ""
+
+
+def test_aa_browser_runs_headless_without_virtual_display():
+    mod = _load_module(AA_BROWSER, "aa_browser_options_under_test")
+
+    assert mod._browser_options() == {
+        "headless": True,
+        "headed": False,
+        "xvfb": False,
+        "sandbox": False,
+        "lang": "en",
+        "incognito": True,
+    }
+
+
+def test_book_candidates_exposes_aa_failure_code(monkeypatch, capsys):
+    mod = _load_module(DOWNLOAD, "download_aa_failure_under_test")
+    monkeypatch.setattr(
+        mod,
+        "search_aa",
+        lambda *args, **kwargs: {
+            "success": False,
+            "source": "anna_archive",
+            "count": 0,
+            "results": [],
+            "error": "ddos_guard_challenge",
+        },
+    )
+    args = SimpleNamespace(
+        query="example",
+        title=None,
+        author=None,
+        year=None,
+        format="pdf",
+        lang=None,
+        limit=5,
+    )
+
+    exit_code = mod._cmd_book_candidates(args)
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert payload["status"] == "failed"
+    assert payload["count"] == 0
+    assert payload["candidates"] == []
+    assert payload["error"] == "ddos_guard_challenge"
 
 
 def test_aa_base_url_uses_live_last_good_before_other_discovery(tmp_path, monkeypatch):
