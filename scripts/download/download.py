@@ -2785,7 +2785,10 @@ def _cmd_book_candidates(args) -> int:
     if not query:
         print("book candidates: need --query or --title/--author", file=sys.stderr)
         return 2
-    result = search_aa(query, fmt=args.format, lang=args.lang, limit=args.limit)
+    formats = args.format or ["epub", "pdf"]
+    if isinstance(formats, str):
+        formats = [formats]
+    result = search_aa(query, fmt=formats, lang=args.lang, limit=args.limit)
     payload = {
         "status": "ok" if result.get("success") else "failed",
         "kind": "book",
@@ -3118,7 +3121,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_bc.add_argument("--title", help="Expected title")
     p_bc.add_argument("--author", help="Expected author")
     p_bc.add_argument("--year", type=int, help="Optional year hint")
-    p_bc.add_argument("--format", "-f", default="pdf", help="File format (default: pdf)")
+    p_bc.add_argument(
+        "--format",
+        "-f",
+        action="append",
+        choices=("epub", "pdf"),
+        help="Allowed file format in preference order (repeatable; default: epub, pdf)",
+    )
     p_bc.add_argument("--lang", help="Language filter, e.g. en")
     p_bc.add_argument("--limit", type=int, default=5)
     p_bc.add_argument("--json", action="store_true", help="Accepted for contract clarity; output is always JSON")

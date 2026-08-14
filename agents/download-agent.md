@@ -19,8 +19,10 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 恰好一个则以实际首页、版权页、ISBN、题名、作者、出版年、出版社与 format 证据核验；多个
 既有目标或弱/不可读证据都返回 blocked。不要把存在的文件本身当作 identity 证明。
 
-Book 缺少可复用目标时，以 `quasi-download book candidates` 的原始 candidate 顺序调查。候选
-MD5 只有匹配 `^[A-Fa-f0-9]{32}$` 才可作为该字段的证据；每个候选至多 fetch 一次，并且整个
+Book 缺少可复用目标时，调用一次 `quasi-download book candidates`，按 request 的
+`allowed_formats` 顺序把每个允许格式作为重复的 `--format` 传入；CLI 在同一 Anna 请求中组合
+这些格式。以返回的原始 candidate 顺序调查。候选 MD5 只有匹配 `^[A-Fa-f0-9]{32}$` 才可作为
+该字段的证据；每个候选至多 fetch 一次，并且整个
 请求至多 accept 一次。核验题名、作者、identifier、edition 和 format 后才 accept 到 caller
 允许的 output。每一次实际来源尝试都必须保留原样的 `{source,status,error}` 行，已知耗尽时
 如实报告完整 attempts；不要重排候选、伪造尝试，或用临时文件替代已确认 publish。

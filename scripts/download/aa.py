@@ -376,6 +376,17 @@ def _is_ddos_guard_challenge(response):
     return "ddos-guard" in server and (body_has_challenge or redirected_to_check)
 
 
+def _normalise_search_formats(fmt):
+    """Return ordered, unique AA extension filters from one or many values."""
+    values = [fmt] if isinstance(fmt, str) else list(fmt or [])
+    formats = []
+    for value in values:
+        normalised = str(value or "").strip().lower()
+        if normalised and normalised not in formats:
+            formats.append(normalised)
+    return formats or ["pdf"]
+
+
 def _fetch_aa_with_browser(url):
     """Execute Anna's JS challenge in an isolated Chromium process.
 
@@ -476,10 +487,14 @@ def search_aa(query, fmt="pdf", lang=None, limit=5):
             "results": [],
         }
 
+    format_query = "".join(
+        f"&ext={urllib.parse.quote_plus(file_format)}"
+        for file_format in _normalise_search_formats(fmt)
+    )
     url = (
         f"{base_url}/search?index=&page=1&display=table"
         f"&acc=aa_download&acc=external_download"
-        f"&ext={fmt}"
+        f"{format_query}"
         f"&q={urllib.parse.quote_plus(query)}"
     )
     if lang:

@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.8** (2026-08-14): **Book 候选搜索不再把允许的 EPUB 静默降成 PDF-only。**
+  - `quasi-download book candidates --format` 现在可按偏好顺序重复；未显式限制时与 Book Workflow 一致地使用 `epub → pdf`。多个格式合并为 Anna 的一次 `ext` 过滤请求，只执行一次 DDoS-Guard headless browser challenge，不另起 per-format cascade。
+  - download-agent 必须把 request 的全部 `allowed_formats` 传给这一次候选命令；CLI 仍原样返回 Anna 的 candidate 顺序，后续 fetch/identity/year 核验预算不变。此前完整题名可以命中 EPUB、却因命令默认 PDF 而错误返回 `book.download_failed` 的路径得到回归覆盖；同一 Dante 查询现在直接返回目标 EPUB。
+
 - **0.65.7** (2026-08-14): **Webpage 成为可恢复材料；Anna 候选搜索会在挑战时安静使用 headless 浏览器。**
   - Webpage 从 exact public URL 开始，经 capture、extract、analyse、audit 形成独立的 snapshot、prepared source 与 canonical page；固定 Workflow 只通过 fresh exact status 恢复，不为网页另造 cursor 或隐藏状态。
   - Anna 的普通候选搜索仍先走廉价 HTTP；只有响应被明确识别为 DDoS-Guard JavaScript challenge 时，才通过 `uvx` 启动隔离、无窗口的 SeleniumBase Chromium，等待页面稳定后把 HTML 交回同一个解析器。挑战限时 75 秒、辅助进程限时 120 秒，缺少 `uvx`、浏览器失败或页面未稳定均 fail closed，并保留机器可读的 `ddos_guard_challenge`。

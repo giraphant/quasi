@@ -184,6 +184,37 @@ def test_aa_search_parses_browser_page_after_ddos_guard_challenge(monkeypatch):
     assert len(browser_calls) == 1
 
 
+def test_aa_search_combines_multiple_formats_in_one_request(monkeypatch):
+    mod = _load_module(AA, "aa_multiple_formats_under_test")
+    requested_urls: list[str] = []
+
+    monkeypatch.setattr(mod, "load_aa_config", lambda: {"donator_key": "configured"})
+    monkeypatch.setattr(
+        mod,
+        "get_aa_base_url",
+        lambda config: "https://annas-archive.pk",
+    )
+
+    def fake_request(_method, url, **_kwargs):
+        requested_urls.append(url)
+        return SimpleNamespace(
+            status_code=200,
+            url=url,
+            headers={},
+            text="<html><body>No files found.</body></html>",
+        )
+
+    monkeypatch.setattr(mod, "_request", fake_request)
+
+    result = mod.search_aa("example", fmt=["epub", "pdf"])
+
+    assert result["success"] is True
+    assert requested_urls == [
+        "https://annas-archive.pk/search?index=&page=1&display=table"
+        "&acc=aa_download&acc=external_download&ext=epub&ext=pdf&q=example"
+    ]
+
+
 def test_aa_browser_fallback_is_bounded_and_uses_named_temp_output(
     tmp_path,
     monkeypatch,
@@ -279,6 +310,61 @@ def test_book_candidates_exposes_aa_failure_code(monkeypatch, capsys):
     assert payload["count"] == 0
     assert payload["candidates"] == []
     assert payload["error"] == "ddos_guard_challenge"
+
+
+def test_book_candidates_defaults_to_one_epub_pdf_search(monkeypatch, capsys):
+    mod = _load_module(DOWNLOAD, "download_default_formats_under_test")
+    calls = []
+
+    def fake_search(query, *, fmt, lang, limit):
+        calls.append({"query": query, "fmt": fmt, "lang": lang, "limit": limit})
+        return {
+            "success": True,
+            "source": "anna_archive",
+            "count": 0,
+            "results": [],
+        }
+
+    monkeypatch.setattr(mod, "search_aa", fake_search)
+    args = SimpleNamespace(
+        query=None,
+        title="Example",
+        author="Author",
+        year=None,
+        format=None,
+        lang=None,
+        limit=5,
+    )
+
+    assert mod._cmd_book_candidates(args) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "ok"
+    assert calls == [
+        {
+            "query": "Example Author",
+            "fmt": ["epub", "pdf"],
+            "lang": None,
+            "limit": 5,
+        }
+    ]
+
+
+def test_book_candidates_accepts_ordered_repeated_format_flags():
+    mod = _load_module(DOWNLOAD, "download_repeated_formats_under_test")
+
+    args = mod._build_parser().parse_args(
+        [
+            "book",
+            "candidates",
+            "--query",
+            "example",
+            "--format",
+            "epub",
+            "--format",
+            "pdf",
+        ]
+    )
+
+    assert args.format == ["epub", "pdf"]
 
 
 def test_aa_base_url_uses_live_last_good_before_other_discovery(tmp_path, monkeypatch):
