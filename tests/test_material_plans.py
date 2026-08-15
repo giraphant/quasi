@@ -17,6 +17,8 @@ import { build } from "esbuild";
 
 const root = process.cwd();
 const config = JSON.parse(process.argv[1]);
+if (config.projectDir !== undefined && config.projectDir !== null)
+  process.env.CLAUDE_PROJECT_DIR = config.projectDir;
 
 async function load(source) {
   const built = await build({
@@ -585,7 +587,12 @@ def book_synthesise_complete(action: str = "create") -> dict[str, Any]:
     }
 
 
-def run_book(value: dict[str, Any], outputs: list[Any]) -> dict[str, Any]:
+def run_book(
+    value: dict[str, Any],
+    outputs: list[Any],
+    *,
+    project_dir: str | None = None,
+) -> dict[str, Any]:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
@@ -595,7 +602,14 @@ def run_book(value: dict[str, Any], outputs: list[Any]) -> dict[str, Any]:
             "--input-type=module",
             "-e",
             PLAN_HARNESS,
-            json.dumps({"kind": "book", "input": value, "outputs": outputs}),
+            json.dumps(
+                {
+                    "kind": "book",
+                    "input": value,
+                    "outputs": outputs,
+                    "projectDir": project_dir,
+                }
+            ),
         ],
         cwd=ROOT,
         text=True,
@@ -2108,6 +2122,33 @@ def test_book_absolute_owned_chapter_audit_path_routes_repair() -> None:
     repair = report["calls"][1]["request"]
     assert repair["identity"]["chapter_slot"] == "01"
     assert repair["repair_diagnostics"] == [diagnostic]
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_book_relative_project_root_matches_absolute_audit_owner_path() -> None:
+    diagnostic = {
+        "path": str(ROOT / "vault/books/exact-book/ch01-opening.md"),
+        "kind": "missing-section",
+        "reason": "The chapter analysis is incomplete.",
+    }
+    report = run_book(
+        canonical_book_input(
+            manifest=True,
+            chapter_outputs=(True, True),
+        ),
+        [
+            audit_complete(escalated=[diagnostic]),
+            chapter_repair_complete(),
+            audit_complete(),
+        ],
+        project_dir=".",
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.audit",
+        "chapter.analyse",
+        "book.audit",
+    ]
     assert report["result"]["terminal"] == "complete"
 
 

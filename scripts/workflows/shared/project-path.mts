@@ -3,13 +3,6 @@ declare const process: {
   cwd: () => string;
 };
 
-const projectRoot = (): string => {
-  const configured = process.env.CLAUDE_PROJECT_DIR;
-  return configured && configured.trim().length > 0
-    ? configured
-    : process.cwd();
-};
-
 const lexicalResolve = (root: string, path: string): string => {
   const absolute = path.startsWith("/") ? path : `${root}/${path}`;
   const segments: string[] = [];
@@ -19,6 +12,13 @@ const lexicalResolve = (root: string, path: string): string => {
     else segments.push(segment);
   }
   return `/${segments.join("/")}`;
+};
+
+const projectRoot = (): string => {
+  const configured = process.env.CLAUDE_PROJECT_DIR;
+  return configured && configured.trim().length > 0
+    ? lexicalResolve(process.cwd(), configured)
+    : process.cwd();
 };
 
 export const projectPathIdentity = (path: string): string =>
