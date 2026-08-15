@@ -2,6 +2,7 @@
 
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { runInNewContext } from "node:vm";
 
 import { build } from "esbuild";
 
@@ -33,8 +34,10 @@ const runtime = () => {
 if (request.action === "run-generated") {
   const generated = await readFile(source, "utf8");
   const body = generated.replace(/^export const meta =/m, "const meta =");
-  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const execute = new AsyncFunction("agent", "pipeline", "args", body);
+  const execute = runInNewContext(
+    `(async (agent, pipeline, args) => {\n${body}\n})`,
+    Object.assign(Object.create(null), { URL }),
+  );
   const { host, report } = runtime();
   const value = await execute(host.agent, host.pipeline, request.input);
   process.stdout.write(JSON.stringify(report(value)));

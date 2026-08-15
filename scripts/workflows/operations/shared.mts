@@ -85,7 +85,12 @@ export const AUDIT_DIAGNOSTIC_SCHEMA = {
   additionalProperties: false,
   required: ["path", "kind", "reason"],
   properties: {
-    path: { type: "string", minLength: 1, maxLength: 2048 },
+    path: {
+      type: "string",
+      minLength: 1,
+      maxLength: 2048,
+      pattern: "^[^/]",
+    },
     kind: { type: "string", minLength: 1, maxLength: 200 },
     reason: { type: "string", minLength: 1, maxLength: 4000 },
   },
@@ -202,7 +207,7 @@ export const makeAuditRow = ({
         uniqueItems: true,
         items: exactPaths
           ? { const: target, type: "string", maxLength: 2048 }
-          : { type: "string", maxLength: 2048 },
+          : { type: "string", maxLength: 2048, pattern: "^[^/]" },
       },
     },
   }),

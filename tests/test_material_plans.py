@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 from copy import deepcopy
@@ -18,8 +17,6 @@ import { build } from "esbuild";
 
 const root = process.cwd();
 const config = JSON.parse(process.argv[1]);
-if (config.projectDir !== undefined && config.projectDir !== null)
-  process.env.CLAUDE_PROJECT_DIR = config.projectDir;
 
 async function load(source) {
   const built = await build({
@@ -582,26 +579,33 @@ def chapter_blocked() -> dict[str, Any]:
     }
 
 
+def chapter_output_observation_mismatch() -> dict[str, Any]:
+    return {
+        "terminal": {
+            "status": "blocked",
+            "issue": {
+                "code": "chapter.output_observation_mismatch",
+                "operation": "chapter.analyse",
+                "summary": "The exact output appeared after the caller observation.",
+                "user_question": None,
+                "retryable": True,
+            },
+            "action": "create",
+            "write_state": "unknown",
+        }
+    }
+
+
 def book_synthesise_complete(action: str = "create") -> dict[str, Any]:
     return {
         "terminal": {"status": "complete", "issue": None, "action": action}
     }
 
 
-def run_book(
-    value: dict[str, Any],
-    outputs: list[Any],
-    *,
-    project_dir: str | None = None,
-) -> dict[str, Any]:
+def run_book(value: dict[str, Any], outputs: list[Any]) -> dict[str, Any]:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
-    env = dict(os.environ)
-    if project_dir is None:
-        env.pop("CLAUDE_PROJECT_DIR", None)
-    else:
-        env["CLAUDE_PROJECT_DIR"] = project_dir
     proc = subprocess.run(
         [
             node,
@@ -613,12 +617,10 @@ def run_book(
                     "kind": "book",
                     "input": value,
                     "outputs": outputs,
-                    "projectDir": project_dir,
                 }
             ),
         ],
         cwd=ROOT,
-        env=env,
         text=True,
         capture_output=True,
         check=False,
@@ -1103,9 +1105,9 @@ def test_paper_foreign_audit_path_stops_without_repair_dispatch() -> None:
     assert report["result"]["issue"]["code"] == "workflow.owner_ambiguity"
 
 
-def test_book_provisional_happy_path_runs_one_stable_two_chapter_pipeline() -> None:
+def test_book_canonical_happy_path_runs_one_stable_two_chapter_pipeline() -> None:
     report = run_book(
-        provisional_book_input(),
+        canonical_book_input(overview=False, admitted=False),
         [
             book_search_complete(),
             book_acquire_complete(),
@@ -1155,10 +1157,34 @@ def test_book_provisional_happy_path_runs_one_stable_two_chapter_pipeline() -> N
     assert "receipts" not in report["result"]
 
 
+def test_book_provisional_search_requests_the_canonical_observation() -> None:
+    report = run_book(
+        provisional_book_input(),
+        [book_search_complete(), book_acquire_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search"
+    ]
+    assert report["result"]["terminal"] == "needs_observation"
+    assert report["result"]["routes"] == [
+        {"kind": "book", "slug": "exact-book"}
+    ]
+    assert report["result"]["resume_seed"] == {
+        "route": {"kind": "book", "slug": "exact-book"},
+        "seed": {
+            "state": "canonical",
+            "material_slug": "exact-book",
+            "identity": BOOK_IDENTITY,
+        },
+        "options": {},
+    }
+
+
 def test_book_uses_the_verified_source_isbn_after_acquire() -> None:
     source_isbn = "9780000000001"
     report = run_book(
-        provisional_book_input(),
+        canonical_book_input(overview=False, admitted=False),
         [
             book_search_complete(),
             book_acquire_complete(isbn=source_isbn),
@@ -1188,7 +1214,7 @@ def test_book_uses_the_verified_source_isbn_after_acquire() -> None:
 
 def test_book_clears_an_unobserved_source_isbn_after_acquire() -> None:
     report = run_book(
-        provisional_book_input(),
+        canonical_book_input(overview=False, admitted=False),
         [
             book_search_complete(),
             book_acquire_complete(isbn=None),
@@ -1352,8 +1378,15 @@ def test_book_identity_selection_later_gate_returns_effective_canonical_resume_s
     value["userDecision"] = book_identity_decision()
     tmp_path = ".quasi/temp/downloads/exact-book.pdf"
 
+    identified = run_book(value, [book_search_complete()])
+    assert identified["result"]["terminal"] == "needs_observation"
+    canonical_resume = identified["result"]["resume_seed"]
     report = run_book(
-        value,
+        {
+            "seed": canonical_resume["seed"],
+            "observation": book_observation(canonical_resume["route"]["slug"]),
+            "options": canonical_resume["options"],
+        },
         [book_search_complete(), book_acquire_year_gate(tmp_path=tmp_path)],
     )
 
@@ -1439,7 +1472,7 @@ def test_book_recommended_year_inner_search_gate_keeps_canonical_resume_seed() -
     }
 
     selected = identity_gate["candidates"][1]
-    resumed = run_book(
+    selected_search = run_book(
         {
             "seed": resume_seed["seed"],
             "observation": canonical_book_input()["observation"],
@@ -1453,6 +1486,25 @@ def test_book_recommended_year_inner_search_gate_keeps_canonical_resume_seed() -
                     "selected_candidate": selected,
                 },
             },
+        },
+        [book_search_complete(selected["identity"])],
+    )
+
+    assert [
+        call["request"]["operation"] for call in selected_search["calls"]
+    ] == ["material.search"]
+    assert selected_search["calls"][0]["request"]["identity_decision"] == {
+        "candidates": identity_gate["candidates"],
+        "conflicts": identity_gate["conflicts"],
+        "selected_candidate": selected,
+    }
+    assert selected_search["result"]["terminal"] == "needs_observation"
+    selected_resume = selected_search["result"]["resume_seed"]
+    resumed = run_book(
+        {
+            "seed": selected_resume["seed"],
+            "observation": book_observation(selected_resume["route"]["slug"]),
+            "options": selected_resume["options"],
         },
         [
             book_search_complete(selected["identity"]),
@@ -1470,11 +1522,6 @@ def test_book_recommended_year_inner_search_gate_keeps_canonical_resume_seed() -
         "material.search",
         "book.acquire",
     ]
-    assert resumed["calls"][0]["request"]["identity_decision"] == {
-        "candidates": identity_gate["candidates"],
-        "conflicts": identity_gate["conflicts"],
-        "selected_candidate": selected,
-    }
     acquire_request = resumed["calls"][1]["request"]
     assert acquire_request["material_key"] == "book:exact-book-revised"
     assert acquire_request["identity"]["year"] == selected["identity"]["year"]
@@ -1503,7 +1550,7 @@ def test_book_rejects_incomplete_year_decision_before_dispatch() -> None:
 
 
 def test_book_accept_current_year_binds_canonical_identity_once() -> None:
-    value = provisional_book_input()
+    value = canonical_book_input(overview=False, admitted=False)
     year_gate_receipt = book_acquire_year_gate()
     gated = run_book(
         value,
@@ -1587,7 +1634,7 @@ def test_book_recommended_year_search_recanonicalizes_before_one_acquire() -> No
         "year": 2023,
     }
 
-    report = run_book(
+    recanonicalized = run_book(
         value,
         [
             book_search_complete(),
@@ -1597,6 +1644,48 @@ def test_book_recommended_year_search_recanonicalizes_before_one_acquire() -> No
                 evidence=decision["year_evidence"],
                 tmp_path=decision["tmp_path"],
             ),
+        ],
+    )
+
+    operations = [
+        call["request"]["operation"] for call in recanonicalized["calls"]
+    ]
+    assert operations == [
+        "material.search",
+        "material.search",
+        "book.acquire",
+    ]
+    search_requests = [
+        call for call in recanonicalized["calls"]
+        if call["request"]["operation"] == "material.search"
+    ]
+    assert [
+        request["request"].get("year_decision") for request in search_requests
+    ] == [None, decision]
+    search_request = search_requests[1]
+    assert search_request["request"]["material_key"] == "book:exact-book"
+    assert search_request["request"]["year_decision"] == decision
+    accepted_request = recanonicalized["calls"][2]["request"]
+    assert accepted_request["material_key"] == "book:exact-book-2023"
+    assert accepted_request["identity"] == revised
+    assert accepted_request["year_decision"] == decision
+    assert recanonicalized["result"]["terminal"] == "needs_observation"
+    assert recanonicalized["result"]["routes"] == [
+        {"kind": "book", "slug": "exact-book-2023"}
+    ]
+
+    resume_seed = recanonicalized["result"]["resume_seed"]
+    report = run_book(
+        {
+            "seed": resume_seed["seed"],
+            "observation": book_observation(
+                "exact-book-2023",
+                source_format="epub",
+            ),
+            "options": resume_seed["options"],
+        },
+        [
+            book_search_complete(revised),
             book_prepare_complete("exact-book-2023"),
             chapter_complete(),
             chapter_complete(),
@@ -1605,29 +1694,53 @@ def test_book_recommended_year_search_recanonicalizes_before_one_acquire() -> No
         ],
     )
 
-    operations = [call["request"]["operation"] for call in report["calls"]]
-    assert operations.count("material.search") == 2
-    assert operations.count("book.acquire") == 1
-    search_requests = [
-        call for call in report["calls"]
-        if call["request"]["operation"] == "material.search"
+    resumed_operations = [
+        call["request"]["operation"] for call in report["calls"]
     ]
-    assert [
-        request["request"].get("year_decision") for request in search_requests
-    ] == [None, decision]
-    search_request = search_requests[1]
-    acquire_request = next(
-        call for call in report["calls"]
-        if call["request"]["operation"] == "book.acquire"
-    )
-    assert search_request["request"]["material_key"] == "book:exact-book"
-    assert search_request["request"]["year_decision"] == decision
-    assert acquire_request["request"]["material_key"] == "book:exact-book-2023"
-    assert acquire_request["request"]["identity"] == revised
-    assert acquire_request["request"]["year_decision"] == decision
+    assert resumed_operations.count("material.search") == 1
+    assert "book.acquire" not in resumed_operations
     assert report["result"]["material"]["canonical"]["slug"] == (
         "exact-book-2023"
     )
+
+
+def test_book_recommended_year_search_reuses_an_existing_owner() -> None:
+    value = canonical_book_input(overview=False, admitted=False)
+    decision = book_year_decision("use-recommended-year")
+    value["userDecision"] = {
+        "material_key": "book:exact-book",
+        "operation": "book.acquire",
+        "value": decision,
+    }
+    revised = {
+        **deepcopy(BOOK_IDENTITY),
+        "slug": "exact-book-2023",
+        "year": 2023,
+    }
+
+    report = run_book(
+        value,
+        [
+            book_search_complete(),
+            book_search_complete(revised, owner_slug="existing-book"),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search",
+        "material.search",
+    ]
+    assert report["result"]["terminal"] == "complete"
+    assert report["result"]["material"]["canonical"] == {
+        "kind": "book",
+        "slug": "existing-book",
+    }
+    assert report["result"]["artifacts"] == [
+        {
+            "role": "overview",
+            "path": "vault/books/existing-book/00-overview.md",
+        }
+    ]
 
 
 def test_book_unknown_recanonicalization_search_never_starts_acquire() -> None:
@@ -1983,6 +2096,23 @@ def test_book_unknown_chapter_requests_fresh_book_observation() -> None:
     }
 
 
+def test_book_retryable_chapter_output_mismatch_requests_fresh_observation() -> None:
+    value = canonical_book_input(
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(False, False),
+    )
+    report = run_book(
+        value,
+        [chapter_output_observation_mismatch(), chapter_complete()],
+    )
+
+    assert report["result"]["terminal"] == "needs_observation"
+    assert report["result"]["routes"] == [
+        {"kind": "book", "slug": "exact-book"}
+    ]
+
+
 def test_book_incoherent_chapter_requests_fresh_book_observation() -> None:
     value = canonical_book_input(
         manifest=True,
@@ -2103,122 +2233,9 @@ def test_book_repairs_the_owned_overview_once_then_reaudits() -> None:
     assert report["result"]["terminal"] == "complete"
 
 
-def test_book_absolute_owned_chapter_audit_path_routes_repair() -> None:
+def test_book_second_owned_escalation_is_repair_exhausted() -> None:
     diagnostic = {
-        "path": str(ROOT / "vault/books/exact-book/ch01-opening.md"),
-        "kind": "block_kind_mismatch_soft",
-        "reason": "金句要点 must use a blockquote list.",
-    }
-    report = run_book(
-        canonical_book_input(
-            manifest=True,
-            chapter_outputs=(True, True),
-        ),
-        [
-            audit_complete(escalated=[diagnostic]),
-            chapter_repair_complete(),
-            audit_complete(),
-        ],
-    )
-
-    assert [call["request"]["operation"] for call in report["calls"]] == [
-        "book.audit",
-        "chapter.analyse",
-        "book.audit",
-    ]
-    repair = report["calls"][1]["request"]
-    assert repair["identity"]["chapter_slot"] == "01"
-    assert repair["repair_diagnostics"] == [diagnostic]
-    assert report["result"]["terminal"] == "complete"
-
-
-def test_book_configured_project_root_matches_absolute_audit_owner_path() -> None:
-    project_root = "/tmp/quasi-book-plan-configured-root"
-    diagnostic = {
-        "path": f"{project_root}/vault/books/exact-book/ch01-opening.md",
-        "kind": "missing-section",
-        "reason": "The chapter analysis is incomplete.",
-    }
-    report = run_book(
-        canonical_book_input(
-            manifest=True,
-            chapter_outputs=(True, True),
-        ),
-        [
-            audit_complete(escalated=[diagnostic]),
-            chapter_repair_complete(),
-            audit_complete(),
-        ],
-        project_dir=project_root,
-    )
-
-    assert [call["request"]["operation"] for call in report["calls"]] == [
-        "book.audit",
-        "chapter.analyse",
-        "book.audit",
-    ]
-    assert report["result"]["terminal"] == "complete"
-
-
-def test_book_harness_clears_inherited_project_root(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/tmp/quasi-ambient-project-root")
-    diagnostic = {
-        "path": str(ROOT / "vault/books/exact-book/ch01-opening.md"),
-        "kind": "missing-section",
-        "reason": "The chapter analysis is incomplete.",
-    }
-    report = run_book(
-        canonical_book_input(
-            manifest=True,
-            chapter_outputs=(True, True),
-        ),
-        [
-            audit_complete(escalated=[diagnostic]),
-            chapter_repair_complete(),
-            audit_complete(),
-        ],
-    )
-
-    assert [call["request"]["operation"] for call in report["calls"]] == [
-        "book.audit",
-        "chapter.analyse",
-        "book.audit",
-    ]
-    assert report["result"]["terminal"] == "complete"
-
-
-def test_book_absolute_owned_overview_audit_path_routes_repair() -> None:
-    diagnostic = {
-        "path": str(ROOT / "vault/books/exact-book/00-overview.md"),
-        "kind": "frontmatter",
-        "reason": "The overview metadata is incomplete.",
-    }
-    report = run_book(
-        canonical_book_input(
-            manifest=True,
-            chapter_outputs=(True, True),
-        ),
-        [
-            audit_complete(escalated=[diagnostic]),
-            book_synthesise_complete("repair"),
-            audit_complete(),
-        ],
-    )
-
-    assert [call["request"]["operation"] for call in report["calls"]] == [
-        "book.audit",
-        "book.synthesise",
-        "book.audit",
-    ]
-    assert report["calls"][1]["request"]["repair_diagnostics"] == [diagnostic]
-    assert report["result"]["terminal"] == "complete"
-
-
-def test_book_second_absolute_owned_escalation_is_repair_exhausted() -> None:
-    diagnostic = {
-        "path": str(ROOT / "vault/books/exact-book/ch01-opening.md"),
+        "path": "vault/books/exact-book/ch01-opening.md",
         "kind": "block_kind_mismatch_soft",
         "reason": "金句要点 still has mixed blocks.",
     }
@@ -2243,9 +2260,9 @@ def test_book_second_absolute_owned_escalation_is_repair_exhausted() -> None:
     assert report["result"]["issue"]["code"] == "workflow.repair_exhausted"
 
 
-def test_book_absolute_foreign_audit_path_remains_owner_ambiguity() -> None:
+def test_book_foreign_audit_path_remains_owner_ambiguity() -> None:
     diagnostic = {
-        "path": str(ROOT / "vault/books/another-book/ch01-opening.md"),
+        "path": "vault/books/another-book/ch01-opening.md",
         "kind": "missing-section",
         "reason": "Foreign Book.",
     }

@@ -32,7 +32,9 @@ CLI 已完成的 deterministic fixes 直接进入结果。对 remaining diagnost
 
 所有 Edit 保留原事实、措辞、引用、链接、代码和 wikilink；你只修复 audit 已定位且现有
 内容足以决定的局部问题。Target 之外的路径不是这次 transaction 的 owner。相对路径按
-`$CLAUDE_PROJECT_DIR` 解析，receipt 使用 request 的原始 path。
+`$CLAUDE_PROJECT_DIR` 解析。`target_path` 原样回显 request target；`escalated[].path` 与
+`mutated_paths[]` 必须逐字使用 `quasi-audit` 返回的 project-relative file / diagnostic path。
+不得复制 `target.resolved`、扩展成绝对路径，或自行生成另一种路径拼写。
 
 ## 输出
 

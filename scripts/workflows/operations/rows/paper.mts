@@ -273,5 +273,6 @@ ${JSON.stringify(request, null, 2)}`,
     artifactRoles: ["canonical"],
     targetRole: "canonical",
     targetScope: "exact",
+    exactPaths: true,
   }),
 ];

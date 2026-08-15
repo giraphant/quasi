@@ -17,7 +17,8 @@ Envelope 的 `artifact_contract` 是 frontmatter、H1、section 顺序、块形�
 相对路径。
 
 第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
-output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；
+output_observation 为权威。只有 output_observation 与磁盘不一致时，不写入并以
+`${operation}.output_observation_mismatch`、`retryable:true` 返回 terminal.blocked，summary 写明 exact path 与 observed state；其他 exact-ref 不一致仍按本 operation 的相应 issue code 返回 blocked；
 只核对 envelope 明列的 path，绝不搜索替代路径。
 
 ## 分析方法

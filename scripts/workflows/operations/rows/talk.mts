@@ -331,6 +331,7 @@ export const talkOperationRows: OperationRow[] = [
     artifactRoles: ["canonical"],
     targetRole: "canonical",
     targetScope: "exact",
+    exactPaths: true,
     envelopeExtras: (_context, { target }) => ({
       afterTarget: { exact_output: target, composite_debt: true },
     }),

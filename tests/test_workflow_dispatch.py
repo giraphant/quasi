@@ -1664,6 +1664,33 @@ def test_audit_rows_expose_their_real_target(operation: str, scope: str, path: s
     assert _prepare(operation)["writeTargets"] == [{"scope": scope, "path": path}]
 
 
+def test_audit_receipt_paths_reject_absolute_or_non_target_paths() -> None:
+    book_schema = _prepare("book.audit")["options"]["schema"]
+    assert (
+        book_schema["properties"]["escalated"]["items"]["properties"]["path"]
+        ["pattern"]
+        == "^[^/]"
+    )
+    assert (
+        book_schema["properties"]["mutated_paths"]["items"]["pattern"]
+        == "^[^/]"
+    )
+
+    for operation in ("paper.audit", "talk.audit"):
+        prepared = _prepare(operation)
+        target = json.loads(prepared["prompt"])["target"]["path"]
+        schema = prepared["options"]["schema"]
+        assert (
+            schema["properties"]["escalated"]["items"]["properties"]["path"]
+            ["const"]
+            == target
+        )
+        assert (
+            schema["properties"]["mutated_paths"]["items"]["const"]
+            == target
+        )
+
+
 def _needs_input_candidate_variants(prepared: dict[str, Any]) -> list[dict[str, Any]]:
     terminal = prepared["options"]["schema"]["properties"]["terminal"]
     needs_input = next(

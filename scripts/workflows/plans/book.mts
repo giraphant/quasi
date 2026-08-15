@@ -24,7 +24,6 @@ import {
   decisionForOperation,
   observationKey,
 } from "../shared/material-input.mts";
-import { projectPathIdentity } from "../shared/project-path.mts";
 import {
   dispatchPreparedOperation,
   type DispatchOutcome,
@@ -307,11 +306,9 @@ const auditBook = async (
       chapter,
     })),
   ] satisfies BookAuditOwner[];
-  const ownersByIdentity = new Map(
-    owners.map((owner) => [projectPathIdentity(owner.path), owner]),
-  );
+  const ownersByPath = new Map(owners.map((owner) => [owner.path, owner]));
   const ownerForAuditPath = (path: string): BookAuditOwner | undefined =>
-    ownersByIdentity.get(projectPathIdentity(path));
+    ownersByPath.get(path);
 
   const firstAudit = await dispatch(runtime, "book.audit", slug, {
     ...common,
@@ -341,7 +338,7 @@ const auditBook = async (
   const repairPath = escalated[0]!.path;
   const repairOwner = ownerForAuditPath(repairPath)!;
   const diagnostics = escalated.filter(
-    ({ path }) => projectPathIdentity(path) === projectPathIdentity(repairOwner.path),
+    ({ path }) => path === repairOwner.path,
   );
   if (repairOwner.chapter !== null) {
     if (
@@ -532,6 +529,12 @@ async function runBookPlanResult(
         [{ role: "overview", path: receipt.local_owner.path }],
         null,
       );
+    if (state.observation === null)
+      return needsObservationMaterialResult(
+        resultSeed(state),
+        [{ kind: "book", slug: state.runtimeSlug as string }],
+        resumeSeed(input, state),
+      );
   }
 
   if (finalObservedBook(state.observation, state.identity as BookIdentity)) {
@@ -595,8 +598,15 @@ async function runBookPlanResult(
             return liftSearchGate(input, state, searched.receipt);
           const searchStop = stopForOutcome(state, searched);
           if (searchStop !== null) return searchStop;
-          bindSearchReceipt(input, state, searched.receipt as StageReceipt);
+          const receipt = searched.receipt as StageReceipt;
+          bindSearchReceipt(input, state, receipt);
           rememberContinuation(resumeSeed(input, state));
+          if (receipt.local_owner !== null)
+            return completeMaterialResult(
+              resultSeed(state),
+              [{ role: "overview", path: receipt.local_owner.path }],
+              null,
+            );
         }
       }
     }
@@ -643,6 +653,12 @@ async function runBookPlanResult(
       path: receipt.output_path as string,
       format: receipt.format as BookFormat,
     };
+    if (state.observation === null)
+      return needsObservationMaterialResult(
+        resultSeed(state),
+        [{ kind: "book", slug: state.runtimeSlug as string }],
+        resumeSeed(input, state),
+      );
   }
 
   let chapters: ChapterInventoryRow[];
@@ -747,7 +763,12 @@ async function runBookPlanResult(
   const observationRequired = outcomes.find(
     (outcome) =>
       outcome.kind === "unknown_outcome" ||
-      outcome.kind === "incoherent_complete",
+      outcome.kind === "incoherent_complete" ||
+      (outcome.kind === "receipt" &&
+        outcome.receipt.terminal.status === "blocked" &&
+        outcome.receipt.terminal.issue.code ===
+          "chapter.output_observation_mismatch" &&
+        outcome.receipt.terminal.issue.retryable === true),
   );
   if (observationRequired !== undefined)
     return needsObservationMaterialResult(
