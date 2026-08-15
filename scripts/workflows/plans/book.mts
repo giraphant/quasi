@@ -500,6 +500,16 @@ async function runBookPlanResult(
     if (searchStop !== null) return searchStop;
     const receipt = searched.receipt as StageReceipt;
     bindSearchReceipt(input, state, receipt);
+    if (
+      input.seed.state === "canonical" &&
+      identityDecision === null &&
+      (sourceFromObservation(initialObservation, formats) !== null ||
+        manifestReady(initialObservation))
+    )
+      state.identity = {
+        ...(state.identity as BookIdentity),
+        isbn: input.seed.identity.isbn,
+      };
     rememberContinuation(resumeSeed(input, state));
     if (receipt.local_owner !== null)
       return completeMaterialResult(
@@ -609,6 +619,11 @@ async function runBookPlanResult(
     const acquireStop = stopForOutcome(state, acquired);
     if (acquireStop !== null) return acquireStop;
     const receipt = acquired.receipt as StageReceipt;
+    state.identity = {
+      ...(state.identity as BookIdentity),
+      isbn: receipt.isbn as string | null,
+    };
+    rememberContinuation(resumeSeed(input, state));
     source = {
       path: receipt.output_path as string,
       format: receipt.format as BookFormat,

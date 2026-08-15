@@ -127,7 +127,8 @@ def validate_language(language: str) -> str:
             normalised.append(part.upper())
         else:
             normalised.append(part.lower())
-    return "-".join(normalised)
+    canonical = "-".join(normalised)
+    return "zh" if canonical == "zh-CN" else canonical
 
 
 def validate_sha256(value: str, *, field: str) -> str:
@@ -1565,7 +1566,7 @@ def contract_failure_receipt(
     try:
         language = validate_language(target_language)
     except TranslateContractError:
-        language = "zh-CN"
+        language = "zh"
     paths = output_paths(
         project_root=project_root,
         slug=safe_slug,

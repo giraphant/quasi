@@ -42,8 +42,14 @@ Paper Prepare 没有用户选择分支：exact source 或 writer ownership 不�
 目标是得到一个 manifest 明列、顺序稳定、边界语义可靠的章节集合。
 
 - EPUB：使用 EPUB extractor 形成章节集合，然后读取 manifest 及各章代表性头尾与正文。
-- PDF：先判断文本层；需要时走 exact OCR recovery。阅读目录、页码和正文结构，选择 TOC、
-  pattern 或 manual ranges 作为最合适的切分方法。
+- PDF：先抽取文本层并阅读开头、中段和结尾的代表性正文。只要正文连贯可读，就使用原
+  PDF 继续切分；缺少目录、TOC/pattern 切分失败、章节边界不理想或需要 manual ranges，
+  都只是结构问题，不是 OCR 依据。只有抽取文本本身没有正文、持续乱码或实际为无可用
+  文本层的扫描页时，才走 request 指定的 exact OCR recovery。
+- Book OCR 逐字使用 request 授权的前台 capability，不添加 `--layout`，也不以 shell
+  background、`nohup` 或脱离宿主的进程运行。宿主截断且没有 CLI JSON receipt 时，writer
+  outcome 未知，立即返回 `blocked`；不把截断解释成文本不可读，也不启动第二个 writer。
+- 阅读目录、页码和正文结构，选择 TOC、pattern 或 manual ranges 作为最合适的切分方法。
 - 抽取后检查串章、截断、碎片化、目录页误收、乱码、页眉页脚污染和章节顺序。章节数量与
   size 是证据，不替代阅读判断。
 - 若 manifest 已存在，先核对它及列出的文件。确有局部边界问题时，使用当前 manifest

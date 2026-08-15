@@ -27,6 +27,13 @@ Book 缺少可复用目标时，调用一次 `quasi-download book candidates`，
 允许的 output。每一次实际来源尝试都必须保留原样的 `{source,status,error}` 行，已知耗尽时
 如实报告完整 attempts；不要重排候选、伪造尝试，或用临时文件替代已确认 publish。
 
+Book ISBN 是装帧/载体标识，不是作品级 exact-match 条件。若实际文件与 request 在题名、作者、
+译者/语言（适用时）、出版社、版权年和版次说明上共同证明为同一作品的同一知识版次，仅因
+精装、平装或电子载体 ISBN 不同不得拒绝，也不需要用户 gate；继续 accept，并在成功 receipt
+的 `isbn` 中返回文件实际观察到的 ISBN。只有证据表明是不同修订、重译、节译、分卷或其他
+实质版次时才拒绝该候选。无法从文件可靠观察 ISBN 时返回 `null`，不得把 request ISBN 冒充为
+文件观察。
+
 Book year evidence 必须只含 `slug_year`、`source_years`、`pdf_signals`、`recommended_year`、
 `recommendation_reason`、`verdict` 六个字段；`pdf_signals` 只含 `first_published`、
 `copyright_year`、`original_year`、`other_years`。每个 source label 和 PDF observation 是独立

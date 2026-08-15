@@ -18,7 +18,7 @@ description: Use when the user wants to preserve a public webpage, process or co
 - Book：`title|isbn` 至少一个；identity hints 可带 `authors/year/publisher/category`；`format`
   只作为下载偏好，不属于 identity hints。
 - Talk：一个已经接受到 `sources/{slug}.{media-ext}` 的媒体，以及 `slug/title/date`；可带 `engines/lang/prepare_media`。
-- Translation：Paper 的 canonical slug；可带 `target_language/source_file/toc_json/toc_page_side`，用户未指定 target 时用 `zh-CN`。
+- Translation：Paper 的 canonical slug；可带 `target_language/source_file/toc_json/toc_page_side`，用户未指定 target 时用 `zh`。
 - Author：`slug/full_name/topic`；可用 `maxBooks/maxPapers` 向下限制默认的 5/10 个代表作。
 - Webpage：仅当用户要保存该公共 URL 对应的网页本身时使用；明确作为 Paper/Book clue 提供的 URL 仍归属原材料。
 - Batch：2–32 个 material，可混合 kind；恢复结果时保持原输入顺序。
@@ -89,7 +89,7 @@ seed；严格 hint、identity、owner 与路径验证只由 TypeScript entry par
 
 - 一条 Workflow 只处理一个逻辑材料；Author 只顺序复合其 Paper/Book 成员，只有 Book 可在内部并发章节。主线程最多同时保持五条
   不同 exact material key 的 Workflow 在飞，同一已知 key 至多一条。Paper/Book/Talk key
-  包含 kind+slug；Translation key 还包含完整 target tag。
+  包含 kind+slug；Translation key 还包含 canonical target tag。
 - 启动前只合并字节完全相同的已知 material key。不要做 title/DOI/ISBN 语义合并、canonical
   reservation、锁、碰撞清洁或补偿；Search 后极少数 owner 重合保持可见，交给用户处理。
 - Paper/Book/Talk/Translation/Author 初次调用只带一个和 seed slug 精确匹配的 `quasi-status`
@@ -114,6 +114,9 @@ seed；严格 hint、identity、owner 与路径验证只由 TypeScript entry par
 ## Agent / Helper 合同
 
 先运行 exact status，再把闭合输入交给映射中的入口：
+
+把 `workflow_input` 对象直接作为 Workflow 工具的 `args` 值；tool call 中 `args` 必须是
+object，不是 JSON string。不要先做 `JSON.stringify`、`json.dumps` 或其它手工序列化。
 
 ```python
 result = Workflow(scriptPath=entry, args=workflow_input)
@@ -203,7 +206,7 @@ Author → exact Author status → discover/freeze → exact child status batch
 2. 每项做一次 exact pre-status：Paper/Book/Talk/Author 用
    `quasi-status --kind KIND --slug SLUG --json`；Translation 另带
    `--target-language USER_TARGET`，并只接受返回的完整 `facts.target_language` 作为
-   `normalized_target`（例如 `zh-cn` → `zh-CN`）。Webpage 只在用户要保存 exact public URL 本身时
+   `normalized_target`（例如 `zh-cn` → `zh`）。Webpage 只在用户要保存 exact public URL 本身时
    使用上述 provisional envelope 开始；若 URL 明确是 Paper/Book clue，保留其原 kind。它返回 canonical
    route 后再运行一次 `quasi-status --kind webpage --slug SLUG --json`。
 3. 用 kind、slug 和 Translation 的 `normalized_target` 构造 exact material key；此时再合并

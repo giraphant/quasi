@@ -152,7 +152,7 @@ def _context(**overrides: Any) -> dict[str, Any]:
             "card_slug": "exact-card",
         },
         "target": "vault/topics/exact-material/00-overview.md",
-        "targetLanguage": "zh-CN",
+        "targetLanguage": "zh",
         "maxItems": 8,
         "maxCards": 3,
         "candidates": [],
@@ -1288,15 +1288,15 @@ def test_prepare_rows_expose_only_paths_they_can_publish():
     assert _prepare("translation.prepare")["writeTargets"] == [
         {
             "scope": "exact",
-            "path": "processing/translations/exact-material-zh-cn.pdf",
+            "path": "processing/translations/exact-material-zh.pdf",
         },
         {
             "scope": "exact",
-            "path": "processing/translations/exact-material-zh-cn.manifest.json",
+            "path": "processing/translations/exact-material-zh.manifest.json",
         },
         {
             "scope": "exact",
-            "path": "processing/translations/exact-material-zh-cn-reocr.pdf",
+            "path": "processing/translations/exact-material-zh-reocr.pdf",
         },
     ]
 

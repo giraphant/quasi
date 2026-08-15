@@ -48,7 +48,7 @@ def source_fixture(
     recovery: bool = False,
 ) -> tuple[Path, str]:
     if recovery:
-        source = root / "processing" / "translations" / f"{slug}-zh-cn-reocr.pdf"
+        source = root / "processing" / "translations" / f"{slug}-zh-reocr.pdf"
     else:
         source = root / "sources" / f"{slug}.pdf"
     make_pdf(source, pages)
@@ -138,6 +138,31 @@ def test_translation_language_fixture_matches_python_path_contract(
     )
 
 
+def test_invalid_language_failure_receipt_uses_canonical_zh_paths(
+    tmp_path: Path,
+):
+    receipt = commit.contract_failure_receipt(
+        command="observe",
+        project_root=tmp_path,
+        backend="immersive",
+        slug="exact-paper",
+        target_language="not a language tag",
+        attempt=1,
+        mode="initial",
+        toc_json=None,
+        toc_page_side="original",
+        source_file=None,
+        code="translation.invalid_language",
+        message="invalid target language",
+    )
+
+    assert receipt["target_language"] == "zh"
+    assert receipt["output_path"] == "processing/translations/exact-paper-zh.pdf"
+    assert receipt["manifest_path"] == (
+        "processing/translations/exact-paper-zh.manifest.json"
+    )
+
+
 def test_strict_observe_cli_emits_one_closed_relative_receipt(tmp_path):
     source, _ = source_fixture(tmp_path)
     env = os.environ.copy()
@@ -174,8 +199,10 @@ def test_strict_observe_cli_emits_one_closed_relative_receipt(tmp_path):
     assert receipt["signal"] == "missing"
     assert receipt["generation_attempt"] == 1
     assert receipt["source_path"] == "sources/strict-translation.pdf"
-    assert receipt["output_path"] == "processing/translations/strict-translation-zh-cn.pdf"
-    assert receipt["manifest_path"].endswith("-zh-cn.manifest.json")
+    assert receipt["target_language"] == "zh"
+    assert receipt["derivative_key"] == "translation:paper:strict-translation:zh"
+    assert receipt["output_path"] == "processing/translations/strict-translation-zh.pdf"
+    assert receipt["manifest_path"].endswith("-zh.manifest.json")
     assert receipt["toc_json"] is None
     assert receipt["output_sha256"] is None
     assert receipt["manifest_sha256"] is None
@@ -389,7 +416,7 @@ def test_output_paths_reject_traversal_before_construction(tmp_path, slug, langu
     assert not (tmp_path / "victim").exists()
 
 
-def test_full_language_tag_owns_distinct_canonical_outputs(tmp_path):
+def test_mainland_chinese_alias_uses_zh_without_colliding_with_zh_tw(tmp_path):
     cn = commit.output_paths(
         project_root=tmp_path,
         slug="strict-translation",
@@ -401,8 +428,36 @@ def test_full_language_tag_owns_distinct_canonical_outputs(tmp_path):
         target_language="zh-TW",
     )
     assert cn["output_path"] != tw["output_path"]
-    assert str(cn["output_path"]).endswith("-zh-cn.pdf")
+    assert str(cn["output_path"]).endswith("-zh.pdf")
     assert str(tw["output_path"]).endswith("-zh-tw.pdf")
+
+
+@pytest.mark.parametrize(
+    ("backend", "module"),
+    [("immersive", immersive), ("pdf2zh", translate_cli.pdf2zh)],
+)
+def test_canonical_zh_uses_zh_cn_at_provider_boundary(
+    tmp_path,
+    monkeypatch,
+    backend,
+    module,
+):
+    observed: dict[str, Any] = {}
+
+    def fake_translate_to_candidate(**kwargs):
+        observed.update(kwargs)
+        return {"task_id": None}
+
+    monkeypatch.setattr(module, "translate_to_candidate", fake_translate_to_candidate)
+    translate_cli.backend_runner(backend)(
+        tmp_path / "source.pdf",
+        tmp_path / "candidate.pdf",
+        "zh",
+        tmp_path / "generation",
+        lambda _state, _task_id: None,
+    )
+
+    assert observed["target_language"] == "zh-CN"
 
 
 def test_source_and_toc_must_be_project_local_regular_files(tmp_path):
@@ -512,7 +567,7 @@ def test_recovery_mode_uses_generation_attempt_two(tmp_path):
         project_root=tmp_path,
         slug="strict-translation",
         backend="pdf2zh",
-        target_language="zh-CN",
+        target_language="zh",
         input_path=source,
         input_sha256=receipt["source_sha256"],
         input_pages=receipt["source_pages"],
@@ -572,7 +627,7 @@ def test_undertranslated_candidate_is_preserved_but_never_canonical(tmp_path):
     assert not (tmp_path / receipt["manifest_path"]).exists()
     candidates = list(
         (tmp_path / "processing" / "translations").glob(
-            ".strict-translation-zh-cn.translate-*/candidate.pdf"
+            ".strict-translation-zh.translate-*/candidate.pdf"
         )
     )
     assert len(candidates) == 1

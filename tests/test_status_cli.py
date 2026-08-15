@@ -473,7 +473,7 @@ def test_translation_status_requires_and_normalises_one_exact_target(tmp_path: P
     project = tmp_path / "project"
     slug = "exact-translation"
     write(project / "sources" / f"{slug}.pdf", b"%PDF-source")
-    for tag in ("zh-cn", "fr-fr"):
+    for tag in ("zh", "fr-fr"):
         write(
             project / "processing" / "translations" / f"{slug}-{tag}.pdf",
             b"%PDF-translation",
@@ -510,17 +510,17 @@ def test_translation_status_requires_and_normalises_one_exact_target(tmp_path: P
         "identity": None,
         "facts": {
             "kind": "translation",
-            "target_language": "zh-CN",
+            "target_language": "zh",
             "source": observation(
                 f"sources/{slug}.pdf", present=True, usable=True
             ),
             "output": observation(
-                f"processing/translations/{slug}-zh-cn.pdf",
+                f"processing/translations/{slug}-zh.pdf",
                 present=True,
                 usable=True,
             ),
             "manifest": observation(
-                f"processing/translations/{slug}-zh-cn.manifest.json",
+                f"processing/translations/{slug}-zh.manifest.json",
                 present=True,
                 usable=True,
             ),

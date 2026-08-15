@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.11** (2026-08-15): **材料身份回到作品事实，中文译文与长 OCR 回到各自稳定边界。**
+  - Book ISBN 只标识装帧或载体：题名、作者、译者/语言、出版社、版权年与版次证据共同证明为同一作品的同一知识版次时，精装、平装或电子 ISBN 差异不再阻断下载；修订、重译、节译和分卷仍作为实质版次差异拒绝或询问。下载实际观察到的 ISBN（包括无法观察时的 `null`）会进入 Prepare、Synthesis 及 Author/Topic continuation，不再被先前 Search 候选覆盖。
+  - 大陆中文在库内统一为 canonical `zh`，Translation 状态、material key、PDF、manifest 与 recovery 文件都使用 `-zh`；Immersive 与 pdf2zh 只在 provider 边界映射回 `zh-CN`，`zh-TW` 等其它标签仍保持独立。
+  - Book Prepare 只有在正文抽取确实为空、持续乱码或没有可用文本层时才运行 exact OCR；目录缺失、切分失败与章节边界问题不再冒充 OCR 依据。OCR 保持前台、单 writer，宿主截断后按 unknown outcome 停止，不再用 `nohup` 逃逸或启动第二个进程。
+  - `collect-material` 明确把闭合 Workflow envelope 直接作为 object `args` 传入，禁止手工 JSON 序列化，避免宿主已传对象时再套 transformed wrapper。
+
 - **0.65.10** (2026-08-15): **Anna 额度耗尽后改走可验证的 LibGen 签名下载。**
   - Fast API 即使以 HTTP 429 返回 `No downloads left`，也会被识别为当日额度耗尽；Book 下载跳过没有意义的 Fast path/domain 轮换，直接继续独立的 LibGen fallback，只有 LibGen 也失败时才向上报告原始额度问题。
   - LibGen 不再直连缺少签名的 `get.php?md5=...`：先读取 `ads.php`，只接受同一 MD5、带非空 `key` 的合法 GET 链接，再通过浏览器兼容请求栈下载。真实 Distinction 候选成功取得 34,608,593-byte、632 页 PDF，文件 MD5 与候选严格一致。

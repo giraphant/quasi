@@ -47,6 +47,11 @@ from translate.translate_commit import (  # noqa: E402
 BACKENDS = {"immersive", "pdf2zh"}
 
 
+def provider_target_language(target_language: str) -> str:
+    canonical = validate_language(target_language)
+    return "zh-CN" if canonical == "zh" else canonical
+
+
 def _public_base_url(value: str) -> str:
     if not value:
         return ""
@@ -59,13 +64,14 @@ def _public_base_url(value: str) -> str:
 
 
 def backend_config_fingerprint(backend: str, target_language: str) -> str:
+    provider_language = provider_target_language(target_language)
     if backend == "immersive":
         public = {
             key: value
             for key, value in immersive.DEFAULT_SETTINGS.items()
             if key != "auth_key"
         }
-        public["target_language"] = target_language
+        public["target_language"] = provider_language
         return fingerprint({"backend": backend, "settings": public})
     if backend == "pdf2zh":
         configured_base = os.environ.get("QUASI_TRANSLATE_BASE_URL", "").strip()
@@ -79,7 +85,7 @@ def backend_config_fingerprint(backend: str, target_language: str) -> str:
                 "base_url": public_base,
                 "model": os.environ.get("QUASI_TRANSLATE_MODEL", "").strip(),
                 "package": pdf2zh.PDF2ZH_SPEC,
-                "target_language": target_language,
+                "target_language": provider_language,
             }
         )
     raise TranslateContractError("translation.invalid_backend", f"unknown backend: {backend}")
@@ -126,7 +132,7 @@ def backend_runner(backend: str):
             return immersive.translate_to_candidate(
                 source_pdf=source,
                 candidate_pdf=candidate,
-                target_language=target_language,
+                target_language=provider_target_language(target_language),
                 work_dir=generation_dir,
                 on_state=on_state,
             )
@@ -144,7 +150,7 @@ def backend_runner(backend: str):
             return pdf2zh.translate_to_candidate(
                 source_pdf=source,
                 candidate_pdf=candidate,
-                target_language=target_language,
+                target_language=provider_target_language(target_language),
                 work_dir=generation_dir / "pdf2zh",
                 on_state=on_state,
             )

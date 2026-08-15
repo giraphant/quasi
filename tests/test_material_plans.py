@@ -355,13 +355,14 @@ def book_acquire_complete(
     format_name: str = "epub",
     evidence: dict[str, Any] | None = None,
     tmp_path: str | None = None,
+    isbn: str | None = BOOK_IDENTITY["isbn"],
 ) -> dict[str, Any]:
     return {
         "output_path": f"sources/{slug}.{format_name}",
         "format": format_name,
         "write_state": "written",
         "identity_verified": True,
-        "isbn": BOOK_IDENTITY["isbn"],
+        "isbn": isbn,
         "attempts": [],
         "terminal": {
             "status": "complete",
@@ -1131,6 +1132,102 @@ def test_book_provisional_happy_path_runs_one_stable_two_chapter_pipeline() -> N
         {"role": "overview", "path": "vault/books/exact-book/00-overview.md"},
     ]
     assert "receipts" not in report["result"]
+
+
+def test_book_uses_the_verified_source_isbn_after_acquire() -> None:
+    source_isbn = "9780000000001"
+    report = run_book(
+        provisional_book_input(),
+        [
+            book_search_complete(),
+            book_acquire_complete(isbn=source_isbn),
+            book_prepare_complete(),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete(),
+            audit_complete(),
+        ],
+    )
+
+    requests = {
+        call["request"]["operation"]: call["request"]
+        for call in report["calls"]
+        if call["request"]["operation"] in {
+            "book.acquire",
+            "book.prepare",
+            "book.synthesise",
+        }
+    }
+    assert requests["book.acquire"]["identity"]["isbn"] == "9780000000000"
+    assert requests["book.prepare"]["identity"]["isbn"] == source_isbn
+    assert requests["book.synthesise"]["identity"]["isbn"] == source_isbn
+    assert requests["book.synthesise"]["frontmatter_seed"]["isbn"] == source_isbn
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_book_clears_an_unobserved_source_isbn_after_acquire() -> None:
+    report = run_book(
+        provisional_book_input(),
+        [
+            book_search_complete(),
+            book_acquire_complete(isbn=None),
+            book_prepare_complete(),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete(),
+            audit_complete(),
+        ],
+    )
+
+    prepare = next(
+        call["request"]
+        for call in report["calls"]
+        if call["request"]["operation"] == "book.prepare"
+    )
+    synthesis = next(
+        call["request"]
+        for call in report["calls"]
+        if call["request"]["operation"] == "book.synthesise"
+    )
+    assert prepare["identity"]["isbn"] is None
+    assert synthesis["frontmatter_seed"]["isbn"] is None
+
+
+def test_book_preserves_the_verified_source_isbn_across_search_resume() -> None:
+    source_isbn = "9780000000001"
+    value = canonical_book_input(
+        source_format="pdf",
+        overview=False,
+        admitted=False,
+    )
+    value["seed"]["identity"]["isbn"] = source_isbn
+
+    report = run_book(
+        value,
+        [
+            book_search_complete(),
+            book_prepare_complete(),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    operations = [call["request"]["operation"] for call in report["calls"]]
+    assert operations[:2] == [
+        "material.search",
+        "book.prepare",
+    ]
+    assert "book.acquire" not in operations
+    prepare = report["calls"][1]["request"]
+    synthesis = next(
+        call["request"]
+        for call in report["calls"]
+        if call["request"]["operation"] == "book.synthesise"
+    )
+    assert prepare["identity"]["isbn"] == source_isbn
+    assert synthesis["frontmatter_seed"]["isbn"] == source_isbn
 
 
 def test_book_search_lifts_only_its_closed_identity_gate() -> None:
@@ -2319,7 +2416,7 @@ def test_talk_unknown_writer_stops_without_later_dispatch() -> None:
 
 
 def translation_observation_for_plan(
-    target_language: str = "zh-CN",
+    target_language: str = "zh",
     *,
     source: bool = True,
     output: bool = False,
@@ -2358,7 +2455,7 @@ def translation_observation_for_plan(
 def canonical_translation_input(
     *,
     requested_target: str = "zh-cn",
-    observed_target: str = "zh-CN",
+    observed_target: str = "zh",
     output: bool = False,
     manifest: bool = False,
 ) -> dict[str, Any]:
@@ -2515,8 +2612,8 @@ def test_translation_normalises_target_and_dispatches_exactly_once() -> None:
         "translation.prepare"
     ]
     request = report["calls"][0]["request"]
-    assert request["material_key"] == "translation:paper:exact-paper:zh-CN"
-    assert request["identity"]["target_language"] == "zh-CN"
+    assert request["material_key"] == "translation:paper:exact-paper:zh"
+    assert request["identity"]["target_language"] == "zh"
     assert report["result"]["terminal"] == "complete"
     assert report["pipelineCalls"] == 0
 
@@ -2525,7 +2622,7 @@ def test_translation_rejects_a_different_target_observation_without_dispatch() -
     report = run_translation(
         canonical_translation_input(
             requested_target="fr",
-            observed_target="zh-CN",
+            observed_target="zh",
         ),
         [],
     )
@@ -2538,7 +2635,7 @@ def test_translation_rejects_a_different_target_observation_without_dispatch() -
 def test_translation_exact_output_and_manifest_reconcile_without_dispatch() -> None:
     value = canonical_translation_input(output=True, manifest=True)
     value["userDecision"] = {
-        "material_key": "translation:paper:exact-paper:zh-CN",
+        "material_key": "translation:paper:exact-paper:zh",
         "operation": "translation.prepare",
         "value": {"acknowledged": True},
     }
@@ -2553,11 +2650,11 @@ def test_translation_exact_output_and_manifest_reconcile_without_dispatch() -> N
     assert report["result"]["artifacts"] == [
         {
             "role": "translation",
-            "path": "processing/translations/exact-paper-zh-cn.pdf",
+            "path": "processing/translations/exact-paper-zh.pdf",
         },
         {
             "role": "manifest",
-            "path": "processing/translations/exact-paper-zh-cn.manifest.json",
+            "path": "processing/translations/exact-paper-zh.manifest.json",
         },
     ]
 
@@ -2572,7 +2669,7 @@ def test_translation_source_gate_binds_its_fingerprint_and_selected_path() -> No
     }
 
     assert gated["result"]["terminal"] == "needs_input"
-    assert gate["material_key"] == "translation:paper:exact-paper:zh-CN"
+    assert gate["material_key"] == "translation:paper:exact-paper:zh"
 
     value["userDecision"] = {
         "material_key": gate["material_key"],
@@ -2609,7 +2706,7 @@ def test_translation_source_selection_survives_a_later_configuration_gate() -> N
         "route": {
             "kind": "translation",
             "slug": "exact-paper",
-            "target_language": "zh-CN",
+            "target_language": "zh",
         },
         "seed": {"state": "canonical", "material_slug": "exact-paper"},
         "options": {
@@ -3103,6 +3200,35 @@ def test_author_unknown_child_outcome_stops_before_later_members_or_writers() ->
     ]
     assert report["result"]["terminal"] == "blocked"
     assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"
+
+
+def test_author_lifts_book_gate_with_the_verified_source_isbn() -> None:
+    identity = book_identity("book-one", "Book One")
+    source_isbn = "9780000000043"
+    route = {"kind": "book", "slug": "book-one"}
+    member = author_member(route, route, identity)
+    member["leaf"]["options"] = {"allowed_formats": ["pdf"]}
+
+    report = run_author(
+        author_compose_input(
+            [member],
+            [(route, book_observation("book-one"))],
+        ),
+        [
+            book_search_complete(identity),
+            book_acquire_complete(
+                "book-one",
+                format_name="pdf",
+                isbn=source_isbn,
+            ),
+            book_prepare_structure_gate(),
+        ],
+    )
+
+    assert report["result"]["terminal"] == "needs_input"
+    assert report["result"]["gate"]["gate"]["kind"] == "book_structure"
+    resumed_book = report["result"]["resume_seed"]["members"][0]["leaf"]
+    assert resumed_book["seed"]["identity"]["isbn"] == source_isbn
 
 
 def test_author_lifts_partial_book_observation_request() -> None:

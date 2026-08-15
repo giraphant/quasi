@@ -33,6 +33,12 @@ Request 提供 material key、kind、用户已有的题名、作者、年份、D
 得到，identifier 与 access URL 是否真正属于它。Slug 使用首列作者姓、短题名与年份组成的
 canonical kebab-case。
 
+Book ISBN 首先是检索线索和装帧标识，不单独定义一部作品或一个知识库 material。若题名、
+作者、译者/语言（适用时）、出版社、版权年与版次说明共同证明是同一作品的同一知识版次，
+精装、平装或电子载体之间仅 ISBN 不同属于正常书目差异：选择证据最强的 ISBN 作为当前查询
+身份，但不得仅因此返回冲突。只有 ISBN 差异同时伴随修订、重译、节译、分卷或其他实质版次
+证据时，才把它作为 edition/identifier conflict。
+
 若权威证据显示作品没有独立出版形态，其正典家园仅是一本 edited volume、anthology 或
 collected papers，这属于 `publication_type` 身份冲突，不能靠把容器题名填进 `journal`
 消化为常规规范化。判据是该条目是否作为可独立检索取得的出版物流通，而不是容器有没有
@@ -71,8 +77,9 @@ Book Request 若带有 `year_decision`，只会是 caller 已校验的 `use-reco
 - `complete`：证据足以形成 high 或 medium confidence 的完整 identity，并完成本地 owner
   观察。题名规范化、副标题补全、姓名缩写展开和 canonical slug 改进都可以属于同一作品的
   正常校正。
-- `needs_input`：最强证据指向一个或数个具体候选，但它们改变了作者、作品、年份、identifier、
-  edition 或 publication type 等身份事实。以 `material.identity_conflict` 返回完整候选、闭合
+- `needs_input`：最强证据指向一个或数个具体候选，但它们改变了作者、作品、年份、实质版次
+  或 publication type 等身份事实。Paper DOI 差异仍是 identifier conflict；Book ISBN 只有在
+  伴随实质版次差异时才进入冲突。以 `material.identity_conflict` 返回完整候选、闭合
   冲突字段和一个用户可以回答的问题。
 - `blocked`：命令结果或本地 owner 无法被安全观察。
 - `failed`：已经走完你认为仍有价值的调查路径，现有能力仍不能建立可辩护身份。说明调查

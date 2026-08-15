@@ -115,7 +115,7 @@ export const validMaterialSlug = (value: unknown): value is string =>
 
 export function normalizeLanguage(value: unknown): string | null {
   if (typeof value !== "string" || !LANGUAGE_TAG.test(value)) return null;
-  return value
+  const normalized = value
     .split("-")
     .map((part, index) => {
       if (index === 0) return part.toLowerCase();
@@ -123,6 +123,7 @@ export function normalizeLanguage(value: unknown): string | null {
       return part.toLowerCase();
     })
     .join("-");
+  return normalized === "zh-CN" ? "zh" : normalized;
 }
 
 export const isArtifactObservation = (

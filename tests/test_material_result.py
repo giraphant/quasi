@@ -430,7 +430,7 @@ def test_talk_status_parser_matches_the_exact_status_producer_projection():
 
 
 def test_translation_status_parser_binds_null_identity_and_exact_target_paths():
-    producer_value = translation_observation("zh-CN")
+    producer_value = translation_observation("zh")
     assert run_workflow_export(
         TRANSLATION_CONTRACT_MODULE,
         "parseTranslationStatusObservation",
@@ -890,7 +890,7 @@ def test_translation_target_mismatch_has_no_dispatchable_value():
                 "route": {
                     "kind": "translation",
                     "slug": "exact-paper",
-                    "target_language": "zh-CN",
+                    "target_language": "zh",
                 },
                 "observation": observation,
             }
@@ -901,7 +901,7 @@ def test_translation_target_mismatch_has_no_dispatchable_value():
 
 
 def test_translation_observation_missing_target_has_no_dispatchable_value():
-    observation = translation_observation("zh-CN")
+    observation = translation_observation("zh")
     del observation["facts"]["target_language"]
 
     result = run_workflow_export(
@@ -912,7 +912,7 @@ def test_translation_observation_missing_target_has_no_dispatchable_value():
                 "route": {
                     "kind": "translation",
                     "slug": "exact-paper",
-                    "target_language": "zh-CN",
+                    "target_language": "zh",
                 },
                 "observation": observation,
             }
@@ -923,7 +923,7 @@ def test_translation_observation_missing_target_has_no_dispatchable_value():
 
 
 def test_translation_observation_rejects_noncanonical_target_tag():
-    observation = translation_observation("zh-cn")
+    observation = translation_observation("zh-CN")
 
     result = run_workflow_export(
         INPUT_MODULE,
@@ -933,7 +933,7 @@ def test_translation_observation_rejects_noncanonical_target_tag():
                 "route": {
                     "kind": "translation",
                     "slug": "exact-paper",
-                    "target_language": "zh-CN",
+                    "target_language": "zh",
                 },
                 "observation": observation,
             }
@@ -961,8 +961,8 @@ def test_non_translation_observation_rejects_target_field():
     assert result is None
 
 
-def test_translation_observation_key_uses_normalized_full_target_tag():
-    observation = translation_observation("zh-CN")
+def test_translation_observation_key_uses_canonical_target():
+    observation = translation_observation("zh")
 
     result = run_workflow_export(
         INPUT_MODULE,
@@ -972,7 +972,7 @@ def test_translation_observation_key_uses_normalized_full_target_tag():
                 "route": {
                     "kind": "translation",
                     "slug": "exact-paper",
-                    "target_language": "zh-CN",
+                    "target_language": "zh",
                 },
                 "observation": observation,
             }
@@ -981,7 +981,7 @@ def test_translation_observation_key_uses_normalized_full_target_tag():
 
     assert result == {
         "__map_entries__": [
-            ["translation:paper:exact-paper:zh-CN", observation]
+            ["translation:paper:exact-paper:zh", observation]
         ]
     }
 
@@ -1480,7 +1480,7 @@ def translation_gate_receipt(kind: str) -> dict[str, Any]:
         question = "Which translation configuration should be used?"
     return {
         "operation": "translation.prepare",
-        "material_key": "translation:paper:exact-paper:zh-CN",
+        "material_key": "translation:paper:exact-paper:zh",
         "terminal": {
             "status": "needs_input",
             "issue": {
@@ -1522,7 +1522,7 @@ def test_translation_gate_maps_each_exact_receipt_arm(
     assert gate == {
         "kind": material_gate_kind,
         "operation": "translation.prepare",
-        "material_key": "translation:paper:exact-paper:zh-CN",
+        "material_key": "translation:paper:exact-paper:zh",
         "question": receipt["terminal"]["issue"]["user_question"],
         "missing_fields": receipt["terminal"]["gate"]["missing_fields"],
         "candidates": receipt["terminal"]["gate"]["candidates"],
