@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.10** (2026-08-15): **Anna 额度耗尽后改走可验证的 LibGen 签名下载。**
+  - Fast API 即使以 HTTP 429 返回 `No downloads left`，也会被识别为当日额度耗尽；Book 下载跳过没有意义的 Fast path/domain 轮换，直接继续独立的 LibGen fallback，只有 LibGen 也失败时才向上报告原始额度问题。
+  - LibGen 不再直连缺少签名的 `get.php?md5=...`：先读取 `ads.php`，只接受同一 MD5、带非空 `key` 的合法 GET 链接，再通过浏览器兼容请求栈下载。真实 Distinction 候选成功取得 34,608,593-byte、632 页 PDF，文件 MD5 与候选严格一致。
+  - 下载层按响应类型与文件前缀拒绝 HTML 错页，Book 进一步验证 PDF 可打开且有页面、EPUB 具备标准 ZIP 容器；约 20KB 的错误页、截断 PDF/EPUB 及遗留无效 temp 不再冒充成功文件。
+
 - **0.65.9** (2026-08-15): **Anna 的停放镜像与半加载搜索页不再制造假零候选。**
   - 镜像健康检查不再只凭响应正文出现 `anna` 就放行：停放页标志会被拒绝，真实首页必须同时带 Anna's Archive 身份与 `/search` 控件；指纹窗口覆盖当前本地化首页中靠后的搜索表单，同时保持有界。
   - Headless Chromium 只在出现合法 32 位 `/md5/` 结果链接或明确的 `No files found` 空态时认定页面稳定；解析器使用同一类证据，普通页面或尚未完成的搜索壳返回 `aa_search_page_incomplete`，不再报告 `success: true, count: 0`。
