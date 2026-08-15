@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from copy import deepcopy
@@ -596,6 +597,11 @@ def run_book(
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
+    env = dict(os.environ)
+    if project_dir is None:
+        env.pop("CLAUDE_PROJECT_DIR", None)
+    else:
+        env["CLAUDE_PROJECT_DIR"] = project_dir
     proc = subprocess.run(
         [
             node,
@@ -612,6 +618,7 @@ def run_book(
             ),
         ],
         cwd=ROOT,
+        env=env,
         text=True,
         capture_output=True,
         check=False,
@@ -2125,7 +2132,38 @@ def test_book_absolute_owned_chapter_audit_path_routes_repair() -> None:
     assert report["result"]["terminal"] == "complete"
 
 
-def test_book_relative_project_root_matches_absolute_audit_owner_path() -> None:
+def test_book_configured_project_root_matches_absolute_audit_owner_path() -> None:
+    project_root = "/tmp/quasi-book-plan-configured-root"
+    diagnostic = {
+        "path": f"{project_root}/vault/books/exact-book/ch01-opening.md",
+        "kind": "missing-section",
+        "reason": "The chapter analysis is incomplete.",
+    }
+    report = run_book(
+        canonical_book_input(
+            manifest=True,
+            chapter_outputs=(True, True),
+        ),
+        [
+            audit_complete(escalated=[diagnostic]),
+            chapter_repair_complete(),
+            audit_complete(),
+        ],
+        project_dir=project_root,
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.audit",
+        "chapter.analyse",
+        "book.audit",
+    ]
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_book_harness_clears_inherited_project_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/tmp/quasi-ambient-project-root")
     diagnostic = {
         "path": str(ROOT / "vault/books/exact-book/ch01-opening.md"),
         "kind": "missing-section",
@@ -2141,7 +2179,6 @@ def test_book_relative_project_root_matches_absolute_audit_owner_path() -> None:
             chapter_repair_complete(),
             audit_complete(),
         ],
-        project_dir=".",
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
