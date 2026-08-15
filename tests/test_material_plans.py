@@ -2179,6 +2179,33 @@ def test_book_absolute_owned_overview_audit_path_routes_repair() -> None:
     assert report["result"]["terminal"] == "complete"
 
 
+def test_book_second_absolute_owned_escalation_is_repair_exhausted() -> None:
+    diagnostic = {
+        "path": str(ROOT / "vault/books/exact-book/ch01-opening.md"),
+        "kind": "block_kind_mismatch_soft",
+        "reason": "金句要点 still has mixed blocks.",
+    }
+    report = run_book(
+        canonical_book_input(
+            manifest=True,
+            chapter_outputs=(True, True),
+        ),
+        [
+            audit_complete(escalated=[diagnostic]),
+            chapter_repair_complete(),
+            audit_complete(escalated=[diagnostic]),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.audit",
+        "chapter.analyse",
+        "book.audit",
+    ]
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "workflow.repair_exhausted"
+
+
 def test_book_absolute_foreign_audit_path_remains_owner_ambiguity() -> None:
     diagnostic = {
         "path": str(ROOT / "vault/books/another-book/ch01-opening.md"),
