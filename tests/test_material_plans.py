@@ -2082,6 +2082,82 @@ def test_book_repairs_the_owned_overview_once_then_reaudits() -> None:
     assert report["result"]["terminal"] == "complete"
 
 
+def test_book_absolute_owned_chapter_audit_path_routes_repair() -> None:
+    diagnostic = {
+        "path": str(ROOT / "vault/books/exact-book/ch01-opening.md"),
+        "kind": "block_kind_mismatch_soft",
+        "reason": "金句要点 must use a blockquote list.",
+    }
+    report = run_book(
+        canonical_book_input(
+            manifest=True,
+            chapter_outputs=(True, True),
+        ),
+        [
+            audit_complete(escalated=[diagnostic]),
+            chapter_repair_complete(),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.audit",
+        "chapter.analyse",
+        "book.audit",
+    ]
+    repair = report["calls"][1]["request"]
+    assert repair["identity"]["chapter_slot"] == "01"
+    assert repair["repair_diagnostics"] == [diagnostic]
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_book_absolute_owned_overview_audit_path_routes_repair() -> None:
+    diagnostic = {
+        "path": str(ROOT / "vault/books/exact-book/00-overview.md"),
+        "kind": "frontmatter",
+        "reason": "The overview metadata is incomplete.",
+    }
+    report = run_book(
+        canonical_book_input(
+            manifest=True,
+            chapter_outputs=(True, True),
+        ),
+        [
+            audit_complete(escalated=[diagnostic]),
+            book_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.audit",
+        "book.synthesise",
+        "book.audit",
+    ]
+    assert report["calls"][1]["request"]["repair_diagnostics"] == [diagnostic]
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_book_absolute_foreign_audit_path_remains_owner_ambiguity() -> None:
+    diagnostic = {
+        "path": str(ROOT / "vault/books/another-book/ch01-opening.md"),
+        "kind": "missing-section",
+        "reason": "Foreign Book.",
+    }
+    report = run_book(
+        canonical_book_input(
+            manifest=True,
+            chapter_outputs=(True, True),
+        ),
+        [audit_complete(escalated=[diagnostic])],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.audit"
+    ]
+    assert report["result"]["issue"]["code"] == "workflow.owner_ambiguity"
+
+
 TALK_IDENTITY = {
     "title": "Exact Talk",
     "date": "2024-01-02",

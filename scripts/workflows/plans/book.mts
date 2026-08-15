@@ -24,6 +24,7 @@ import {
   decisionForOperation,
   observationKey,
 } from "../shared/material-input.mts";
+import { projectPathIdentity } from "../shared/project-path.mts";
 import {
   dispatchPreparedOperation,
   type DispatchOutcome,
@@ -59,6 +60,11 @@ interface BookState {
   runtimeSlug: string | null;
   identity: BookIdentity | null;
   observation: BookStatusObservation | null;
+}
+
+interface BookAuditOwner {
+  path: string;
+  chapter: ChapterInventoryRow | null;
 }
 
 interface SelectedSource {
@@ -294,10 +300,18 @@ const auditBook = async (
   const inputPaths = chapters.map((chapter) =>
     bookChapterOutputPath(slug, chapter),
   );
-  const chapterOwners = new Map(
-    chapters.map((chapter) => [bookChapterOutputPath(slug, chapter), chapter]),
+  const owners = [
+    { path: bookOverviewPath(slug), chapter: null },
+    ...chapters.map((chapter) => ({
+      path: bookChapterOutputPath(slug, chapter),
+      chapter,
+    })),
+  ] satisfies BookAuditOwner[];
+  const ownersByIdentity = new Map(
+    owners.map((owner) => [projectPathIdentity(owner.path), owner]),
   );
-  const ownedOverview = bookOverviewPath(slug);
+  const ownerForAuditPath = (path: string): BookAuditOwner | undefined =>
+    ownersByIdentity.get(projectPathIdentity(path));
 
   const firstAudit = await dispatch(runtime, "book.audit", slug, {
     ...common,
@@ -314,11 +328,7 @@ const auditBook = async (
     kind: string;
     reason: string;
   }>;
-  if (
-    escalated.some(
-      ({ path }) => path !== ownedOverview && !chapterOwners.has(path),
-    )
-  )
+  if (escalated.some(({ path }) => ownerForAuditPath(path) === undefined))
     return blockedMaterialResult(
       resultSeed(state),
       planIssue(
@@ -329,10 +339,15 @@ const auditBook = async (
     );
 
   const repairPath = escalated[0]!.path;
-  const diagnostics = escalated.filter(({ path }) => path === repairPath);
-  const chapter = chapterOwners.get(repairPath);
-  if (chapter !== undefined) {
-    if (!observedOutputs.has(repairPath) && !currentRunOutputs.has(repairPath))
+  const repairOwner = ownerForAuditPath(repairPath)!;
+  const diagnostics = escalated.filter(
+    ({ path }) => projectPathIdentity(path) === projectPathIdentity(repairOwner.path),
+  );
+  if (repairOwner.chapter !== null) {
+    if (
+      !observedOutputs.has(repairOwner.path) &&
+      !currentRunOutputs.has(repairOwner.path)
+    )
       return blockedMaterialResult(
         resultSeed(state),
         planIssue(
@@ -343,7 +358,7 @@ const auditBook = async (
       );
     const repaired = await dispatch(runtime, "chapter.analyse", slug, {
       ...common,
-      chapter,
+      chapter: repairOwner.chapter,
       mode: "repair",
       outputExists: true,
       diagnostics,
@@ -370,7 +385,7 @@ const auditBook = async (
   const secondReceipt = secondAudit.receipt as StageReceipt;
   if (
     (secondReceipt.escalated as Array<{ path: string }>).some(
-      ({ path }) => path !== ownedOverview && !chapterOwners.has(path),
+      ({ path }) => ownerForAuditPath(path) === undefined,
     )
   )
     return blockedMaterialResult(
