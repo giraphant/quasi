@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.12** (2026-08-15): **Book Audit 的 owner 判断不再混淆绝对路径与项目相对路径。**
+  - Book Workflow 先以有效的 `CLAUDE_PROJECT_DIR`（否则 cwd）把 Audit diagnostic path 和 canonical owner path 解析成同一个 project-path identity，再做精确成员比较；相对形式与绝对形式现在会命中同一 overview 或 manifest 已登记章节。
+  - owner 边界没有放宽为“书目录内任意文件”：项目外路径和未被 manifest 接纳的路径仍返回 `workflow.owner_ambiguity`；owned artifact 经一次 repair 后仍有真实违规时返回 `workflow.repair_exhausted`，原始诊断保持不变。
+  - Book 的独立 bundle 与内嵌该计划的 Author/Topic bundle 同步重建；绝对 chapter、绝对 overview、外部路径、相对 configured root 和 second-audit residual 均有回归覆盖。
+
 - **0.65.11** (2026-08-15): **材料身份回到作品事实，中文译文与长 OCR 回到各自稳定边界。**
   - Book ISBN 只标识装帧或载体：题名、作者、译者/语言、出版社、版权年与版次证据共同证明为同一作品的同一知识版次时，精装、平装或电子 ISBN 差异不再阻断下载；修订、重译、节译和分卷仍作为实质版次差异拒绝或询问。下载实际观察到的 ISBN（包括无法观察时的 `null`）会进入 Prepare、Synthesis 及 Author/Topic continuation，不再被先前 Search 候选覆盖。
   - 大陆中文在库内统一为 canonical `zh`，Translation 状态、material key、PDF、manifest 与 recovery 文件都使用 `-zh`；Immersive 与 pdf2zh 只在 provider 边界映射回 `zh-CN`，`zh-TW` 等其它标签仍保持独立。
