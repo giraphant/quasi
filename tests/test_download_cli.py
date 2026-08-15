@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -370,6 +371,224 @@ def test_aa_browser_settles_only_on_valid_results_or_explicit_empty_state():
         "No files found.",
         "<main>No files found.</main>",
     )
+
+
+def test_aa_fast_api_recognises_quota_error_from_429_json(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_aa_quota_json_under_test")
+
+    class FakeResponse:
+        status_code = 429
+        headers = {"content-type": "text/json; charset=utf-8"}
+
+        def json(self):
+            return {
+                "///download_url": "",
+                "download_url": "",
+                "error": "No downloads left",
+            }
+
+    monkeypatch.setattr(mod, "aa_request", lambda *_args, **_kwargs: FakeResponse())
+
+    with pytest.raises(mod.AAQuotaExhausted, match="No downloads left"):
+        mod.aa_fast_download_url(
+            "https://annas-archive.pk",
+            "0123456789abcdef0123456789abcdef",
+            "secret",
+        )
+
+
+def test_aa_quota_exhaustion_skips_fast_rotations_and_tries_libgen(
+    tmp_path,
+    monkeypatch,
+):
+    mod = _load_module(DOWNLOAD, "download_aa_quota_fallback_under_test")
+    fast_calls: list[tuple] = []
+    libgen_calls: list[tuple[str, str, str]] = []
+
+    monkeypatch.setattr(mod, "load_aa_config", lambda: {"donator_key": "secret"})
+    monkeypatch.setattr(
+        mod,
+        "get_aa_base_url",
+        lambda _config: "https://annas-archive.pk",
+    )
+
+    def quota_exhausted(*args):
+        fast_calls.append(args)
+        raise mod.AAQuotaExhausted("No downloads left")
+
+    def libgen_success(md5, dest, fmt):
+        libgen_calls.append((md5, dest, fmt))
+        Path(dest).write_bytes(b"%PDF-1.7\n" + b"x" * 12000)
+        return True
+
+    monkeypatch.setattr(mod, "aa_fast_download_url", quota_exhausted)
+    monkeypatch.setattr(mod, "_try_libgen_download", libgen_success)
+
+    result = mod.download_from_aa(
+        "0123456789abcdef0123456789abcdef",
+        output_dir=str(tmp_path),
+        filename="book",
+        fmt="pdf",
+    )
+
+    assert result == str(tmp_path / "book.pdf")
+    assert len(fast_calls) == 1
+    assert libgen_calls == [
+        (
+            "0123456789abcdef0123456789abcdef",
+            str(tmp_path / "book.pdf"),
+            "pdf",
+        )
+    ]
+
+
+def test_book_fetch_removes_invalid_existing_temp_before_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    mod = _load_module(DOWNLOAD, "download_existing_book_temp_under_test")
+    dest = tmp_path / "book.pdf"
+    dest.write_bytes(b"<html>stale error page</html>" + b" " * 12000)
+
+    monkeypatch.setattr(mod, "load_aa_config", lambda: {"donator_key": "secret"})
+    monkeypatch.setattr(
+        mod,
+        "get_aa_base_url",
+        lambda _config: "https://annas-archive.pk",
+    )
+    monkeypatch.setattr(
+        mod,
+        "aa_fast_download_url",
+        lambda *_args: (_ for _ in ()).throw(
+            mod.AAQuotaExhausted("No downloads left")
+        ),
+    )
+    monkeypatch.setattr(mod, "_try_libgen_download", lambda *_args: False)
+
+    with pytest.raises(mod.AAQuotaExhausted, match="No downloads left"):
+        mod.download_from_aa(
+            "0123456789abcdef0123456789abcdef",
+            output_dir=str(tmp_path),
+            filename="book",
+            fmt="pdf",
+        )
+
+    assert not dest.exists()
+
+
+def test_libgen_resolves_ads_page_before_downloading_keyed_url(
+    tmp_path,
+    monkeypatch,
+):
+    mod = _load_module(DOWNLOAD, "download_libgen_ads_under_test")
+    md5 = "0123456789abcdef0123456789abcdef"
+    dest = tmp_path / "book.pdf"
+    ads_url = f"https://libgen.li/ads.php?md5={md5}"
+    download_url = f"https://libgen.li/get.php?md5={md5}&key=abc123"
+    import fitz
+
+    document = fitz.open()
+    for page_number in range(40):
+        page = document.new_page()
+        page.insert_text((72, 72), f"Valid page {page_number} " + "content " * 200)
+    pdf_bytes = document.tobytes(deflate=False)
+    document.close()
+    calls: list[tuple[str, str, bool]] = []
+
+    class FakeResponse:
+        def __init__(self, *, url, text="", content=b"", content_type="text/html"):
+            self.status_code = 200
+            self.url = url
+            self.text = text
+            self.content = content
+            self.headers = {
+                "content-type": content_type,
+                "content-length": str(len(content)),
+            }
+
+        def iter_content(self, chunk_size=8192):
+            for start in range(0, len(self.content), chunk_size):
+                yield self.content[start:start + chunk_size]
+
+        def raise_for_status(self):
+            return None
+
+    def fake_aa_request(method, url, *, timeout=30, stream=False):
+        calls.append((method, url, stream))
+        if url == ads_url:
+            return FakeResponse(
+                url=ads_url,
+                text=(
+                    f'<a href="/get.php?md5={md5}&amp;key=abc123">'
+                    "<h2>GET</h2></a>"
+                ),
+            )
+        if url == download_url:
+            return FakeResponse(
+                url=download_url,
+                content=pdf_bytes,
+                content_type="application/pdf",
+            )
+        raise AssertionError(f"unexpected URL: {url}")
+
+    monkeypatch.setattr(mod, "aa_request", fake_aa_request)
+
+    assert mod._try_libgen_download(md5, str(dest), "pdf") is True
+    assert dest.read_bytes() == pdf_bytes
+    assert calls == [
+        ("GET", ads_url, False),
+        ("GET", download_url, True),
+    ]
+
+
+def test_stream_download_rejects_large_html_and_removes_output(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_stream_html_under_test")
+    dest = tmp_path / "book.pdf"
+    html_bytes = b"<!doctype html><html><body>busy</body></html>" + b" " * 20000
+
+    class FakeResponse:
+        status_code = 200
+        headers = {
+            "content-type": "text/html; charset=utf-8",
+            "content-length": str(len(html_bytes)),
+        }
+
+        def iter_content(self, chunk_size=8192):
+            for start in range(0, len(html_bytes), chunk_size):
+                yield html_bytes[start:start + chunk_size]
+
+        def raise_for_status(self):
+            return None
+
+    def requester(_method, _url, *, timeout=30, stream=False):
+        return FakeResponse()
+
+    assert mod._stream_download(
+        "https://libgen.li/get.php?md5=x&key=y",
+        str(dest),
+        requester=requester,
+    ) is False
+    assert not dest.exists()
+
+
+def test_book_file_validator_requires_real_pdf_or_epub_structure(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_book_structure_under_test")
+    corrupt_pdf = tmp_path / "corrupt.pdf"
+    corrupt_pdf.write_bytes(b"%PDF-1.7\ntruncated" + b"x" * 12000)
+    valid_epub = tmp_path / "valid.epub"
+    with zipfile.ZipFile(valid_epub, "w") as archive:
+        archive.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+        archive.writestr(
+            "META-INF/container.xml",
+            '<?xml version="1.0"?><container><rootfiles/></container>',
+        )
+    corrupt_epub = tmp_path / "corrupt.epub"
+    with zipfile.ZipFile(corrupt_epub, "w") as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+
+    assert mod._is_valid_book_file(corrupt_pdf, "pdf") is False
+    assert mod._is_valid_book_file(valid_epub, "epub") is True
+    assert mod._is_valid_book_file(corrupt_epub, "epub") is False
 
 
 def test_book_candidates_exposes_aa_failure_code(monkeypatch, capsys):

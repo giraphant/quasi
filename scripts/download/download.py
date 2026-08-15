@@ -41,6 +41,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -1714,17 +1715,30 @@ def aa_fast_download_url(base_url, md5, donator_key,
         print(f"  Fast API request failed: {e}", file=sys.stderr)
         return None, {}
 
+    try:
+        data = r.json()
+    except (json.JSONDecodeError, ValueError):
+        data = None
+
+    if isinstance(data, dict):
+        error = str(data.get("error") or "").strip()
+        if error.lower() == "no downloads left":
+            raise AAQuotaExhausted(
+                "AA daily quota exhausted: No downloads left. "
+                "Trying non-AA fallback sources."
+            )
+
     if r.status_code != 200:
         print(f"  Fast API failed: HTTP {r.status_code}", file=sys.stderr)
         return None, {}
 
-    try:
-        data = r.json()
-    except json.JSONDecodeError:
+    if not isinstance(data, dict):
         print("  Fast API returned non-JSON response", file=sys.stderr)
         return None, {}
 
     quota_info = data.get("account_fast_download_info", {})
+    if not isinstance(quota_info, dict):
+        quota_info = {}
     if quota_info:
         left = quota_info.get("downloads_left", "?")
         total = quota_info.get("downloads_per_day", "?")
@@ -1756,6 +1770,10 @@ LIBGEN_MIRRORS = [
     "https://libgen.li",
     "https://libgen.st",
 ]
+_LIBGEN_GET_HREF_RE = re.compile(
+    r'''href\s*=\s*["']([^"']*get\.php\?[^"']*)["']''',
+    re.IGNORECASE,
+)
 
 # path_index/domain_index combos to try when default AA download fails.
 # These switch between different collections and download servers.
@@ -1764,35 +1782,96 @@ AA_FALLBACK_INDICES = [
 ]
 
 
-def _try_libgen_download(md5, dest):
-    """Fallback: download from LibGen.li get.php (no key needed)."""
-    for mirror in LIBGEN_MIRRORS:
-        url = f"{mirror}/get.php?md5={md5}"
-        print(f"  LibGen fallback: {url}", file=sys.stderr)
+def _libgen_download_url_from_html(page_url, html_text, md5):
+    """Return the keyed GET URL advertised by one LibGen ads page."""
+    wanted_md5 = str(md5 or "").lower()
+    for match in _LIBGEN_GET_HREF_RE.finditer(str(html_text or "")):
+        href = html.unescape(match.group(1))
+        candidate = urllib.parse.urljoin(page_url, href)
+        parsed = urllib.parse.urlparse(candidate)
+        query = urllib.parse.parse_qs(parsed.query)
+        candidate_md5 = (query.get("md5") or [""])[0].lower()
+        key = (query.get("key") or [""])[0]
+        if (
+            parsed.scheme in {"http", "https"}
+            and parsed.hostname
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.path.rstrip("/").endswith("/get.php")
+            and candidate_md5 == wanted_md5
+            and key
+        ):
+            return candidate
+    return ""
+
+
+def _is_valid_book_file(path, fmt):
+    """Validate the container structure promised by a Book candidate."""
+    path = Path(path)
+    if not path.is_file() or path.stat().st_size == 0:
+        return False
+
+    fmt = str(fmt or "").lower().lstrip(".")
+    if fmt == "pdf":
         try:
-            r = requests.get(
-                url, headers=HEADERS_BROWSER, stream=True,
-                timeout=120, allow_redirects=True,
-            )
-            if r.status_code != 200:
-                print(f"  LibGen HTTP {r.status_code}", file=sys.stderr)
+            with path.open("rb") as source_file:
+                if source_file.read(5) != b"%PDF-":
+                    return False
+            import fitz
+
+            document = fitz.open(path)
+            try:
+                return document.page_count > 0
+            finally:
+                document.close()
+        except (ImportError, OSError, RuntimeError, ValueError):
+            return False
+
+    if fmt == "epub":
+        try:
+            with zipfile.ZipFile(path) as archive:
+                names = set(archive.namelist())
+                return (
+                    archive.read("mimetype").strip() == b"application/epub+zip"
+                    and "META-INF/container.xml" in names
+                )
+        except (OSError, KeyError, zipfile.BadZipFile):
+            return False
+
+    return False
+
+
+def _try_libgen_download(md5, dest, fmt):
+    """Fallback: resolve a keyed LibGen GET link, then validate its payload."""
+    for mirror in LIBGEN_MIRRORS:
+        ads_url = f"{mirror}/ads.php?md5={md5}"
+        print(f"  LibGen fallback: {ads_url}", file=sys.stderr)
+        try:
+            page = aa_request("GET", ads_url, timeout=30)
+            if page.status_code != 200:
+                print(f"  LibGen HTTP {page.status_code}", file=sys.stderr)
                 continue
-
-            total = int(r.headers.get("content-length", 0))
-            downloaded = 0
-            with open(dest, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-                    downloaded += len(chunk)
-
-            if os.path.getsize(dest) > 10240:
+            download_url = _libgen_download_url_from_html(
+                str(getattr(page, "url", ads_url)),
+                page.text,
+                md5,
+            )
+            if not download_url:
+                print("  LibGen page has no keyed GET link", file=sys.stderr)
+                continue
+            if _stream_download(
+                download_url,
+                dest,
+                headers=HEADERS_BROWSER,
+                requester=aa_request,
+            ) and _is_valid_book_file(dest, fmt):
                 size_mb = os.path.getsize(dest) / (1024 * 1024)
                 print(f"  LibGen OK {size_mb:.1f} MB", file=sys.stderr)
                 return True
-            else:
-                print(f"  LibGen file too small ({os.path.getsize(dest)} bytes)", file=sys.stderr)
+            if os.path.exists(dest):
+                print("  LibGen payload does not match candidate format", file=sys.stderr)
                 os.remove(dest)
-        except requests.RequestException as e:
+        except (requests.RequestException, OSError, TimeoutError) as e:
             print(f"  LibGen failed: {e}", file=sys.stderr)
             if os.path.exists(dest):
                 os.remove(dest)
@@ -1803,8 +1882,9 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
                      verify_author=None, verify_title=None):
     """Download a file from AA by MD5. Returns file path or None.
 
-    Flow: AA Fast API (default) → AA Fast API (path/domain rotation) → LibGen.li
-    Raises AAQuotaExhausted if daily download quota is exhausted.
+    Flow: AA Fast API (default) → AA Fast API (path/domain rotation) → LibGen.
+    Exhausted AA quota skips the redundant rotations and is reported only if
+    the independent LibGen fallback also fails.
 
     If verify_author/verify_title provided, checks content after download.
     Returns None (and deletes file) if content doesn't match.
@@ -1825,8 +1905,11 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
     dest = os.path.join(output_dir, f"{title_slug}.{fmt}")
 
     if os.path.exists(dest) and os.path.getsize(dest) > 1000:
-        print(f"  File already exists: {dest}", file=sys.stderr)
-        return dest
+        if _is_valid_book_file(dest, fmt):
+            print(f"  File already exists: {dest}", file=sys.stderr)
+            return dest
+        print(f"  Removing invalid existing temp file: {dest}", file=sys.stderr)
+        os.remove(dest)
 
     def _aa_verify(path):
         """Post-download verification for AA. Returns True if OK."""
@@ -1844,25 +1927,34 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
     key = config["donator_key"]
 
     # --- Stage 1: AA Fast API (default parameters) ---
-    dl_url, quota = aa_fast_download_url(base_url, md5, key)
-    # AAQuotaExhausted propagates up if quota == 0
+    quota_error = None
+    try:
+        dl_url, quota = aa_fast_download_url(base_url, md5, key)
+    except AAQuotaExhausted as exc:
+        quota_error = exc
+        dl_url, quota = None, {}
+        print("  AA quota exhausted; skipping Fast API rotations", file=sys.stderr)
 
     if dl_url:
         print(f"  Downloading to: {dest}", file=sys.stderr)
         if _stream_download(dl_url, dest, headers=HEADERS_BROWSER, requester=aa_request):
-            size_mb = os.path.getsize(dest) / (1024 * 1024)
-            print(f"  Done! {size_mb:.1f} MB -> {dest}", file=sys.stderr)
-            if _aa_verify(dest):
-                return dest
+            if not _is_valid_book_file(dest, fmt):
+                print("  AA payload does not match candidate format", file=sys.stderr)
+                if os.path.exists(dest):
+                    os.remove(dest)
             else:
+                size_mb = os.path.getsize(dest) / (1024 * 1024)
+                print(f"  Done! {size_mb:.1f} MB -> {dest}", file=sys.stderr)
+                if _aa_verify(dest):
+                    return dest
                 print(f"  AA content mismatch — file deleted", file=sys.stderr)
-                return None  # Don't try other AA sources for same wrong MD5
+                return None  # Same MD5 = same wrong file
         if os.path.exists(dest):
             os.remove(dest)
         print(f"  Default download failed, trying alternate sources...", file=sys.stderr)
 
     # --- Stage 2: AA Fast API with path_index/domain_index rotation ---
-    for pi, di in AA_FALLBACK_INDICES:
+    for pi, di in (() if quota_error else AA_FALLBACK_INDICES):
         print(f"  Trying path_index={pi}, domain_index={di}...", file=sys.stderr)
         try:
             dl_url, quota = aa_fast_download_url(base_url, md5, key, pi, di)
@@ -1871,22 +1963,26 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
         if not dl_url:
             continue
         if _stream_download(dl_url, dest, headers=HEADERS_BROWSER, requester=aa_request):
-            size_mb = os.path.getsize(dest) / (1024 * 1024)
-            print(f"  Done! {size_mb:.1f} MB -> {dest}", file=sys.stderr)
-            if _aa_verify(dest):
-                return dest
-            else:
+            if _is_valid_book_file(dest, fmt):
+                size_mb = os.path.getsize(dest) / (1024 * 1024)
+                print(f"  Done! {size_mb:.1f} MB -> {dest}", file=sys.stderr)
+                if _aa_verify(dest):
+                    return dest
                 print(f"  AA content mismatch — file deleted", file=sys.stderr)
                 return None  # Same MD5 = same wrong file
+            print("  AA payload does not match candidate format", file=sys.stderr)
         if os.path.exists(dest):
             os.remove(dest)
 
-    # --- Stage 3: LibGen.li fallback (no key needed) ---
+    # --- Stage 3: LibGen ads page -> keyed GET fallback ---
     print(f"  AA exhausted all options, trying LibGen...", file=sys.stderr)
-    if _try_libgen_download(md5, dest):
+    if _try_libgen_download(md5, dest, fmt):
         if _aa_verify(dest):
             return dest
         return None
+
+    if quota_error:
+        raise quota_error
 
     print(f"  All sources failed for MD5 {md5}", file=sys.stderr)
     return None
@@ -2677,6 +2773,19 @@ def _stream_download(url, dest_path, headers=None, requester=None):
                         end="", flush=True, file=sys.stderr,
                     )
         print(file=sys.stderr)
+        content_type = _header_value(r.headers, "content-type").lower()
+        try:
+            with open(dest_path, "rb") as downloaded_file:
+                prefix = downloaded_file.read(1024).lstrip().lower()
+        except OSError:
+            return False
+        if "html" in content_type or prefix.startswith((b"<!doctype html", b"<html")):
+            print("  Download returned HTML instead of a file", file=sys.stderr)
+            try:
+                os.remove(dest_path)
+            except OSError:
+                pass
+            return False
         return True
 
     try:
