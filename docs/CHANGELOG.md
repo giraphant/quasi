@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.14** (2026-08-16): **Book 章节的 stale observation 会按真实 Agent issue code 回到磁盘事实。**
+  - Analyse Agent 返回的完整 code 是 `chapter.analyse.output_observation_mismatch`；Book 先前只匹配缩写后的 `chapter.output_observation_mismatch`，使本应恢复的 `blocked + retryable:true` 错误终结为 blocked。恢复分支现在从 host-stamped operation 构造同一完整 code，并返回 canonical Book route 的 `needs_observation`。
+  - 同 code 但不可重试、以及其他 retryable blocked 仍原样停止；源码计划和生成的 Book bundle 都用真实 code 做回归，Author/Topic 内嵌的 Book 计划同步重建。没有增加通用 retry、schema 分支或兼容层。
+
 - **0.65.13** (2026-08-16): **Workflow 不再依赖 Node 宿主；Book 改名与章节恢复先回到磁盘事实。**
   - 撤回 0.65.12 在生成 Workflow 中读取 `process.env` / `process.cwd()` 的路径兼容层：native Workflow sandbox 没有 Node 全局变量，Book 一进入 Audit 就会在首次 dispatch 前崩溃。Audit specialist 现在只返回 `quasi-audit` 的 project-relative path；Paper/Talk receipt 由 schema 锁定 exact target，Book 只在 manifest 接纳的相对 owner 集合中做逐字匹配，不再为绝对路径引入运行目录或后缀猜测。
   - provisional / identity Search 若把 Book 绑定到新的 canonical slug，会先返回该 route 的 `needs_observation`，由外层取得 fresh exact status 后才进入 writer；已有章节因此不会因旧 request slug 的空观察而全部被误派为 `output_observation.exists:false`。只有精确的、`retryable:true` 的 `chapter.output_observation_mismatch` 加入同一观察恢复，普通 blocked 仍原样停止。
