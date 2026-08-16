@@ -15,6 +15,8 @@ from test_material_plans import (
     canonical_input,
     canonical_talk_input,
     canonical_translation_input,
+    chapter_complete,
+    chapter_output_observation_mismatch,
     translation_complete,
 )
 from test_topic_plan import recall_complete, topic_input
@@ -154,3 +156,21 @@ def test_generated_named_workflow_returns_its_source_entry_result(entry: str) ->
     generated = run_generated_workflow(entry, value, outputs)
 
     assert generated == source
+
+
+def test_generated_book_recovers_the_qualified_chapter_observation_mismatch() -> None:
+    value = canonical_book_input(
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(False, False),
+    )
+    report = run_generated_workflow(
+        "book",
+        value,
+        [chapter_output_observation_mismatch(), chapter_complete()],
+    )
+
+    assert report["value"]["terminal"] == "needs_observation"
+    assert report["value"]["routes"] == [
+        {"kind": "book", "slug": "exact-book"}
+    ]

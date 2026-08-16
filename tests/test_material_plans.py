@@ -579,16 +579,20 @@ def chapter_blocked() -> dict[str, Any]:
     }
 
 
-def chapter_output_observation_mismatch() -> dict[str, Any]:
+def chapter_output_observation_mismatch(
+    *,
+    code: str = "chapter.analyse.output_observation_mismatch",
+    retryable: bool = True,
+) -> dict[str, Any]:
     return {
         "terminal": {
             "status": "blocked",
             "issue": {
-                "code": "chapter.output_observation_mismatch",
+                "code": code,
                 "operation": "chapter.analyse",
                 "summary": "The exact output appeared after the caller observation.",
                 "user_question": None,
-                "retryable": True,
+                "retryable": retryable,
             },
             "action": "create",
             "write_state": "unknown",
@@ -2111,6 +2115,36 @@ def test_book_retryable_chapter_output_mismatch_requests_fresh_observation() -> 
     assert report["result"]["routes"] == [
         {"kind": "book", "slug": "exact-book"}
     ]
+
+
+@pytest.mark.parametrize(
+    ("receipt", "expected_code"),
+    [
+        (
+            chapter_output_observation_mismatch(retryable=False),
+            "chapter.analyse.output_observation_mismatch",
+        ),
+        (
+            chapter_output_observation_mismatch(
+                code="chapter.analyse.input_missing",
+            ),
+            "chapter.analyse.input_missing",
+        ),
+    ],
+)
+def test_book_does_not_reobserve_other_chapter_blocks(
+    receipt: dict[str, Any],
+    expected_code: str,
+) -> None:
+    value = canonical_book_input(
+        manifest=True,
+        chapter_inputs=(True, True),
+        chapter_outputs=(False, False),
+    )
+    report = run_book(value, [receipt, chapter_complete()])
+
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == expected_code
 
 
 def test_book_incoherent_chapter_requests_fresh_book_observation() -> None:

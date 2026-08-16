@@ -767,7 +767,7 @@ async function runBookPlanResult(
       (outcome.kind === "receipt" &&
         outcome.receipt.terminal.status === "blocked" &&
         outcome.receipt.terminal.issue.code ===
-          "chapter.output_observation_mismatch" &&
+          `${outcome.receipt.operation}.output_observation_mismatch` &&
         outcome.receipt.terminal.issue.retryable === true),
   );
   if (observationRequired !== undefined)
