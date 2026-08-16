@@ -135,13 +135,39 @@ def _normalise_mirror(url):
     return f"https://{host}"
 
 
-def _safe_http_url(value):
-    parsed = urllib.parse.urlparse(str(value or ""))
-    return bool(
+def _parse_safe_http_url(value):
+    try:
+        parsed = urllib.parse.urlparse(str(value or ""))
+        port = parsed.port
+    except (TypeError, ValueError):
+        return None
+    if not (
         parsed.scheme in {"http", "https"}
         and parsed.hostname
         and parsed.username is None
         and parsed.password is None
+    ):
+        return None
+    return parsed, port
+
+
+def _safe_http_url(value):
+    return _parse_safe_http_url(value) is not None
+
+
+def _same_http_origin(left, right):
+    left_url = _parse_safe_http_url(left)
+    right_url = _parse_safe_http_url(right)
+    if left_url is None or right_url is None:
+        return False
+    left_parsed, left_port = left_url
+    right_parsed, right_port = right_url
+    default_ports = {"http": 80, "https": 443}
+    return (
+        left_parsed.scheme == right_parsed.scheme
+        and left_parsed.hostname == right_parsed.hostname
+        and (left_port if left_port is not None else default_ports[left_parsed.scheme])
+        == (right_port if right_port is not None else default_ports[right_parsed.scheme])
     )
 
 
@@ -156,10 +182,15 @@ def parse_aa_slow_partner_urls(detail_url, html_text):
         context = " ".join(anchor.parent.get_text(" ", strip=True).split()).lower()
         if not label.startswith("slow partner server") or "no waitlist" not in context:
             continue
-        candidate = urllib.parse.urljoin(detail_url, anchor.get("href", ""))
+        try:
+            candidate = urllib.parse.urljoin(detail_url, anchor.get("href", ""))
+        except (TypeError, ValueError):
+            continue
+        candidate_url = _parse_safe_http_url(candidate)
         if (
-            _safe_http_url(candidate)
-            and "/slow_download/" in urllib.parse.urlparse(candidate).path
+            candidate_url is not None
+            and "/slow_download/" in candidate_url[0].path
+            and _same_http_origin(detail_url, candidate)
             and candidate not in seen
         ):
             seen.add(candidate)
@@ -169,10 +200,14 @@ def parse_aa_slow_partner_urls(detail_url, html_text):
 
 def _normalise_slow_final_url(partner_url, candidate):
     value = html.unescape(str(candidate or "")).replace(r"\/", "/").strip()
-    value = urllib.parse.urljoin(partner_url, value)
-    if not _safe_http_url(value):
+    try:
+        value = urllib.parse.urljoin(partner_url, value)
+    except (TypeError, ValueError):
         return ""
-    if "/slow_download/" in urllib.parse.urlparse(value).path:
+    parsed_url = _parse_safe_http_url(value)
+    if parsed_url is None:
+        return ""
+    if "/slow_download/" in parsed_url[0].path:
         return ""
     return value
 

@@ -33,8 +33,9 @@ headless helper that search already uses; the helper exits before the caller
 continues and never starts a detached download.
 
 Search keeps its existing result-or-explicit-empty settling rule. Detail
-settles on a non-challenge `/md5/{md5}` document with a populated main body,
-including a document with no Slow links. Slow settles on a non-challenge
+settles on a non-challenge exact `/md5/{md5}` path with a `div.main-inner`
+container whose normalized visible text is non-empty, including a document
+with no Slow links. Slow settles on a non-challenge
 `/slow_download/` document that exposes either one supported final-URL shape or
 an explicit countdown/waitlist marker. These predicates prevent one page kind
 from accepting another kind's partially loaded shell.
@@ -43,8 +44,10 @@ The detail-page parser scans anchors in DOM order and selects links whose label
 starts with `Slow Partner Server` and whose containing row says `no waitlist`.
 It preserves first occurrence order with a list plus a seen set, resolves
 relative links against the detail URL, and admits only credential-free HTTP(S)
-URLs whose path contains `/slow_download/`. Server numbers such as `#5` and
-`#8` are presentation text, not identifiers.
+URLs whose path contains `/slow_download/`. A selected Slow landing URL must
+also have the same scheme, hostname, and effective port as the Anna detail URL;
+cross-origin Slow landing links are not admitted. Server numbers such as `#5`
+and `#8` are presentation text, not identifiers.
 
 For each selected partner page, resolve the final file URL from the page shapes
 currently used by Anna: a `Download now` anchor, an anchor with a `download`
@@ -52,6 +55,11 @@ attribute, clipboard JavaScript, location JavaScript, or an explicit HTTP(S)
 URL displayed in the page. The resolved URL must be credential-free HTTP(S)
 and must not point back to `/slow_download/`. The file request carries the
 partner-page URL as `Referer`.
+
+The same-origin restriction ends at the Slow landing-page boundary. Final file
+URLs may remain external under the existing trusted-provider model; this change
+does not add DNS resolution, private-address filtering, or redirect-chain
+validation to the transfer helper.
 
 No-wait means only that quasi does not join a queue. If a selected page contains
 only a countdown or waitlist, this version records that partner as unavailable

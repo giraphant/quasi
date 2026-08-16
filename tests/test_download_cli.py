@@ -113,6 +113,52 @@ def test_aa_slow_partner_parser_excludes_waitlist_viewer_and_unsafe_urls():
     assert mod.parse_aa_slow_partner_urls(detail_url, page) == []
 
 
+def test_aa_slow_partner_parser_requires_detail_origin_with_effective_port():
+    mod = _load_module(AA, "aa_slow_partner_origin_under_test")
+    detail_url = "https://annas-archive.pk/md5/0123456789abcdef0123456789abcdef"
+    page = """
+    <main>
+      <div><a href="/slow_download/id/0/1">Slow Partner Server #1</a>
+        — no waitlist</div>
+      <div><a href="https://annas-archive.pk:443/slow_download/id/0/2">Slow Partner Server #2</a>
+        — no waitlist</div>
+      <div><a href="https://files.example/slow_download/id/0/3">Slow Partner Server #3</a>
+        — no waitlist</div>
+      <div><a href="http://annas-archive.pk/slow_download/id/0/4">Slow Partner Server #4</a>
+        — no waitlist</div>
+      <div><a href="https://annas-archive.pk:444/slow_download/id/0/5">Slow Partner Server #5</a>
+        — no waitlist</div>
+      <div><a href="https://annas-archive.pk:0/slow_download/id/0/6">Slow Partner Server #6</a>
+        — no waitlist</div>
+    </main>
+    """
+
+    assert mod.parse_aa_slow_partner_urls(detail_url, page) == [
+        "https://annas-archive.pk/slow_download/id/0/1",
+        "https://annas-archive.pk:443/slow_download/id/0/2",
+    ]
+
+
+def test_aa_slow_partner_parser_skips_malformed_url_and_continues():
+    mod = _load_module(AA, "aa_slow_partner_malformed_under_test")
+    detail_url = "https://annas-archive.pk/md5/0123456789abcdef0123456789abcdef"
+    page = """
+    <main>
+      <div><a href="https://[broken/slow_download/id/0/1">Slow Partner Server #1</a>
+        — no waitlist</div>
+      <div><a href="/slow_download/id/0/2">Slow Partner Server #2</a>
+        — no waitlist</div>
+    </main>
+    """
+
+    try:
+        result = mod.parse_aa_slow_partner_urls(detail_url, page)
+    except ValueError as exc:
+        pytest.fail(f"malformed partner URL aborted parsing: {exc}")
+
+    assert result == ["https://annas-archive.pk/slow_download/id/0/2"]
+
+
 @pytest.mark.parametrize(
     ("page", "expected"),
     [
@@ -157,6 +203,57 @@ def test_aa_slow_final_url_parser_rejects_credentials_and_recursive_slow_urls():
         partner_url,
         '<a href="/slow_download/id/0/6">Download now</a>',
     ) == ""
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://[broken/file.pdf",
+        "https://example.org:not-a-port/file.pdf",
+        "https://example.org:99999/file.pdf",
+    ],
+)
+def test_aa_safe_http_url_rejects_malformed_authorities_without_raising(value):
+    mod = _load_module(AA, "aa_safe_http_malformed_under_test")
+
+    try:
+        result = mod._safe_http_url(value)
+    except ValueError as exc:
+        pytest.fail(f"malformed authority escaped URL validation: {exc}")
+
+    assert result is False
+
+
+@pytest.mark.parametrize(
+    ("partner_url", "page"),
+    [
+        (
+            "https://annas-archive.pk/slow_download/id/0/5",
+            """
+            <a href="https://[broken/file.pdf">Download now</a>
+            <a href="https://cdn.example.org/book.pdf">Download now</a>
+            """,
+        ),
+        (
+            "https://[broken/slow_download/id/0/5",
+            '<a href="/files/book.pdf">Download now</a>',
+        ),
+    ],
+)
+def test_aa_slow_final_url_parser_contains_urljoin_errors(partner_url, page):
+    mod = _load_module(AA, "aa_slow_final_malformed_under_test")
+
+    try:
+        result = mod.parse_aa_slow_final_url(partner_url, page)
+    except ValueError as exc:
+        pytest.fail(f"malformed URL aborted final fallback parsing: {exc}")
+
+    expected = (
+        "https://cdn.example.org/book.pdf"
+        if partner_url.startswith("https://annas-archive.pk")
+        else ""
+    )
+    assert result == expected
 
 
 def test_aa_reachability_rejects_live_shape_anna_parking_page(monkeypatch):
@@ -463,7 +560,11 @@ def test_aa_browser_settles_only_on_valid_results_or_explicit_empty_state():
         "detail",
         "https://annas-archive.pk/md5/0123456789abcdef0123456789abcdef",
         "Book details are loaded",
-        "<main><h1>Book details are loaded</h1></main>",
+        """
+        <main><div class="main-inner"><div><div class="md-meta">
+        Book details are loaded
+        </div></div></div></main>
+        """,
     )
     assert not mod._looks_like_settled_page(
         "detail",
@@ -493,6 +594,87 @@ def test_aa_browser_settles_only_on_valid_results_or_explicit_empty_state():
         "Loading",
         "<main>Loading</main>",
     )
+
+
+def test_aa_browser_detail_mode_requires_populated_non_error_main_content():
+    mod = _load_module(AA_BROWSER, "aa_browser_detail_content_under_test")
+    detail_url = "https://annas-archive.pk/md5/0123456789abcdef0123456789abcdef"
+
+    assert not mod._looks_like_settled_page(
+        "detail", detail_url, "", "<html><body><main></main></body></html>"
+    )
+    assert not mod._looks_like_settled_page(
+        "detail",
+        detail_url,
+        "",
+        '<main><div class="main-inner"></div></main>',
+    )
+    assert not mod._looks_like_settled_page(
+        "detail",
+        detail_url,
+        "Loading",
+        '<main><div class="main-inner">Loading</div></main>',
+    )
+    assert not mod._looks_like_settled_page(
+        "detail", detail_url, "Book details", "<main><h1>Book details</h1></main>"
+    )
+    assert not mod._looks_like_settled_page(
+        "detail",
+        f"https://annas-archive.pk/error{urllib.parse.urlparse(detail_url).path}",
+        "A complete-looking error route",
+        '<main><div class="main-inner">A complete-looking error route</div></main>',
+    )
+    assert not mod._looks_like_settled_page(
+        "detail",
+        detail_url,
+        "Internal Server Error",
+        '<main><div class="main-inner">Internal Server Error</div></main>',
+    )
+    assert mod._looks_like_settled_page(
+        "detail",
+        detail_url,
+        "A complete book record without partner links",
+        """
+        <main><div class="main-inner"><div><div class="md-meta">
+        <h1>A complete book record</h1><span>Language: English</span>
+        </div></div></div></main>
+        """,
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "page"),
+    [
+        (
+            "Download now",
+            '<a href="https://files.example/book.pdf">Download now</a>',
+        ),
+        (
+            "Download",
+            '<a download href="https://files.example/book.pdf">Download</a>',
+        ),
+        (
+            "Copy link",
+            '<script>navigator.clipboard.writeText("https://files.example/book.pdf")</script>',
+        ),
+        (
+            "Preparing download",
+            '<script>window.location.href = "https://files.example/book.pdf"</script>',
+        ),
+        ("https://files.example/book.pdf", "<code>https://files.example/book.pdf</code>"),
+        ("https://files.example/book.pdf", "<span>https://files.example/book.pdf</span>"),
+        ("Wait 20 seconds", "<main><p>Wait 20 seconds before downloading.</p></main>"),
+        ("You are on the waitlist", "<main><p>You are on the waitlist.</p></main>"),
+    ],
+)
+def test_aa_browser_slow_mode_settles_on_parser_shapes_or_explicit_wait(body, page):
+    mod = _load_module(AA_BROWSER, "aa_browser_slow_shapes_under_test")
+    slow_url = (
+        "https://annas-archive.pk/slow_download/"
+        "0123456789abcdef0123456789abcdef/0/0"
+    )
+
+    assert mod._looks_like_settled_page("slow", slow_url, body, page)
 
 
 def test_fetch_aa_page_returns_complete_detail_response_without_browser(monkeypatch):

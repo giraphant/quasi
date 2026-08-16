@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import html as html_lib
 import re
 import sys
 import time
+import urllib.parse
 from contextlib import suppress
+from html.parser import HTMLParser
 from pathlib import Path
 
 
@@ -27,16 +30,85 @@ DDOS_GUARD_INDICATORS = (
 _VALID_MD5_LINK = re.compile(
     r'''href\s*=\s*["'][^"']*/md5/[A-Fa-f0-9]{32}(?:[/?#][^"']*)?["']''',
 )
-_DETAIL_PATH = re.compile(r"/md5/[A-Fa-f0-9]{32}(?:[/?#]|$)")
+_DETAIL_PATH = re.compile(r"/md5/[A-Fa-f0-9]{32}/?")
+_DETAIL_PLACEHOLDER = re.compile(
+    r"^(?:loading(?:\s+please\s+wait)?[.…]*|please\s+wait[.…]*|"
+    r"internal\s+server\s+error|server\s+error|not\s+found|forbidden)$",
+    re.IGNORECASE,
+)
+_SLOW_DOWNLOAD_NOW_LINK = re.compile(
+    r"<a\b(?=[^>]*\bhref\s*=)[^>]*>.*?download\s+now.*?</a\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
 _SLOW_DOWNLOAD_LINK = re.compile(r"<a\b[^>]*\bdownload\b", re.IGNORECASE)
+_SLOW_CLIPBOARD = re.compile(
+    r"navigator\.clipboard\.writeText\(\s*['\"](?:https?:)?[^'\"]+['\"]\s*\)",
+    re.IGNORECASE,
+)
+_SLOW_LOCATION = re.compile(
+    r"window\.location\.href\s*=\s*['\"](?:https?:|/)[^'\"]+['\"]",
+    re.IGNORECASE,
+)
+_SLOW_VISIBLE_URL = re.compile(
+    r"<(?:code|span)\b[^>]*>\s*https?://[^<\s]+\s*</(?:code|span)\s*>",
+    re.IGNORECASE,
+)
 _SLOW_COUNTDOWN = re.compile(
     r"class\s*=\s*[\"'][^\"']*\bjs-partner-countdown\b", re.IGNORECASE
+)
+_SLOW_EXPLICIT_WAIT = re.compile(
+    r"\b(?:waitlist|countdown|wait\s+\d+\s+seconds?)\b", re.IGNORECASE
 )
 
 
 def _is_challenge(title: str, body: str) -> bool:
     page_text = f"{title}\n{body}".lower()
     return any(indicator in page_text for indicator in DDOS_GUARD_INDICATORS)
+
+
+class _MainInnerTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._div_depth = 0
+        self._active_depth = None
+        self.text = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != "div":
+            return
+        self._div_depth += 1
+        classes = dict(attrs).get("class", "").split()
+        if self._active_depth is None and "main-inner" in classes:
+            self._active_depth = self._div_depth
+
+    def handle_endtag(self, tag):
+        if tag.lower() != "div":
+            return
+        if self._active_depth == self._div_depth:
+            self._active_depth = None
+        self._div_depth = max(0, self._div_depth - 1)
+
+    def handle_data(self, data):
+        if self._active_depth is not None:
+            self.text.append(data)
+
+
+def _main_inner_text(page_html: str) -> str:
+    parser = _MainInnerTextParser()
+    try:
+        parser.feed(page_html)
+        parser.close()
+    except (TypeError, ValueError):
+        return ""
+    return " ".join(html_lib.unescape(" ".join(parser.text)).split())
+
+
+def _is_detail_url(current_url: str) -> bool:
+    try:
+        path = urllib.parse.urlparse(current_url).path
+    except (TypeError, ValueError):
+        return False
+    return bool(_DETAIL_PATH.fullmatch(path))
 
 
 def _looks_like_settled_page(
@@ -50,10 +122,19 @@ def _looks_like_settled_page(
             bool(_VALID_MD5_LINK.search(html)) or "no files found." in body.lower()
         )
     if page_kind == "detail":
-        return bool(_DETAIL_PATH.search(current_url)) and bool(body.strip() or html.strip())
+        if not _is_detail_url(current_url):
+            return False
+        main_text = _main_inner_text(html)
+        return bool(main_text) and not bool(_DETAIL_PLACEHOLDER.fullmatch(main_text))
     if page_kind == "slow":
         return "/slow_download/" in current_url and bool(
-            _SLOW_DOWNLOAD_LINK.search(html) or _SLOW_COUNTDOWN.search(html)
+            _SLOW_DOWNLOAD_NOW_LINK.search(html)
+            or _SLOW_DOWNLOAD_LINK.search(html)
+            or _SLOW_CLIPBOARD.search(html)
+            or _SLOW_LOCATION.search(html)
+            or _SLOW_VISIBLE_URL.search(html)
+            or _SLOW_COUNTDOWN.search(html)
+            or _SLOW_EXPLICIT_WAIT.search(body)
         )
     return False
 
