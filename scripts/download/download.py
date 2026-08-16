@@ -1899,8 +1899,8 @@ def _try_aa_slow_download(base_url, md5, dest, fmt):
         if _stream_download(download_url, dest, headers=headers, requester=aa_request):
             if _is_valid_book_file(dest, fmt):
                 return True
-            if os.path.exists(dest):
-                os.remove(dest)
+        if os.path.exists(dest):
+            os.remove(dest)
     return False
 
 

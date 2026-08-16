@@ -762,6 +762,51 @@ def test_aa_slow_download_uses_each_no_wait_partner_as_referer(tmp_path, monkeyp
     assert dest.read_bytes() == valid_pdf
 
 
+def test_aa_slow_download_removes_undersized_transfer(tmp_path, monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_aa_slow_undersized_under_test")
+    md5 = "0123456789abcdef0123456789abcdef"
+    base_url = "https://annas-archive.pk"
+    detail_url = f"{base_url}/md5/{md5}"
+    partner_url = f"{base_url}/slow_download/id/0/5"
+    download_url = "https://cdn.example.org/undersized.pdf"
+    dest = tmp_path / "book.pdf"
+    payload = b"%PDF-1.7\n" + b"x" * 100
+    pages = {
+        detail_url: """
+        <div><a href="/slow_download/id/0/5">Slow Partner Server #5</a>
+        — no waitlist, but can be very slow</div>
+        """,
+        partner_url: '<a href="https://cdn.example.org/undersized.pdf">Download now</a>',
+    }
+
+    class FakeResponse:
+        status_code = 200
+        headers = {
+            "content-type": "application/pdf",
+            "content-length": str(len(payload)),
+        }
+
+        def iter_content(self, chunk_size=8192):
+            yield payload
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(
+        mod,
+        "fetch_aa_page",
+        lambda url, *, page_kind: pages[url],
+    )
+    monkeypatch.setattr(
+        mod,
+        "aa_request",
+        lambda method, url, *, timeout, stream, headers: FakeResponse(),
+    )
+
+    assert mod._try_aa_slow_download(base_url, md5, str(dest), "pdf") is False
+    assert not dest.exists()
+
+
 @pytest.mark.parametrize("successful_stage", ["fast", "libgen", "slow"])
 def test_book_download_reaches_slow_only_after_fast_and_libgen_fail(
     tmp_path,
