@@ -37,7 +37,7 @@
 
 ## Commit
 
-`2174c1d feat(download): parse Anna slow partners`
+`acc9af8 feat(download): parse Anna slow partners`
 
 ## Concerns
 
