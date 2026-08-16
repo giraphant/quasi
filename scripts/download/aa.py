@@ -11,6 +11,7 @@ Returns the legacy {success, source, count, results} dict — caller
 (download-agent) consumes this directly.
 """
 
+import html
 import json
 import os
 import re
@@ -132,6 +133,84 @@ def _normalise_mirror(url):
     if not host.startswith("annas-archive."):
         return ""
     return f"https://{host}"
+
+
+def _safe_http_url(value):
+    parsed = urllib.parse.urlparse(str(value or ""))
+    return bool(
+        parsed.scheme in {"http", "https"}
+        and parsed.hostname
+        and parsed.username is None
+        and parsed.password is None
+    )
+
+
+def parse_aa_slow_partner_urls(detail_url, html_text):
+    if not _HAS_BS4:
+        return []
+    soup = BeautifulSoup(str(html_text or ""), "html.parser")
+    urls = []
+    seen = set()
+    for anchor in soup.find_all("a", href=True):
+        label = " ".join(anchor.get_text(" ", strip=True).split()).lower()
+        context = " ".join(anchor.parent.get_text(" ", strip=True).split()).lower()
+        if not label.startswith("slow partner server") or "no waitlist" not in context:
+            continue
+        candidate = urllib.parse.urljoin(detail_url, anchor.get("href", ""))
+        if (
+            _safe_http_url(candidate)
+            and "/slow_download/" in urllib.parse.urlparse(candidate).path
+            and candidate not in seen
+        ):
+            seen.add(candidate)
+            urls.append(candidate)
+    return urls
+
+
+def _normalise_slow_final_url(partner_url, candidate):
+    value = html.unescape(str(candidate or "")).replace(r"\/", "/").strip()
+    value = urllib.parse.urljoin(partner_url, value)
+    if not _safe_http_url(value):
+        return ""
+    if "/slow_download/" in urllib.parse.urlparse(value).path:
+        return ""
+    return value
+
+
+def parse_aa_slow_final_url(partner_url, html_text):
+    page = str(html_text or "")
+    candidates = []
+    if _HAS_BS4:
+        soup = BeautifulSoup(page, "html.parser")
+        for anchor in soup.find_all("a", href=True):
+            label = " ".join(anchor.get_text(" ", strip=True).split()).lower()
+            if "download now" in label or anchor.has_attr("download"):
+                candidates.append(anchor.get("href", ""))
+    clipboard = re.search(
+        r"navigator\.clipboard\.writeText\(\s*['\"]([^'\"]+)['\"]\s*\)",
+        page,
+        re.IGNORECASE,
+    )
+    if clipboard:
+        candidates.append(clipboard.group(1))
+    location = re.search(
+        r"window\.location\.href\s*=\s*['\"]([^'\"]+)['\"]",
+        page,
+        re.IGNORECASE,
+    )
+    if location:
+        candidates.append(location.group(1))
+    if _HAS_BS4:
+        soup = BeautifulSoup(page, "html.parser")
+        for element in soup.find_all(["code", "span"]):
+            text = " ".join(element.get_text(" ", strip=True).split())
+            if text:
+                candidates.append(text)
+    for candidate in candidates:
+        normalised = _normalise_slow_final_url(partner_url, candidate)
+        if normalised:
+            return normalised
+    return ""
 
 
 def _dedupe_mirrors(mirrors):

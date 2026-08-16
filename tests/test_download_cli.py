@@ -75,6 +75,90 @@ def test_aa_wikipedia_infobox_mirror_parser_prefers_url_row():
     ]
 
 
+def test_aa_slow_partner_parser_preserves_dom_order_and_deduplicates_no_wait():
+    mod = _load_module(AA, "aa_slow_partner_order_under_test")
+    detail_url = "https://annas-archive.pk/md5/0123456789abcdef0123456789abcdef"
+    page = """
+    <main>
+      <div><a href="/slow_download/id/0/5">Slow Partner Server #5</a>
+        — no waitlist, but can be very slow</div>
+      <div><a href="/slow_download/id/0/6">Slow Partner Server #6</a>
+        — no waitlist, but can be very slow</div>
+      <div><a href="/slow_download/id/0/5">Slow Partner Server #5</a>
+        — no waitlist, duplicate</div>
+    </main>
+    """
+
+    assert mod.parse_aa_slow_partner_urls(detail_url, page) == [
+        "https://annas-archive.pk/slow_download/id/0/5",
+        "https://annas-archive.pk/slow_download/id/0/6",
+    ]
+
+
+def test_aa_slow_partner_parser_excludes_waitlist_viewer_and_unsafe_urls():
+    mod = _load_module(AA, "aa_slow_partner_filter_under_test")
+    detail_url = "https://annas-archive.pk/md5/0123456789abcdef0123456789abcdef"
+    page = """
+    <main>
+      <div><a href="/slow_download/id/0/1">Slow Partner Server #1</a>
+        — waitlist, but faster</div>
+      <div><a href="https://user:secret@example.org/slow_download/id/0/2">Slow Partner Server #2</a>
+        — no waitlist</div>
+      <div><a href="javascript:alert(1)">Slow Partner Server #3</a>
+        — no waitlist</div>
+      <div><a href="/viewer/id">After downloading: Open in our viewer</a></div>
+    </main>
+    """
+
+    assert mod.parse_aa_slow_partner_urls(detail_url, page) == []
+
+
+@pytest.mark.parametrize(
+    ("page", "expected"),
+    [
+        (
+            '<a href="https://cdn.example.org/download/file.pdf">Download now</a>',
+            "https://cdn.example.org/download/file.pdf",
+        ),
+        (
+            '<a download href="https://cdn.example.org/files/book.epub">Download</a>',
+            "https://cdn.example.org/files/book.epub",
+        ),
+        (
+            '<script>navigator.clipboard.writeText("https:\\/\\/cdn.example.org\\/book.pdf")</script>',
+            "https://cdn.example.org/book.pdf",
+        ),
+        (
+            '<script>window.location.href = "/files/book.pdf"</script>',
+            "https://annas-archive.pk/files/book.pdf",
+        ),
+        (
+            '<code>https://cdn.example.org/files/book%20copy.pdf</code>',
+            "https://cdn.example.org/files/book%20copy.pdf",
+        ),
+    ],
+)
+def test_aa_slow_final_url_parser_supports_approved_shapes(page, expected):
+    mod = _load_module(AA, "aa_slow_final_url_parser_under_test")
+    partner_url = "https://annas-archive.pk/slow_download/id/0/5"
+
+    assert mod.parse_aa_slow_final_url(partner_url, page) == expected
+
+
+def test_aa_slow_final_url_parser_rejects_credentials_and_recursive_slow_urls():
+    mod = _load_module(AA, "aa_slow_final_url_parser_negative_under_test")
+    partner_url = "https://annas-archive.pk/slow_download/id/0/5"
+
+    assert mod.parse_aa_slow_final_url(
+        partner_url,
+        '<a href="https://user:secret@example.org/file.pdf">Download now</a>',
+    ) == ""
+    assert mod.parse_aa_slow_final_url(
+        partner_url,
+        '<a href="/slow_download/id/0/6">Download now</a>',
+    ) == ""
+
+
 def test_aa_reachability_rejects_live_shape_anna_parking_page(monkeypatch):
     mod = _load_module(AA, "aa_parking_page_under_test")
     calls: list[tuple[str, str, int]] = []
