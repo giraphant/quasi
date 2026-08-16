@@ -48,7 +48,15 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
 import requests
-from aa import aa_request, get_aa_base_url, load_aa_config, search_aa  # noqa: E402
+from aa import (  # noqa: E402
+    aa_request,
+    fetch_aa_page,
+    get_aa_base_url,
+    load_aa_config,
+    parse_aa_slow_final_url,
+    parse_aa_slow_partner_urls,
+    search_aa,
+)
 from scripts.core import print_json, project_root, resolve_project_path  # noqa: E402
 
 # --- Config ---
@@ -1878,13 +1886,31 @@ def _try_libgen_download(md5, dest, fmt):
     return False
 
 
+def _try_aa_slow_download(base_url, md5, dest, fmt):
+    """Try each no-wait Anna slow partner in page order."""
+    detail_url = f"{base_url}/md5/{md5}"
+    detail_html = fetch_aa_page(detail_url, page_kind="detail")
+    for partner_url in parse_aa_slow_partner_urls(detail_url, detail_html):
+        partner_html = fetch_aa_page(partner_url, page_kind="slow")
+        download_url = parse_aa_slow_final_url(partner_url, partner_html)
+        if not download_url:
+            continue
+        headers = {**HEADERS_BROWSER, "Referer": partner_url}
+        if _stream_download(download_url, dest, headers=headers, requester=aa_request):
+            if _is_valid_book_file(dest, fmt):
+                return True
+            if os.path.exists(dest):
+                os.remove(dest)
+    return False
+
+
 def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
                      verify_author=None, verify_title=None):
     """Download a file from AA by MD5. Returns file path or None.
 
-    Flow: AA Fast API (default) → AA Fast API (path/domain rotation) → LibGen.
+    Flow: AA Fast API (default) → AA Fast API (path/domain rotation) → LibGen → Slow.
     Exhausted AA quota skips the redundant rotations and is reported only if
-    the independent LibGen fallback also fails.
+    the independent LibGen and Slow fallbacks also fail.
 
     If verify_author/verify_title provided, checks content after download.
     Returns None (and deletes file) if content doesn't match.
@@ -1958,8 +1984,10 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
         print(f"  Trying path_index={pi}, domain_index={di}...", file=sys.stderr)
         try:
             dl_url, quota = aa_fast_download_url(base_url, md5, key, pi, di)
-        except AAQuotaExhausted:
-            raise  # Quota exhausted, stop everything
+        except AAQuotaExhausted as exc:
+            quota_error = exc
+            print("  AA quota exhausted; skipping Fast API rotations", file=sys.stderr)
+            break
         if not dl_url:
             continue
         if _stream_download(dl_url, dest, headers=HEADERS_BROWSER, requester=aa_request):
@@ -1977,6 +2005,13 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
     # --- Stage 3: LibGen ads page -> keyed GET fallback ---
     print(f"  AA exhausted all options, trying LibGen...", file=sys.stderr)
     if _try_libgen_download(md5, dest, fmt):
+        if _aa_verify(dest):
+            return dest
+        return None
+
+    # --- Stage 4: Anna no-wait slow partner fallback ---
+    print("  LibGen failed, trying Anna slow partners...", file=sys.stderr)
+    if _try_aa_slow_download(base_url, md5, dest, fmt):
         if _aa_verify(dest):
             return dest
         return None
@@ -2750,10 +2785,11 @@ def _stream_download(url, dest_path, headers=None, requester=None):
     """
 
     def _do():
+        request_headers = headers or HEADERS_BROWSER
         if requester:
-            r = requester("GET", url, timeout=120, stream=True)
+            r = requester("GET", url, timeout=120, stream=True, headers=request_headers)
         else:
-            r = requests.get(url, headers=headers or HEADERS_BROWSER,
+            r = requests.get(url, headers=request_headers,
                              stream=True, timeout=120)
         if r.status_code != 200:
             r.raise_for_status()  # routed through _retry's HTTP code check

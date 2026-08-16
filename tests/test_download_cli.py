@@ -690,6 +690,12 @@ def test_book_fetch_removes_invalid_existing_temp_before_fallback(
         ),
     )
     monkeypatch.setattr(mod, "_try_libgen_download", lambda *_args: False)
+    monkeypatch.setattr(
+        mod,
+        "_try_aa_slow_download",
+        lambda *_args: False,
+        raising=False,
+    )
 
     with pytest.raises(mod.AAQuotaExhausted, match="No downloads left"):
         mod.download_from_aa(
@@ -700,6 +706,163 @@ def test_book_fetch_removes_invalid_existing_temp_before_fallback(
         )
 
     assert not dest.exists()
+
+
+def test_aa_slow_download_uses_each_no_wait_partner_as_referer(tmp_path, monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_aa_slow_transport_under_test")
+    md5 = "0123456789abcdef0123456789abcdef"
+    base_url = "https://annas-archive.pk"
+    detail_url = f"{base_url}/md5/{md5}"
+    partner_five = f"{base_url}/slow_download/id/0/5"
+    partner_six = f"{base_url}/slow_download/id/0/6"
+    first_download = "https://cdn.example.org/first.pdf"
+    second_download = "https://cdn.example.org/second.pdf"
+    dest = tmp_path / "book.pdf"
+    import fitz
+
+    document = fitz.open()
+    document.new_page().insert_text((72, 72), "valid second partner payload")
+    valid_pdf = document.tobytes()
+    document.close()
+    pages = {
+        detail_url: """
+        <div><a href="/slow_download/id/0/5">Slow Partner Server #5</a>
+        — no waitlist, but can be very slow</div>
+        <div><a href="/slow_download/id/0/6">Slow Partner Server #6</a>
+        — no waitlist, but can be very slow</div>
+        """,
+        partner_five: '<a href="https://cdn.example.org/first.pdf">Download now</a>',
+        partner_six: '<a href="https://cdn.example.org/second.pdf">Download now</a>',
+    }
+    observed_referers = []
+    observed_downloads = []
+
+    monkeypatch.setattr(
+        mod,
+        "fetch_aa_page",
+        lambda url, *, page_kind: pages[url],
+        raising=False,
+    )
+
+    def stream_download(url, output_path, *, headers=None, requester=None):
+        observed_downloads.append(url)
+        observed_referers.append(headers["Referer"])
+        Path(output_path).write_bytes(
+            b"%PDF-1.7\n" + b"x" * 12000
+            if url == first_download
+            else valid_pdf
+        )
+        return True
+
+    monkeypatch.setattr(mod, "_stream_download", stream_download)
+
+    assert mod._try_aa_slow_download(base_url, md5, str(dest), "pdf") is True
+    assert observed_downloads == [first_download, second_download]
+    assert observed_referers == [partner_five, partner_six]
+    assert dest.read_bytes() == valid_pdf
+
+
+@pytest.mark.parametrize("successful_stage", ["fast", "libgen", "slow"])
+def test_book_download_reaches_slow_only_after_fast_and_libgen_fail(
+    tmp_path,
+    monkeypatch,
+    successful_stage,
+):
+    mod = _load_module(DOWNLOAD, f"download_slow_cascade_{successful_stage}_under_test")
+    md5 = "0123456789abcdef0123456789abcdef"
+    dest = tmp_path / "book.pdf"
+    slow_calls = []
+    libgen_calls = []
+
+    monkeypatch.setattr(mod, "load_aa_config", lambda: {"donator_key": "secret"})
+    monkeypatch.setattr(mod, "get_aa_base_url", lambda _config: "https://annas-archive.pk")
+    monkeypatch.setattr(mod, "AA_FALLBACK_INDICES", ())
+    monkeypatch.setattr(
+        mod,
+        "aa_fast_download_url",
+        lambda *_args: (
+            ("https://cdn.example.org/fast.pdf", {})
+            if successful_stage == "fast"
+            else (None, {})
+        ),
+    )
+    monkeypatch.setattr(mod, "_is_valid_book_file", lambda *_args: True)
+
+    def stream_download(_url, output_path, *, headers=None, requester=None):
+        Path(output_path).write_bytes(b"fast payload")
+        return True
+
+    monkeypatch.setattr(mod, "_stream_download", stream_download)
+
+    def libgen_download(_md5, output_path, _fmt):
+        libgen_calls.append(output_path)
+        if successful_stage == "libgen":
+            Path(output_path).write_bytes(b"libgen payload")
+            return True
+        return False
+
+    monkeypatch.setattr(mod, "_try_libgen_download", libgen_download)
+
+    def slow_download(*args):
+        slow_calls.append(args)
+        if successful_stage == "slow":
+            Path(args[2]).write_bytes(b"slow payload")
+            return True
+        return False
+
+    monkeypatch.setattr(mod, "_try_aa_slow_download", slow_download, raising=False)
+
+    assert mod.download_from_aa(
+        md5,
+        output_dir=str(tmp_path),
+        filename="book",
+        fmt="pdf",
+    ) == str(dest)
+    assert len(libgen_calls) == (0 if successful_stage == "fast" else 1)
+    assert len(slow_calls) == (1 if successful_stage == "slow" else 0)
+
+
+def test_book_rotation_quota_still_reaches_fallbacks(tmp_path, monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_rotation_quota_slow_fallback_under_test")
+    md5 = "0123456789abcdef0123456789abcdef"
+    fast_calls = []
+    libgen_calls = []
+    slow_calls = []
+
+    monkeypatch.setattr(mod, "load_aa_config", lambda: {"donator_key": "secret"})
+    monkeypatch.setattr(mod, "get_aa_base_url", lambda _config: "https://annas-archive.pk")
+    monkeypatch.setattr(mod, "AA_FALLBACK_INDICES", ((1, 1), (2, 2)))
+
+    def fast_download(*args):
+        fast_calls.append(args)
+        if len(fast_calls) == 1:
+            return None, {}
+        raise mod.AAQuotaExhausted("No downloads left")
+
+    monkeypatch.setattr(mod, "aa_fast_download_url", fast_download)
+    monkeypatch.setattr(
+        mod,
+        "_try_libgen_download",
+        lambda *args: libgen_calls.append(args) or False,
+    )
+    monkeypatch.setattr(
+        mod,
+        "_try_aa_slow_download",
+        lambda *args: slow_calls.append(args) or False,
+        raising=False,
+    )
+
+    with pytest.raises(mod.AAQuotaExhausted, match="No downloads left"):
+        mod.download_from_aa(
+            md5,
+            output_dir=str(tmp_path),
+            filename="book",
+            fmt="pdf",
+        )
+
+    assert [call[3:] for call in fast_calls] == [(), (1, 1)]
+    assert len(libgen_calls) == 1
+    assert len(slow_calls) == 1
 
 
 def test_libgen_resolves_ads_page_before_downloading_keyed_url(
@@ -739,7 +902,7 @@ def test_libgen_resolves_ads_page_before_downloading_keyed_url(
         def raise_for_status(self):
             return None
 
-    def fake_aa_request(method, url, *, timeout=30, stream=False):
+    def fake_aa_request(method, url, *, timeout=30, stream=False, headers=None):
         calls.append((method, url, stream))
         if url == ads_url:
             return FakeResponse(
@@ -786,7 +949,7 @@ def test_stream_download_rejects_large_html_and_removes_output(tmp_path):
         def raise_for_status(self):
             return None
 
-    def requester(_method, _url, *, timeout=30, stream=False):
+    def requester(_method, _url, *, timeout=30, stream=False, headers=None):
         return FakeResponse()
 
     assert mod._stream_download(
@@ -795,6 +958,42 @@ def test_stream_download_rejects_large_html_and_removes_output(tmp_path):
         requester=requester,
     ) is False
     assert not dest.exists()
+
+
+def test_stream_download_forwards_partner_referer(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_stream_partner_referer_under_test")
+    dest = tmp_path / "book.pdf"
+    payload = b"%PDF-1.7\n" + b"x" * 12000
+    observed_headers = {}
+
+    class FakeResponse:
+        status_code = 200
+        headers = {
+            "content-type": "application/pdf",
+            "content-length": str(len(payload)),
+        }
+
+        def iter_content(self, chunk_size=8192):
+            for start in range(0, len(payload), chunk_size):
+                yield payload[start:start + chunk_size]
+
+        def raise_for_status(self):
+            return None
+
+    def requester(_method, _url, *, timeout, stream, headers):
+        observed_headers.update(headers)
+        return FakeResponse()
+
+    assert mod._stream_download(
+        "https://cdn.example.org/files/book.pdf",
+        str(dest),
+        headers={
+            **mod.HEADERS_BROWSER,
+            "Referer": "https://annas-archive.pk/slow_download/id/0/5",
+        },
+        requester=requester,
+    ) is True
+    assert observed_headers["Referer"] == "https://annas-archive.pk/slow_download/id/0/5"
 
 
 def test_book_file_validator_requires_real_pdf_or_epub_structure(tmp_path):
