@@ -27,6 +27,11 @@ DDOS_GUARD_INDICATORS = (
 _VALID_MD5_LINK = re.compile(
     r'''href\s*=\s*["'][^"']*/md5/[A-Fa-f0-9]{32}(?:[/?#][^"']*)?["']''',
 )
+_DETAIL_PATH = re.compile(r"/md5/[A-Fa-f0-9]{32}(?:[/?#]|$)")
+_SLOW_DOWNLOAD_LINK = re.compile(r"<a\b[^>]*\bdownload\b", re.IGNORECASE)
+_SLOW_COUNTDOWN = re.compile(
+    r"class\s*=\s*[\"'][^\"']*\bjs-partner-countdown\b", re.IGNORECASE
+)
 
 
 def _is_challenge(title: str, body: str) -> bool:
@@ -34,10 +39,27 @@ def _is_challenge(title: str, body: str) -> bool:
     return any(indicator in page_text for indicator in DDOS_GUARD_INDICATORS)
 
 
+def _looks_like_settled_page(
+    page_kind: str,
+    current_url: str,
+    body: str,
+    html: str,
+) -> bool:
+    if page_kind == "search":
+        return "/search" in current_url and (
+            bool(_VALID_MD5_LINK.search(html)) or "no files found." in body.lower()
+        )
+    if page_kind == "detail":
+        return bool(_DETAIL_PATH.search(current_url)) and bool(body.strip() or html.strip())
+    if page_kind == "slow":
+        return "/slow_download/" in current_url and bool(
+            _SLOW_DOWNLOAD_LINK.search(html) or _SLOW_COUNTDOWN.search(html)
+        )
+    return False
+
+
 def _looks_like_settled_search(current_url: str, body: str, html: str) -> bool:
-    if "/search" not in current_url:
-        return False
-    return bool(_VALID_MD5_LINK.search(html)) or "no files found." in body.lower()
+    return _looks_like_settled_page("search", current_url, body, html)
 
 
 async def _read_page(page):
@@ -60,7 +82,7 @@ def _browser_options():
     }
 
 
-async def _fetch(url: str, output: Path, timeout: float) -> bool:
+async def _fetch(url: str, output: Path, timeout: float, page_kind: str = "search") -> bool:
     from seleniumbase import cdp_driver
 
     driver = None
@@ -76,7 +98,8 @@ async def _fetch(url: str, output: Path, timeout: float) -> bool:
         settled_observations = 0
         while time.monotonic() < deadline:
             title, body, current_url, html = await _read_page(page)
-            if not _is_challenge(title, body) and _looks_like_settled_search(
+            if not _is_challenge(title, body) and _looks_like_settled_page(
+                page_kind,
                 current_url,
                 body,
                 html,
@@ -100,10 +123,13 @@ def main(argv=None) -> int:
     parser.add_argument("--url", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--timeout", type=float, default=75.0)
+    parser.add_argument("--page-kind", choices=("search", "detail", "slow"), default="search")
     args = parser.parse_args(argv)
 
     try:
-        solved = asyncio.run(_fetch(args.url, args.output, max(5.0, args.timeout)))
+        solved = asyncio.run(
+            _fetch(args.url, args.output, max(5.0, args.timeout), args.page_kind)
+        )
     except Exception as e:
         print(f"browser challenge failed: {type(e).__name__}: {e}", file=sys.stderr)
         return 1

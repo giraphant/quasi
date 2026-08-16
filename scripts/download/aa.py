@@ -113,9 +113,9 @@ def _request(method, url, *, timeout=30, stream=False, browser_tls=True, headers
     )
 
 
-def aa_request(method, url, *, timeout=30, stream=False):
+def aa_request(method, url, *, timeout=30, stream=False, headers=None):
     """Public AA HTTP helper shared by the download module."""
-    return _request(method, url, timeout=timeout, stream=stream)
+    return _request(method, url, timeout=timeout, stream=stream, headers=headers)
 
 
 def _normalise_mirror(url):
@@ -503,7 +503,7 @@ def _normalise_search_formats(fmt):
     return formats or ["pdf"]
 
 
-def _fetch_aa_with_browser(url):
+def _fetch_aa_with_browser(url: str, page_kind: str = "search") -> str:
     """Execute Anna's JS challenge in an isolated Chromium process.
 
     The plugin venv still supports Python 3.9, while the pinned browser helper
@@ -519,7 +519,7 @@ def _fetch_aa_with_browser(url):
     try:
         temp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="aa-browser-", dir=str(temp_root)) as temp_dir:
-            output_path = Path(temp_dir) / "search.html"
+            output_path = Path(temp_dir) / f"{page_kind}.html"
             command = [
                 uvx,
                 "--python",
@@ -536,6 +536,8 @@ def _fetch_aa_with_browser(url):
                 str(output_path),
                 "--timeout",
                 str(AA_BROWSER_CHALLENGE_TIMEOUT),
+                "--page-kind",
+                page_kind,
             ]
             print("  Anna is checking the browser; waiting for the page...", file=sys.stderr)
             proc = subprocess.run(
@@ -560,6 +562,22 @@ def _fetch_aa_with_browser(url):
     except (OSError, UnicodeError) as e:
         print(f"  Anna browser fallback failed: {e}", file=sys.stderr)
     return ""
+
+
+def fetch_aa_page(url: str, *, page_kind: str) -> str:
+    """Fetch a bounded Anna page, invoking Chromium only for verified gates."""
+    if page_kind not in {"search", "detail", "slow"}:
+        raise ValueError(f"unsupported Anna page kind: {page_kind}")
+    try:
+        response = _request("GET", url, timeout=30)
+    except Exception:
+        return ""
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if _is_ddos_guard_challenge(response) or (
+        response.status_code == 403 and host.startswith("annas-archive.")
+    ):
+        return _fetch_aa_with_browser(url, page_kind)
+    return response.text if response.status_code == 200 else ""
 
 
 def search_aa(query, fmt="pdf", lang=None, limit=5):

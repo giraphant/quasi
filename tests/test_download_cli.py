@@ -386,7 +386,10 @@ def test_aa_browser_fallback_is_bounded_and_uses_named_temp_output(
 
     monkeypatch.setattr(mod.subprocess, "run", fake_run)
 
-    html = mod._fetch_aa_with_browser("https://annas-archive.pk/search?q=example")
+    html = mod._fetch_aa_with_browser(
+        "https://annas-archive.pk/md5/0123456789abcdef0123456789abcdef",
+        page_kind="detail",
+    )
 
     assert html == "<html><a href='/md5/abc'>book</a></html>"
     assert observed["command"][:9] == [
@@ -401,6 +404,7 @@ def test_aa_browser_fallback_is_bounded_and_uses_named_temp_output(
         str(mod.AA_BROWSER_SCRIPT),
     ]
     assert observed["kwargs"]["timeout"] == mod.AA_BROWSER_PROCESS_TIMEOUT
+    assert observed["command"][observed["command"].index("--page-kind") + 1] == "detail"
     assert not list((tmp_path / ".quasi" / "temp").glob("aa-browser-*"))
 
 
@@ -455,6 +459,144 @@ def test_aa_browser_settles_only_on_valid_results_or_explicit_empty_state():
         "No files found.",
         "<main>No files found.</main>",
     )
+    assert mod._looks_like_settled_page(
+        "detail",
+        "https://annas-archive.pk/md5/0123456789abcdef0123456789abcdef",
+        "Book details are loaded",
+        "<main><h1>Book details are loaded</h1></main>",
+    )
+    assert not mod._looks_like_settled_page(
+        "detail",
+        search_url,
+        "results",
+        '<a href="/md5/0123456789abcdef0123456789abcdef">book</a>',
+    )
+    slow_url = (
+        "https://annas-archive.pk/slow_download/"
+        "0123456789abcdef0123456789abcdef/0/0"
+    )
+    assert mod._looks_like_settled_page(
+        "slow",
+        slow_url,
+        "Download now",
+        '<a download href="https://files.example/book.pdf">Download now</a>',
+    )
+    assert mod._looks_like_settled_page(
+        "slow",
+        slow_url,
+        "Wait 20 seconds",
+        '<span class="js-partner-countdown">20</span>',
+    )
+    assert not mod._looks_like_settled_page(
+        "slow",
+        slow_url,
+        "Loading",
+        "<main>Loading</main>",
+    )
+
+
+def test_fetch_aa_page_returns_complete_detail_response_without_browser(monkeypatch):
+    mod = _load_module(AA, "aa_fetch_detail_http_under_test")
+    detail_url = "https://annas-archive.pk/md5/0123456789abcdef0123456789abcdef"
+    response = SimpleNamespace(
+        status_code=200,
+        headers={},
+        text="<main>Book details are loaded</main>",
+        url=detail_url,
+    )
+    monkeypatch.setattr(mod, "_request", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(
+        mod,
+        "_fetch_aa_with_browser",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("browser must not run for a complete HTTP response")
+        ),
+        raising=False,
+    )
+
+    assert mod.fetch_aa_page(detail_url, page_kind="detail") == response.text
+
+
+def test_fetch_aa_page_uses_detail_browser_after_confirmed_ddos_guard(monkeypatch):
+    mod = _load_module(AA, "aa_fetch_detail_browser_under_test")
+    detail_url = "https://annas-archive.pk/md5/0123456789abcdef0123456789abcdef"
+    response = SimpleNamespace(
+        status_code=403,
+        headers={"server": "ddos-guard"},
+        text="Checking your browser with DDoS-Guard challenge",
+        url=f"{detail_url}?check=1",
+    )
+    browser_calls = []
+    monkeypatch.setattr(mod, "_request", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(
+        mod,
+        "_fetch_aa_with_browser",
+        lambda url, page_kind="search": browser_calls.append((url, page_kind)) or "<main>detail</main>",
+        raising=False,
+    )
+
+    assert mod.fetch_aa_page(detail_url, page_kind="detail") == "<main>detail</main>"
+    assert browser_calls == [(detail_url, "detail")]
+
+
+def test_fetch_aa_page_uses_slow_browser_after_anna_403(monkeypatch):
+    mod = _load_module(AA, "aa_fetch_slow_browser_under_test")
+    slow_url = "https://annas-archive.pk/slow_download/0123456789abcdef0123456789abcdef/0/0"
+    response = SimpleNamespace(
+        status_code=403,
+        headers={},
+        text="Forbidden",
+        url=slow_url,
+    )
+    browser_calls = []
+    monkeypatch.setattr(mod, "_request", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(
+        mod,
+        "_fetch_aa_with_browser",
+        lambda url, page_kind="search": browser_calls.append((url, page_kind)) or "<main>slow</main>",
+        raising=False,
+    )
+
+    assert mod.fetch_aa_page(slow_url, page_kind="slow") == "<main>slow</main>"
+    assert browser_calls == [(slow_url, "slow")]
+
+
+def test_fetch_aa_page_returns_empty_for_ordinary_server_error(monkeypatch):
+    mod = _load_module(AA, "aa_fetch_error_under_test")
+    detail_url = "https://annas-archive.pk/md5/0123456789abcdef0123456789abcdef"
+    response = SimpleNamespace(
+        status_code=500,
+        headers={},
+        text="Server error",
+        url=detail_url,
+    )
+    monkeypatch.setattr(mod, "_request", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(
+        mod,
+        "_fetch_aa_with_browser",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("browser must not run for an ordinary server error")
+        ),
+        raising=False,
+    )
+
+    assert mod.fetch_aa_page(detail_url, page_kind="detail") == ""
+
+
+def test_aa_request_forwards_headers(monkeypatch):
+    mod = _load_module(AA, "aa_request_headers_under_test")
+    observed = {}
+    referer = "https://annas-archive.pk/md5/0123456789abcdef0123456789abcdef"
+
+    def fake_request(method, url, **kwargs):
+        observed.update(method=method, url=url, **kwargs)
+        return SimpleNamespace(status_code=200, headers={}, text="", url=url)
+
+    monkeypatch.setattr(mod, "_request", fake_request)
+
+    mod.aa_request("GET", "https://files.example/book.pdf", headers={"Referer": referer})
+
+    assert observed["headers"] == {"Referer": referer}
 
 
 def test_aa_fast_api_recognises_quota_error_from_429_json(monkeypatch):
