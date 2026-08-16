@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.15** (2026-08-16): **Book 下载在 Fast 与 LibGen 均失败后会继续尝试 Anna 的 no-wait Slow Partner。**
+  - 下载器按 Anna 详情页的 DOM 顺序发现全部 `no waitlist` partner，逐页解析 `Download now`、download attribute、clipboard、location 与可见 URL 五种实际出口，并把 partner 页作为最终文件请求的 Referer；已有的容器校验、最小大小检查与失败临时文件清理继续作为统一验收边界。
+  - Slow 详情页仍先走普通 HTTP，只有确认遭遇挑战才使用受监督、有限时的 headless browser；详情页以真实 `main-inner` 内容判定完成，Slow 页直接复用最终 URL parser 判定完成。landing link 必须与 Anna 详情页同源，畸形 URL 只跳过当前候选；本版不加入 waitlist、后台下载、断点续传或另一套 provider 状态机。
+
 - **0.65.14** (2026-08-16): **Book 章节的 stale observation 会按真实 Agent issue code 回到磁盘事实。**
   - Analyse Agent 返回的完整 code 是 `chapter.analyse.output_observation_mismatch`；Book 先前只匹配缩写后的 `chapter.output_observation_mismatch`，使本应恢复的 `blocked + retryable:true` 错误终结为 blocked。恢复分支现在从 host-stamped operation 构造同一完整 code，并返回 canonical Book route 的 `needs_observation`。
   - 同 code 但不可重试、以及其他 retryable blocked 仍原样停止；源码计划和生成的 Book bundle 都用真实 code 做回归，Author/Topic 内嵌的 Book 计划同步重建。没有增加通用 retry、schema 分支或兼容层。
