@@ -630,6 +630,35 @@ def test_aa_browser_detail_mode_requires_populated_non_error_main_content():
         "Internal Server Error",
         '<main><div class="main-inner">Internal Server Error</div></main>',
     )
+    assert not mod._looks_like_settled_page(
+        "detail",
+        detail_url,
+        "",
+        """
+        <main><div class="main-inner">
+          <script>window.payload = "book metadata"</script>
+          <style>.book { display: block }</style>
+        </div></main>
+        """,
+    )
+    assert not mod._looks_like_settled_page(
+        "detail",
+        detail_url,
+        "Loading book details…",
+        '<main><div class="main-inner">Loading book details…</div></main>',
+    )
+    assert not mod._looks_like_settled_page(
+        "detail",
+        detail_url,
+        "500 Internal Server Error — please retry",
+        '<main><div class="main-inner">500 Internal Server Error — please retry</div></main>',
+    )
+    assert not mod._looks_like_settled_page(
+        "detail",
+        "https://annas-archive.pk:not-a-port/md5/0123456789abcdef0123456789abcdef",
+        "A complete-looking record",
+        '<main><div class="main-inner">A complete-looking record</div></main>',
+    )
     assert mod._looks_like_settled_page(
         "detail",
         detail_url,
@@ -675,6 +704,33 @@ def test_aa_browser_slow_mode_settles_on_parser_shapes_or_explicit_wait(body, pa
     )
 
     assert mod._looks_like_settled_page("slow", slow_url, body, page)
+
+
+@pytest.mark.parametrize(
+    ("body", "page"),
+    [
+        (
+            "Help",
+            '<a href="/help/download/info">Help</a>',
+        ),
+        (
+            "Copy link",
+            '<script>navigator.clipboard.writeText("javascript:alert(1)")</script>',
+        ),
+        (
+            "Preparing download",
+            '<script>window.location.href = "/slow_download/still-waiting"</script>',
+        ),
+    ],
+)
+def test_aa_browser_slow_mode_rejects_shapes_the_final_parser_rejects(body, page):
+    mod = _load_module(AA_BROWSER, "aa_browser_slow_decoys_under_test")
+    slow_url = (
+        "https://annas-archive.pk/slow_download/"
+        "0123456789abcdef0123456789abcdef/0/0"
+    )
+
+    assert not mod._looks_like_settled_page("slow", slow_url, body, page)
 
 
 def test_fetch_aa_page_returns_complete_detail_response_without_browser(monkeypatch):

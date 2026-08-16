@@ -19,6 +19,8 @@ from contextlib import suppress
 from html.parser import HTMLParser
 from pathlib import Path
 
+from aa import parse_aa_slow_final_url
+
 
 DDOS_GUARD_INDICATORS = (
     "ddos-guard",
@@ -32,26 +34,9 @@ _VALID_MD5_LINK = re.compile(
 )
 _DETAIL_PATH = re.compile(r"/md5/[A-Fa-f0-9]{32}/?")
 _DETAIL_PLACEHOLDER = re.compile(
-    r"^(?:loading(?:\s+please\s+wait)?[.…]*|please\s+wait[.…]*|"
-    r"internal\s+server\s+error|server\s+error|not\s+found|forbidden)$",
-    re.IGNORECASE,
-)
-_SLOW_DOWNLOAD_NOW_LINK = re.compile(
-    r"<a\b(?=[^>]*\bhref\s*=)[^>]*>.*?download\s+now.*?</a\s*>",
+    r"^(?:loading\b.*|please\s+wait\b.*|(?:error\s*)?[45]\d\d\b.*|"
+    r"(?:internal\s+)?server\s+error\b.*|not\s+found\b.*|forbidden\b.*)$",
     re.IGNORECASE | re.DOTALL,
-)
-_SLOW_DOWNLOAD_LINK = re.compile(r"<a\b[^>]*\bdownload\b", re.IGNORECASE)
-_SLOW_CLIPBOARD = re.compile(
-    r"navigator\.clipboard\.writeText\(\s*['\"](?:https?:)?[^'\"]+['\"]\s*\)",
-    re.IGNORECASE,
-)
-_SLOW_LOCATION = re.compile(
-    r"window\.location\.href\s*=\s*['\"](?:https?:|/)[^'\"]+['\"]",
-    re.IGNORECASE,
-)
-_SLOW_VISIBLE_URL = re.compile(
-    r"<(?:code|span)\b[^>]*>\s*https?://[^<\s]+\s*</(?:code|span)\s*>",
-    re.IGNORECASE,
 )
 _SLOW_COUNTDOWN = re.compile(
     r"class\s*=\s*[\"'][^\"']*\bjs-partner-countdown\b", re.IGNORECASE
@@ -71,17 +56,24 @@ class _MainInnerTextParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self._div_depth = 0
         self._active_depth = None
+        self._hidden_depth = 0
         self.text = []
 
     def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if self._active_depth is not None and tag in {"script", "style", "template", "noscript"}:
+            self._hidden_depth += 1
         if tag.lower() != "div":
             return
         self._div_depth += 1
-        classes = dict(attrs).get("class", "").split()
+        classes = (dict(attrs).get("class") or "").split()
         if self._active_depth is None and "main-inner" in classes:
             self._active_depth = self._div_depth
 
     def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in {"script", "style", "template", "noscript"} and self._hidden_depth:
+            self._hidden_depth -= 1
         if tag.lower() != "div":
             return
         if self._active_depth == self._div_depth:
@@ -89,7 +81,7 @@ class _MainInnerTextParser(HTMLParser):
         self._div_depth = max(0, self._div_depth - 1)
 
     def handle_data(self, data):
-        if self._active_depth is not None:
+        if self._active_depth is not None and self._hidden_depth == 0:
             self.text.append(data)
 
 
@@ -103,12 +95,25 @@ def _main_inner_text(page_html: str) -> str:
     return " ".join(html_lib.unescape(" ".join(parser.text)).split())
 
 
-def _is_detail_url(current_url: str) -> bool:
+def _parse_safe_http_url(value):
     try:
-        path = urllib.parse.urlparse(current_url).path
+        parsed = urllib.parse.urlparse(str(value or ""))
+        parsed.port
     except (TypeError, ValueError):
-        return False
-    return bool(_DETAIL_PATH.fullmatch(path))
+        return None
+    if not (
+        parsed.scheme in {"http", "https"}
+        and parsed.hostname
+        and parsed.username is None
+        and parsed.password is None
+    ):
+        return None
+    return parsed
+
+
+def _is_detail_url(current_url: str) -> bool:
+    parsed = _parse_safe_http_url(current_url)
+    return parsed is not None and bool(_DETAIL_PATH.fullmatch(parsed.path))
 
 
 def _looks_like_settled_page(
@@ -127,12 +132,9 @@ def _looks_like_settled_page(
         main_text = _main_inner_text(html)
         return bool(main_text) and not bool(_DETAIL_PLACEHOLDER.fullmatch(main_text))
     if page_kind == "slow":
-        return "/slow_download/" in current_url and bool(
-            _SLOW_DOWNLOAD_NOW_LINK.search(html)
-            or _SLOW_DOWNLOAD_LINK.search(html)
-            or _SLOW_CLIPBOARD.search(html)
-            or _SLOW_LOCATION.search(html)
-            or _SLOW_VISIBLE_URL.search(html)
+        parsed = _parse_safe_http_url(current_url)
+        return parsed is not None and "/slow_download/" in parsed.path and bool(
+            parse_aa_slow_final_url(current_url, html)
             or _SLOW_COUNTDOWN.search(html)
             or _SLOW_EXPLICIT_WAIT.search(body)
         )
