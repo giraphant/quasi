@@ -67,25 +67,22 @@ PDF/EPUB container is checked before the temp path is returned.
 
 There is no persistent `.part`, Range protocol, cursor, sidecar, background
 worker, or new digest policy. If the host interrupts a Slow transfer, that
-invocation fails; on a later invocation the existing invalid-temp preflight
-removes any incomplete destination and starts again. Persistent resume will be
-designed separately only if production evidence shows repeated host-lifetime
-failures on otherwise progressing no-wait transfers.
+invocation fails. A later invocation follows the existing temp preflight and
+whole-file overwrite behavior; it does not interpret incomplete bytes as
+progress. Persistent resume will be designed separately only if production
+evidence shows repeated host-lifetime failures on otherwise progressing
+no-wait transfers.
 
 ## Results and failure handling
 
-`quasi-download book fetch --json` reports the actual successful transport as
-`anna_archive`, `libgen`, or `anna_archive_slow`. It also returns the ordered
-source attempts as existing `{source,status,error}` rows, including failures,
-so download-agent can copy rather than reconstruct its receipt evidence. Each
-row uses `status:"ok"` with `error:null`, or `status:"failed"` with one concise
-non-empty error code; repeated Fast rotations may produce repeated
-`anna_archive` rows because they are distinct actual transport attempts.
+The public Book fetch JSON remains unchanged. Success still reports the temp
+path, `source:"anna_archive"`, and inspect evidence; failure remains
+`status:"download_failed"` with `reason:"all_sources_failed"`. Provider-level
+attempt reporting, quota-result normalization, and actual-transport naming are
+separate contract work and are not prerequisites for adding this fallback.
 
-Failure remains `status: download_failed` and `reason: all_sources_failed`, now
-with the same ordered attempts. An incomplete temp file is not writer success
-and is not an accepted source. `quasi-download accept` continues to own
-publication into `sources/`.
+An incomplete temp file is not writer success and is not an accepted source.
+`quasi-download accept` continues to own publication into `sources/`.
 
 ## Tests
 
@@ -97,8 +94,7 @@ Focused tests must prove:
 - final URL parsing accepts the supported Anna shapes and rejects another
   `/slow_download/` URL;
 - the cascade reaches Slow only after Fast rotations and LibGen fail, passes the
-  partner URL as Referer, stops on first valid success, and reports ordered
-  attempts;
+  partner URL as Referer, and stops on first valid success;
 - an interrupted or HTML transfer never becomes a successful temp result;
 - invalid containers never become a successful temp result;
 - existing Fast and LibGen success paths remain ahead of Slow and continue to
@@ -113,6 +109,7 @@ artifact contract changes.
 - Anna waitlist or countdown support.
 - Persistent browser cookies or a reusable browser daemon.
 - Persistent partial files, Range resume, or a new payload-digest policy.
+- Provider-attempt JSON, quota-result normalization, or source-name changes.
 - Copying Shelfmark's global URL rotation, four-failure threshold, in-memory
   whole-book buffer, or retry/watchdog constants.
 - Independent LibGen search, WeLib, Z-Library, torrent, or Usenet providers.
