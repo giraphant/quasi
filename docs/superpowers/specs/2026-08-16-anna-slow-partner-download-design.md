@@ -8,11 +8,6 @@ quasi never opens Anna's `/md5/{md5}` detail page and therefore never sees the
 public Slow Partner links. LibGen is only a transport fallback for the same MD5
 and has materially smaller coverage than Anna's partner inventory.
 
-Slow Partner downloads may continue making progress for longer than one
-Workflow specialist invocation. The existing stream helper truncates its
-destination on every retry, so a killed invocation cannot contribute durable
-progress to the next one.
-
 ## Scope
 
 Add one deterministic final fallback to `quasi-download book fetch`:
@@ -62,32 +57,20 @@ No-wait means only that quasi does not join a queue. If a selected page contains
 only a countdown or waitlist, this version records that partner as unavailable
 and proceeds to the next no-wait partner without sleeping.
 
-## Durable transfer
+## Transfer boundary
 
-The Book stream helper downloads into a sibling `<destination>.part` file. The
-part file is the only recovery state; there is no cursor or sidecar manifest.
+The resolved file URL goes through the existing foreground Book stream helper,
+with the Slow Partner page supplied as `Referer`. Its current behavior remains
+unchanged: transient failures retry the complete transfer, an HTML payload is
+removed, files below the existing minimum are rejected, and the promised
+PDF/EPUB container is checked before the temp path is returned.
 
-- With no part file, request the complete file and write it from byte zero.
-- With a non-empty part file, request `Range: bytes=<size>-`.
-- A coherent `206 Partial Content` appends to the part file.
-- A `200 OK` response to a Range request means the server ignored Range; truncate
-  the part and restart from byte zero using that response.
-- An incoherent `Content-Range`, HTML response, or deterministic 4xx response
-  rejects that transfer. HTML removes the part because it is not book data.
-- Network interruption and host termination leave the part intact. A later
-  invocation re-enters through the same exact temp destination and resumes.
-- Once transfer completes, validate the promised PDF/EPUB container and compare
-  the completed file's MD5 with the Anna candidate MD5. Only then atomically
-  replace the canonical temp destination; mismatch removes the part.
-
-The digest check is necessary because several Anna transports for one candidate
-share the same part file. It also closes the existing gap where quasi validates
-the MD5 embedded in a LibGen URL but not the downloaded bytes themselves.
-
-The existing requests read timeout remains an inactivity timeout, not a total
-download deadline. A no-wait server that continues delivering bytes may run for
-as long as the host permits; if the host stops it, the next invocation resumes
-from disk. No `nohup`, detached child, or hidden long-running worker is used.
+There is no persistent `.part`, Range protocol, cursor, sidecar, background
+worker, or new digest policy. If the host interrupts a Slow transfer, that
+invocation fails; on a later invocation the existing invalid-temp preflight
+removes any incomplete destination and starts again. Persistent resume will be
+designed separately only if production evidence shows repeated host-lifetime
+failures on otherwise progressing no-wait transfers.
 
 ## Results and failure handling
 
@@ -100,9 +83,9 @@ non-empty error code; repeated Fast rotations may produce repeated
 `anna_archive` rows because they are distinct actual transport attempts.
 
 Failure remains `status: download_failed` and `reason: all_sources_failed`, now
-with the same ordered attempts. A retained `.part` is recoverable progress, not
-proof of a successful writer or an accepted source. `quasi-download accept`
-continues to own publication into `sources/`.
+with the same ordered attempts. An incomplete temp file is not writer success
+and is not an accepted source. `quasi-download accept` continues to own
+publication into `sources/`.
 
 ## Tests
 
@@ -116,11 +99,8 @@ Focused tests must prove:
 - the cascade reaches Slow only after Fast rotations and LibGen fail, passes the
   partner URL as Referer, stops on first valid success, and reports ordered
   attempts;
-- an interrupted transfer leaves `.part`, a later invocation sends the exact
-  Range header, and a valid `206` appends;
-- a server that ignores Range with `200` restarts cleanly rather than appending;
-- invalid `Content-Range`, HTML, wrong MD5, and invalid containers never publish
-  the canonical temp output;
+- an interrupted or HTML transfer never becomes a successful temp result;
+- invalid containers never become a successful temp result;
 - existing Fast and LibGen success paths remain ahead of Slow and continue to
   pass their current validation.
 
@@ -132,6 +112,7 @@ artifact contract changes.
 
 - Anna waitlist or countdown support.
 - Persistent browser cookies or a reusable browser daemon.
+- Persistent partial files, Range resume, or a new payload-digest policy.
 - Copying Shelfmark's global URL rotation, four-failure threshold, in-memory
   whole-book buffer, or retry/watchdog constants.
 - Independent LibGen search, WeLib, Z-Library, torrent, or Usenet providers.
