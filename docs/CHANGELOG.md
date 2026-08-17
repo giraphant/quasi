@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.16** (2026-08-17): **生成的 Workflow 入口兼容 provider bridge 对结构化 `args` 的单层 JSON 编码。**
+  - GLM 5.2/5.3 的 Workflow tool call 会在进入原生 runtime 前把 object `args` 生成为 JSON string；同一 Claude Code 版本下 GPT 与 Claude 仍直接传 object，因此这不是 named Workflow 或 Claude Code runtime 的通用序列化变化。七个公共入口现在只在唯一的生成边界解析一层字符串，正常 object 路径保持不变，也不再需要临时 wrapper。
+  - 解析后的值仍进入原有 closed-envelope parser；畸形 JSON、双重编码、数组、基本类型与未知字段继续在零 Agent dispatch 时返回 `material.invalid_input`。Skill 的 object 正规合同和各材料领域 parser 均未放宽。
+
 - **0.65.15** (2026-08-16): **Book 下载在 Fast 与 LibGen 均失败后会继续尝试 Anna 的 no-wait Slow Partner。**
   - 下载器按 Anna 详情页的 DOM 顺序发现全部 `no waitlist` partner，逐页解析 `Download now`、download attribute、clipboard、location 与可见 URL 五种实际出口，并把 partner 页作为最终文件请求的 Referer；已有的容器校验、最小大小检查与失败临时文件清理继续作为统一验收边界。
   - Slow 详情页仍先走普通 HTTP，只有确认遭遇挑战才使用受监督、有限时的 headless browser；详情页以真实 `main-inner` 内容判定完成，Slow 页直接复用最终 URL parser 判定完成。landing link 必须与 Anna 详情页同源，畸形 URL 只跳过当前候选；本版不加入 waitlist、后台下载、断点续传或另一套 provider 状态机。
