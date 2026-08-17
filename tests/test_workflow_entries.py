@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -156,6 +157,33 @@ def test_generated_named_workflow_returns_its_source_entry_result(entry: str) ->
     generated = run_generated_workflow(entry, value, outputs)
 
     assert generated == source
+
+
+@pytest.mark.parametrize("entry", ENTRIES)
+def test_generated_named_workflow_accepts_one_json_string_transport_layer(
+    entry: str,
+) -> None:
+    value, outputs = _abi_case(entry)
+
+    direct = run_generated_workflow(entry, value, outputs)
+    encoded = run_generated_workflow(entry, json.dumps(value), outputs)
+
+    assert encoded == direct
+
+
+@pytest.mark.parametrize("transport", ("malformed", "double_encoded"))
+def test_generated_named_workflow_rejects_invalid_string_transports(
+    transport: str,
+) -> None:
+    value: str = "{"
+    if transport == "double_encoded":
+        value = json.dumps(json.dumps(_entry_input("paper")))
+
+    report = run_generated_workflow("paper", value)
+
+    assert report["agentCalls"] == 0
+    assert report["value"]["terminal"] == "blocked"
+    assert report["value"]["issue"]["code"] == "material.invalid_input"
 
 
 def test_generated_book_recovers_the_qualified_chapter_observation_mismatch() -> None:

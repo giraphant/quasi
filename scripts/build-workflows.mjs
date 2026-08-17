@@ -151,7 +151,16 @@ export const meta = ${JSON.stringify(workflowMeta, null, 2)}
 
 ${bundledSource}
 
-return await __quasiWorkflow.run({ agent, pipeline }, args)
+const __quasiArgs = (() => {
+  if (typeof args !== "string") return args
+  try {
+    return JSON.parse(args)
+  } catch {
+    return args
+  }
+})()
+
+return await __quasiWorkflow.run({ agent, pipeline }, __quasiArgs)
 `;
 
   await validateRuntimeBundle(generated);
