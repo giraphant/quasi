@@ -273,11 +273,15 @@ const bindSearchReceipt = (
   state: BookState,
   receipt: StageReceipt,
 ): void => {
-  state.identity = receipt.identity as BookIdentity;
+  const search = receipt.terminal as unknown as {
+    identity: BookIdentity;
+    owner_slug: string | null;
+  };
+  state.identity = search.identity;
   state.runtimeSlug =
-    receipt.local_owner === null
+    search.owner_slug === null
       ? state.identity.slug
-      : receipt.local_owner.vault_slug;
+      : search.owner_slug;
   state.observation =
     input.observations.get(
       observationKey({ kind: "book", slug: state.runtimeSlug as string }),
@@ -512,6 +516,9 @@ async function runBookPlanResult(
     if (searchStop !== null) return searchStop;
     const receipt = searched.receipt as StageReceipt;
     bindSearchReceipt(input, state, receipt);
+    const search = receipt.terminal as unknown as {
+      owner_slug: string | null;
+    };
     if (
       input.seed.state === "canonical" &&
       identityDecision === null &&
@@ -523,10 +530,10 @@ async function runBookPlanResult(
         isbn: input.seed.identity.isbn,
       };
     rememberContinuation(resumeSeed(input, state));
-    if (receipt.local_owner !== null)
+    if (search.owner_slug !== null)
       return completeMaterialResult(
         resultSeed(state),
-        [{ role: "overview", path: receipt.local_owner.path }],
+        [{ role: "overview", path: bookOverviewPath(search.owner_slug) }],
         null,
       );
     if (state.observation === null)
@@ -600,11 +607,14 @@ async function runBookPlanResult(
           if (searchStop !== null) return searchStop;
           const receipt = searched.receipt as StageReceipt;
           bindSearchReceipt(input, state, receipt);
+          const search = receipt.terminal as unknown as {
+            owner_slug: string | null;
+          };
           rememberContinuation(resumeSeed(input, state));
-          if (receipt.local_owner !== null)
+          if (search.owner_slug !== null)
             return completeMaterialResult(
               resultSeed(state),
-              [{ role: "overview", path: receipt.local_owner.path }],
+              [{ role: "overview", path: bookOverviewPath(search.owner_slug) }],
               null,
             );
         }

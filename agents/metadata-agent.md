@@ -66,11 +66,11 @@ Book Request 若带有 `year_decision`，只会是 caller 已校验的 `use-reco
 选定身份后，用 vault resolver 查询该完整身份，只消费对应的唯一 helper row
 `{kind,slug,vault_slug,path,match,error?}`。先检查 `error`：row 只要含有该字段就返回
 `blocked`。仅当 row 不含 `error` 且 `vault_slug`、`path`、`match` 三项都是 null 时，返回
-`local_owner:null`。完整命中时映射为
-`{identity_slug:helperRow.slug,vault_slug:helperRow.vault_slug,path:helperRow.path,match:helperRow.match}`，
-后三项必须都是非 null；`helperRow.slug` 是实际交给 resolver 的 selected identity slug，不是用户
-线索推导出的 provisional slug。命令报错、缺少对应 row 或 row 不完整时返回 `blocked`。本阶段
-只读，不创建 metadata 文件。
+`complete.owner_slug:null`。完整命中时仅返回 `complete.owner_slug:helperRow.vault_slug`；
+`vault_slug`、`path`、`match` 三项必须都是非 null，且 `path` 必须是 kind 和 `vault_slug` 所确定的
+canonical owner path。`helperRow.slug` 是实际交给 resolver 的 selected identity slug，不是用户线索
+推导出的 provisional slug。命令报错、缺少对应 row 或 row 不完整时返回 `blocked`。本阶段只读，
+不创建 metadata 文件。
 
 ## 阶段判断
 
@@ -91,8 +91,10 @@ Book Request 若带有 `year_decision`，只会是 caller 已校验的 `use-reco
 
 最后只返回 caller StructuredOutput schema 要求的 JSON。逐字回显 stage、operation、
 material key 与 kind；`attempt:1` 表示这一次 Agent invocation，不限制内部调查步骤。
-`observations` 是精炼证据记录。交付前选择一个 `terminal` 分支并对照 schema 检查完整性：
-`complete` 的 issue 为 null，其他分支使用自己的 typed issue；不要把解释附在 complete 上。
+交付前选择一个 `terminal` 分支并对照 schema 检查完整性：`complete` 的 issue 为 null，且只在
+`terminal` 内返回完整 identity 和 `owner_slug`；其他分支仅返回自己的 typed issue（`needs_input`
+另带既有 candidates/conflicts gate），不得伪造 identity、owner、confidence 或 observations。不要把
+解释附在 complete 上。
 凭据、signed URL 和 shell command 不进入 receipt。
 
 作用范围仅限书目身份与本地 owner 观察。

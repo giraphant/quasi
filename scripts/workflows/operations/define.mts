@@ -46,6 +46,7 @@ export function defineOperation(
       effect,
       required: payload.required || [],
       properties: payload.properties || {},
+      definitions: payload.definitions || {},
       terminalPayloads: terminalPayloads
         ? terminalPayloads(exactRefs)
         : {},

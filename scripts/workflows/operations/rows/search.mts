@@ -51,43 +51,61 @@ const identitySchema: AnyFunction = (kind) => ({
   },
 });
 
-const typedIdentitySchema: AnyFunction = (kind) => ({
+const identityDefinition: AnyFunction = (kind, requestedKind) =>
+  kind === requestedKind ? "identity" : "book_identity";
+
+const typedIdentitySchema: AnyFunction = (kind, requestedKind) => ({
   type: "object",
   additionalProperties: false,
   required: ["kind", "identity"],
   properties: {
     kind: { const: kind },
-    identity: identitySchema(kind),
+    identity: {
+      $ref: `#/definitions/${identityDefinition(kind, requestedKind)}`,
+    },
   },
 });
 
 const candidateSchema: AnyFunction = (requestedKind) =>
   requestedKind === "paper"
     ? {
-        anyOf: [typedIdentitySchema("paper"), typedIdentitySchema("book")],
+        anyOf: [
+          typedIdentitySchema("paper", requestedKind),
+          typedIdentitySchema("book", requestedKind),
+        ],
       }
-    : typedIdentitySchema("book");
+    : typedIdentitySchema("book", requestedKind);
 
-const localOwnerSchema = {
-  type: ["object", "null"],
+const ownerSlugSchema = {
+  type: ["string", "null"],
+  pattern: MATERIAL_SLUG_PATTERN,
+};
+
+const searchIssueSchema = {
+  type: "object",
   additionalProperties: false,
-  required: ["identity_slug", "vault_slug", "path", "match"],
+  required: ["code", "operation", "summary", "user_question", "retryable"],
   properties: {
-    identity_slug: { type: "string", pattern: MATERIAL_SLUG_PATTERN },
-    vault_slug: { type: "string", pattern: MATERIAL_SLUG_PATTERN },
-    path: { type: "string", maxLength: 2048 },
-    match: { type: "string", enum: ["slug", "isbn", "doi", "title"] },
+    code: { type: "string", minLength: 1, maxLength: 200 },
+    operation: { const: "material.search" },
+    summary: { type: "string", minLength: 1, maxLength: 4000 },
+    user_question: { type: ["string", "null"], maxLength: 4000 },
+    retryable: { type: "boolean" },
   },
 };
 
-const validLocalOwner: AnyFunction = (owner, kind, identitySlug) => {
-  if (owner === null) return true;
-  const expected =
-    kind === "book"
-      ? `vault/books/${owner.vault_slug}/00-overview.md`
-      : `vault/papers/${owner.vault_slug}.md`;
-  return owner.identity_slug === identitySlug && owner.path === expected;
-};
+const searchDefinitions: AnyFunction = (kind) => ({
+  identity: identitySchema(kind),
+  ...(kind === "paper"
+    ? { book_identity: identitySchema("book") }
+    : {}),
+  issue: searchIssueSchema,
+  conflict_issue: issueSchema(
+    "material.search",
+    "material.identity_conflict",
+    { questionRequired: true },
+  ),
+});
 
 export const materialSearchOperationRows: OperationRow[] = [
   {
@@ -148,37 +166,24 @@ export const materialSearchOperationRows: OperationRow[] = [
       yearDecision: yearDecision || null,
     }),
     payloadProperties: ({ kind }) => ({
-      required: ["kind", "identity", "local_owner", "confidence", "observations"],
+      required: ["kind"],
       properties: {
         kind: { const: kind },
-        identity: { ...identitySchema(kind), type: ["object", "null"] },
-        local_owner: localOwnerSchema,
-        confidence: { type: "string", enum: ["high", "medium", "low"] },
-        observations: {
-          type: "array",
-          maxItems: 64,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["source", "query", "summary"],
-            properties: {
-              source: { type: "string", minLength: 1, maxLength: 200 },
-              query: { type: "string", minLength: 1, maxLength: 1000 },
-              summary: { type: "string", minLength: 1, maxLength: 2000 },
-            },
-          },
-        },
       },
+      definitions: searchDefinitions(kind),
     }),
     terminalPayloads: ({ kind }) => ({
+      complete: {
+        required: ["identity", "owner_slug"],
+        properties: {
+          identity: { $ref: "#/definitions/identity" },
+          owner_slug: ownerSlugSchema,
+        },
+      },
       needs_input: {
         required: ["candidates", "conflicts"],
         properties: {
-          issue: issueSchema(
-            "material.search",
-            "material.identity_conflict",
-            { questionRequired: true },
-          ),
+          issue: { $ref: "#/definitions/conflict_issue" },
           candidates: {
             type: "array",
             minItems: 1,
@@ -195,24 +200,27 @@ export const materialSearchOperationRows: OperationRow[] = [
           },
         },
       },
+      blocked: { properties: { issue: { $ref: "#/definitions/issue" } } },
+      failed: { properties: { issue: { $ref: "#/definitions/issue" } } },
     }),
-    complete: (receipt, context) =>
-      !!receipt.identity &&
-      ["high", "medium"].includes(receipt.confidence) &&
-      receipt.identity.confidence === receipt.confidence &&
-      (context.identityDecision === null ||
-        sameClosedValue(
-          receipt.identity,
-          context.identityDecision.selected_candidate.identity,
-        )) &&
-      (context.yearDecision === null ||
-        receipt.identity.year ===
-          context.yearDecision.year_evidence.recommended_year) &&
-      validLocalOwner(
-        receipt.local_owner,
-        receipt.kind,
-        receipt.identity.slug,
-      ),
+    complete: (receipt, context) => {
+      const terminal = receipt.terminal as unknown as {
+        status: string;
+        identity: { year: number };
+      };
+      return (
+        terminal.status === "complete" &&
+        !!terminal.identity &&
+        (context.identityDecision === null ||
+          sameClosedValue(
+            terminal.identity,
+            context.identityDecision.selected_candidate.identity,
+          )) &&
+        (context.yearDecision === null ||
+          terminal.identity.year ===
+            context.yearDecision.year_evidence.recommended_year)
+      );
+    },
     envelope: (_context, refs) => ({
       schema_version: "quasi.stage.request/0.2",
       operation: "material.search",

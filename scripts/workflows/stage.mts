@@ -129,6 +129,7 @@ interface StageReceiptDefinition {
   effect: string;
   required?: string[];
   properties?: WorkflowContext;
+  definitions?: WorkflowContext;
   terminalPayloads?: WorkflowContext;
 }
 
@@ -175,6 +176,7 @@ export function stageReceiptPartition({
   effect,
   required = [],
   properties = {},
+  definitions = {},
   terminalPayloads = {},
 }: StageReceiptDefinition): StageReceiptPartition {
   const fullSchema = annotateConstTypes({
@@ -200,6 +202,12 @@ export function stageReceiptPartition({
       ...properties,
       terminal: stageTerminalSchema(operation, terminalPayloads),
     },
+    ...(Object.keys(definitions).length === 0
+      ? {}
+      : {
+          $schema: "http://json-schema.org/draft-07/schema#",
+          definitions,
+        }),
   });
   return partitionStageReceiptSchema(fullSchema);
 }

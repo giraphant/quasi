@@ -352,11 +352,15 @@ async function runPaperPlanResult(
     if (searchStop !== null) return searchStop;
 
     const receipt = searched.receipt as StageReceipt;
-    state.identity = receipt.identity as PaperIdentity;
+    const search = receipt.terminal as unknown as {
+      identity: PaperIdentity;
+      owner_slug: string | null;
+    };
+    state.identity = search.identity;
     const runtimeSlug: string =
-      receipt.local_owner === null
+      search.owner_slug === null
         ? state.identity.slug
-        : receipt.local_owner.vault_slug;
+        : search.owner_slug;
     state.runtimeSlug = runtimeSlug;
     state.observation =
       input.observations.get(
@@ -364,7 +368,7 @@ async function runPaperPlanResult(
       ) ?? null;
     rememberContinuation(resumeSeed(input, state));
 
-    if (receipt.local_owner !== null)
+    if (search.owner_slug !== null)
       return auditPaper(runtime, input, state, null);
   }
 

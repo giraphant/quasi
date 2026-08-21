@@ -426,15 +426,16 @@ def _search_output(
     kind: str,
     *,
     identity_slug: str,
-    local_owner: dict[str, Any] | None,
+    owner_slug: str | None,
     year: int = 2024,
 ) -> dict[str, Any]:
     return {
-        "identity": _search_identity(kind, slug=identity_slug, year=year),
-        "local_owner": local_owner,
-        "confidence": "high",
-        "observations": [],
-        "terminal": {"status": "complete", "issue": None},
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "identity": _search_identity(kind, slug=identity_slug, year=year),
+            "owner_slug": owner_slug,
+        },
     }
 
 
@@ -511,7 +512,7 @@ def _search_status_output(status: str) -> dict[str, Any]:
         return _search_output(
             "paper",
             identity_slug="selected-paper",
-            local_owner=None,
+            owner_slug=None,
         )
     issue = {
         "code": (
@@ -542,23 +543,17 @@ def _search_status_output(status: str) -> dict[str, Any]:
                 "conflicts": ["title"],
             }
         )
-    return {
-        "identity": None,
-        "local_owner": None,
-        "confidence": "low",
-        "observations": [],
-        "terminal": terminal,
-    }
+    return {"terminal": terminal}
 
 
-def test_search_null_owner_is_a_coherent_observed_miss() -> None:
+def test_search_complete_accepts_null_owner_slug_as_an_observed_miss() -> None:
     report = _dispatch(
         {
             "invocation": _invocation("material.search", kind="paper"),
             "model_output": _search_output(
                 "paper",
                 identity_slug="selected-paper",
-                local_owner=None,
+                owner_slug=None,
             ),
         }
     )
@@ -566,51 +561,50 @@ def test_search_null_owner_is_a_coherent_observed_miss() -> None:
     assert report["result"]["kind"] == "receipt"
 
 
-def test_search_owner_schema_does_not_encode_a_hit_with_null_fields() -> None:
-    owner_schema = _prepare("material.search")["options"]["schema"]["properties"][
-        "local_owner"
-    ]
+@pytest.mark.parametrize("kind", ["paper", "book"])
+def test_material_search_model_schema_stays_under_claude_auto_cap(kind: str) -> None:
+    """Catches a regression that inlines canonical identities per terminal."""
+    schema = _prepare("material.search", kind=kind)["options"]["schema"]
 
-    assert owner_schema["type"] == ["object", "null"]
-    for field in ("vault_slug", "path", "match"):
-        assert owner_schema["properties"][field]["type"] == "string"
+    assert len(json.dumps(schema, ensure_ascii=False, separators=(",", ":"))) <= 4096
 
 
-def test_search_complete_rejects_an_owner_for_a_different_identity() -> None:
-    report = _dispatch(
-        {
-            "invocation": _invocation("material.search", kind="paper"),
-            "model_output": _search_output(
-                "paper",
-                identity_slug="selected-paper",
-                local_owner={
-                    "identity_slug": "different-paper",
-                    "vault_slug": "existing-paper",
-                    "path": "vault/papers/existing-paper.md",
-                    "match": "doi",
-                },
-            ),
-        }
+@pytest.mark.parametrize("status", ["needs_input", "blocked", "failed"])
+def test_search_non_complete_model_schema_excludes_legacy_fake_identity_fields(
+    status: str,
+) -> None:
+    """Catches a regression that makes non-complete outputs carry fake facts."""
+    schema = _prepare("material.search", kind="paper")["options"]["schema"]
+    branch = _terminal_branches(_prepare("material.search", kind="paper"))[status]
+
+    assert schema["additionalProperties"] is False
+    assert set(schema["properties"]) == {"terminal"}
+    assert all(
+        field not in branch["properties"]
+        for field in ("identity", "local_owner", "confidence", "observations")
     )
 
-    assert report["result"]["kind"] == "incoherent_complete"
+
+def test_search_complete_schema_excludes_the_removed_owner_object_shape() -> None:
+    schema = _prepare("material.search", kind="paper")["options"]["schema"]
+    complete = _terminal_branches(_prepare("material.search", kind="paper"))["complete"]
+
+    assert schema["additionalProperties"] is False
+    assert complete["additionalProperties"] is False
+    assert set(complete["required"]) == {"status", "issue", "identity", "owner_slug"}
+    assert "local_owner" not in complete["properties"]
 
 
 @pytest.mark.parametrize(
-    ("kind", "vault_slug", "path"),
+    ("kind", "vault_slug"),
     [
-        ("paper", "existing-paper", "vault/papers/existing-paper.md"),
-        (
-            "book",
-            "existing-book",
-            "vault/books/existing-book/00-overview.md",
-        ),
+        ("paper", "existing-paper"),
+        ("book", "existing-book"),
     ],
 )
-def test_search_complete_accepts_identity_bound_to_a_different_vault_slug(
+def test_search_complete_accepts_one_owner_slug_bound_to_the_identity(
     kind: str,
     vault_slug: str,
-    path: str,
 ) -> None:
     report = _dispatch(
         {
@@ -618,12 +612,7 @@ def test_search_complete_accepts_identity_bound_to_a_different_vault_slug(
             "model_output": _search_output(
                 kind,
                 identity_slug="selected-identity",
-                local_owner={
-                    "identity_slug": "selected-identity",
-                    "vault_slug": vault_slug,
-                    "path": path,
-                    "match": "title",
-                },
+                owner_slug=vault_slug,
             ),
         }
     )
@@ -1009,7 +998,8 @@ def test_webpage_audit_targets_only_the_canonical_page() -> None:
 
 
 def test_material_search_stage_terminal_union_has_four_closed_branches() -> None:
-    branches = _terminal_branches(_prepare("material.search"))
+    prepared = _prepare("material.search")
+    branches = _terminal_branches(prepared)
 
     assert set(branches) == {"complete", "needs_input", "blocked", "failed"}
     for branch in branches.values():
@@ -1024,12 +1014,20 @@ def test_material_search_stage_terminal_union_has_four_closed_branches() -> None
         "user_question",
         "retryable",
     }
-    for status in ("needs_input", "blocked", "failed"):
-        issue = branches[status]["properties"]["issue"]
+    definitions = prepared["options"]["schema"]["definitions"]
+    for definition in ("issue", "conflict_issue"):
+        issue = definitions[definition]
         assert issue["type"] == "object"
         assert issue["additionalProperties"] is False
         assert set(issue["required"]) == issue_fields
         assert set(issue["properties"]) == issue_fields
+    assert branches["needs_input"]["properties"]["issue"] == {
+        "$ref": "#/definitions/conflict_issue"
+    }
+    for status in ("blocked", "failed"):
+        assert branches[status]["properties"]["issue"] == {
+            "$ref": "#/definitions/issue"
+        }
 
 
 @pytest.mark.parametrize(
@@ -1746,7 +1744,7 @@ def test_search_owner_reconcile_requires_the_selected_identity() -> None:
             "model_output": _search_output(
                 "paper",
                 identity_slug="selected-paper",
-                local_owner=None,
+                owner_slug=None,
             ),
         }
     )
@@ -1756,7 +1754,7 @@ def test_search_owner_reconcile_requires_the_selected_identity() -> None:
             "model_output": _search_output(
                 "paper",
                 identity_slug="different-paper",
-                local_owner=None,
+                owner_slug=None,
             ),
         }
     )
@@ -1779,7 +1777,7 @@ def test_book_year_search_requires_the_recommended_year_then_uses_owner_proof():
             "model_output": _search_output(
                 "book",
                 identity_slug="metadata-book-2024",
-                local_owner=None,
+                owner_slug=None,
                 year=2024,
             ),
         }
@@ -1790,12 +1788,7 @@ def test_book_year_search_requires_the_recommended_year_then_uses_owner_proof():
             "model_output": _search_output(
                 "book",
                 identity_slug="metadata-book-2025",
-                local_owner={
-                    "identity_slug": "metadata-book-2025",
-                    "vault_slug": "existing-vault-owner",
-                    "path": "vault/books/existing-vault-owner/00-overview.md",
-                    "match": "isbn",
-                },
+                owner_slug="existing-vault-owner",
                 year=2025,
             ),
         }

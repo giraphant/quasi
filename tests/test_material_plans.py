@@ -268,20 +268,12 @@ def book_search_complete(
     owner_slug: str | None = None,
 ) -> dict[str, Any]:
     return {
-        "identity": deepcopy(identity),
-        "local_owner": (
-            {
-                "identity_slug": identity["slug"],
-                "vault_slug": owner_slug,
-                "path": f"vault/books/{owner_slug}/00-overview.md",
-                "match": "isbn",
-            }
-            if owner_slug is not None
-            else None
-        ),
-        "confidence": identity["confidence"],
-        "observations": [],
-        "terminal": {"status": "complete", "issue": None},
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "identity": deepcopy(identity),
+            "owner_slug": owner_slug,
+        },
     }
 
 
@@ -293,10 +285,6 @@ def book_search_needs_input() -> dict[str, Any]:
         "isbn": "9780000000001",
     }
     return {
-        "identity": None,
-        "local_owner": None,
-        "confidence": "low",
-        "observations": [],
         "terminal": {
             "status": "needs_input",
             "issue": {
@@ -737,10 +725,6 @@ def identity_decision(selected: dict[str, Any]) -> dict[str, Any]:
 
 def search_needs_input() -> dict[str, Any]:
     return {
-        "identity": None,
-        "local_owner": None,
-        "confidence": "low",
-        "observations": [],
         "terminal": {
             "status": "needs_input",
             "issue": {
@@ -764,22 +748,13 @@ def search_complete(
     *,
     owner_slug: str | None = None,
 ) -> dict[str, Any]:
-    owner = (
-        {
-            "identity_slug": identity["slug"],
-            "vault_slug": owner_slug,
-            "path": f"vault/papers/{owner_slug}.md",
-            "match": "doi",
-        }
-        if owner_slug is not None
-        else None
-    )
     return {
-        "identity": deepcopy(identity),
-        "local_owner": owner,
-        "confidence": identity["confidence"],
-        "observations": [],
-        "terminal": {"status": "complete", "issue": None},
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "identity": deepcopy(identity),
+            "owner_slug": owner_slug,
+        },
     }
 
 
