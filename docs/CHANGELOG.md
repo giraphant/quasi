@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.21** (2026-08-21): **Paper 恢复不再被 Wayback 超时截断，也不会从精确 DOI 漂移到另一篇作品。**
+  - Wayback 的 urllib JSON 读取在 Python 3.9 会抛出独立的 `socket.timeout`；先前只捕获 `TimeoutError`，因此该可选 provider 超时会让整个 fetch 崩溃，尚未运行的 Kagi 恢复也随之消失。该异常现在与其它 provider miss 一样 fail-soft，后续 cascade 继续。
+  - Caller 已提供 DOI 时，它仍是 Paper 的精确 identity：Kagi 可以贡献同一作品的替代 URL，但发现的其它 DOI 不再启动第二套 OA、Sci-Hub、publisher 与 EZProxy cascade。无 DOI 请求仍可使用 Kagi 发现的 DOI。
+  - `paper diagnose` 的 Cloudflare 证据只归属其 exact route；`mode:"direct"` 且 `ezproxy.attempted:false` 不再被 Download Agent 概括为整个 EZProxy 或 fetch cascade 都遭 Cloudflare 阻断。
+
 - **0.65.20** (2026-08-21): **Anna 的挑战跳转暂时没有文档时继续等待，不再提前结束浏览器恢复。**
   - SeleniumBase 读取页面源码时只等待 `<html>` 一秒；DDoS-Guard 替换 document 的短暂空档因此会抛出 `TimeoutError`，而浏览器 helper 先前把它当成整次挑战失败，尚未用完既有 75 秒预算便返回 `ddos_guard_challenge`。
   - Anna 的观察循环现在只把该暂态视为未稳定并继续轮询；启动、导航及其它异常仍 fail closed，75 秒挑战预算与 120 秒进程预算均未放宽。相同 Dhanjani 搜索在旧逻辑下复现 `{html}` 超时，容错后跨过两次空档并取得含有效 MD5 结果的 780KB 页面。
