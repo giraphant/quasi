@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.18** (2026-08-21): **正常经过 Cloudflare CDN 的出版社页面不再被误判为挑战页。**
+  - Paper 下载先前只要看到普通响应的 `Server: cloudflare` 或 `CF-Ray` 就报告 `PUBLISHER_CLOUDFLARE_CHALLENGE`；SAGE 等正常页面本来就携带这些 CDN 头，因此 EZProxy 已成功取得的文章页也会被提前丢弃。
+  - 挑战识别现在使用 Cloudflare 的正式响应合同 `CF-Mitigated: challenge`。真实挑战继续停止，普通 Cloudflare HTML/PDF 则进入既有 PDF、citation link、正文 fallback 与身份核验；本版不加入浏览器绕过、Wayback 修复或新的重试层。
+
 - **0.65.17** (2026-08-21): **长任务保留调用时限，Paper / Book Search 不再因回执重复字段超出 Auto schema 上限。**
   - PreToolUse Bash hook 的 `updatedInput` 会替换完整 tool input；先前只返回改写后的 `command`，因此 Agent 明确传入的 `timeout`、`run_in_background` 与其它 Bash 参数会被静默丢弃，长下载、OCR 和翻译随后回落到默认两分钟并以 exit 143 结束。Hook 现在复制原始 input、只替换 `command`，既有环境注入与密钥边界不变。
   - `material.search` 的模型回执只在 complete terminal 返回完整 identity 与唯一 `owner_slug`；重复的顶层 confidence、调查 observations、owner identity/path/match 不再要求模型抄写，owner path 由 kind 与 slug 确定性派生。`needs_input` 的完整候选、冲突字段、问题以及 identity / year decision 语义保持不变。
