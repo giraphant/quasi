@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import io
 import json
 import importlib.util
@@ -3303,6 +3304,65 @@ def test_verify_doi_only_request_keeps_old_scan_flow():
         "an old scan with no printed doi",
         expected_doi="10.5840/philtopics19962427",
     ) is True
+
+
+def test_verify_pdf_rechecks_sparse_extracted_text_with_first_page_ocr(
+    monkeypatch,
+):
+    mod = _load_module(DOWNLOAD, "verify_gate_sparse_scan_under_test")
+    monkeypatch.setattr(
+        mod,
+        "_extract_pdf_text",
+        lambda *args, **kwargs: "scanned journal page 1 1996",
+    )
+    monkeypatch.setattr(
+        mod,
+        "_ocr_pdf_first_page",
+        lambda *args, **kwargs: _RIGHT_PAPER_TEXT,
+        raising=False,
+    )
+
+    assert mod.verify_pdf_content("old-scan.pdf", **_CLARKE_IDENTITY) is True
+
+
+def test_verify_pdf_does_not_let_ocr_override_substantial_wrong_text(
+    monkeypatch,
+):
+    mod = _load_module(DOWNLOAD, "verify_gate_wrong_text_no_ocr_under_test")
+    monkeypatch.setattr(
+        mod,
+        "_extract_pdf_text",
+        lambda *args, **kwargs: _WRONG_PAPER_TEXT * 8,
+    )
+    monkeypatch.setattr(
+        mod,
+        "_ocr_pdf_first_page",
+        lambda *args, **kwargs: _RIGHT_PAPER_TEXT,
+        raising=False,
+    )
+
+    assert mod.verify_pdf_content("wrong-paper.pdf", **_CLARKE_IDENTITY) is False
+
+
+def test_first_page_ocr_fails_soft_when_pymupdf_is_unavailable(monkeypatch):
+    mod = _load_module(DOWNLOAD, "verify_gate_ocr_no_pymupdf_under_test")
+    original_import = builtins.__import__
+
+    def unavailable_fitz(name, *args, **kwargs):
+        if name == "fitz":
+            raise ImportError("fitz unavailable")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", unavailable_fitz)
+    error = None
+    result = None
+    try:
+        result = mod._ocr_pdf_first_page("old-scan.pdf")
+    except ImportError as caught:
+        error = caught
+
+    assert error is None
+    assert result == ""
 
 
 def _stub_paper_network(mod, monkeypatch):

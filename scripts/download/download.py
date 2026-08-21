@@ -1120,6 +1120,42 @@ def _extract_pdf_text(pdf_path, max_pages=2, allow_raw_fallback=True):
         return ""
 
 
+def _ocr_pdf_first_page(pdf_path):
+    """Return lightweight English OCR from page one, or empty text.
+
+    This is an identity-check fallback for old scanned papers, not the
+    extraction pipeline.  It is deliberately bounded to one page and fails
+    soft when PyMuPDF or tesseract is unavailable.
+    """
+    try:
+        import fitz
+
+        with fitz.open(pdf_path) as document:
+            if document.page_count < 1:
+                return ""
+            page = document.load_page(0)
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(3, 3), alpha=False)
+            image = pixmap.tobytes("png")
+
+        result = subprocess.run(
+            ["tesseract", "stdin", "stdout", "-l", "eng"],
+            input=image,
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout.decode("utf-8", errors="ignore")
+    except (
+        ImportError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+        OSError,
+        RuntimeError,
+    ):
+        pass
+    return ""
+
+
 def _extract_epub_text(epub_path, max_items=3):
     """Extract front text from an EPUB for lightweight book verification."""
     import zipfile
@@ -1345,8 +1381,26 @@ def verify_pdf_content(pdf_path, expected_author=None, expected_title=None,
     contract of `_verify_text_content`.
     """
     text = _extract_pdf_text(pdf_path)
-    return _verify_text_content(
+    verified = _verify_text_content(
         text,
+        expected_author,
+        expected_title,
+        expected_doi=expected_doi,
+    )
+    if verified or not text:
+        return verified
+
+    normalised_text = " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+    if len(normalised_text) >= 500:
+        return False
+
+    print("  Verify: sparse text; retrying identity with first-page OCR",
+          file=sys.stderr)
+    ocr_text = _ocr_pdf_first_page(pdf_path)
+    if not ocr_text:
+        return False
+    return _verify_text_content(
+        ocr_text,
         expected_author,
         expected_title,
         expected_doi=expected_doi,
