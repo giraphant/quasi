@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import importlib.util
@@ -530,6 +531,85 @@ def test_aa_browser_runs_headless_without_virtual_display():
         "lang": "en",
         "incognito": True,
     }
+
+
+def test_aa_browser_tolerates_transient_missing_html_before_results(
+    tmp_path,
+    monkeypatch,
+):
+    mod = _load_module(AA_BROWSER, "aa_browser_transient_dom_under_test")
+    result_html = (
+        '<html><body><a href="/md5/0123456789abcdef0123456789abcdef">'
+        "book</a></body></html>"
+    )
+
+    class FakePage:
+        def __init__(self):
+            self.source_reads = 0
+
+        async def get_title(self):
+            return "Anna's Archive"
+
+        async def evaluate(self, _script):
+            return "One result"
+
+        async def get_current_url(self):
+            return "https://annas-archive.pk/search?q=example"
+
+        async def get_page_source(self):
+            self.source_reads += 1
+            if self.source_reads <= 2:
+                raise asyncio.TimeoutError(
+                    "Time ran out while waiting for: {html}"
+                )
+            return result_html
+
+    page = FakePage()
+
+    class FakeDriver:
+        def __init__(self):
+            self.stopped = False
+
+        async def get(self, _url):
+            return page
+
+        def stop(self):
+            self.stopped = True
+
+    driver = FakeDriver()
+
+    async def start_async(**_options):
+        return driver
+
+    real_sleep = asyncio.sleep
+
+    async def fast_sleep(_seconds):
+        await real_sleep(0)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "seleniumbase",
+        SimpleNamespace(cdp_driver=SimpleNamespace(start_async=start_async)),
+    )
+    monkeypatch.setattr(mod.asyncio, "sleep", fast_sleep)
+    output = tmp_path / "search.html"
+
+    try:
+        solved = asyncio.run(
+            mod._fetch(
+                "https://annas-archive.pk/search?q=example",
+                output,
+                5.0,
+                "search",
+            )
+        )
+    except asyncio.TimeoutError:
+        pytest.fail("a transient missing document escaped the bounded poll loop")
+
+    assert solved is True
+    assert page.source_reads == 4
+    assert output.read_text(encoding="utf-8") == result_html
+    assert driver.stopped is True
 
 
 def test_aa_browser_settles_only_on_valid_results_or_explicit_empty_state():

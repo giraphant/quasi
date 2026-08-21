@@ -180,7 +180,12 @@ async def _fetch(url: str, output: Path, timeout: float, page_kind: str = "searc
 
         settled_observations = 0
         while time.monotonic() < deadline:
-            title, body, current_url, html = await _read_page(page)
+            try:
+                title, body, current_url, html = await _read_page(page)
+            except asyncio.TimeoutError:
+                settled_observations = 0
+                await asyncio.sleep(1.0)
+                continue
             if not _is_challenge(title, body) and _looks_like_settled_page(
                 page_kind,
                 current_url,
