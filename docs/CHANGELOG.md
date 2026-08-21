@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.22** (2026-08-21): **老扫描 Paper 不再因稀疏文本层被误判为错误论文。**
+  - Paper 身份核验先前只读取前两页文本层；Ferguson、Deutschmann 与 Kroker 的正确扫描 PDF 只能抽出 60–220 个字符，非空却不含题名/作者，因此三份文件都会作为 content mismatch 被删除。
+  - 强身份核验失败且文本明显稀疏时，下载器现在只对第一页做一次有界 English Tesseract OCR，再使用原有 DOI 或完整题名 + 作者合同复核；实测三份 15–31 页扫描件均通过。已有充分文本的错误论文不会进入 OCR，PyMuPDF 或 Tesseract 不可用时仍 fail closed。
+
 - **0.65.21** (2026-08-21): **Paper 恢复不再被 Wayback 超时截断，也不会从精确 DOI 漂移到另一篇作品。**
   - Wayback 的 urllib JSON 读取在 Python 3.9 会抛出独立的 `socket.timeout`；先前只捕获 `TimeoutError`，因此该可选 provider 超时会让整个 fetch 崩溃，尚未运行的 Kagi 恢复也随之消失。该异常现在与其它 provider miss 一样 fail-soft，后续 cascade 继续。
   - Caller 已提供 DOI 时，它仍是 Paper 的精确 identity：Kagi 可以贡献同一作品的替代 URL，但发现的其它 DOI 不再启动第二套 OA、Sci-Hub、publisher 与 EZProxy cascade。无 DOI 请求仍可使用 Kagi 发现的 DOI。
