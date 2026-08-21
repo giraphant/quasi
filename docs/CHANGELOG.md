@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.19** (2026-08-21): **EZProxy 的一种请求形式遭遇挑战时不再跳过同一候选的可用登录路径。**
+  - Paper 下载会先尝试已改写的出版社代理域名，再回退到 `login?url=`；先前第一种形式只要返回真实 Cloudflare challenge，就会直接结束整个候选，导致已由 CookieCloud 建立的登录路径永远没有执行。
+  - Cloudflare challenge 现在只终止当前 request form；同一候选会继续尝试既有的下一种形式，全部形式均失败后才停止。真实 Kim DOI 使用当前 CookieCloud cookies 与普通 `requests` 经 `login?url=` 返回 `200 application/pdf`，因此本版不加入浏览器、TLS impersonation 或新的重试架构。
+
 - **0.65.18** (2026-08-21): **正常经过 Cloudflare CDN 的出版社页面不再被误判为挑战页。**
   - Paper 下载先前只要看到普通响应的 `Server: cloudflare` 或 `CF-Ray` 就报告 `PUBLISHER_CLOUDFLARE_CHALLENGE`；SAGE 等正常页面本来就携带这些 CDN 头，因此 EZProxy 已成功取得的文章页也会被提前丢弃。
   - 挑战识别现在使用 Cloudflare 的正式响应合同 `CF-Mitigated: challenge`。真实挑战继续停止，普通 Cloudflare HTML/PDF 则进入既有 PDF、citation link、正文 fallback 与身份核验；本版不加入浏览器绕过、Wayback 修复或新的重试层。
