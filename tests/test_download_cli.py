@@ -2962,6 +2962,57 @@ def test_ezproxy_request_urls_prefer_rewritten_host_over_login():
     ) == ["https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf"]
 
 
+def test_ezproxy_fetch_tries_login_form_after_rewritten_host_challenge(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_ezproxy_challenge_fallback_under_test")
+    candidate = (
+        "https://onlinelibrary.wiley.com/doi/pdfdirect/10.1111/josp.12524"
+        "?download=true"
+    )
+    config = {
+        "login_url": "https://login.eux.idm.oclc.org/login?url=",
+        "domain": "eux.idm.oclc.org",
+        "cookie": "redacted",
+    }
+    requested: list[str] = []
+
+    class FakeSession:
+        def get(self, url, **_kwargs):
+            requested.append(url)
+            if url.startswith(config["login_url"]):
+                return SimpleNamespace(
+                    url=(
+                        "https://onlinelibrary-wiley-com.eux.idm.oclc.org/doi/"
+                        "pdfdirect/10.1111/josp.12524?download=true"
+                    ),
+                    content=b"%PDF- login form succeeded",
+                    status_code=200,
+                    history=[object()],
+                    headers={"content-type": "application/pdf;charset=UTF-8"},
+                )
+            return SimpleNamespace(
+                url=url,
+                content=b"<html>verify you are human</html>",
+                status_code=403,
+                history=[],
+                headers={
+                    "content-type": "text/html",
+                    "cf-mitigated": "challenge",
+                },
+            )
+
+    output = tmp_path / "paper.pdf"
+
+    assert mod._ezproxy_fetch_candidate(
+        FakeSession(), config, candidate, str(output), "Wiley PDF"
+    ) is True
+    assert requested == [
+        "https://onlinelibrary-wiley-com.eux.idm.oclc.org/doi/pdfdirect/"
+        "10.1111/josp.12524?download=true",
+        "https://login.eux.idm.oclc.org/login?url=" + candidate,
+    ]
+    assert output.read_bytes().startswith(b"%PDF-")
+
+
 @pytest.mark.parametrize(
     ("login_url", "expected_suffix"),
     [

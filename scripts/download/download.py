@@ -1429,7 +1429,7 @@ def _ezproxy_fetch_candidate(session, config, candidate_url, output_path, label,
             _raise_if_ezproxy_login_page(str(pdf_resp.url), login_url, data, len(pdf_resp.history), response_headers)
             if _is_cloudflare_challenge(data, response_headers):
                 print(f"  EZProxy {label}: PUBLISHER_CLOUDFLARE_CHALLENGE", file=sys.stderr)
-                return False
+                continue
             if _is_pdf_response(data, response_headers):
                 with open(output_path, "wb") as f:
                     f.write(data)
