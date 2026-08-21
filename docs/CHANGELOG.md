@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.17** (2026-08-21): **长任务保留调用时限，Paper / Book Search 不再因回执重复字段超出 Auto schema 上限。**
+  - PreToolUse Bash hook 的 `updatedInput` 会替换完整 tool input；先前只返回改写后的 `command`，因此 Agent 明确传入的 `timeout`、`run_in_background` 与其它 Bash 参数会被静默丢弃，长下载、OCR 和翻译随后回落到默认两分钟并以 exit 143 结束。Hook 现在复制原始 input、只替换 `command`，既有环境注入与密钥边界不变。
+  - `material.search` 的模型回执只在 complete terminal 返回完整 identity 与唯一 `owner_slug`；重复的顶层 confidence、调查 observations、owner identity/path/match 不再要求模型抄写，owner path 由 kind 与 slug 确定性派生。`needs_input` 的完整候选、冲突字段、问题以及 identity / year decision 语义保持不变。
+  - Search schema 用 draft-07 本地 definitions 复用 identity 与 issue 形状；实际 model schema 从 Paper 5426 / Book 4551 降至 Paper 3921 / Book 3007，低于 Claude Code Auto 模式的 4096 字符门槛。其它超过该门槛的 operation 不在本版范围内。
+
 - **0.65.16** (2026-08-17): **生成的 Workflow 入口兼容 provider bridge 对结构化 `args` 的单层 JSON 编码。**
   - GLM 5.2/5.3 的 Workflow tool call 会在进入原生 runtime 前把 object `args` 生成为 JSON string；同一 Claude Code 版本下 GPT 与 Claude 仍直接传 object，因此这不是 named Workflow 或 Claude Code runtime 的通用序列化变化。七个公共入口现在只在唯一的生成边界解析一层字符串，正常 object 路径保持不变，也不再需要临时 wrapper。
   - 解析后的值仍进入原有 closed-envelope parser；畸形 JSON、双重编码、数组、基本类型与未知字段继续在零 Agent dispatch 时返回 `material.invalid_input`。Skill 的 object 正规合同和各材料领域 parser 均未放宽。
