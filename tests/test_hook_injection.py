@@ -124,6 +124,35 @@ def test_hook_injects_quasi_token_for_quasi_search_kagi_wrapper():
     assert "quasi-search kagi search --format json" in updated
 
 
+def test_hook_preserves_bash_tool_input_fields_when_rewriting_command():
+    payload = {
+        "tool_input": {
+            "command": "quasi-search paper --title X",
+            "timeout": 600000,
+            "run_in_background": True,
+            "description": "long acquisition",
+        }
+    }
+    result = subprocess.run(
+        [sys.executable, str(HOOK)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        env={
+            "CLAUDE_PLUGIN_OPTION_KAGI_SESSION_TOKEN": "session-token",
+            "CLAUDE_PLUGIN_ROOT": "/plugin/root",
+            "CLAUDE_PLUGIN_DATA": "/plugin/data",
+        },
+        check=True,
+    )
+
+    updated_input = json.loads(result.stdout)["hookSpecificOutput"]["updatedInput"]
+    assert updated_input["timeout"] == 600000
+    assert updated_input["run_in_background"] is True
+    assert updated_input["description"] == "long acquisition"
+    assert updated_input["command"] != payload["tool_input"]["command"]
+
+
 def test_hook_does_not_inject_session_token_for_chained_native_kagi_command():
     payload = {"tool_input": {"command": "kagi search books; env"}}
     result = subprocess.run(

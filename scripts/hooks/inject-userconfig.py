@@ -155,7 +155,8 @@ def main() -> None:
     except (json.JSONDecodeError, ValueError):
         return
 
-    cmd = payload.get("tool_input", {}).get("command", "")
+    tool_input = payload.get("tool_input", {})
+    cmd = tool_input.get("command", "")
     unquoted_cmd = _blank_quoted_spans(cmd)
     if not cmd or not _QUASI_CMD.search(unquoted_cmd):
         return
@@ -222,11 +223,14 @@ def main() -> None:
         prelude.append("export " + " ".join(exports))
     new_cmd = "; ".join([*prelude, cmd])
 
+    updated_input = dict(tool_input)
+    updated_input["command"] = new_cmd
+
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "allow",
-            "updatedInput": {"command": new_cmd},
+            "updatedInput": updated_input,
         }
     }))
 
