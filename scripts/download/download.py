@@ -366,16 +366,8 @@ def _header_value(headers, name: str) -> str:
         return ""
 
 
-def _is_cloudflare_challenge(content, headers=None) -> bool:
-    lower_html = content[:10000].lower()
-    server = _header_value(headers, "server").lower()
-    return (
-        "cloudflare" in server
-        or bool(_header_value(headers, "cf-ray"))
-        or b"just a moment" in lower_html
-        or b"cf-chl" in lower_html
-        or b"challenge-platform" in lower_html
-    )
+def _is_cloudflare_challenge(_content, headers=None) -> bool:
+    return _header_value(headers, "cf-mitigated").strip().lower() == "challenge"
 
 
 def _is_pdf_response(content, headers=None) -> bool:

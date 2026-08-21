@@ -2107,7 +2107,12 @@ def test_paper_diagnose_classifies_landing_cloudflare_pdf_and_connection_error(m
             url,
             403,
             "Forbidden",
-            {"content-type": "text/html", "cf-ray": "abc", "server": "cloudflare"},
+            {
+                "content-type": "text/html",
+                "cf-mitigated": "challenge",
+                "cf-ray": "abc",
+                "server": "cloudflare",
+            },
             io.BytesIO(b"<title>Just a moment...</title>"),
         ),
         _FakeUrlResponse(url, b"%PDF-1.7", headers={"content-type": "application/pdf"}),
@@ -2338,13 +2343,35 @@ def test_ezproxy_login_detection_does_not_treat_cloudflare_as_cookie_expired():
 
     assert mod._is_cloudflare_challenge(
         cloudflare_html,
-        {"server": "cloudflare", "cf-ray": "abc"},
+        {"server": "cloudflare", "cf-ray": "abc", "cf-mitigated": "challenge"},
     )
     mod._raise_if_ezproxy_login_page(
         "https://www-cell-com.eux.idm.oclc.org/action/showPdf",
         "https://login.eux.idm.oclc.org/login?url=",
         cloudflare_html,
-        headers={"server": "cloudflare", "cf-ray": "abc"},
+        headers={"server": "cloudflare", "cf-ray": "abc", "cf-mitigated": "challenge"},
+    )
+
+
+def test_cloudflare_detection_uses_official_mitigated_header():
+    mod = _load_module(DOWNLOAD, "download_cloudflare_official_header_under_test")
+
+    assert mod._is_cloudflare_challenge(
+        b"<html><body>Verification required</body></html>",
+        {"content-type": "text/html", "cf-mitigated": "challenge"},
+    )
+
+
+def test_cloudflare_detection_ignores_normal_cloudflare_cdn_response():
+    mod = _load_module(DOWNLOAD, "download_cloudflare_normal_response_under_test")
+    normal_sage_html = b"""
+    <!DOCTYPE html><html><head><title>Money as a Social Construction</title></head>
+    <body><main><a href="/doi/pdf/10.1177/0725513696047000002">Download PDF</a></main></body></html>
+    """
+
+    assert not mod._is_cloudflare_challenge(
+        normal_sage_html,
+        {"content-type": "text/html", "server": "cloudflare", "cf-ray": "abc"},
     )
 
 
