@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.20** (2026-08-21): **Anna 的挑战跳转暂时没有文档时继续等待，不再提前结束浏览器恢复。**
+  - SeleniumBase 读取页面源码时只等待 `<html>` 一秒；DDoS-Guard 替换 document 的短暂空档因此会抛出 `TimeoutError`，而浏览器 helper 先前把它当成整次挑战失败，尚未用完既有 75 秒预算便返回 `ddos_guard_challenge`。
+  - Anna 的观察循环现在只把该暂态视为未稳定并继续轮询；启动、导航及其它异常仍 fail closed，75 秒挑战预算与 120 秒进程预算均未放宽。相同 Dhanjani 搜索在旧逻辑下复现 `{html}` 超时，容错后跨过两次空档并取得含有效 MD5 结果的 780KB 页面。
+
 - **0.65.19** (2026-08-21): **EZProxy 的一种请求形式遭遇挑战时不再跳过同一候选的可用登录路径。**
   - Paper 下载会先尝试已改写的出版社代理域名，再回退到 `login?url=`；先前第一种形式只要返回真实 Cloudflare challenge，就会直接结束整个候选，导致已由 CookieCloud 建立的登录路径永远没有执行。
   - Cloudflare challenge 现在只终止当前 request form；同一候选会继续尝试既有的下一种形式，全部形式均失败后才停止。真实 Kim DOI 使用当前 CookieCloud cookies 与普通 `requests` 经 `login?url=` 返回 `200 application/pdf`，因此本版不加入浏览器、TLS impersonation 或新的重试架构。
