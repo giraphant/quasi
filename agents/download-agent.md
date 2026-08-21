@@ -58,6 +58,14 @@ hard 4xx、登录页或 challenge 时，可仅对 caller 给出的同一 URL 执
 fetch 之外追加搜索或另起候选 cascade；`quasi-download` 拥有该 cascade。每一次实际来源尝试都必须保留原样的
 `{source,status,error}` 行；耗尽时如实报告完整 attempts。核验后才 accept。
 
+`paper fetch` 的 `status:identity_uncertain` 不是下载失败：CLI 已确认这些 exact
+`candidates[].temp_path` 是可读候选，只是机械题名/作者检查不足以裁决。逐个阅读其
+`inspect.front_text`，必要时再用 Read 或 Bash 查看该 exact 临时文件的首页、末页版权信息与少量正文；结合题名、作者、
+期刊、年份、正文主题和嵌入 DOI 作专业判断。排版拆字、旧文本层或轻微 OCR 错字不能单独构成拒绝理由；
+但嵌入的不同 DOI 或明确不同作者/作品是排除证据。至多对一个已证明候选执行现有
+`quasi-download accept`；判断完成后只删除该次 fetch 返回且未接受的 exact temp paths。若没有候选足以
+证明身份，清理全部返回候选并以已知失败结束，不把机械不确定冒充 `all_sources_failed`。
+
 阅读每个候选的 inspect/front-page/file metadata，排除题名相似但版本、作者或作品不同的
 文件。通过核验的候选 accept 到 caller 允许的 output。Book 与 Paper 的成功 receipt 都必须
 命名稳定的 source（复用时为 `existing_file`）。

@@ -17,6 +17,8 @@ slot 格式：
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import unicodedata
 
@@ -32,6 +34,7 @@ SKIP_TITLES_EXACT = {
     'copyright',
     'contents', 'table of contents',
     'list of figures', 'list of tables', 'list of illustrations',
+    'list of music examples', 'list of abbreviations',
     'list of contributors', 'editorial board', 'notes on contributors',
     'index', 'index2',
     'figures', 'contributors',
@@ -39,8 +42,36 @@ SKIP_TITLES_EXACT = {
     'acknowledgments', 'acknowledgements',
     'dedication', 'epigraph',
     'about the author', 'about the authors', 'about the book',
+    'about the technical editor', 'about the technical reviewer',
     'author biographies', 'other books by this author', 'illustrations',
+    # 出版方家具（HarperCollins 等电子版尾部宣传页）
+    'about the publisher', 'about the publishing company',
+    'about this ebook', 'about this ebook\'s publisher',
+    # Verso Classics 电子版首部系列宣传页 + 版权页变体
+    'verso', 'copyright page',
+    # 出版方系列书目页（Bloomsbury Revelations 等他作列表）
+    'series', 'series information', 'selected titles in the series',
+    # 中文电子版家具
+    '目录', '版权页', '版权信息', '版权', '封面', '书名页',
+    '出版说明', '关于出版社', '关于本书', '作者简介',
 }
+
+
+def filter_signature() -> str:
+    """SKIP 规则集合的稳定摘要，并入 request_fingerprint。
+
+    词表任何增删都改变 signature，使既有 manifest 判 stale 并触发
+    干净重建，而不是 reconcile 复用旧章节集合。
+    """
+    payload = json.dumps(
+        {
+            "exact": sorted(SKIP_TITLES_EXACT),
+            "patterns": [p.pattern for p in SKIP_PATTERNS],
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 SKIP_PATTERNS = [
     re.compile(r'^Part\s+[IVXLCDM\d]+\b', re.IGNORECASE),  # Part II, Part 3 标题页

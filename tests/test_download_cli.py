@@ -3376,7 +3376,7 @@ def _stub_paper_network(mod, monkeypatch):
     monkeypatch.setattr(mod, "_kagi_discover_paper", lambda *a, **k: ([], []))
 
 
-def test_download_paper_reverifies_and_deletes_wrong_existing_temp(
+def test_download_paper_returns_identity_uncertain_existing_temp_for_agent_review(
     monkeypatch, tmp_path
 ):
     mod = _load_module(DOWNLOAD, "download_exists_reverify_under_test")
@@ -3397,8 +3397,93 @@ def test_download_paper_reverifies_and_deletes_wrong_existing_temp(
         ),
     )
 
-    assert result is None
+    assert result["status"] == "identity_uncertain"
+    assert len(result["candidates"]) == 1
+    candidate = result["candidates"][0]
+    assert candidate["source"] == "Existing temp"
+    assert candidate["inspect"]["front_text"] == _WRONG_PAPER_TEXT.strip()
+    assert Path(candidate["temp_path"]).is_file()
+    assert Path(candidate["temp_path"]) != leftover
     assert not leftover.exists()
+
+
+def test_paper_fetch_cli_exposes_identity_uncertain_candidates(
+    monkeypatch, tmp_path, capsys
+):
+    mod = _load_module(DOWNLOAD, "paper_fetch_uncertain_cli_under_test")
+    candidate = tmp_path / ".adamson.quasi-paper-candidate-test.pdf"
+    candidate.write_bytes(b"%PDF- candidate " + b"x" * 2000)
+    outcome = {
+        "status": "identity_uncertain",
+        "candidates": [
+            {
+                "temp_path": str(candidate),
+                "source": "Kagi URL",
+                "inspect": {
+                    "format": "pdf",
+                    "size_bytes": candidate.stat().st_size,
+                    "readability": "text",
+                    "front_text": "When Craft Gets Slorp Glenn Adamson",
+                    "year_signals": None,
+                    "fallback_hint": None,
+                },
+            }
+        ],
+    }
+    monkeypatch.setattr(mod, "download_paper", lambda **kwargs: outcome)
+    args = mod._build_parser().parse_args([
+        "paper", "fetch",
+        "--slug", "adamson-when-craft-gets-sloppy-2008",
+        "--url", "https://example.test/adamson.pdf",
+        "--title", "When Craft Gets Sloppy",
+        "--author", "Glenn Adamson",
+        "--temp-dir", str(tmp_path),
+        "--json",
+    ])
+
+    assert args.func(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "status": "identity_uncertain",
+        "kind": "paper",
+        "doi": None,
+        "urls": ["https://example.test/adamson.pdf"],
+        "candidates": outcome["candidates"],
+    }
+
+
+def test_download_paper_cleans_uncertain_candidates_after_verified_source(
+    monkeypatch, tmp_path
+):
+    mod = _load_module(DOWNLOAD, "paper_uncertain_cleanup_under_test")
+    direct_url = "https://example.test/ambiguous.pdf"
+    oa_url = "https://repository.example.test/exact.pdf"
+
+    def fake_download(url, output_path, **kwargs):
+        marker = b"right" if url == oa_url else b"ambiguous"
+        Path(output_path).write_bytes(b"%PDF- " + marker + b"x" * 2000)
+        return True
+
+    monkeypatch.setattr(mod, "download_pdf_from_url", fake_download)
+    monkeypatch.setattr(mod, "find_oa_url", lambda doi: oa_url)
+    monkeypatch.setattr(
+        mod,
+        "verify_source_content",
+        lambda path, *args, **kwargs: b"right" in Path(path).read_bytes(),
+    )
+    monkeypatch.setattr(mod.time, "sleep", lambda seconds: None)
+
+    result = mod.download_paper(
+        doi="10.1234/example",
+        url=direct_url,
+        output_dir=str(tmp_path),
+        filename="example-paper",
+        verify_author="Example Author",
+        verify_title="Exact Example Paper",
+    )
+
+    assert result == str(tmp_path / "example-paper.pdf")
+    assert list(tmp_path.glob(".*.quasi-paper-candidate-*")) == []
 
 
 def test_download_paper_serves_existing_temp_that_proves_identity(

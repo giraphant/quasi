@@ -1156,6 +1156,10 @@ def test_paper_acquire_preserves_both_urls_and_real_diagnostic_capabilities() ->
         "quasi-download paper diagnose --url URL [--via-ezproxy] "
         "[--timeout SECONDS] --json"
     )
+    assert any(
+        "identity_uncertain" in capability
+        for capability in request["capabilities"]
+    )
 
 
 def test_acquire_terminal_fields_remain_branch_local() -> None:

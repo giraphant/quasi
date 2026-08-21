@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.23** (2026-08-21): **Paper 身份疑点交给下载专家裁决，章节过滤规则变化会使旧 manifest 失效。**
+  - Paper 下载器不再把完整题名的机械字符串匹配当作最终专业判断：结构可用但未通过该快速证明的候选会留在隔离 temp path，并以 `identity_uncertain` 连同首页证据交给 Download Agent。Agent 阅读 exact 文件、综合题名、作者、期刊、正文与 DOI 后至多 accept 一个；排版拆字、旧文本层与轻微 OCR 错字不再直接销毁正确来源，明确的其它作品仍会被拒绝和清理。后续来源若给出确定性身份，先前保留的疑似候选自动清理。
+  - Book TOC 过滤补充出版方宣传页、系列页、技术编辑信息及中英文电子书家具；SKIP 词表与 pattern 的稳定摘要进入章节 request fingerprint，规则变化后旧 manifest 会变为 stale 并干净重建，不再复用旧章节集合。
+  - `quasi-academic` output style 收回额外的篇幅、结构和学术纪律指令，只保留自然中文与中文引号约定，让具体任务和 Agent 合同决定回答形态。
+
 - **0.65.22** (2026-08-21): **老扫描 Paper 不再因稀疏文本层被误判为错误论文。**
   - Paper 身份核验先前只读取前两页文本层；Ferguson、Deutschmann 与 Kroker 的正确扫描 PDF 只能抽出 60–220 个字符，非空却不含题名/作者，因此三份文件都会作为 content mismatch 被删除。
   - 强身份核验失败且文本明显稀疏时，下载器现在只对第一页做一次有界 English Tesseract OCR，再使用原有 DOI 或完整题名 + 作者合同复核；实测三份 15–31 页扫描件均通过。已有充分文本的错误论文不会进入 OCR，PyMuPDF 或 Tesseract 不可用时仍 fail closed。

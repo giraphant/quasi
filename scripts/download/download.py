@@ -2504,7 +2504,10 @@ def _kagi_discover_paper(title, author=None):
 def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                    filename=None, retry_wayback=True,
                    verify_author=None, verify_title=None):
-    """Download a paper PDF by DOI or URL. Returns file path or None.
+    """Download a paper PDF by DOI or URL.
+
+    Returns an exact verified path, an ``identity_uncertain`` candidate
+    envelope for specialist review, or None when no usable file was found.
 
     Cascade:
       Phase 1 (with provided identifiers):
@@ -2513,10 +2516,11 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
       Phase 2 (recovery — when Phase 1 fails and title available):
         Kagi discovery → retry with discovered DOIs/URLs
 
-    If verify_author/verify_title are provided, every candidate — including a
-    pre-existing temp file — must prove the requested identity (embedded DOI,
-    or contiguous title phrase plus author).
-    Mismatches are deleted and the cascade continues.
+    If verify_author/verify_title are provided, deterministic identity proof
+    still selects a candidate immediately. Structurally usable files that do
+    not satisfy that mechanical proof are fenced instead of being destroyed;
+    after the cascade is exhausted their exact paths and front-page evidence
+    are returned to the download specialist for professional judgement.
     """
     requested_doi = doi
 
@@ -2530,18 +2534,47 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
     os.makedirs(output_dir, exist_ok=True)
     dest = os.path.join(output_dir, f"{safe_name}.pdf")
     text_dest = os.path.join(output_dir, f"{safe_name}.txt")
+    uncertain_candidates: list[dict] = []
+
+    def _cleanup_uncertain_candidates():
+        for candidate in uncertain_candidates:
+            try:
+                Path(candidate["temp_path"]).unlink(missing_ok=True)
+            except OSError as exc:
+                print(
+                    f"  Candidate cleanup failed: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+
+    def _retain_uncertain_candidate(path, source_name):
+        candidate = Path(path)
+        descriptor, retained_path = tempfile.mkstemp(
+            prefix=f".{safe_name}.quasi-paper-candidate-",
+            suffix=candidate.suffix.lower(),
+            dir=output_dir,
+        )
+        os.close(descriptor)
+        os.replace(candidate, retained_path)
+        retained = Path(retained_path).resolve()
+        uncertain_candidates.append({
+            "temp_path": str(retained),
+            "source": source_name,
+            "inspect": _inspect_downloaded_file(retained),
+        })
 
     def _verify_and_accept(path, source_name):
         """Verify downloaded file. Returns True if accepted, False if rejected."""
         if not verify_author and not verify_title:
+            _cleanup_uncertain_candidates()
             return True
         if verify_source_content(path, verify_author, verify_title,
                                  expected_doi=requested_doi):
+            _cleanup_uncertain_candidates()
             return True
-        print(f"  {source_name}: content mismatch, deleting and trying next source",
+        print(f"  {source_name}: identity uncertain; retaining for specialist review",
               file=sys.stderr)
         if os.path.exists(path):
-            os.remove(path)
+            _retain_uncertain_candidate(path, source_name)
         return False
 
     # A leftover temp file is a candidate like any other, not proof: a prior
@@ -2832,6 +2865,11 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                 pass
 
     print(f"  Could not download paper", file=sys.stderr)
+    if uncertain_candidates:
+        return {
+            "status": "identity_uncertain",
+            "candidates": uncertain_candidates,
+        }
     return None
 
 
@@ -3077,6 +3115,15 @@ def _cmd_paper_fetch(args) -> int:
         retry_wayback=True,
         verify_title=args.title, verify_author=args.author,
     )
+    if isinstance(result, dict) and result.get("status") == "identity_uncertain":
+        print_json({
+            "status": "identity_uncertain",
+            "kind": "paper",
+            "doi": args.doi,
+            "urls": all_urls,
+            "candidates": result.get("candidates", []),
+        })
+        return 0
     if result:
         path_obj = Path(result).resolve()
         print_json({

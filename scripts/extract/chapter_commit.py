@@ -27,6 +27,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.schemas.chapter_manifest import valid_chapter_page_pair  # noqa: E402
+from scripts.extract.toc_utils import filter_signature  # noqa: E402
 
 
 SCHEMA_VERSION = "quasi.extract.chapters.receipt/0.1"
@@ -133,7 +134,14 @@ def _source_identity(path: Path) -> dict:
 def request_fingerprint(input_path: Path, mode: str, options: dict) -> tuple[str, dict]:
     identity = _source_identity(input_path)
     encoded = json.dumps(
-        {"input": identity, "mode": mode, "options": options},
+        {
+            "input": identity,
+            "mode": mode,
+            "options": options,
+            # 词表变化必须使旧 manifest stale：SKIP 规则参与 fingerprint，
+            # 同一 request 在不同过滤规则下会产生不同章节集合。
+            "toc_filter_signature": filter_signature(),
+        },
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
