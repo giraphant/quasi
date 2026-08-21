@@ -34,6 +34,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -2025,7 +2026,13 @@ def _get_json_urllib(url, timeout=15):
         req = urllib.request.Request(url, headers=HEADERS_API)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read())
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, TimeoutError):
+    except (
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        json.JSONDecodeError,
+        TimeoutError,
+        socket.timeout,
+    ):
         return None
 
 
@@ -2736,9 +2743,12 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                       file=sys.stderr)
             time.sleep(0.5)
 
-        # Try discovered DOIs (different from the original)
+        # Try discovered DOIs only when the caller had no exact DOI.
         for kagi_doi in kagi_dois:
-            if kagi_doi == doi:
+            # A caller-supplied DOI is the exact Paper identity. Kagi URLs may
+            # still recover another copy, but a discovered DOI must not replace
+            # it and launch a second acquisition cascade for a different work.
+            if doi:
                 continue
             print(f"  Kagi discovered DOI: {kagi_doi}", file=sys.stderr)
 

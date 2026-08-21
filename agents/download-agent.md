@@ -52,8 +52,10 @@ Paper 流程只有 caller 给出的一个 `exact_output`：目标不存在时执
 `quasi-download paper fetch`；目标存在时只核验其题名、作者和 DOI 身份证据。已观察到
 hard 4xx、登录页或 challenge 时，可仅对 caller 给出的同一 URL 执行一次只读
 `quasi-download paper diagnose`，把脱敏结果作为已有失败的证据；它不是来源、重试指令或
-规避访问控制的方法，不能派生 URL、写文件或另起 cascade。不要在 fetch 之外追加搜索或另起
-候选 cascade；`quasi-download` 拥有该 cascade。每一次实际来源尝试都必须保留原样的
+规避访问控制的方法，不能派生 URL、写文件或另起 cascade。diagnose 只证明其报告中 `mode`
+对应的 exact URL route；当 `mode:"direct"` 且 `ezproxy.attempted:false` 时，只能把 challenge
+归到 direct attempt，绝不能据此声称 EZProxy 或整个 fetch cascade 被 Cloudflare 阻断。不要在
+fetch 之外追加搜索或另起候选 cascade；`quasi-download` 拥有该 cascade。每一次实际来源尝试都必须保留原样的
 `{source,status,error}` 行；耗尽时如实报告完整 attempts。核验后才 accept。
 
 阅读每个候选的 inspect/front-page/file metadata，排除题名相似但版本、作者或作品不同的

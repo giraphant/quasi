@@ -8,6 +8,7 @@ import urllib.error
 import urllib.parse
 import hashlib
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -1943,6 +1944,17 @@ def test_find_oa_url_accepts_crossref_pdf_url_when_content_type_unspecified(monk
     )
 
 
+def test_json_lookup_treats_socket_timeout_as_a_missing_provider_result(monkeypatch):
+    mod = _load_module(DOWNLOAD, "download_json_socket_timeout_under_test")
+
+    def timed_out(*_args, **_kwargs):
+        raise socket.timeout("The read operation timed out")
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", timed_out)
+
+    assert mod._get_json_urllib("https://web.archive.org/cdx/search/cdx") is None
+
+
 def test_find_oa_url_accepts_cambridge_crossref_content_view_link(monkeypatch):
     mod = _load_module(DOWNLOAD, "download_crossref_cambridge_under_test")
 
@@ -3424,3 +3436,55 @@ def test_download_paper_routes_kagi_discovered_urls_through_ezproxy(
 
     assert result == str(tmp_path / "clarke-1996.pdf")
     assert proxied == [[discovered]]
+
+
+def test_download_paper_does_not_replace_an_exact_doi_with_kagi_discovery(
+    monkeypatch, tmp_path
+):
+    mod = _load_module(DOWNLOAD, "download_kagi_exact_doi_boundary_under_test")
+    requested = "10.1109/tem.2022.3214489"
+    unrelated = "10.36227/techrxiv.19612884"
+    attempted_dois: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(mod, "download_pdf_from_url", lambda *a, **k: False)
+    monkeypatch.setattr(
+        mod,
+        "find_oa_url",
+        lambda doi: attempted_dois.append(("oa", doi)) or None,
+    )
+    monkeypatch.setattr(
+        mod,
+        "try_scihub_download",
+        lambda doi, *_a, **_k: attempted_dois.append(("scihub", doi)) or False,
+    )
+    monkeypatch.setattr(
+        mod,
+        "_try_publisher_direct",
+        lambda doi, *_a, **_k: attempted_dois.append(("publisher", doi)) or False,
+    )
+    monkeypatch.setattr(
+        mod,
+        "_try_ezproxy_with_refresh",
+        lambda doi, *_a, **_k: attempted_dois.append(("ezproxy", doi)) or False,
+    )
+    monkeypatch.setattr(mod, "_try_ezproxy_urls_with_refresh", lambda *a, **k: False)
+    monkeypatch.setattr(mod, "find_wayback_url", lambda _doi: None)
+    monkeypatch.setattr(
+        mod, "_kagi_discover_paper", lambda *_a, **_k: ([unrelated], [])
+    )
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+
+    result = mod.download_paper(
+        doi=requested,
+        output_dir=str(tmp_path),
+        filename="lee-mobile-products-2024",
+        verify_title="Mapping the Evolutionary Pattern of Mobile Products",
+    )
+
+    assert result is None
+    assert attempted_dois == [
+        ("oa", requested),
+        ("scihub", requested),
+        ("publisher", requested),
+        ("ezproxy", requested),
+    ]
