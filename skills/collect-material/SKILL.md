@@ -219,7 +219,9 @@ Author → exact Author status → discover/freeze → exact child status batch
      必须继续带同一个 `normalized_target`。Author 还必须在 exact
      `vault/authors/{slug}.md` present/usable 且 `identity.name` 逐字等于本次
      `resume_seed.seed.full_name`（初次调用则为 `seed.full_name`）时才报告完成。Webpage 的 snapshot、
-     prepared、canonical 三个 returned refs 都必须与该 observation 相等、present 且 usable。
+     prepared、canonical 三个 returned refs 都必须与该 observation 相等、present 且 usable。Paper 的
+     source、Workflow 选定的 normalized_text、canonical 三个 returned refs 也都必须与该 observation
+     相等、present 且 usable；只审计 canonical 不能证明 Paper complete。
    - Paper `complete` 且 `next.kind=="book"`：只按 `next.kind` 选 Book entry。先观察
      `next.identity.slug`，构造
      `{state:"canonical",material_slug:next.identity.slug,identity:next.identity}`，传 Book

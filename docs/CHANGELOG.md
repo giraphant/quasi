@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.25** (2026-08-22): **Paper complete 重新要求 source、Prepare 选定文本与 canonical 三层产物同时可用。**
+  - 既有 canonical owner 先前会直接进入 Audit；Audit 只检查 canonical 页面，因此即使 accepted source 或 `processing/papers/{slug}/source.txt` 缺失，Workflow 仍可能返回 complete。Paper 现在缺 source 时先 Acquire，并在 Audit 前始终由 Prepare 核对或生成输入；已有 canonical 不会因此重跑 Analyse，只有 Audit 的 exact repair 诊断才会调用它。
+  - Paper complete 现在返回 source、Prepare 实际选定的 normalized text 与 canonical 三个 exact refs，Collect 用 fresh post-status 逐一验证。Search 找到既有 owner 但当前 invocation 没有该 owner 的 fresh admitted observation 时，会先返回 `needs_observation`，不再凭 Search 回执直接审计并结算。
+
 - **0.65.24** (2026-08-22): **Download Agent 以可验证交付为目标，不再把查询写法与远端格式当作固定流程。**
   - Book 候选搜索现在明确区分来源不可观察的 `status:failed` 与真实的 `status:ok,count:0`；镜像不可达、挑战未解或页面未稳定不再被概括成“零候选”。只有真实空结果或候选调查耗尽才返回 `book.download_failed`，来源本身不可用则返回可重试的 `book.candidate_search_unavailable`。
   - Download Agent 可以依据书名变体、作者、identifier 与调查证据自行改写查询、排序候选和决定停止点；Paper 内置 cascade 失败后也可用 Kagi 发现新的可靠 URL，再交回既有 fetch 能力，而不是在 Agent 层复制认证下载器或 provider cascade。

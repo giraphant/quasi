@@ -76,7 +76,9 @@ entry may return exact routes for host observation and an opaque one-item contin
 
 The public result is `quasi.material.result/0.1`:
 
-- `complete` — verify its exact canonical artifacts with fresh status;
+- `complete` — verify every returned artifact with fresh status; Paper returns its source,
+  Prepare-selected normalized text, and canonical page, while Webpage returns snapshot,
+  prepared projection, and canonical page;
 - `needs_observation` — fetch only the returned routes and reinvoke the same
   entry with the unchanged continuation; complete returned status observations
   for the same routes advance only when they differ byte-for-byte; after two

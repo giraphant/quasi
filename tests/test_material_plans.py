@@ -855,29 +855,93 @@ def test_paper_provisional_happy_path_carries_prepare_selected_input() -> None:
     }
     assert report["result"]["terminal"] == "complete"
     assert report["result"]["artifacts"] == [
+        {"role": "source", "path": "sources/exact-paper.pdf"},
+        {
+            "role": "normalized_text",
+            "path": "processing/papers/exact-paper/source.txt",
+        },
         {
             "role": "canonical",
             "path": report["calls"][-1]["request"]["target"]["path"],
-        }
+        },
     ]
     assert "receipts" not in report["result"]
     assert report["pipelineCalls"] == 0
 
 
-def test_paper_admitted_canonical_starts_at_audit_and_ignores_stale_search_decision() -> None:
-    value = canonical_input(canonical=True, admitted=True)
+def test_paper_admitted_canonical_reconciles_prepare_and_ignores_stale_search_decision() -> None:
+    value = canonical_input(
+        source=True,
+        prepared=True,
+        canonical=True,
+        admitted=True,
+    )
     value["userDecision"] = {
         "material_key": "paper:exact-paper",
         "operation": "retired.workflow.operation",
         "value": {"stale": True},
     }
 
-    report = run_paper(value, [audit_complete()])
+    report = run_paper(value, [prepare_complete(), audit_complete()])
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
-        "paper.audit"
+        "paper.prepare",
+        "paper.audit",
     ]
     assert report["result"]["terminal"] == "complete"
+
+
+def test_paper_existing_source_and_canonical_reconciles_missing_prepared_text() -> None:
+    report = run_paper(
+        canonical_input(
+            source=True,
+            prepared=False,
+            canonical=True,
+            admitted=True,
+        ),
+        [prepare_complete(), audit_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "paper.prepare",
+        "paper.audit",
+    ]
+    assert report["result"]["terminal"] == "complete"
+    assert report["result"]["artifacts"] == [
+        {"role": "source", "path": "sources/exact-paper.pdf"},
+        {
+            "role": "normalized_text",
+            "path": "processing/papers/exact-paper/source.txt",
+        },
+        {"role": "canonical", "path": "vault/papers/exact-paper.md"},
+    ]
+
+
+def test_paper_existing_canonical_recovers_missing_source_before_prepare() -> None:
+    report = run_paper(
+        canonical_input(
+            source=False,
+            prepared=False,
+            canonical=True,
+            admitted=True,
+        ),
+        [acquire_complete(), prepare_complete(), audit_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "paper.acquire",
+        "paper.prepare",
+        "paper.audit",
+    ]
+    assert report["result"]["terminal"] == "complete"
+    assert report["result"]["artifacts"] == [
+        {"role": "source", "path": "sources/exact-paper.pdf"},
+        {
+            "role": "normalized_text",
+            "path": "processing/papers/exact-paper/source.txt",
+        },
+        {"role": "canonical", "path": "vault/papers/exact-paper.md"},
+    ]
 
 
 def test_paper_search_lifts_only_the_typed_identity_gate() -> None:
@@ -924,12 +988,11 @@ def test_paper_same_kind_decision_runs_one_owner_reconcile_search_under_gate_key
 
     report = run_paper(
         value,
-        [search_complete(owner_slug="owned-paper"), audit_complete()],
+        [search_complete(owner_slug="owned-paper")],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
         "material.search",
-        "paper.audit",
     ]
     search_request = report["calls"][0]["request"]
     assert search_request["material_key"] == "paper:request-paper"
@@ -939,6 +1002,29 @@ def test_paper_same_kind_decision_runs_one_owner_reconcile_search_under_gate_key
         "kind": "paper",
         "slug": "owned-paper",
     }
+    assert report["result"]["terminal"] == "needs_observation"
+    assert report["result"]["routes"] == [
+        {"kind": "paper", "slug": "owned-paper"}
+    ]
+
+
+def test_paper_search_owner_requires_fresh_admitted_owner_observation() -> None:
+    selected = {"kind": "paper", "identity": deepcopy(PAPER_IDENTITY)}
+    value = provisional_input()
+    value["userDecision"] = identity_decision(selected)
+
+    report = run_paper(
+        value,
+        [search_complete(owner_slug="request-paper")],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search"
+    ]
+    assert report["result"]["terminal"] == "needs_observation"
+    assert report["result"]["routes"] == [
+        {"kind": "paper", "slug": "request-paper"}
+    ]
 
 
 def test_paper_book_decision_returns_typed_next_without_dispatch() -> None:
@@ -1005,18 +1091,23 @@ def test_paper_existing_canonical_reconciles_prepare_then_repairs_once() -> None
         "reason": "The Analysis section is absent.",
     }
     report = run_paper(
-        canonical_input(canonical=True, admitted=True),
+        canonical_input(
+            source=True,
+            prepared=True,
+            canonical=True,
+            admitted=True,
+        ),
         [
-            audit_complete(escalated=[diagnostic]),
             prepare_complete(),
+            audit_complete(escalated=[diagnostic]),
             analyse_complete("repair"),
             audit_complete(),
         ],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
-        "paper.audit",
         "paper.prepare",
+        "paper.audit",
         "paper.analyse",
         "paper.audit",
     ]
@@ -1033,10 +1124,15 @@ def test_paper_second_audit_escalation_stops_as_repair_exhausted() -> None:
         "reason": "The Analysis section is absent.",
     }
     report = run_paper(
-        canonical_input(canonical=True, admitted=True),
+        canonical_input(
+            source=True,
+            prepared=True,
+            canonical=True,
+            admitted=True,
+        ),
         [
-            audit_complete(escalated=[diagnostic]),
             prepare_complete(),
+            audit_complete(escalated=[diagnostic]),
             analyse_complete("repair"),
             audit_complete(escalated=[diagnostic]),
         ],
@@ -1063,8 +1159,14 @@ def test_paper_unknown_writer_stops_without_later_dispatch() -> None:
 
 def test_paper_foreign_audit_path_stops_without_repair_dispatch() -> None:
     report = run_paper(
-        canonical_input(canonical=True, admitted=True),
+        canonical_input(
+            source=True,
+            prepared=True,
+            canonical=True,
+            admitted=True,
+        ),
         [
+            prepare_complete(),
             audit_complete(
                 escalated=[
                     {
@@ -1078,7 +1180,8 @@ def test_paper_foreign_audit_path_stops_without_repair_dispatch() -> None:
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
-        "paper.audit"
+        "paper.prepare",
+        "paper.audit",
     ]
     assert report["result"]["terminal"] == "blocked"
     assert report["result"]["issue"]["code"] == "workflow.owner_ambiguity"
@@ -3053,7 +3156,13 @@ def book_identity(slug: str, title: str) -> dict[str, Any]:
 
 
 def admitted_paper_observation(identity: dict[str, Any]) -> dict[str, Any]:
-    value = paper_observation(identity["slug"], canonical=True, admitted=True)
+    value = paper_observation(
+        identity["slug"],
+        source=True,
+        prepared=True,
+        canonical=True,
+        admitted=True,
+    )
     value["identity"] = {
         "title": identity["title"],
         "authors": identity["authors"],
@@ -3238,6 +3347,7 @@ def test_author_coalesces_canonical_children_and_repairs_once() -> None:
             [(current, admitted_paper_observation(identity))],
         ),
         [
+            prepare_complete("shared-paper"),
             audit_complete(),
             author_synthesise_complete(),
             audit_complete(escalated=[diagnostic]),
@@ -3248,6 +3358,7 @@ def test_author_coalesces_canonical_children_and_repairs_once() -> None:
 
     operations = [call["request"]["operation"] for call in report["calls"]]
     assert operations == [
+        "paper.prepare",
         "paper.audit",
         "author.synthesise",
         "author.audit",
@@ -3362,25 +3473,48 @@ def test_author_paper_to_book_route_survives_a_later_paper_gate() -> None:
         [
             audit_complete(),
             search_complete(p2, owner_slug="paper-two"),
-            audit_complete(),
-            author_synthesise_complete(),
-            audit_complete(),
         ],
     )
 
     assert [call["request"]["operation"] for call in resumed["calls"]] == [
         "book.audit",
         "material.search",
+    ]
+    assert resumed["result"]["terminal"] == "needs_observation"
+
+    completed = run_author(
+        author_compose_input(
+            resumed["result"]["resume_seed"]["members"],
+            [
+                (
+                    {"kind": "book", "slug": "book-one"},
+                    admitted_book_observation(b1),
+                ),
+                (p2_route, admitted_paper_observation(p2)),
+            ],
+        ),
+        [
+            audit_complete(),
+            prepare_complete("paper-two"),
+            audit_complete(),
+            author_synthesise_complete(),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in completed["calls"]] == [
+        "book.audit",
+        "paper.prepare",
         "paper.audit",
         "author.synthesise",
         "author.audit",
     ]
-    synthesis = resumed["calls"][3]["request"]
+    synthesis = completed["calls"][3]["request"]
     assert [item["title"] for item in synthesis["inputs"]] == [
         "Rerouted Book Title",
         "Second Paper",
     ]
-    assert resumed["result"]["terminal"] == "complete"
+    assert completed["result"]["terminal"] == "complete"
 
 
 def test_author_unknown_child_outcome_stops_before_later_members_or_writers() -> None:

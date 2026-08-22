@@ -112,6 +112,11 @@ recovery observations. A typed gate returns the current effective
 `{route,seed,options}`; the caller obtains fresh exact status and adds only the new
 decision. Unknown writer outcomes stop instead of racing a second writer.
 
+A Paper complete result names the exact accepted source, the normalized text selected by
+Prepare, and the canonical page. An existing canonical owner therefore still reconciles
+Prepare before Audit; if its source is absent, Acquire runs first. Audit alone proves only
+the canonical page and cannot turn a missing source or prepared projection into complete.
+
 Inside a named plan, each descriptor row gives one specialist a goal, exact refs,
 declared capabilities, and a closed
 `quasi.stage.receipt/0.3` model-facing schema. After StructuredOutput validates the

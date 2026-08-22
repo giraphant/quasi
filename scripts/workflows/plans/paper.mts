@@ -22,6 +22,7 @@ import {
   blockedMaterialResult,
   completeMaterialResult,
   needsInputMaterialResult,
+  needsObservationMaterialResult,
   stoppedMaterialResult,
   type ComposedLeafResumeSeed,
   type LeafCompositionOutcome,
@@ -141,11 +142,21 @@ const dispatch = (
 
 const completedPaper = (
   state: PaperState,
+  sourcePath: string,
+  selectedInput: string,
   canonicalPath: string,
 ): MaterialResult =>
   completeMaterialResult(
     resultSeed(state),
     [
+      {
+        role: "source",
+        path: sourcePath,
+      },
+      {
+        role: "normalized_text",
+        path: selectedInput,
+      },
       {
         role: "canonical",
         path: canonicalPath,
@@ -158,7 +169,8 @@ const auditPaper = async (
   runtime: MaterialRuntime,
   input: PaperRunInput,
   state: PaperState,
-  selectedInput: string | null,
+  sourcePath: string,
+  selectedInput: string,
 ): Promise<MaterialResult> => {
   const slug = state.runtimeSlug as string;
   const common = {
@@ -176,7 +188,7 @@ const auditPaper = async (
   const firstReceipt = firstAudit.receipt as StageReceipt;
   const target = firstReceipt.target_path as string;
   if (firstReceipt.remaining_violations === 0)
-    return completedPaper(state, target);
+    return completedPaper(state, sourcePath, selectedInput, target);
   if (
     firstReceipt.escalated.some(
       (diagnostic: { path: string }) => diagnostic.path !== target,
@@ -191,17 +203,9 @@ const auditPaper = async (
       ),
     );
 
-  let repairInput = selectedInput;
-  if (repairInput === null) {
-    const prepared = await dispatch(runtime, "paper.prepare", slug, common);
-    const prepareStop = stopForOutcome(state, prepared);
-    if (prepareStop !== null) return prepareStop;
-    repairInput = (prepared.receipt as StageReceipt).selected_input;
-  }
-
   const repaired = await dispatch(runtime, "paper.analyse", slug, {
     ...common,
-    input: repairInput,
+    input: selectedInput,
     mode: "repair",
     diagnostics: firstReceipt.escalated,
   });
@@ -229,7 +233,12 @@ const auditPaper = async (
       ),
     );
   if (secondReceipt.remaining_violations === 0)
-    return completedPaper(state, secondReceipt.target_path as string);
+    return completedPaper(
+      state,
+      sourcePath,
+      selectedInput,
+      secondReceipt.target_path as string,
+    );
   return blockedMaterialResult(
     resultSeed(state),
     planIssue(
@@ -266,6 +275,7 @@ async function runPaperPlanResult(
     observation: initialObservation,
   };
   rememberContinuation(resumeSeed(input, state));
+  let canonicalReady = false;
 
   const admittedCanonical =
     input.seed.state === "canonical" &&
@@ -368,8 +378,18 @@ async function runPaperPlanResult(
       ) ?? null;
     rememberContinuation(resumeSeed(input, state));
 
-    if (search.owner_slug !== null)
-      return auditPaper(runtime, input, state, null);
+    if (search.owner_slug !== null) {
+      if (
+        state.observation === null ||
+        !paperObservationAdmitsIdentity(state.observation, state.identity)
+      )
+        return needsObservationMaterialResult(
+          resultSeed(state),
+          [{ kind: "paper", slug: runtimeSlug }],
+          resumeSeed(input, state),
+        );
+      canonicalReady = true;
+    }
   }
 
   if (
@@ -379,7 +399,7 @@ async function runPaperPlanResult(
       state.identity as PaperIdentity,
     )
   )
-    return auditPaper(runtime, input, state, null);
+    canonicalReady = true;
 
   const slug = state.runtimeSlug as string;
   const common = {
@@ -387,10 +407,14 @@ async function runPaperPlanResult(
     meta: state.identity,
     materialKey: `paper:${slug}`,
   };
-  if (!state.observation?.facts.source.usable) {
+  let sourcePath = state.observation?.facts.source.usable
+    ? state.observation.facts.source.path
+    : null;
+  if (sourcePath === null) {
     const acquired = await dispatch(runtime, "paper.acquire", slug, common);
     const acquireStop = stopForOutcome(state, acquired);
     if (acquireStop !== null) return acquireStop;
+    sourcePath = (acquired.receipt as StageReceipt).output_path as string;
   }
 
   const prepared = await dispatch(runtime, "paper.prepare", slug, common);
@@ -398,15 +422,17 @@ async function runPaperPlanResult(
   if (prepareStop !== null) return prepareStop;
   const selectedInput = (prepared.receipt as StageReceipt).selected_input;
 
-  const analysed = await dispatch(runtime, "paper.analyse", slug, {
-    ...common,
-    input: selectedInput,
-    mode: state.observation?.facts.canonical.present ? "repair" : "create",
-  });
-  const analyseStop = stopForOutcome(state, analysed);
-  if (analyseStop !== null) return analyseStop;
+  if (!canonicalReady) {
+    const analysed = await dispatch(runtime, "paper.analyse", slug, {
+      ...common,
+      input: selectedInput,
+      mode: state.observation?.facts.canonical.present ? "repair" : "create",
+    });
+    const analyseStop = stopForOutcome(state, analysed);
+    if (analyseStop !== null) return analyseStop;
+  }
 
-  return auditPaper(runtime, input, state, selectedInput);
+  return auditPaper(runtime, input, state, sourcePath, selectedInput);
 }
 
 export async function runPaperPlanForComposition(
