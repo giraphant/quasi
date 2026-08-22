@@ -654,6 +654,7 @@ def search_aa(query, fmt="pdf", lang=None, limit=5):
             "source": "anna_archive",
             "count": 0,
             "results": [],
+            "error": "source_unavailable",
         }
 
     format_query = "".join(

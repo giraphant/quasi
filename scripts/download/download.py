@@ -1860,8 +1860,22 @@ def _libgen_download_url_from_html(page_url, html_text, md5):
     return ""
 
 
+_BOOK_HTML_FORMATS = frozenset({"html", "htm", "xhtml"})
+_BOOK_FORMAT_TOKEN_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,15}$")
+
+
+def _book_format_token(value):
+    """Return one safe remote-format token without limiting agent method."""
+    token = str(value or "").strip().lower().lstrip(".")
+    if not _BOOK_FORMAT_TOKEN_RE.fullmatch(token):
+        raise argparse.ArgumentTypeError(
+            "format must be a short alphanumeric extension token"
+        )
+    return token
+
+
 def _is_valid_book_file(path, fmt):
-    """Validate the container structure promised by a Book candidate."""
+    """Validate canonical containers or preserve a plausible temp candidate."""
     path = Path(path)
     if not path.is_file() or path.stat().st_size == 0:
         return False
@@ -1893,7 +1907,18 @@ def _is_valid_book_file(path, fmt):
         except (OSError, KeyError, zipfile.BadZipFile):
             return False
 
-    return False
+    try:
+        with path.open("rb") as source_file:
+            prefix = source_file.read(4096).lstrip().lower()
+    except OSError:
+        return False
+
+    looks_html = prefix.startswith((b"<!doctype html", b"<html"))
+    if fmt in _BOOK_HTML_FORMATS:
+        return looks_html and path.stat().st_size >= 1024
+    if looks_html:
+        return False
+    return path.stat().st_size >= 1024
 
 
 def _try_libgen_download(md5, dest, fmt):
@@ -1919,6 +1944,7 @@ def _try_libgen_download(md5, dest, fmt):
                 dest,
                 headers=HEADERS_BROWSER,
                 requester=aa_request,
+                allow_html=fmt in _BOOK_HTML_FORMATS,
             ) and _is_valid_book_file(dest, fmt):
                 size_mb = os.path.getsize(dest) / (1024 * 1024)
                 print(f"  LibGen OK {size_mb:.1f} MB", file=sys.stderr)
@@ -1943,7 +1969,13 @@ def _try_aa_slow_download(base_url, md5, dest, fmt):
         if not download_url:
             continue
         headers = {**HEADERS_BROWSER, "Referer": partner_url}
-        if _stream_download(download_url, dest, headers=headers, requester=aa_request):
+        if _stream_download(
+            download_url,
+            dest,
+            headers=headers,
+            requester=aa_request,
+            allow_html=fmt in _BOOK_HTML_FORMATS,
+        ):
             if _is_valid_book_file(dest, fmt):
                 return True
         if os.path.exists(dest):
@@ -2010,7 +2042,13 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
 
     if dl_url:
         print(f"  Downloading to: {dest}", file=sys.stderr)
-        if _stream_download(dl_url, dest, headers=HEADERS_BROWSER, requester=aa_request):
+        if _stream_download(
+            dl_url,
+            dest,
+            headers=HEADERS_BROWSER,
+            requester=aa_request,
+            allow_html=fmt in _BOOK_HTML_FORMATS,
+        ):
             if not _is_valid_book_file(dest, fmt):
                 print("  AA payload does not match candidate format", file=sys.stderr)
                 if os.path.exists(dest):
@@ -2037,7 +2075,13 @@ def download_from_aa(md5, output_dir="sources", filename=None, fmt="pdf",
             break
         if not dl_url:
             continue
-        if _stream_download(dl_url, dest, headers=HEADERS_BROWSER, requester=aa_request):
+        if _stream_download(
+            dl_url,
+            dest,
+            headers=HEADERS_BROWSER,
+            requester=aa_request,
+            allow_html=fmt in _BOOK_HTML_FORMATS,
+        ):
             if _is_valid_book_file(dest, fmt):
                 size_mb = os.path.getsize(dest) / (1024 * 1024)
                 print(f"  Done! {size_mb:.1f} MB -> {dest}", file=sys.stderr)
@@ -2873,7 +2917,14 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
     return None
 
 
-def _stream_download(url, dest_path, headers=None, requester=None):
+def _stream_download(
+    url,
+    dest_path,
+    headers=None,
+    requester=None,
+    *,
+    allow_html=False,
+):
     """Stream-download file with progress. Retries the whole transfer on
     transient connection / 5xx errors (chunked stream restarts from byte 0).
     """
@@ -2909,7 +2960,11 @@ def _stream_download(url, dest_path, headers=None, requester=None):
                 prefix = downloaded_file.read(1024).lstrip().lower()
         except OSError:
             return False
-        if "html" in content_type or prefix.startswith((b"<!doctype html", b"<html")):
+        looks_html = (
+            "html" in content_type
+            or prefix.startswith((b"<!doctype html", b"<html"))
+        )
+        if looks_html and not allow_html:
             print("  Download returned HTML instead of a file", file=sys.stderr)
             try:
                 os.remove(dest_path)
@@ -3373,8 +3428,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--format",
         "-f",
         action="append",
-        choices=("epub", "pdf"),
-        help="Allowed file format in preference order (repeatable; default: epub, pdf)",
+        type=_book_format_token,
+        help="Candidate file format to search (repeatable; default: epub, pdf)",
     )
     p_bc.add_argument("--lang", help="Language filter, e.g. en")
     p_bc.add_argument("--limit", type=int, default=5)
@@ -3384,7 +3439,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_bf = book_sub.add_parser("fetch", help="Download one book candidate to temp and diagnose")
     p_bf.add_argument("--md5", required=True, help="Anna's Archive file MD5")
     p_bf.add_argument("--slug", required=True, help="Target work slug for temp filename")
-    p_bf.add_argument("--format", "-f", default="pdf", help="File format (default: pdf)")
+    p_bf.add_argument(
+        "--format",
+        "-f",
+        type=_book_format_token,
+        default="pdf",
+        help="Candidate file format (default: pdf)",
+    )
     p_bf.add_argument("--temp-dir", default=str(_default_temp_dir()),
                       help="Temp output directory (default: .quasi/temp/downloads)")
     p_bf.add_argument("--json", action="store_true", help="Accepted for contract clarity; output is always JSON")

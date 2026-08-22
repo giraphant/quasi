@@ -351,6 +351,23 @@ def test_aa_search_reports_ddos_guard_challenge(monkeypatch):
     ]
 
 
+def test_aa_search_reports_source_unavailable_when_no_mirror_is_reachable(monkeypatch):
+    mod = _load_module(AA, "aa_source_unavailable_under_test")
+
+    monkeypatch.setattr(mod, "load_aa_config", lambda: {"donator_key": "configured"})
+    monkeypatch.setattr(mod, "get_aa_base_url", lambda config: None)
+
+    result = mod.search_aa("example")
+
+    assert result == {
+        "success": False,
+        "source": "anna_archive",
+        "count": 0,
+        "results": [],
+        "error": "source_unavailable",
+    }
+
+
 def test_aa_search_parses_browser_page_after_ddos_guard_challenge(monkeypatch):
     mod = _load_module(AA, "aa_ddos_guard_browser_under_test")
     challenge = SimpleNamespace(
@@ -1064,7 +1081,15 @@ def test_aa_slow_download_uses_each_no_wait_partner_as_referer(tmp_path, monkeyp
         raising=False,
     )
 
-    def stream_download(url, output_path, *, headers=None, requester=None):
+    def stream_download(
+        url,
+        output_path,
+        *,
+        headers=None,
+        requester=None,
+        allow_html=False,
+    ):
+        assert allow_html is False
         observed_downloads.append(url)
         observed_referers.append(headers["Referer"])
         Path(output_path).write_bytes(
@@ -1153,7 +1178,15 @@ def test_book_download_reaches_slow_only_after_fast_and_libgen_fail(
     )
     monkeypatch.setattr(mod, "_is_valid_book_file", lambda *_args: True)
 
-    def stream_download(_url, output_path, *, headers=None, requester=None):
+    def stream_download(
+        _url,
+        output_path,
+        *,
+        headers=None,
+        requester=None,
+        allow_html=False,
+    ):
+        assert allow_html is False
         Path(output_path).write_bytes(b"fast payload")
         return True
 
@@ -1450,7 +1483,7 @@ def test_book_candidates_defaults_to_one_epub_pdf_search(monkeypatch, capsys):
     ]
 
 
-def test_book_candidates_accepts_ordered_repeated_format_flags():
+def test_book_candidates_accepts_ordered_repeated_arbitrary_format_flags():
     mod = _load_module(DOWNLOAD, "download_repeated_formats_under_test")
 
     args = mod._build_parser().parse_args(
@@ -1460,13 +1493,76 @@ def test_book_candidates_accepts_ordered_repeated_format_flags():
             "--query",
             "example",
             "--format",
-            "epub",
+            "mobi",
             "--format",
-            "pdf",
+            "html",
         ]
     )
 
-    assert args.format == ["epub", "pdf"]
+    assert args.format == ["mobi", "html"]
+
+
+def test_book_candidates_rejects_unsafe_format_tokens():
+    mod = _load_module(DOWNLOAD, "download_unsafe_format_under_test")
+
+    with pytest.raises(SystemExit):
+        mod._build_parser().parse_args(
+            [
+                "book",
+                "candidates",
+                "--query",
+                "example",
+                "--format",
+                "../../outside",
+            ]
+        )
+
+
+def test_book_candidate_validator_preserves_noncanonical_temp_inputs(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_noncanonical_candidate_under_test")
+    mobi = tmp_path / "candidate.mobi"
+    mobi.write_bytes(b"BOOKMOBI" + b"x" * 12000)
+    html_candidate = tmp_path / "candidate.html"
+    html_candidate.write_text(
+        "<!doctype html><html><body>" + "article text " * 1000 + "</body></html>",
+        encoding="utf-8",
+    )
+
+    assert mod._is_valid_book_file(mobi, "mobi") is True
+    assert mod._is_valid_book_file(html_candidate, "html") is True
+    assert mod._is_valid_book_file(html_candidate, "mobi") is False
+
+
+def test_stream_download_can_preserve_explicit_html_candidate(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_explicit_html_candidate_under_test")
+    dest = tmp_path / "article.html"
+    body = (b"<!doctype html><html><body>" + b"article text " * 1000 + b"</body></html>")
+
+    class FakeResponse:
+        status_code = 200
+        headers = {
+            "content-length": str(len(body)),
+            "content-type": "text/html; charset=utf-8",
+        }
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            del chunk_size
+            yield body
+
+    def requester(_method, _url, *, timeout, stream, headers):
+        del timeout, stream, headers
+        return FakeResponse()
+
+    assert mod._stream_download(
+        "https://example.org/article",
+        str(dest),
+        requester=requester,
+        allow_html=True,
+    ) is True
+    assert dest.read_bytes() == body
 
 
 def test_aa_base_url_uses_live_last_good_before_other_discovery(tmp_path, monkeypatch):

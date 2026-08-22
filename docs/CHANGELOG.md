@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.24** (2026-08-22): **Download Agent 以可验证交付为目标，不再把查询写法与远端格式当作固定流程。**
+  - Book 候选搜索现在明确区分来源不可观察的 `status:failed` 与真实的 `status:ok,count:0`；镜像不可达、挑战未解或页面未稳定不再被概括成“零候选”。只有真实空结果或候选调查耗尽才返回 `book.download_failed`，来源本身不可用则返回可重试的 `book.candidate_search_unavailable`。
+  - Download Agent 可以依据书名变体、作者、identifier 与调查证据自行改写查询、排序候选和决定停止点；Paper 内置 cascade 失败后也可用 Kagi 发现新的可靠 URL，再交回既有 fetch 能力，而不是在 Agent 层复制认证下载器或 provider cascade。
+  - Book 搜索与临时 fetch 不再把远端候选格式锁死为 PDF/EPUB：安全的格式 token 均可暂存，明确的 HTML 候选也不会被通用错误页过滤器删除。Agent 可在同一临时目录使用现有确定性工具规范化候选；只有内容、身份和可读性均核验通过的 canonical PDF/EPUB 才能经唯一一次原子 accept 发布。实际 fetch capability 同步改为当前 CLI 的 `--md5/--slug/--format` 合同。
+
 - **0.65.23** (2026-08-21): **Paper 身份疑点交给下载专家裁决，章节过滤规则变化会使旧 manifest 失效。**
   - Paper 下载器不再把完整题名的机械字符串匹配当作最终专业判断：结构可用但未通过该快速证明的候选会留在隔离 temp path，并以 `identity_uncertain` 连同首页证据交给 Download Agent。Agent 阅读 exact 文件、综合题名、作者、期刊、正文与 DOI 后至多 accept 一个；排版拆字、旧文本层与轻微 OCR 错字不再直接销毁正确来源，明确的其它作品仍会被拒绝和清理。后续来源若给出确定性身份，先前保留的疑似候选自动清理。
   - Book TOC 过滤补充出版方宣传页、系列页、技术编辑信息及中英文电子书家具；SKIP 词表与 pattern 的稳定摘要进入章节 request fingerprint，规则变化后旧 manifest 会变为 stale 并干净重建，不再复用旧章节集合。

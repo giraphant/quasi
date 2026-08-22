@@ -1523,6 +1523,48 @@ def test_book_acquire_conservatively_owns_both_possible_sources():
     ]
 
 
+def test_book_acquire_distinguishes_unavailable_search_and_allows_query_reformulation():
+    prepared = _prepare("book.acquire")
+    request = _prompt_request(prepared["prompt"])
+    failed = next(
+        branch
+        for branch in prepared["options"]["schema"]["properties"]["terminal"]["anyOf"]
+        if branch["properties"]["status"]["const"] == "failed"
+    )
+
+    assert request["capabilities"][0] == (
+        "quasi-download book candidates (--title TITLE --author AUTHOR | "
+        "--query QUERY) [--year YEAR] --format FORMAT... --json"
+    )
+    assert failed["properties"]["issue"]["properties"]["code"]["enum"] == [
+        "book.download_failed",
+        "book.candidate_search_unavailable",
+    ]
+    assert request["resource_bounds"] == {"accept_budget": 1}
+    assert request["capabilities"][1] == (
+        "quasi-download book fetch --md5 MD5 --slug SLUG --format FORMAT "
+        "[--temp-dir DIR] --json"
+    )
+    assert any(
+        "normalize" in capability and "same temporary directory" in capability
+        for capability in request["capabilities"]
+    )
+
+
+def test_paper_acquire_allows_agent_owned_discovery_and_temp_normalization():
+    prepared = _prepare("paper.acquire")
+    request = _prompt_request(prepared["prompt"])
+
+    assert any(
+        capability.startswith("quasi-search kagi ")
+        for capability in request["capabilities"]
+    )
+    assert any(
+        "normalize" in capability and "same temporary directory" in capability
+        for capability in request["capabilities"]
+    )
+
+
 def test_book_acquire_year_mismatch_is_incoherent_complete():
     identity = _search_identity("book", slug="exact-book")
     report = _dispatch(

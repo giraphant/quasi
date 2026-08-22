@@ -116,7 +116,9 @@ export const paperOperationRows: OperationRow[] = [
       capabilities: [
         "quasi-download paper fetch --slug SLUG (--doi DOI | --url URL ...) [--title TITLE] [--author AUTHOR] [--temp-dir DIR] --json",
         "quasi-download paper diagnose --url URL [--via-ezproxy] [--timeout SECONDS] --json",
+        "quasi-search kagi ...",
         "quasi-download accept --path INPUT --slug SLUG --kind paper --json",
+        "Use available deterministic local tools to inspect or normalize fetched content into the exact PDF output format in the same temporary directory",
         "paper fetch may return identity_uncertain candidates; review each exact temp_path and inspect evidence, accept at most one, and remove the rejected returned temp paths",
         "Read the exact output only to verify title, authors, and DOI evidence",
       ],

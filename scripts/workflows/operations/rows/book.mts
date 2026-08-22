@@ -277,7 +277,10 @@ export const bookOperationRows: OperationRow[] = [
       },
       failed: {
         properties: {
-          issue: issueSchema("book.acquire", ["book.download_failed"]),
+          issue: issueSchema("book.acquire", [
+            "book.download_failed",
+            "book.candidate_search_unavailable",
+          ]),
           attempts: { ...ATTEMPT_SCHEMA, minItems: 1 },
         },
       },
@@ -366,7 +369,7 @@ export const bookOperationRows: OperationRow[] = [
           : null,
         identity_contract: BOOK_ARTIFACT_CONTRACT.identity,
         year_decision: yearDecision,
-        resource_bounds: { fetch_budget_per_candidate: 1, accept_budget: 1 },
+        resource_bounds: { accept_budget: 1 },
         shell_argv: {
           slug: posixSingleQuote(slug),
           allowed_outputs: allowedSources.map(({ path }: any) =>
@@ -384,9 +387,10 @@ export const bookOperationRows: OperationRow[] = [
             : null,
         },
         capabilities: [
-          "quasi-download book candidates --title TITLE --author AUTHOR --json",
-          "quasi-download book fetch --candidate-json CANDIDATE --output OUTPUT --json",
+          "quasi-download book candidates (--title TITLE --author AUTHOR | --query QUERY) [--year YEAR] --format FORMAT... --json",
+          "quasi-download book fetch --md5 MD5 --slug SLUG --format FORMAT [--temp-dir DIR] --json",
           "quasi-download accept --path INPUT --slug SLUG --kind book --json",
+          "Use available deterministic local tools to inspect or normalize fetched candidates into an allowed PDF/EPUB sibling in the same temporary directory",
           "Read exact candidate, output, and temporary paths to verify identity and year evidence",
         ],
         output_path_rule:
