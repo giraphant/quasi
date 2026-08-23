@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.26** (2026-08-23): **Paper 的既有 owner 不再因本地化语义字段与检索身份的表示差异陷入观察死循环。**
+  - `material.search` 已明确把当前作品绑定到同一个 `owner_slug`，且 fresh exact status 证明该 owner 的 canonical 可用时，Paper 现在接受 Search 的 owner 判定并继续 Prepare 与 Audit；中文标题、大小写或作者 wikilink 等库内表示不再要求与检索 identity 逐字相同。
+  - 普通 canonical seed 仍需标题、作者与年份的严格磁盘 testimony 才能跳过 Search；Search 指向的新 route 没有 fresh observation、或 canonical 不可用时仍返回 `needs_observation`。Dant 型 source/canonical 已存在但 prepared 缺失的恢复因此能取得进展，而不会放宽任意同 slug 文档的身份边界。
+
 - **0.65.25** (2026-08-22): **Paper complete 重新要求 source、Prepare 选定文本与 canonical 三层产物同时可用。**
   - 既有 canonical owner 先前会直接进入 Audit；Audit 只检查 canonical 页面，因此即使 accepted source 或 `processing/papers/{slug}/source.txt` 缺失，Workflow 仍可能返回 complete。Paper 现在缺 source 时先 Acquire，并在 Audit 前始终由 Prepare 核对或生成输入；已有 canonical 不会因此重跑 Analyse，只有 Audit 的 exact repair 诊断才会调用它。
   - Paper complete 现在返回 source、Prepare 实际选定的 normalized text 与 canonical 三个 exact refs，Collect 用 fresh post-status 逐一验证。Search 找到既有 owner 但当前 invocation 没有该 owner 的 fresh admitted observation 时，会先返回 `needs_observation`，不再凭 Search 回执直接审计并结算。

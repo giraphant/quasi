@@ -381,7 +381,8 @@ async function runPaperPlanResult(
     if (search.owner_slug !== null) {
       if (
         state.observation === null ||
-        !paperObservationAdmitsIdentity(state.observation, state.identity)
+        !state.observation.facts.canonical.present ||
+        !state.observation.facts.canonical.usable
       )
         return needsObservationMaterialResult(
           resultSeed(state),

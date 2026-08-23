@@ -944,6 +944,44 @@ def test_paper_existing_canonical_recovers_missing_source_before_prepare() -> No
     ]
 
 
+def test_paper_search_owner_admits_usable_canonical_with_localized_identity() -> None:
+    value = canonical_input(
+        source=True,
+        prepared=False,
+        canonical=True,
+        admitted=True,
+    )
+    value["observation"]["identity"] = {
+        "title": "精确论文",
+        "authors": ["[[ada-example|Ada Example]]"],
+        "year": 2024,
+    }
+
+    report = run_paper(
+        value,
+        [
+            search_complete(owner_slug="exact-paper"),
+            prepare_complete(),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search",
+        "paper.prepare",
+        "paper.audit",
+    ]
+    assert report["result"]["terminal"] == "complete"
+    assert report["result"]["artifacts"] == [
+        {"role": "source", "path": "sources/exact-paper.pdf"},
+        {
+            "role": "normalized_text",
+            "path": "processing/papers/exact-paper/source.txt",
+        },
+        {"role": "canonical", "path": "vault/papers/exact-paper.md"},
+    ]
+
+
 def test_paper_search_lifts_only_the_typed_identity_gate() -> None:
     report = run_paper(provisional_input(), [search_needs_input()])
 
