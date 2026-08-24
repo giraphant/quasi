@@ -230,7 +230,10 @@ OPERATION_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
     ),
     "material.search": ("paper", _context()),
     "paper.acquire": ("paper", _context()),
-    "paper.prepare": ("paper", _context()),
+    "paper.prepare": (
+        "paper",
+        _context(source="sources/exact-material.pdf"),
+    ),
     "paper.analyse": ("paper", _context()),
     "paper.audit": ("paper", _context(target="vault/papers/exact-material.md")),
     "book.acquire": (
@@ -1201,6 +1204,7 @@ def test_paper_acquire_write_state_is_the_sole_effect_claim() -> None:
         {
             "invocation": _invocation("paper.acquire"),
             "model_output": {
+                "output_path": "sources/exact-material.pdf",
                 "write_state": "written",
                 "identity_verified": True,
                 "terminal": {
@@ -1217,6 +1221,25 @@ def test_paper_acquire_write_state_is_the_sole_effect_claim() -> None:
         "sources/exact-material.pdf"
     )
     assert report["result"]["receipt"]["doi"] == "10.1000/exact"
+
+
+def test_paper_acquire_exposes_pdf_and_text_source_alternatives() -> None:
+    prepared = _prepare("paper.acquire")
+    request = _prompt_request(prepared["prompt"])
+    schema = prepared["options"]["schema"]
+
+    assert prepared["writeTargets"] == [
+        {"scope": "exact", "path": "sources/exact-material.pdf"},
+        {"scope": "exact", "path": "sources/exact-material.txt"},
+    ]
+    assert request["allowed_outputs"] == [
+        {"format": "pdf", "path": "sources/exact-material.pdf"},
+        {"format": "txt", "path": "sources/exact-material.txt"},
+    ]
+    assert schema["properties"]["output_path"]["enum"] == [
+        "sources/exact-material.pdf",
+        "sources/exact-material.txt",
+    ]
 
 
 def test_paper_acquire_unknown_write_state_is_incoherent_complete() -> None:

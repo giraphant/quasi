@@ -89,11 +89,24 @@ PAPER_OBSERVATION = {
     "identity": None,
     "facts": {
         "kind": "paper",
-        "source": {
-            "path": "sources/exact-paper.pdf",
-            "present": False,
-            "usable": False,
-        },
+        "sources": [
+            {
+                "format": "pdf",
+                "artifact": {
+                    "path": "sources/exact-paper.pdf",
+                    "present": False,
+                    "usable": False,
+                },
+            },
+            {
+                "format": "txt",
+                "artifact": {
+                    "path": "sources/exact-paper.txt",
+                    "present": False,
+                    "usable": False,
+                },
+            },
+        ],
         "prepared": [
             {
                 "path": "processing/papers/exact-paper/source.txt",
@@ -118,7 +131,8 @@ PAPER_OBSERVATION = {
 def paper_observation_for_slug(slug: str) -> dict[str, Any]:
     value = deepcopy(PAPER_OBSERVATION)
     value["slug"] = slug
-    value["facts"]["source"]["path"] = f"sources/{slug}.pdf"
+    value["facts"]["sources"][0]["artifact"]["path"] = f"sources/{slug}.pdf"
+    value["facts"]["sources"][1]["artifact"]["path"] = f"sources/{slug}.txt"
     value["facts"]["prepared"][0]["path"] = (
         f"processing/papers/{slug}/source.txt"
     )

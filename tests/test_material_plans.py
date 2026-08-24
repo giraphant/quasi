@@ -656,6 +656,7 @@ def paper_observation(
     slug: str,
     *,
     source: bool = False,
+    text_source: bool = False,
     prepared: bool = False,
     canonical: bool = False,
     admitted: bool = False,
@@ -675,11 +676,24 @@ def paper_observation(
         ),
         "facts": {
             "kind": "paper",
-            "source": {
-                "path": f"sources/{slug}.pdf",
-                "present": source,
-                "usable": source,
-            },
+            "sources": [
+                {
+                    "format": "pdf",
+                    "artifact": {
+                        "path": f"sources/{slug}.pdf",
+                        "present": source,
+                        "usable": source,
+                    },
+                },
+                {
+                    "format": "txt",
+                    "artifact": {
+                        "path": f"sources/{slug}.txt",
+                        "present": text_source,
+                        "usable": text_source,
+                    },
+                },
+            ],
             "prepared": [
                 {
                     "path": f"processing/papers/{slug}/source.txt",
@@ -717,6 +731,7 @@ def canonical_input(
     *,
     material_slug: str = "exact-paper",
     source: bool = False,
+    text_source: bool = False,
     prepared: bool = False,
     canonical: bool = False,
     admitted: bool = False,
@@ -730,6 +745,7 @@ def canonical_input(
         "observation": paper_observation(
             material_slug,
             source=source,
+            text_source=text_source,
             prepared=prepared,
             canonical=canonical,
             admitted=admitted,
@@ -789,8 +805,9 @@ def search_complete(
     }
 
 
-def acquire_complete() -> dict[str, Any]:
+def acquire_complete(output_path: str = "sources/exact-paper.pdf") -> dict[str, Any]:
     return {
+        "output_path": output_path,
         "write_state": "written",
         "identity_verified": True,
         "attempts": [],
@@ -937,9 +954,66 @@ def test_paper_existing_source_and_canonical_reconciles_missing_prepared_text() 
         "paper.prepare",
         "paper.audit",
     ]
+
+
+def test_paper_text_source_flows_through_prepare_and_completion() -> None:
+    report = run_paper(
+        canonical_input(
+            text_source=True,
+            canonical=True,
+            admitted=True,
+        ),
+        [prepare_complete(), audit_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "paper.prepare",
+        "paper.audit",
+    ]
+    assert report["calls"][0]["request"]["refs"]["source"] == (
+        "sources/exact-paper.txt"
+    )
+    assert report["result"]["artifacts"][0] == {
+        "role": "source",
+        "path": "sources/exact-paper.txt",
+    }
+
+
+def test_paper_conflicting_source_alternatives_stop_before_dispatch() -> None:
+    report = run_paper(
+        canonical_input(
+            source=True,
+            text_source=True,
+            canonical=True,
+            admitted=True,
+        ),
+        [],
+    )
+
+    assert report["calls"] == []
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "paper.source_conflict"
+
+
+def test_paper_acquire_may_select_the_text_output() -> None:
+    report = run_paper(
+        canonical_input(canonical=True, admitted=True),
+        [
+            acquire_complete("sources/exact-paper.txt"),
+            prepare_complete(),
+            audit_complete(),
+        ],
+    )
+
+    assert report["calls"][1]["request"]["refs"]["source"] == (
+        "sources/exact-paper.txt"
+    )
+    assert report["result"]["artifacts"][0]["path"] == (
+        "sources/exact-paper.txt"
+    )
     assert report["result"]["terminal"] == "complete"
     assert report["result"]["artifacts"] == [
-        {"role": "source", "path": "sources/exact-paper.pdf"},
+        {"role": "source", "path": "sources/exact-paper.txt"},
         {
             "role": "normalized_text",
             "path": "processing/papers/exact-paper/source.txt",

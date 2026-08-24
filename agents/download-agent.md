@@ -58,8 +58,9 @@ tmp path 和逐字段相等的 prior evidence。`accept-current` 要求 request 
 Search 新返回的完整 identity 且 year 等于推荐年。它的 bibliographic slug 可以与运行时 material
 key/output slug 不同；你不转换、替换或重新推导任何 slug。
 
-Paper 流程只有 caller 给出的一个 `exact_output`：目标不存在时以 `quasi-download paper fetch`
-取得候选；目标存在时只核验其题名、作者和 DOI 身份证据。内置 cascade 失败后，若仍有可靠的
+Paper 流程只有 caller 给出的 PDF/TXT 两个 `allowed_outputs`，且成功时必须恰好选择其中一个：
+目标均不存在时以 `quasi-download paper fetch` 取得候选；恰好一个目标存在时只核验其题名、
+作者和 DOI 身份证据；两个目标同时存在时返回 blocked，不自行删改。内置 cascade 失败后，若仍有可靠的
 检索词、URL 或正文线索，可继续使用声明的检索与 fetch 能力调查；次数、顺序与停止判断由你负责，
 但整个请求仍只能 accept 一次。已观察到
 hard 4xx、登录页或 challenge 时，可仅对 caller 给出的同一 URL 执行一次只读
@@ -70,8 +71,9 @@ hard 4xx、登录页或 challenge 时，可仅对 caller 给出的同一 URL 执
 Agent 层复刻 `quasi-download` 已经执行过的 provider cascade；新发现的 URL 应作为新的 fetch
 输入，而不是自行实现另一套认证下载器。每一次实际来源尝试都必须保留原样的
 `{source,status,error}` 行；耗尽时如实报告完整 attempts。核验后才 accept。HTML、纯文本或其他
-非 PDF 候选同样只能留在 fetch 的临时目录；可用已有确定性工具规范化为 exact PDF sibling，
-但只有内容与身份均核验通过的 PDF 才能发布。
+非 PDF 候选同样先留在 fetch 的临时目录；可用已有确定性工具规范化为 PDF 或严格 UTF-8 text
+sibling。只有内容完整且身份核验通过的 PDF/文本才能发布，HTML shell、登录页与元数据页不能
+冒充 text source。
 
 `paper fetch` 的 `status:identity_uncertain` 不是下载失败：CLI 已确认这些 exact
 `candidates[].temp_path` 是可读候选，只是机械题名/作者检查不足以裁决。逐个阅读其
@@ -107,5 +109,5 @@ blocked/unknown。作用范围仅限访问与 source acceptance。
 最后直接返回 caller StructuredOutput schema 的单材料 receipt，不套 `per_item` 或计数 wrapper。
 Book 的 `MISMATCH` 或 `AMBIGUOUS` 以 `terminal.needs_input` 询问年份决策并保留 year evidence 与
 临时 path；Book complete 把本次使用的 year evidence 与 nullable temp path 放在
-`terminal.complete`。这些字段不在 receipt 顶层重复。`output_path` 始终逐字回显 request 的
-相对 output ref。
+`terminal.complete`。这些字段不在 receipt 顶层重复。`output_path` 始终逐字回显 request
+选中的一个相对 allowed output ref。

@@ -338,7 +338,16 @@ def status_payload(
 
 
 def paper_status(root: Path, slug: str) -> dict[str, Any]:
-    source = artifact_path(root, "paper.acquire", "output", slug=slug)
+    sources = [
+        (
+            "pdf",
+            artifact_path(root, "paper.acquire", "outputPdf", slug=slug),
+        ),
+        (
+            "txt",
+            artifact_path(root, "paper.acquire", "outputText", slug=slug),
+        ),
+    ]
     prepared = [
         artifact_path(root, "paper.prepare", "normalized", slug=slug),
         artifact_path(root, "paper.prepare", "recoveryText", slug=slug),
@@ -351,7 +360,13 @@ def paper_status(root: Path, slug: str) -> dict[str, Any]:
         frontmatter_identity(frontmatter) if canonical_fact["usable"] else None,
         {
             "kind": "paper",
-            "source": artifact_observation(root, source),
+            "sources": [
+                {
+                    "format": format_name,
+                    "artifact": artifact_observation(root, path),
+                }
+                for format_name, path in sources
+            ],
             "prepared": [artifact_observation(root, path) for path in prepared],
             "canonical": canonical_fact,
         },
@@ -893,7 +908,7 @@ def scan_status(root: Path) -> dict[str, Any]:
             discovered["webpage"].add(entry.name)
 
     source_directory = artifact_path(
-        root, "paper.acquire", "output", slug=scan_slug
+        root, "paper.acquire", "outputPdf", slug=scan_slug
     ).parent
     for entry in children(source_directory):
         slug = entry.stem
@@ -906,6 +921,8 @@ def scan_status(root: Path) -> dict[str, Any]:
             known = [kind for kind in ("paper", "book") if slug in discovered[kind]]
             for kind in known or ["paper", "book"]:
                 discovered[kind].add(slug)
+        elif suffix == ".txt":
+            discovered["paper"].add(slug)
         elif suffix[1:] in MEDIA_EXTENSIONS:
             discovered["talk"].add(slug)
 

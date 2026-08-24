@@ -1,4 +1,5 @@
 import { PAPER_ARTIFACT_CONTRACT } from "../../artifact-contracts/generated.mjs";
+import { InputContractError } from "../../context-base.mts";
 import {
   ATTEMPT_SCHEMA,
   PREPARE_STEP_SCHEMA,
@@ -36,9 +37,16 @@ const quoteOrNull: AnyFunction = (value) =>
 export const paperOperationRows: OperationRow[] = [
   {
     operation: "paper.acquire",
-    refs: ({ output, meta }) => ({ output, doi: meta.doi || null }),
-    writeTargets: ({ output }) => [{ scope: "exact", path: output }],
-    payloadProperties: ({ output, doi }) => ({
+    refs: ({ outputPdf, outputText, meta }) => ({
+      outputPdf,
+      outputText,
+      doi: meta.doi || null,
+    }),
+    writeTargets: ({ outputPdf, outputText }) => [
+      { scope: "exact", path: outputPdf },
+      { scope: "exact", path: outputText },
+    ],
+    payloadProperties: ({ outputPdf, outputText, doi }) => ({
       required: [
         "output_path",
         "doi",
@@ -47,7 +55,7 @@ export const paperOperationRows: OperationRow[] = [
         "attempts",
       ],
       properties: {
-        output_path: { const: output },
+        output_path: { type: "string", enum: [outputPdf, outputText] },
         doi: { const: doi },
         write_state: {
           type: "string",
@@ -81,16 +89,19 @@ export const paperOperationRows: OperationRow[] = [
       receipt.identity_verified === true &&
       (receipt.write_state === "written" ||
         receipt.write_state === "not_written"),
-    envelope: ({ slug, meta, materialKey }, { output }) => ({
+    envelope: ({ slug, meta, materialKey }, { outputPdf, outputText }) => ({
       schema_version: "quasi.stage.request/0.2",
       operation: "paper.acquire",
       stage: "Acquire",
       material_key: materialKey,
       effect: "writer",
       objective:
-        "Reconcile or obtain one identity-verified Paper source at the exact output path.",
-      exact_output: output,
-      refs: { output },
+        "Reconcile or obtain one identity-verified Paper source at exactly one allowed output path.",
+      allowed_outputs: [
+        { format: "pdf", path: outputPdf },
+        { format: "txt", path: outputText },
+      ],
+      refs: { output_pdf: outputPdf, output_text: outputText },
       identity: {
         slug,
         title: meta.title,
@@ -106,7 +117,8 @@ export const paperOperationRows: OperationRow[] = [
       identity_contract: PAPER_ARTIFACT_CONTRACT.identity,
       shell_argv: {
         slug: posixSingleQuote(slug),
-        exact_output: posixSingleQuote(output),
+        exact_output_pdf: posixSingleQuote(outputPdf),
+        exact_output_text: posixSingleQuote(outputText),
         expected_title: posixSingleQuote(meta.title),
         expected_author: posixSingleQuote(meta.authors[0]),
         doi: quoteOrNull(meta.doi),
@@ -118,22 +130,34 @@ export const paperOperationRows: OperationRow[] = [
         "quasi-download paper diagnose --url URL [--via-ezproxy] [--timeout SECONDS] --json",
         "quasi-search kagi ...",
         "quasi-download accept --path INPUT --slug SLUG --kind paper --json",
-        "Use available deterministic local tools to inspect or normalize fetched content into the exact PDF output format in the same temporary directory",
+        "Use available deterministic local tools to inspect or normalize fetched content into one allowed PDF or UTF-8 text output format in the same temporary directory",
         "paper fetch may return identity_uncertain candidates; review each exact temp_path and inspect evidence, accept at most one, and remove the rejected returned temp paths",
         "Read the exact output only to verify title, authors, and DOI evidence",
       ],
       output_path_rule:
-        "Echo exact_output byte-for-byte as output_path in every terminal; a resolved or absolute CLI path is observation evidence only.",
+        "Echo one allowed_outputs[].path byte-for-byte as output_path in every terminal; a resolved or absolute CLI path is observation evidence only.",
     }),
   },
   {
     operation: "paper.prepare",
-    refs: ({ source, normalized, recoverySource, recoveryText }) => ({
-      source,
-      normalized,
-      recoverySource,
-      recoveryText,
+    context: (rawContext, base) => ({
+      ...base,
+      source: rawContext.source,
     }),
+    refs: ({ source, sourcePdf, sourceText, normalized, recoverySource, recoveryText }) => {
+      if (![sourcePdf, sourceText].includes(source))
+        throw new InputContractError(
+          "paper.prepare source must be one declared Paper source",
+        );
+      return {
+        source,
+        sourcePdf,
+        sourceText,
+        normalized,
+        recoverySource,
+        recoveryText,
+      };
+    },
     writeTargets: ({ normalized, recoverySource, recoveryText }) => [
       { scope: "exact", path: normalized },
       { scope: "exact", path: recoverySource },
@@ -202,7 +226,9 @@ export const paperOperationRows: OperationRow[] = [
       },
       capabilities: [
         "quasi-extract text INPUT OUTPUT --json",
-        "quasi-extract ocr INPUT OUTPUT --no-clobber --json",
+        ...(refs.source === refs.sourcePdf
+          ? ["quasi-extract ocr INPUT OUTPUT --no-clobber --json"]
+          : []),
         "Read exact normalized text artifacts",
       ],
       artifact_roles: ["normalized_text", "recovery_source"],

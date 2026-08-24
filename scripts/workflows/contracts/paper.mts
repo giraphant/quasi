@@ -49,7 +49,10 @@ export type PaperSeed = LeafSeed<PaperIntake, PaperIdentity>;
 
 export interface PaperStatusFacts {
   kind: "paper";
-  source: ArtifactObservation;
+  sources: Array<{
+    format: "pdf" | "txt";
+    artifact: ArtifactObservation;
+  }>;
   prepared: ArtifactObservation[];
   canonical: ArtifactObservation;
 }
@@ -175,11 +178,23 @@ export const parsePaperStatusObservation = (
     `processing/papers/${slug}/source.txt`,
     `processing/papers/${slug}/ocr.txt`,
   ];
+  const expectedSources = [
+    { format: "pdf", path: `sources/${slug}.pdf` },
+    { format: "txt", path: `sources/${slug}.txt` },
+  ];
   if (
-    !exactKeys(facts, ["kind", "source", "prepared", "canonical"]) ||
+    !exactKeys(facts, ["kind", "sources", "prepared", "canonical"]) ||
     facts.kind !== "paper" ||
-    !isArtifactObservation(facts.source) ||
-    facts.source.path !== `sources/${slug}.pdf` ||
+    !Array.isArray(facts.sources) ||
+    facts.sources.length !== expectedSources.length ||
+    !facts.sources.every(
+      (item, index) =>
+        isRecord(item) &&
+        exactKeys(item, ["format", "artifact"]) &&
+        item.format === expectedSources[index]!.format &&
+        isArtifactObservation(item.artifact) &&
+        item.artifact.path === expectedSources[index]!.path,
+    ) ||
     !isArtifactList(facts.prepared) ||
     facts.prepared.length !== expectedPrepared.length ||
     !facts.prepared.every(

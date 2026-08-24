@@ -51,7 +51,10 @@ OPERATION_CATALOG = {
         "phase": "Acquire",
         "effect": "writer",
         "agent": "quasi:download-agent",
-        "artifacts": {"output": "sources/{slug}.pdf"},
+        "artifacts": {
+            "outputPdf": "sources/{slug}.pdf",
+            "outputText": "sources/{slug}.txt",
+        },
     },
     "paper.prepare": {
         "kinds": ["paper"],
@@ -59,7 +62,8 @@ OPERATION_CATALOG = {
         "effect": "writer",
         "agent": "quasi:extract-agent",
         "artifacts": {
-            "source": "sources/{slug}.pdf",
+            "sourcePdf": "sources/{slug}.pdf",
+            "sourceText": "sources/{slug}.txt",
             "normalized": "processing/papers/{slug}/source.txt",
             "recoverySource": "processing/papers/{slug}/ocr.pdf",
             "recoveryText": "processing/papers/{slug}/ocr.txt",

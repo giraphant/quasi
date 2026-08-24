@@ -34,6 +34,9 @@ source 做 OCR，再提取和复核 recovery text。已有 recovery artifact 应
 writer outcome 不以再次写入来猜测。成功 receipt 的 `selected_input` 必须是已实际阅读且标记
 usable 的 exact normalized artifact。
 
+若 accepted source 是 `.txt`，使用 request 的 `quasi-extract text` 能力做严格 UTF-8 与换行
+归一化并实际阅读；文本载体不运行 OCR。若 accepted source 是 PDF，才允许使用 recovery OCR。
+
 Paper Prepare 没有用户选择分支：exact source 或 writer ownership 不能确认时返回 `blocked`；
 在现有 bounded capabilities 下不能形成可读文本时返回 `failed`。
 

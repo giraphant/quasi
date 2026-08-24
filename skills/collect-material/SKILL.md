@@ -282,7 +282,7 @@ issue。Batch 恢复原输入顺序并标出 exact-key coalescing。
 常见成功产物：
 
 ```text
-sources/{slug}.{pdf|epub}
+sources/{slug}.{pdf|epub|txt}
 processing/papers/{slug}/source.txt
 processing/chapters/{slug}/{manifest.json,*.txt}
 vault/papers/{slug}.md

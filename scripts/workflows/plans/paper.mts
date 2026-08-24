@@ -408,9 +408,19 @@ async function runPaperPlanResult(
     meta: state.identity,
     materialKey: `paper:${slug}`,
   };
-  let sourcePath = state.observation?.facts.source.usable
-    ? state.observation.facts.source.path
-    : null;
+  const usableSources = (state.observation?.facts.sources ?? [])
+    .filter(({ artifact }) => artifact.usable)
+    .map(({ artifact }) => artifact.path);
+  if (usableSources.length > 1)
+    return blockedMaterialResult(
+      resultSeed(state),
+      planIssue(
+        "paper.source_conflict",
+        null,
+        "Both canonical Paper source alternatives are usable; exact ownership is ambiguous.",
+      ),
+    );
+  let sourcePath = usableSources[0] ?? null;
   if (sourcePath === null) {
     const acquired = await dispatch(runtime, "paper.acquire", slug, common);
     const acquireStop = stopForOutcome(state, acquired);
@@ -418,7 +428,10 @@ async function runPaperPlanResult(
     sourcePath = (acquired.receipt as StageReceipt).output_path as string;
   }
 
-  const prepared = await dispatch(runtime, "paper.prepare", slug, common);
+  const prepared = await dispatch(runtime, "paper.prepare", slug, {
+    ...common,
+    source: sourcePath,
+  });
   const prepareStop = stopForOutcome(state, prepared);
   if (prepareStop !== null) return prepareStop;
   const selectedInput = (prepared.receipt as StageReceipt).selected_input;

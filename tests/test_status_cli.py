@@ -256,9 +256,20 @@ def test_empty_paper_status_is_one_closed_factual_observation(tmp_path: Path):
         "identity": None,
         "facts": {
             "kind": "paper",
-            "source": observation(
-                "sources/missing-paper.pdf", present=False, usable=False
-            ),
+            "sources": [
+                {
+                    "format": "pdf",
+                    "artifact": observation(
+                        "sources/missing-paper.pdf", present=False, usable=False
+                    ),
+                },
+                {
+                    "format": "txt",
+                    "artifact": observation(
+                        "sources/missing-paper.txt", present=False, usable=False
+                    ),
+                },
+            ],
             "prepared": [
                 observation(
                     "processing/papers/missing-paper/source.txt",
@@ -276,6 +287,30 @@ def test_empty_paper_status_is_one_closed_factual_observation(tmp_path: Path):
             ),
         },
     }
+
+
+def test_paper_status_observes_pdf_and_text_source_alternatives(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "text-paper"
+    write(project / "sources" / f"{slug}.txt", "complete article text")
+
+    result = run_status(project, "--kind", "paper", "--slug", slug, "--json")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["facts"]["sources"] == [
+        {
+            "format": "pdf",
+            "artifact": observation(
+                f"sources/{slug}.pdf", present=False, usable=False
+            ),
+        },
+        {
+            "format": "txt",
+            "artifact": observation(
+                f"sources/{slug}.txt", present=True, usable=True
+            ),
+        },
+    ]
 
 
 def test_book_status_keeps_complete_manifest_rows_and_observes_each_output(
@@ -850,12 +885,15 @@ def test_paper_status_uses_live_operation_catalog_artifact_template(
     source = write(project / "alternate-sources" / f"{slug}.pdf", b"%PDF")
     monkeypatch.setitem(
         status_module.OPERATION_CATALOG["paper.acquire"]["artifacts"],
-        "output",
+        "outputPdf",
         "alternate-sources/{slug}.pdf",
     )
 
     payload = status_module.paper_status(project, slug)
 
-    assert payload["facts"]["source"] == observation(
-        source.relative_to(project).as_posix(), present=True, usable=True
-    )
+    assert payload["facts"]["sources"][0] == {
+        "format": "pdf",
+        "artifact": observation(
+            source.relative_to(project).as_posix(), present=True, usable=True
+        ),
+    }
