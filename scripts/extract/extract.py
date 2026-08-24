@@ -29,6 +29,7 @@ Usage:
   quasi-extract text  INPUT.pdf OUTPUT.txt [--json]
   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine dsocr2|tesseract]
                                 [--layout] [--no-clobber] [--json]
+                                [--resume --progress-file PATH --chunk-pages N]
   quasi-extract split INPUT.pdf --output-dir DIR
                                 [--method toc|pattern]
                                 [--max-chapters N]
@@ -56,6 +57,9 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
     positional: list[str] = []
     json_mode = "--json" in rest
     no_clobber = False
+    resume = False
+    progress_file = ""
+    chunk_pages = 8
     seen: set[str] = set()
     errors: list[str] = []
 
@@ -102,6 +106,35 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
             seen.add("no-clobber")
             no_clobber = True
             i += 1
+        elif a == "--resume":
+            if "resume" in seen:
+                errors.append("duplicate --resume")
+            seen.add("resume")
+            resume = True
+            i += 1
+        elif a == "--progress-file":
+            if "progress-file" in seen:
+                errors.append("duplicate --progress-file")
+            seen.add("progress-file")
+            if i + 1 >= len(rest) or rest[i + 1].startswith("-"):
+                errors.append("--progress-file requires a path")
+                i += 1
+            else:
+                progress_file = rest[i + 1]
+                i += 2
+        elif a == "--chunk-pages":
+            if "chunk-pages" in seen:
+                errors.append("duplicate --chunk-pages")
+            seen.add("chunk-pages")
+            if i + 1 >= len(rest) or rest[i + 1].startswith("-"):
+                errors.append("--chunk-pages requires an integer")
+                i += 1
+            else:
+                try:
+                    chunk_pages = int(rest[i + 1])
+                except ValueError:
+                    errors.append("--chunk-pages requires an integer")
+                i += 2
         elif a == "--engine":
             if "engine" in seen:
                 errors.append("duplicate --engine")
@@ -141,6 +174,21 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
         len(positional) < 2 or not positional[1]
     ):
         errors.append("--json/--no-clobber requires an explicit OUTPUT")
+    if resume:
+        if not progress_file:
+            errors.append("--resume requires --progress-file")
+        if not json_mode:
+            errors.append("--resume requires --json")
+        if not no_clobber:
+            errors.append("--resume requires --no-clobber")
+        if layout:
+            errors.append("--resume is only supported for non-layout Book OCR")
+        if len(positional) < 2 or not positional[1]:
+            errors.append("--resume requires an explicit OUTPUT")
+        if not 1 <= chunk_pages <= 32:
+            errors.append("--chunk-pages must be between 1 and 32")
+    elif progress_file or "chunk-pages" in seen:
+        errors.append("--progress-file/--chunk-pages requires --resume")
     if errors:
         return fail(errors[0])
 
@@ -151,6 +199,60 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
 
     input_arg = positional[0]
     output_arg = positional[1] if len(positional) > 1 else ""
+    if resume:
+        from ocr_resume import run_ocr_step
+
+        language = positional[2] if len(positional) > 2 else None
+
+        def run_range(
+            source_slice: Path,
+            staged_output: Path,
+            selected_engine: str,
+            selected_language: str | None,
+        ) -> int:
+            args = [str(source_slice), str(staged_output)]
+            if selected_language:
+                args.append(selected_language)
+            if selected_engine == "tesseract":
+                command = ["bash", str(here / "ocr_pdf.sh"), *args]
+                return subprocess.call(command, stdout=sys.stderr, stderr=sys.stderr)
+            command = [sys.executable, str(here / "ocr_dsocr2.py"), *args]
+            rc = subprocess.call(command, stdout=sys.stderr, stderr=sys.stderr)
+            if rc == 0:
+                return 0
+            sys.stderr.write(
+                "[extract] DS OCR2 unavailable/failed; falling back to tesseract.\n"
+            )
+            return subprocess.call(
+                ["bash", str(here / "ocr_pdf.sh"), *args],
+                stdout=sys.stderr,
+                stderr=sys.stderr,
+            )
+
+        try:
+            result = run_ocr_step(
+                input_arg,
+                output_arg,
+                progress_file,
+                engine,
+                chunk_pages,
+                language,
+                runner=run_range,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            exists, size, _ = _ocr_output_state(output_arg)
+            _emit_ocr_json(
+                status="failed",
+                input_arg=input_arg,
+                output_arg=output_arg,
+                exit_code=1,
+                exists=exists,
+                size=size,
+                failure={"code": "ocr_resume_failed", "message": str(exc)},
+            )
+            return 1
+        print(json.dumps({**result, "exit": 0, "failure": None}, ensure_ascii=False))
+        return 0
     if no_clobber:
         exists, size, regular = _ocr_output_state(output_arg)
         if exists:
@@ -402,7 +504,8 @@ def _ocr_output_state(output_arg: str) -> tuple[bool, int, bool]:
 def _print_ocr_help() -> None:
     print(
         "Usage: quasi-extract ocr INPUT.pdf [OUTPUT.pdf] [LANGUAGE] "
-        "[--engine dsocr2|tesseract] [--layout] [--no-clobber] [--json]"
+        "[--engine dsocr2|tesseract] [--layout] [--no-clobber] [--json] "
+        "[--resume --progress-file PATH --chunk-pages N]"
     )
     print(
         "Default engine: dsocr2 (DeepSeek-OCR-2). "
@@ -412,6 +515,9 @@ def _print_ocr_help() -> None:
     print("          source PDF before quasi-translate. Default output is reflowed text.")
     print("--no-clobber: require an explicit OUTPUT and never overwrite an existing path.")
     print("--json: require an explicit OUTPUT; emit exactly one JSON receipt on stdout.")
+    print("--resume: run one Book OCR page range and persist exact progress.")
+    print("--progress-file: exact durable JSON progress path required by --resume.")
+    print("--chunk-pages: pages per resumable step (default 8, range 1-32).")
 
 
 def _emit_ocr_json(

@@ -513,6 +513,158 @@ def _write_pdf(path: Path, pages: list[str]) -> None:
     doc.close()
 
 
+def _load_ocr_resume():
+    try:
+        import ocr_resume
+    except ImportError as exc:
+        pytest.fail(f"resumable OCR capability is unavailable: {exc}")
+    return ocr_resume
+
+
+def _fake_range_ocr(calls: list[tuple[int, int]]):
+    def run(source: Path, output: Path, engine: str, language: str | None) -> int:
+        import fitz
+
+        with fitz.open(source) as document:
+            labels = [page.get_text().strip() for page in document]
+            calls.append((int(labels[0]), int(labels[-1])))
+            document.save(output)
+        return 0
+
+    return run
+
+
+def test_ocr_resume_advances_one_range_per_invocation_and_merges(tmp_path: Path):
+    capability = _load_ocr_resume()
+    source = tmp_path / "source.pdf"
+    output = tmp_path / "ocr.pdf"
+    progress = tmp_path / "ocr.progress.json"
+    _write_pdf(source, [str(page) for page in range(1, 6)])
+    calls: list[tuple[int, int]] = []
+    runner = _fake_range_ocr(calls)
+
+    first = capability.run_ocr_step(
+        source, output, progress, "tesseract", 2, None, runner=runner
+    )
+    second = capability.run_ocr_step(
+        source, output, progress, "tesseract", 2, None, runner=runner
+    )
+    third = capability.run_ocr_step(
+        source, output, progress, "tesseract", 2, None, runner=runner
+    )
+
+    assert first["status"] == "partial"
+    assert first["progress"]["completed_pages"] == 2
+    assert second["status"] == "partial"
+    assert second["progress"]["completed_pages"] == 4
+    assert third["status"] == "ok"
+    assert third["progress"]["completed_pages"] == 5
+    assert calls == [(1, 2), (3, 4), (5, 5)]
+    import fitz
+
+    with fitz.open(output) as document:
+        assert document.page_count == 5
+        assert [page.get_text().strip() for page in document] == [
+            str(page) for page in range(1, 6)
+        ]
+    assert not progress.exists()
+    assert not (tmp_path / ".ocr-parts").exists()
+
+
+def test_ocr_resume_rejects_source_drift_without_running_engine(tmp_path: Path):
+    capability = _load_ocr_resume()
+    source = tmp_path / "source.pdf"
+    output = tmp_path / "ocr.pdf"
+    progress = tmp_path / "ocr.progress.json"
+    _write_pdf(source, ["1", "2", "3"])
+    capability.run_ocr_step(
+        source, output, progress, "tesseract", 1, None,
+        runner=_fake_range_ocr([]),
+    )
+    _write_pdf(source, ["replacement"])
+
+    with pytest.raises(ValueError, match="source_sha256"):
+        capability.run_ocr_step(
+            source, output, progress, "tesseract", 1, None,
+            runner=lambda *_args: pytest.fail("engine must not run after source drift"),
+        )
+
+
+def test_ocr_resume_rejects_corrupt_committed_part(tmp_path: Path):
+    capability = _load_ocr_resume()
+    source = tmp_path / "source.pdf"
+    output = tmp_path / "ocr.pdf"
+    progress = tmp_path / "ocr.progress.json"
+    _write_pdf(source, ["1", "2", "3"])
+    capability.run_ocr_step(
+        source, output, progress, "tesseract", 1, None,
+        runner=_fake_range_ocr([]),
+    )
+    next_part = tmp_path / ".ocr-parts" / "pages-000002-000002.pdf"
+    next_part.write_bytes(b"not a pdf")
+
+    with pytest.raises(ValueError, match="part"):
+        capability.run_ocr_step(
+            source, output, progress, "tesseract", 1, None,
+            runner=lambda *_args: pytest.fail("corrupt committed part must not be replaced"),
+        )
+
+
+def test_ocr_resume_engine_death_leaves_progress_at_last_commit(tmp_path: Path):
+    capability = _load_ocr_resume()
+    source = tmp_path / "source.pdf"
+    output = tmp_path / "ocr.pdf"
+    progress = tmp_path / "ocr.progress.json"
+    _write_pdf(source, ["1", "2"])
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        capability.run_ocr_step(
+            source,
+            output,
+            progress,
+            "tesseract",
+            1,
+            None,
+            runner=lambda *_args: (_ for _ in ()).throw(RuntimeError("interrupted")),
+        )
+
+    assert json.loads(progress.read_text(encoding="utf-8"))["completed_pages"] == 0
+    assert list((tmp_path / ".ocr-parts").glob("*.pdf")) == []
+
+
+def test_ocr_resume_lock_contention_fails_closed(tmp_path: Path):
+    capability = _load_ocr_resume()
+    source = tmp_path / "source.pdf"
+    output = tmp_path / "ocr.pdf"
+    progress = tmp_path / "ocr.progress.json"
+    _write_pdf(source, ["1"])
+    import fcntl
+
+    lock = progress.with_suffix(progress.suffix + ".lock")
+    lock.touch()
+    with lock.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(RuntimeError, match="locked"):
+            capability.run_ocr_step(
+                source, output, progress, "tesseract", 1, None,
+                runner=lambda *_args: pytest.fail("contended engine must not run"),
+            )
+
+
+def test_ocr_resume_cli_requires_closed_resume_arguments(
+    capsys: pytest.CaptureFixture[str], forbid_engine_launch
+):
+    rc = extract_cli._run_ocr(
+        EXTRACT_DIR,
+        ["in.pdf", "out.pdf", "--resume", "--no-clobber", "--json"],
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 2
+    assert payload["failure"]["code"] == "invalid_arguments"
+    assert "--progress-file" in payload["failure"]["message"]
+
+
 @pytest.mark.skipif(shutil.which("pdftotext") is None, reason="pdftotext unavailable")
 def test_text_extract_writes_utf8_and_machine_signals(tmp_path: Path):
     source = tmp_path / "paper.pdf"
