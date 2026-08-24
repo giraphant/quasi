@@ -475,6 +475,80 @@ def chapter_inventory(
     return manifest_fact, projected
 
 
+def book_ocr_progress(root: Path, slug: str) -> dict[str, Any]:
+    path = artifact_path(root, "book.prepare", "ocrProgress", slug=slug)
+    projected: dict[str, Any] = {
+        "path": relative(root, path),
+        "present": False,
+        "usable": False,
+        "source_sha256": None,
+        "total_pages": None,
+        "completed_pages": None,
+        "next_page": None,
+    }
+    try:
+        info = path.lstat()
+    except OSError:
+        return projected
+    projected["present"] = True
+    if not stat.S_ISREG(info.st_mode) or path.is_symlink() or info.st_size <= 0:
+        return projected
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return projected
+    keys = {
+        "schema_version",
+        "input_path",
+        "output_path",
+        "source_sha256",
+        "engine",
+        "chunk_pages",
+        "total_pages",
+        "completed_pages",
+        "next_page",
+    }
+    if not isinstance(value, dict) or set(value) != keys:
+        return projected
+    total = value.get("total_pages")
+    completed = value.get("completed_pages")
+    next_page = value.get("next_page")
+    chunk = value.get("chunk_pages")
+    source_hash = value.get("source_sha256")
+    expected_next = (
+        completed + 1
+        if type(completed) is int and type(total) is int and completed < total
+        else None
+    )
+    if (
+        value.get("schema_version") != "quasi.ocr.progress/0.1"
+        or value.get("input_path") != f"sources/{slug}.pdf"
+        or value.get("output_path")
+        != f"processing/chapters/{slug}/ocr.pdf"
+        or not isinstance(source_hash, str)
+        or re.fullmatch(r"[0-9a-f]{64}", source_hash) is None
+        or value.get("engine") not in {"dsocr2", "tesseract"}
+        or type(chunk) is not int
+        or not 1 <= chunk <= 32
+        or type(total) is not int
+        or total < 1
+        or type(completed) is not int
+        or not 0 <= completed <= total
+        or next_page != expected_next
+    ):
+        return projected
+    projected.update(
+        {
+            "usable": True,
+            "source_sha256": source_hash,
+            "total_pages": total,
+            "completed_pages": completed,
+            "next_page": next_page,
+        }
+    )
+    return projected
+
+
 def book_status(root: Path, slug: str) -> dict[str, Any]:
     sources = [
         (
@@ -523,6 +597,7 @@ def book_status(root: Path, slug: str) -> dict[str, Any]:
                 for format_name, path in sources
             ],
             "manifest": manifest_fact,
+            "ocr_progress": book_ocr_progress(root, slug),
             "chapters": chapters,
             "overview": overview_fact,
         },

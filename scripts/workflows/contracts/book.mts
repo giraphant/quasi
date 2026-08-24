@@ -84,6 +84,12 @@ export interface BookStatusFacts {
     artifact: ArtifactObservation;
   }>;
   manifest: ArtifactObservation & { valid: boolean };
+  ocr_progress: ArtifactObservation & {
+    source_sha256: string | null;
+    total_pages: number | null;
+    completed_pages: number | null;
+    next_page: number | null;
+  };
   chapters: BookChapterObservation[];
   overview: ArtifactObservation;
 }
@@ -229,6 +235,7 @@ export const parseBookStatusObservation = (
   if (observation === null) return null;
   const facts = observation.facts;
   const manifest = facts.manifest;
+  const ocrProgress = facts.ocr_progress;
   const slug = observation.slug;
   const expectedSources = [
     { format: "epub", path: `sources/${slug}.epub` },
@@ -242,6 +249,7 @@ export const parseBookStatusObservation = (
       "kind",
       "sources",
       "manifest",
+      "ocr_progress",
       "chapters",
       "overview",
     ]) ||
@@ -265,6 +273,43 @@ export const parseBookStatusObservation = (
     }) ||
     typeof manifest.valid !== "boolean" ||
     manifest.path !== bookManifestPath(slug) ||
+    !isRecord(ocrProgress) ||
+    !exactEnvelopeKeys(ocrProgress, [
+      "path",
+      "present",
+      "usable",
+      "source_sha256",
+      "total_pages",
+      "completed_pages",
+      "next_page",
+    ]) ||
+    !isArtifactObservation({
+      path: ocrProgress.path,
+      present: ocrProgress.present,
+      usable: ocrProgress.usable,
+    }) ||
+    ocrProgress.path !==
+      `processing/chapters/${slug}/ocr.progress.json` ||
+    (ocrProgress.usable
+      ? typeof ocrProgress.source_sha256 !== "string" ||
+        !/^[0-9a-f]{64}$/.test(ocrProgress.source_sha256) ||
+        !Number.isInteger(ocrProgress.total_pages) ||
+        (ocrProgress.total_pages as number) < 1 ||
+        !Number.isInteger(ocrProgress.completed_pages) ||
+        (ocrProgress.completed_pages as number) < 0 ||
+        (ocrProgress.completed_pages as number) >
+          (ocrProgress.total_pages as number) ||
+        (ocrProgress.next_page !== null &&
+          (!Number.isInteger(ocrProgress.next_page) ||
+            ocrProgress.next_page !==
+              (ocrProgress.completed_pages as number) + 1)) ||
+        ((ocrProgress.completed_pages as number) <
+          (ocrProgress.total_pages as number)) !==
+          (ocrProgress.next_page !== null)
+      : ocrProgress.source_sha256 !== null ||
+        ocrProgress.total_pages !== null ||
+        ocrProgress.completed_pages !== null ||
+        ocrProgress.next_page !== null) ||
     chapters === null ||
     !chapters.every(
       (chapter) =>

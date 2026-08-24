@@ -1568,6 +1568,7 @@ export const OPERATION_CATALOG = {
       "source": "sources/{slug}.{format}",
       "normalized": "processing/chapters/{slug}/source.txt",
       "recoverySource": "processing/chapters/{slug}/ocr.pdf",
+      "ocrProgress": "processing/chapters/{slug}/ocr.progress.json",
       "recoveryText": "processing/chapters/{slug}/ocr.txt",
       "outputDir": "processing/chapters/{slug}",
       "manifest": "processing/chapters/{slug}/manifest.json"

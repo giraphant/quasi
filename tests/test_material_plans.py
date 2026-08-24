@@ -150,6 +150,7 @@ def book_observation(
     chapter_outputs: tuple[bool, ...] = (False, False),
     overview: bool = False,
     admitted: bool = False,
+    ocr_completed_pages: int | None = None,
 ) -> dict[str, Any]:
     rows = inventory or BOOK_CHAPTERS
     chapters = []
@@ -207,6 +208,19 @@ def book_observation(
                 "usable": manifest,
                 "valid": manifest,
             },
+            "ocr_progress": {
+                "path": f"processing/chapters/{slug}/ocr.progress.json",
+                "present": ocr_completed_pages is not None,
+                "usable": ocr_completed_pages is not None,
+                "source_sha256": "a" * 64 if ocr_completed_pages is not None else None,
+                "total_pages": 100 if ocr_completed_pages is not None else None,
+                "completed_pages": ocr_completed_pages,
+                "next_page": (
+                    ocr_completed_pages + 1
+                    if ocr_completed_pages is not None and ocr_completed_pages < 100
+                    else None
+                ),
+            },
             "chapters": chapters,
             "overview": {
                 "path": f"vault/books/{slug}/00-overview.md",
@@ -241,6 +255,7 @@ def canonical_book_input(
     chapter_outputs: tuple[bool, ...] = (False, False),
     overview: bool = True,
     admitted: bool = True,
+    ocr_completed_pages: int | None = None,
 ) -> dict[str, Any]:
     return {
         "seed": {
@@ -257,6 +272,7 @@ def canonical_book_input(
             chapter_outputs=chapter_outputs,
             overview=overview,
             admitted=admitted,
+            ocr_completed_pages=ocr_completed_pages,
         ),
         "options": {},
     }
@@ -454,6 +470,21 @@ def book_prepare_complete(
         "diagnostics": [],
         "terminal": {"status": "complete", "issue": None},
     }
+
+
+def book_prepare_ocr_in_progress(*, retryable: bool = True) -> dict[str, Any]:
+    receipt = book_prepare_complete(format_name="pdf")
+    receipt["terminal"] = {
+        "status": "blocked",
+        "issue": {
+            "code": "book.prepare.ocr_in_progress",
+            "operation": "book.prepare",
+            "summary": "One OCR page range was committed; more pages remain.",
+            "user_question": None,
+            "retryable": retryable,
+        },
+    }
+    return receipt
 
 
 def book_structure_candidates() -> list[dict[str, Any]]:
@@ -1962,6 +1993,50 @@ def test_book_manifest_with_a_missing_input_reconciles_prepare() -> None:
     assert report["calls"][0]["request"]["refs"]["source"] == (
         "sources/exact-book.epub"
     )
+
+
+def test_book_retryable_ocr_progress_requests_fresh_observation() -> None:
+    value = canonical_book_input(source_format="pdf")
+
+    report = run_book(value, [book_prepare_ocr_in_progress()])
+
+    assert report["result"]["terminal"] == "needs_observation"
+    assert report["result"]["routes"] == [{"kind": "book", "slug": "exact-book"}]
+    assert report["calls"][0]["request"]["operation"] == "book.prepare"
+
+
+@pytest.mark.parametrize(
+    ("code", "retryable"),
+    [
+        ("book.prepare.ocr_in_progress", False),
+        ("book.prepare.source_invalid", True),
+    ],
+)
+def test_book_only_retryable_qualified_ocr_progress_resumes(
+    code: str, retryable: bool
+) -> None:
+    value = canonical_book_input(source_format="pdf")
+    receipt = book_prepare_ocr_in_progress(retryable=retryable)
+    receipt["terminal"]["issue"]["code"] = code
+
+    report = run_book(value, [receipt])
+
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == code
+
+
+def test_book_higher_ocr_progress_dispatches_the_next_prepare_step() -> None:
+    value = canonical_book_input(
+        source_format="pdf", ocr_completed_pages=16
+    )
+
+    report = run_book(value, [book_prepare_ocr_in_progress()])
+
+    assert report["calls"][0]["request"]["operation"] == "book.prepare"
+    assert report["calls"][0]["request"]["refs"]["ocr_progress"] == (
+        "processing/chapters/exact-book/ocr.progress.json"
+    )
+    assert report["result"]["terminal"] == "needs_observation"
 
 
 def test_book_missing_source_reconciles_acquire_before_prepare() -> None:

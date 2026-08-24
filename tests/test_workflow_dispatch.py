@@ -1997,6 +1997,24 @@ def test_book_prepare_split_capabilities_bind_exact_pdf_inputs() -> None:
     assert all("ocr.txt" not in capability for capability in split)
 
 
+def test_book_prepare_exposes_exact_resumable_ocr_progress_contract() -> None:
+    prepared = _prepare(
+        "book.prepare",
+        context=_context(format="pdf", source="sources/exact-material.pdf"),
+    )
+    request = _prompt_request(prepared["prompt"])
+
+    assert request["refs"]["ocr_progress"] == (
+        "processing/chapters/exact-material/ocr.progress.json"
+    )
+    assert (
+        "quasi-extract ocr 'sources/exact-material.pdf' "
+        "'processing/chapters/exact-material/ocr.pdf' --resume --progress-file "
+        "'processing/chapters/exact-material/ocr.progress.json' --chunk-pages 8 "
+        "--no-clobber --json"
+    ) in request["capabilities"]
+
+
 def test_translation_gate_is_required_only_inside_needs_input_terminal() -> None:
     schema = _prepare("translation.prepare")["options"]["schema"]
     assert "gate" not in schema["properties"]

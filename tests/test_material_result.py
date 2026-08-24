@@ -160,6 +160,15 @@ BOOK_OBSERVATION = {
             "usable": False,
             "valid": False,
         },
+        "ocr_progress": {
+            "path": "processing/chapters/request-book-1/ocr.progress.json",
+            "present": False,
+            "usable": False,
+            "source_sha256": None,
+            "total_pages": None,
+            "completed_pages": None,
+            "next_page": None,
+        },
         "chapters": [],
         "overview": {
             "path": "vault/books/request-book-1/00-overview.md",

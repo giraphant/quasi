@@ -424,6 +424,7 @@ export const bookOperationRows: OperationRow[] = [
         format,
         normalized,
         recoverySource,
+        ocrProgress,
         recoveryText,
         outputDir,
         manifest,
@@ -443,6 +444,7 @@ export const bookOperationRows: OperationRow[] = [
         format,
         normalized,
         recoverySource,
+        ocrProgress,
         recoveryText,
         outputDir,
         manifest,
@@ -600,6 +602,7 @@ export const bookOperationRows: OperationRow[] = [
         format: refs.format,
         normalized_document: refs.normalized,
         recovery_source: refs.recoverySource,
+        ocr_progress: refs.ocrProgress,
         recovery_text: refs.recoveryText,
         output_dir: refs.outputDir,
         manifest: refs.manifest,
@@ -607,7 +610,11 @@ export const bookOperationRows: OperationRow[] = [
       structure_decision: refs.structureDecision,
       capabilities: [
         "quasi-extract text INPUT OUTPUT --json",
-        "quasi-extract ocr INPUT OUTPUT --no-clobber --json",
+        ...(refs.format === "pdf"
+          ? [
+              `quasi-extract ocr ${posixSingleQuote(refs.source)} ${posixSingleQuote(refs.recoverySource)} --resume --progress-file ${posixSingleQuote(refs.ocrProgress)} --chunk-pages 8 --no-clobber --json`,
+            ]
+          : []),
         "quasi-extract epub INPUT OUTPUT_DIR --json",
         ...(refs.format === "pdf"
           ? [refs.source, refs.recoverySource].flatMap((input) => [

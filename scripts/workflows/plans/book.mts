@@ -728,6 +728,18 @@ async function runBookPlanResult(
             resumeSeed(input, state),
           );
     }
+    if (
+      prepared.kind === "receipt" &&
+      prepared.receipt.terminal.status === "blocked" &&
+      prepared.receipt.terminal.issue.code ===
+        "book.prepare.ocr_in_progress" &&
+      prepared.receipt.terminal.issue.retryable === true
+    )
+      return needsObservationMaterialResult(
+        resultSeed(state),
+        [{ kind: "book", slug }],
+        resumeSeed(input, state),
+      );
     const prepareStop = stopForOutcome(state, prepared);
     if (prepareStop !== null) return prepareStop;
     chapters = (prepared.receipt as StageReceipt)

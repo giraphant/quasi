@@ -368,6 +368,49 @@ def test_book_status_keeps_complete_manifest_rows_and_observes_each_output(
     ]
 
 
+def test_book_status_projects_closed_resumable_ocr_progress(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "scan-book"
+    progress_path = (
+        project / "processing" / "chapters" / slug / "ocr.progress.json"
+    )
+    progress = {
+        "schema_version": "quasi.ocr.progress/0.1",
+        "input_path": f"sources/{slug}.pdf",
+        "output_path": f"processing/chapters/{slug}/ocr.pdf",
+        "source_sha256": "a" * 64,
+        "engine": "dsocr2",
+        "chunk_pages": 8,
+        "total_pages": 100,
+        "completed_pages": 8,
+        "next_page": 9,
+    }
+    write(progress_path, json.dumps(progress))
+
+    result = run_status(project, "--kind", "book", "--slug", slug, "--json")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["facts"]["ocr_progress"] == {
+        "path": f"processing/chapters/{slug}/ocr.progress.json",
+        "present": True,
+        "usable": True,
+        "source_sha256": "a" * 64,
+        "total_pages": 100,
+        "completed_pages": 8,
+        "next_page": 9,
+    }
+
+    progress["unexpected"] = True
+    write(progress_path, json.dumps(progress))
+    malformed = run_status(
+        project, "--kind", "book", "--slug", slug, "--json"
+    )
+    observed = json.loads(malformed.stdout)["facts"]["ocr_progress"]
+    assert observed["present"] is True
+    assert observed["usable"] is False
+    assert observed["source_sha256"] is None
+
+
 def test_book_status_rejects_an_unpaired_manifest_page_range(tmp_path: Path):
     project = tmp_path / "project"
     slug = "bad-pages"
