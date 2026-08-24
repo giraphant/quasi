@@ -1020,13 +1020,13 @@ def _pdf_urls_from_article_url(url: str) -> list[str]:
 
 
 def _is_article_html_url(url: str) -> bool:
-    parsed = urllib.parse.urlparse(url)
-    path = parsed.path.lower()
-    if _is_cell_host(parsed.hostname or ""):
-        return "/fulltext/" in path or "/abs/" in path
-    if _is_sciencedirect_article_url(url):
-        return "/pdfft" not in path and not path.rstrip("/").endswith("/pdf")
-    return False
+    """Whether a URL may return scholarly HTML worth evidence checking.
+
+    Host names are not evidence.  Every normal HTTP(S) response may be offered
+    to the existing title/author/article-shape predicate after PDF, login, and
+    challenge classification has rejected it.
+    """
+    return urllib.parse.urlparse(url).scheme.lower() in {"http", "https"}
 
 
 def _is_pdf_data(data):
@@ -2621,6 +2621,24 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
             _retain_uncertain_candidate(path, source_name)
         return False
 
+    def _fetch_and_verify_url(candidate_url, source_name, *, timeout=60):
+        result = download_pdf_from_url(
+            candidate_url,
+            dest,
+            timeout=timeout,
+            text_fallback_path=text_dest,
+            expected_author=verify_author,
+            expected_title=verify_title,
+        )
+        if not result:
+            return None
+        candidate_path = result if isinstance(result, str) else dest
+        return (
+            candidate_path
+            if _verify_and_accept(candidate_path, source_name)
+            else None
+        )
+
     # A leftover temp file is a candidate like any other, not proof: a prior
     # run may have parked a wrong-identity PDF here that its caller rejected.
     for existing in (dest, text_dest):
@@ -2682,21 +2700,9 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
         _remember_sciencedirect_url(hint_url)
         print(f"  Direct URL: {hint_url[:80]}", file=sys.stderr)
         try:
-            direct_result = download_pdf_from_url(
-                hint_url,
-                dest,
-                text_fallback_path=(
-                    text_dest
-                    if _is_article_html_url(hint_url)
-                    else None
-                ),
-                expected_author=verify_author,
-                expected_title=verify_title,
-            )
-            if direct_result:
-                direct_path = direct_result if isinstance(direct_result, str) else dest
-                if _verify_and_accept(direct_path, "Direct"):
-                    return direct_path
+            direct_path = _fetch_and_verify_url(hint_url, "Direct")
+            if direct_path:
+                return direct_path
         except EZProxyCookieExpired:
             print(f"  EZProxy cookie expired on hint URL, continuing...", file=sys.stderr)
         time.sleep(0.5)
@@ -2707,8 +2713,9 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
         oa_url = find_oa_url(doi)
         if oa_url:
             print(f"  OA: {oa_url[:80]}", file=sys.stderr)
-            if download_pdf_from_url(oa_url, dest) and _verify_and_accept(dest, "OA"):
-                return dest
+            oa_path = _fetch_and_verify_url(oa_url, "OA")
+            if oa_path:
+                return oa_path
             time.sleep(0.5)
 
     if not doi:
@@ -2792,8 +2799,9 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
         wb_url = find_wayback_url(doi)
         if wb_url:
             print(f"  WB: {wb_url[:80]}", file=sys.stderr)
-            if download_pdf_from_url(wb_url, dest, timeout=90) and _verify_and_accept(dest, "Wayback"):
-                return dest
+            wayback_path = _fetch_and_verify_url(wb_url, "Wayback", timeout=90)
+            if wayback_path:
+                return wayback_path
 
     # --- Phase 2: Kagi discovery recovery ---
     # When Phase 1 exhausted all sources, search Kagi by title to discover
@@ -2813,8 +2821,9 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
             _remember_sciencedirect_url(kagi_url)
             print(f"  Kagi URL: {kagi_url[:80]}", file=sys.stderr)
             try:
-                if download_pdf_from_url(kagi_url, dest) and _verify_and_accept(dest, "Kagi URL"):
-                    return dest
+                kagi_path = _fetch_and_verify_url(kagi_url, "Kagi URL")
+                if kagi_path:
+                    return kagi_path
             except EZProxyCookieExpired:
                 pass
             time.sleep(0.5)
@@ -2825,8 +2834,11 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                 _seen_urls.add(kagi_pdf_url)
                 print(f"  Kagi PDF URL: {kagi_pdf_url[:80]}", file=sys.stderr)
                 try:
-                    if download_pdf_from_url(kagi_pdf_url, dest) and _verify_and_accept(dest, "Kagi PDF URL"):
-                        return dest
+                    kagi_pdf_path = _fetch_and_verify_url(
+                        kagi_pdf_url, "Kagi PDF URL"
+                    )
+                    if kagi_pdf_path:
+                        return kagi_pdf_path
                 except EZProxyCookieExpired:
                     pass
                 time.sleep(0.5)
@@ -2840,8 +2852,11 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                     _remember_sciencedirect_url(sd_url)
                     print(f"  Kagi Cell ScienceDirect URL: {sd_url[:80]}", file=sys.stderr)
                     try:
-                        if download_pdf_from_url(sd_url, dest) and _verify_and_accept(dest, "Kagi Cell ScienceDirect URL"):
-                            return dest
+                        science_path = _fetch_and_verify_url(
+                            sd_url, "Kagi Cell ScienceDirect URL"
+                        )
+                        if science_path:
+                            return science_path
                     except EZProxyCookieExpired:
                         pass
                     time.sleep(0.5)
@@ -2887,8 +2902,9 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
             oa_url = find_oa_url(kagi_doi)
             if oa_url:
                 print(f"  Kagi OA: {oa_url[:80]}", file=sys.stderr)
-                if download_pdf_from_url(oa_url, dest) and _verify_and_accept(dest, "Kagi OA"):
-                    return dest
+                kagi_oa_path = _fetch_and_verify_url(oa_url, "Kagi OA")
+                if kagi_oa_path:
+                    return kagi_oa_path
                 time.sleep(0.5)
 
             # Sci-Hub with new DOI

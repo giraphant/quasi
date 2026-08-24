@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministically extract a PDF text layer with ``pdftotext``.
+"""Deterministically normalize text or extract a PDF text layer.
 
 The command reports extraction signals, not a readability verdict.  A PDF with
 an empty, sparse, or garbled text layer can therefore still be a successful
@@ -142,8 +142,9 @@ def extract_text(input_arg: str, output_arg: str, *, as_json: bool) -> int:
             as_json=as_json,
         )
 
-    pdftotext = shutil.which("pdftotext")
-    if pdftotext is None:
+    text_input = input_path.suffix.lower() == ".txt"
+    pdftotext = None if text_input else shutil.which("pdftotext")
+    if not text_input and pdftotext is None:
         return _fail(
             input_arg=input_arg,
             output_arg=output_arg,
@@ -175,32 +176,40 @@ def extract_text(input_arg: str, output_arg: str, *, as_json: bool) -> int:
 
     temp_path = Path(temp_name)
     try:
-        proc = subprocess.run(
-            [pdftotext, "-enc", "UTF-8", str(input_path), str(temp_path)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout or "pdftotext failed").strip()
-            return _fail(
-                input_arg=input_arg,
-                output_arg=output_arg,
-                output_path=output_path,
-                exit_code=proc.returncode or 1,
-                code="pdftotext_failed",
-                message=detail[-2000:],
-                as_json=as_json,
+        if text_input:
+            text = input_path.read_bytes().decode("utf-8")
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
+            text = text.rstrip("\n") + "\n"
+        else:
+            proc = subprocess.run(
+                [pdftotext, "-enc", "UTF-8", str(input_path), str(temp_path)],
+                text=True,
+                capture_output=True,
+                check=False,
             )
-
-        raw = temp_path.read_bytes()
-        text = raw.decode("utf-8")
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "pdftotext failed").strip()
+                return _fail(
+                    input_arg=input_arg,
+                    output_arg=output_arg,
+                    output_path=output_path,
+                    exit_code=proc.returncode or 1,
+                    code="pdftotext_failed",
+                    message=detail[-2000:],
+                    as_json=as_json,
+                )
+            text = temp_path.read_bytes().decode("utf-8")
         encoded = text.encode("utf-8")
         with temp_path.open("wb") as handle:
             handle.write(encoded)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_path, output_path)
+        directory = os.open(str(output_path.parent), os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
         payload = _receipt(
             status="ok",
@@ -234,11 +243,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="quasi-extract text",
         description=(
-            "Extract a PDF text layer atomically and report deterministic signals. "
+            "Normalize UTF-8 text or extract a PDF text layer atomically and report deterministic signals. "
             "No readability threshold is applied."
         ),
     )
-    parser.add_argument("input", help="source PDF")
+    parser.add_argument("input", help="source PDF or UTF-8 text")
     parser.add_argument("output", help="UTF-8 text output")
     parser.add_argument("--json", action="store_true", help="emit a JSON receipt")
     args = parser.parse_args(argv)

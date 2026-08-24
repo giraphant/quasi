@@ -686,6 +686,47 @@ def test_text_extract_writes_utf8_and_machine_signals(tmp_path: Path):
     assert "Café, agency, and culture" in text
 
 
+def test_text_extract_normalizes_utf8_text_input_without_pdftotext(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    import extract_text
+
+    source = tmp_path / "article.txt"
+    output = tmp_path / "normalized" / "source.txt"
+    source.write_bytes("Title\r\nAbstract\rBody".encode("utf-8"))
+    monkeypatch.setattr(
+        extract_text.shutil,
+        "which",
+        lambda _name: pytest.fail("text input must not invoke pdftotext"),
+    )
+
+    rc = extract_text.extract_text(str(source), str(output), as_json=True)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert output.read_bytes() == "Title\nAbstract\nBody\n".encode("utf-8")
+    assert payload["status"] == "ok"
+    assert payload["chars"] == len("Title\nAbstract\nBody\n")
+
+
+def test_text_extract_invalid_utf8_never_replaces_existing_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    import extract_text
+
+    source = tmp_path / "article.txt"
+    output = tmp_path / "source.txt"
+    source.write_bytes(b"\xff\xfe")
+    output.write_text("existing\n", encoding="utf-8")
+
+    rc = extract_text.extract_text(str(source), str(output), as_json=True)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["failure"]["code"] == "output_write_failed"
+    assert output.read_text(encoding="utf-8") == "existing\n"
+
+
 @pytest.mark.skipif(shutil.which("pdftotext") is None, reason="pdftotext unavailable")
 def test_text_extract_empty_text_layer_is_success_with_low_signals(tmp_path: Path):
     source = tmp_path / "image-only.pdf"

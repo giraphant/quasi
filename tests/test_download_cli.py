@@ -2653,6 +2653,52 @@ def test_write_text_fallback_from_article_html(tmp_path):
     assert "Timescapes of non-human experience" in out.read_text(encoding="utf-8")
 
 
+def test_generic_article_html_repository_is_eligible_for_text_fallback(tmp_path):
+    mod = _load_module(DOWNLOAD, "download_generic_html_fallback_under_test")
+    url = "https://repository.example.edu/items/full-article"
+    html = (
+        "<html><body><article><h1>Situated repair in public life</h1>"
+        "<p>Alex Example</p><h2>Abstract</h2><p>" + "argument " * 90 +
+        "</p><h2>References</h2><p>Sources</p></article></body></html>"
+    ).encode("utf-8")
+    output = tmp_path / "paper.txt"
+
+    assert mod._is_article_html_url(url)
+    assert mod._write_text_fallback_from_html(
+        html,
+        str(output),
+        headers={"content-type": "text/html; charset=utf-8"},
+        expected_title="Situated repair in public life",
+        expected_author="Alex Example",
+    )
+    assert output.read_text(encoding="utf-8").endswith("\n")
+
+
+@pytest.mark.parametrize(
+    ("body", "title"),
+    [
+        ("<html><body><form>Sign in</form>" + "login " * 200 + "</body></html>", "Target"),
+        ("<html><body><h1>Different work</h1><h2>Abstract</h2>" + "text " * 200 + "</body></html>", "Target article"),
+        ("<html><body><nav>Abstract References</nav>" + "menu " * 200 + "</body></html>", "Target article"),
+    ],
+    ids=("login", "wrong-title", "navigation-shell"),
+)
+def test_generic_article_text_fallback_rejects_non_articles(
+    tmp_path, body, title
+):
+    mod = _load_module(DOWNLOAD, "download_generic_html_rejection_under_test")
+    output = tmp_path / "paper.txt"
+
+    assert not mod._write_text_fallback_from_html(
+        body.encode("utf-8"),
+        str(output),
+        headers={"content-type": "text/html"},
+        expected_title=title,
+        expected_author="Alex Example",
+    )
+    assert not output.exists()
+
+
 def test_download_paper_adds_cell_pdf_hints_before_fetch(monkeypatch, tmp_path):
     mod = _load_module(DOWNLOAD, "download_cell_hints_under_test")
     tried: list[str] = []
