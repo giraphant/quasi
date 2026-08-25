@@ -30,7 +30,7 @@ import {
   type MaterialResult,
   type MaterialResultSeed,
 } from "../shared/material-result.mts";
-import { normalizeWebUrl } from "../contracts/webpage.mts";
+import { normalizeWebUrl } from "../shared/web-url.mts";
 import type {
   OperationName,
   StageReceipt,
