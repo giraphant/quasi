@@ -32,6 +32,15 @@ AA_HOMEPAGE_HTML = """
 """
 
 
+def _readable_pdf_bytes(text: str = "Readable article") -> bytes:
+    fitz = pytest.importorskip("fitz")
+    document = fitz.open()
+    document.new_page().insert_text((72, 72), text)
+    data = document.tobytes()
+    document.close()
+    return data
+
+
 def run_download(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(DOWNLOAD), *args],
@@ -1730,7 +1739,7 @@ def test_accept_moves_temp_file_to_sources(tmp_path):
     temp_dir = project / ".quasi" / "temp" / "downloads"
     temp_dir.mkdir(parents=True)
     src = temp_dir / "candidate.pdf"
-    src.write_bytes(b"%PDF- test content")
+    src.write_bytes(_readable_pdf_bytes("Accepted paper"))
 
     result = subprocess.run(
         [
@@ -1759,6 +1768,40 @@ def test_accept_moves_temp_file_to_sources(tmp_path):
     assert Path(payload["path"]).name == "author-title-2024.pdf"
     assert Path(payload["path"]).exists()
     assert not src.exists()
+
+
+def test_accept_rejects_an_unreadable_paper_pdf_without_publishing(tmp_path):
+    project = tmp_path / "project"
+    temp_dir = project / ".quasi" / "temp" / "downloads"
+    temp_dir.mkdir(parents=True)
+    src = temp_dir / "candidate.pdf"
+    src.write_bytes(b"%PDF-1.7\ntruncated")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(DOWNLOAD),
+            "accept",
+            "--path",
+            str(src),
+            "--slug",
+            "unreadable-paper",
+            "--kind",
+            "paper",
+            "--json",
+        ],
+        cwd=project,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "invalid_source"
+    assert payload["reason"] == "paper_pdf_unreadable"
+    assert src.exists()
+    assert not (project / "sources" / "unreadable-paper.pdf").exists()
 
 
 def test_accept_overwrite_uses_one_sibling_atomic_replace(tmp_path, monkeypatch):
@@ -2304,7 +2347,11 @@ def test_paper_diagnose_classifies_landing_cloudflare_pdf_and_connection_error(m
             },
             io.BytesIO(b"<title>Just a moment...</title>"),
         ),
-        _FakeUrlResponse(url, b"%PDF-1.7", headers={"content-type": "application/pdf"}),
+        _FakeUrlResponse(
+            url,
+            _readable_pdf_bytes(),
+            headers={"content-type": "application/pdf"},
+        ),
         urllib.error.URLError("offline"),
     ]
 
@@ -2378,7 +2425,7 @@ def test_paper_diagnose_via_ezproxy_redacts_session_data(monkeypatch):
 
         def iter_content(self, *, chunk_size):
             assert chunk_size <= mod._DIAGNOSE_BODY_LIMIT
-            yield b"%PDF-1.7"
+            yield _readable_pdf_bytes()
 
         def close(self):
             self.closed = True
@@ -2603,7 +2650,7 @@ def test_ezproxy_tries_cell_showpdf_candidate_first(monkeypatch, tmp_path):
                 )
             return SimpleNamespace(
                 url="https://www-cell-com.eux.idm.oclc.org/action/showPdf?pii=S1364-6613%2826%2900108-7",
-                content=b"%PDF- cell via ezproxy",
+                    content=_readable_pdf_bytes("Cell via EZProxy"),
                 status_code=200,
                 history=[object()],
                 headers={"content-type": "application/pdf;charset=UTF-8"},
@@ -3219,7 +3266,7 @@ def test_ezproxy_fetch_tries_login_form_after_rewritten_host_challenge(tmp_path)
                         "https://onlinelibrary-wiley-com.eux.idm.oclc.org/doi/"
                         "pdfdirect/10.1111/josp.12524?download=true"
                     ),
-                    content=b"%PDF- login form succeeded",
+                        content=_readable_pdf_bytes("Login form succeeded"),
                     status_code=200,
                     history=[object()],
                     headers={"content-type": "application/pdf;charset=UTF-8"},
@@ -3305,7 +3352,7 @@ def test_download_paper_routes_url_only_request_through_ezproxy(monkeypatch, tmp
             if "/stable/pdf/" in url:
                 return SimpleNamespace(
                     url="https://www-jstor-org.eux.idm.oclc.org/stable/pdf/43154235.pdf",
-                    content=b"%PDF- jstor via ezproxy",
+                    content=_readable_pdf_bytes("JSTOR via EZProxy"),
                     status_code=200,
                     history=[object()],
                     headers={"content-type": "application/pdf"},
@@ -3354,7 +3401,7 @@ def test_ezproxy_url_download_keeps_already_proxied_url_unwrapped(monkeypatch, t
             requested.append(url)
             return SimpleNamespace(
                 url=url,
-                content=b"%PDF- already proxied",
+                content=_readable_pdf_bytes("Already proxied"),
                 status_code=200,
                 history=[object()],
                 headers={"content-type": "application/pdf"},
@@ -3446,6 +3493,98 @@ def test_verify_doi_only_request_keeps_old_scan_flow():
         "an old scan with no printed doi",
         expected_doi="10.5840/philtopics19962427",
     ) is True
+
+
+def test_pdf_validation_rejects_large_opaque_bytes_and_broken_pdf_prefix():
+    mod = _load_module(DOWNLOAD, "strong_pdf_gate_under_test")
+
+    assert mod._is_pdf_data(b"opaque" * 20_000) is False
+    assert mod._is_pdf_data(b"%PDF-1.7\nnot actually a pdf") is False
+    assert mod._is_pdf_response(
+        b"<html><body>publisher error</body></html>",
+        {"Content-Type": "application/pdf"},
+    ) is False
+
+
+def test_pdf_validation_accepts_a_readable_one_page_pdf():
+    fitz = pytest.importorskip("fitz")
+    mod = _load_module(DOWNLOAD, "strong_pdf_readable_under_test")
+    document = fitz.open()
+    document.new_page().insert_text((72, 72), "A readable article")
+    data = document.tobytes()
+    document.close()
+
+    assert mod._is_pdf_data(data) is True
+    assert mod._is_pdf_response(data, {"Content-Type": "text/plain"}) is True
+
+
+def test_retry_does_not_repeat_certificate_verification_failure(monkeypatch):
+    import ssl
+
+    mod = _load_module(DOWNLOAD, "certificate_fail_fast_under_test")
+    calls = []
+
+    def fail():
+        calls.append("attempt")
+        raise urllib.error.URLError(
+            ssl.SSLCertVerificationError("certificate verify failed")
+        )
+
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+    with pytest.raises(urllib.error.URLError):
+        mod._retry(fail, attempts=3, label="certificate")
+
+    assert calls == ["attempt"]
+
+
+def test_paper_fetch_budget_is_closed_and_defaults_below_host_ceiling():
+    mod = _load_module(DOWNLOAD, "paper_budget_parser_under_test")
+    parser = mod._build_parser()
+
+    args = parser.parse_args([
+        "paper", "fetch", "--slug", "bounded-paper", "--doi", "10.1/x"
+    ])
+    assert args.budget_seconds == 480
+
+    with pytest.raises(SystemExit):
+        parser.parse_args([
+            "paper", "fetch", "--slug", "bounded-paper", "--doi", "10.1/x",
+            "--budget-seconds", "29",
+        ])
+    with pytest.raises(SystemExit):
+        parser.parse_args([
+            "paper", "fetch", "--slug", "bounded-paper", "--doi", "10.1/x",
+            "--budget-seconds", "541",
+        ])
+
+
+def test_paper_fetch_budget_exhaustion_returns_typed_json_without_partial(
+    monkeypatch, tmp_path, capsys
+):
+    mod = _load_module(DOWNLOAD, "paper_budget_terminal_under_test")
+    partial = tmp_path / "bounded-paper.pdf"
+
+    def exhaust(**_kwargs):
+        partial.write_bytes(b"partial")
+        raise mod.PaperFetchBudgetExceeded(30)
+
+    monkeypatch.setattr(mod, "download_paper", exhaust)
+    args = mod._build_parser().parse_args([
+        "paper", "fetch", "--slug", "bounded-paper", "--doi", "10.1/x",
+        "--temp-dir", str(tmp_path), "--budget-seconds", "30", "--json",
+    ])
+
+    assert args.func(args) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "status": "budget_exhausted",
+        "kind": "paper",
+        "doi": "10.1/x",
+        "urls": [],
+        "budget_seconds": 30,
+        "candidates": [],
+    }
+    assert not partial.exists()
 
 
 def test_verify_pdf_rechecks_sparse_extracted_text_with_first_page_ocr(

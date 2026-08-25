@@ -126,7 +126,7 @@ export const paperOperationRows: OperationRow[] = [
         url: quoteOrNull(meta.url),
       },
       capabilities: [
-        "quasi-download paper fetch --slug SLUG (--doi DOI | --url URL ...) [--title TITLE] [--author AUTHOR] [--temp-dir DIR] --json",
+        "quasi-download paper fetch --slug SLUG (--doi DOI | --url URL ...) [--title TITLE] [--author AUTHOR] [--temp-dir DIR] [--budget-seconds 30..540] --json",
         "quasi-download paper diagnose --url URL [--via-ezproxy] [--timeout SECONDS] --json",
         "quasi-search kagi ...",
         "quasi-download accept --path INPUT --slug SLUG --kind paper --json",

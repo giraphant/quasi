@@ -34,7 +34,9 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -86,6 +88,34 @@ EZPROXY_MIN_INTERVAL = 30  # seconds; global min gap between EZProxy attempts
 _RETRYABLE_HTTP_CODES = frozenset({429, 500, 502, 503, 504, 520, 521, 522, 524})
 
 
+class PaperFetchBudgetExceeded(RuntimeError):
+    """The caller-owned Paper acquisition wall-clock budget expired."""
+
+    def __init__(self, budget_seconds: int):
+        self.budget_seconds = budget_seconds
+        super().__init__(f"paper fetch exceeded {budget_seconds}s wall-clock budget")
+
+
+def _is_certificate_verification_failure(exc) -> bool:
+    """Return whether retrying the same TLS route cannot change the result."""
+    seen = set()
+    current = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return True
+        if isinstance(current, requests.exceptions.SSLError):
+            return True
+        if "CERTIFICATE_VERIFY_FAILED" in str(current).upper():
+            return True
+        current = (
+            getattr(current, "reason", None)
+            or getattr(current, "__cause__", None)
+            or getattr(current, "__context__", None)
+        )
+    return False
+
+
 def _is_retryable_http(exc) -> bool:
     code = None
     if isinstance(exc, urllib.error.HTTPError):
@@ -120,6 +150,8 @@ def _retry(fn, *, attempts=3, base_delay=1.0, label="http"):
             TimeoutError,
             ConnectionResetError,
         ) as e:
+            if _is_certificate_verification_failure(e):
+                raise
             last_exc = e
         if i < attempts - 1:
             sleep = base_delay * (2 ** i)
@@ -372,8 +404,9 @@ def _is_cloudflare_challenge(_content, headers=None) -> bool:
 
 
 def _is_pdf_response(content, headers=None) -> bool:
-    content_type = _header_value(headers, "content-type").lower()
-    return "application/pdf" in content_type or _is_pdf_data(content)
+    # Content-Type is remote testimony, not file evidence. Several publisher
+    # errors label HTML/login bodies application/pdf.
+    return _is_pdf_data(content)
 
 
 def _looks_like_shibboleth_login(content) -> bool:
@@ -1030,10 +1063,16 @@ def _is_article_html_url(url: str) -> bool:
 
 
 def _is_pdf_data(data):
-    """Check if raw bytes look like a PDF."""
-    return data[:5] == b"%PDF-" or (
-        len(data) > 50000 and b"<html" not in data[:1000].lower()
-    )
+    """Prove that raw bytes are a readable, non-empty PDF container."""
+    if not isinstance(data, (bytes, bytearray)) or not bytes(data).lstrip().startswith(b"%PDF-"):
+        return False
+    try:
+        import fitz
+
+        with fitz.open(stream=bytes(data), filetype="pdf") as document:
+            return document.page_count > 0
+    except (ImportError, RuntimeError, ValueError, TypeError):
+        return False
 
 
 def _html_to_text(data) -> str:
@@ -3086,6 +3125,78 @@ def _handle_errors(fn, *args, **kwargs):
         sys.exit(3)
 
 
+@contextmanager
+def _paper_fetch_budget(seconds: int):
+    """Interrupt one foreground Paper cascade before the host kills Bash."""
+    if not hasattr(signal, "setitimer") or not hasattr(signal, "SIGALRM"):
+        yield
+        return
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, 0)
+
+    def expire(_signum, _frame):
+        raise PaperFetchBudgetExceeded(seconds)
+
+    signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0] > 0:
+            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
+
+
+def _bounded_paper_budget(value: str) -> int:
+    try:
+        seconds = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("budget must be an integer") from exc
+    if not 30 <= seconds <= 540:
+        raise argparse.ArgumentTypeError("budget must be between 30 and 540 seconds")
+    return seconds
+
+
+def _recover_budget_candidates(temp_dir: Path, slug: str) -> list[dict]:
+    """Keep only structurally complete exact candidates after interruption."""
+    candidates: list[dict] = []
+    retained = list(temp_dir.glob(f".{slug}.quasi-paper-candidate-*"))
+    for direct in (temp_dir / f"{slug}.pdf", temp_dir / f"{slug}.txt"):
+        if direct.exists():
+            retained.append(direct)
+
+    for path in retained:
+        usable = False
+        try:
+            if path.suffix.lower() == ".pdf":
+                usable = _is_pdf_data(path.read_bytes())
+            elif path.suffix.lower() == ".txt":
+                text = path.read_text(encoding="utf-8")
+                usable = bool(text.strip())
+        except (OSError, UnicodeError):
+            usable = False
+        if not usable:
+            path.unlink(missing_ok=True)
+            continue
+        if not path.name.startswith(f".{slug}.quasi-paper-candidate-"):
+            descriptor, raw_retained = tempfile.mkstemp(
+                prefix=f".{slug}.quasi-paper-candidate-",
+                suffix=path.suffix.lower(),
+                dir=temp_dir,
+            )
+            os.close(descriptor)
+            os.replace(path, raw_retained)
+            path = Path(raw_retained)
+        candidates.append({
+            "temp_path": str(path.resolve()),
+            "source": "budget_boundary",
+            "inspect": _inspect_downloaded_file(path.resolve()),
+        })
+    return candidates
+
+
 # ---- subcommand handlers ---------------------------------------------------
 
 def _cmd_book_candidates(args) -> int:
@@ -3179,13 +3290,26 @@ def _cmd_paper_fetch(args) -> int:
 
     temp_dir = resolve_project_path(args.temp_dir or _default_temp_dir())
     all_urls = args.url or []
-    result = _handle_errors(
-        download_paper,
-        doi=args.doi, urls=all_urls,
-        output_dir=str(temp_dir), filename=args.slug,
-        retry_wayback=True,
-        verify_title=args.title, verify_author=args.author,
-    )
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        with _paper_fetch_budget(args.budget_seconds):
+            result = _handle_errors(
+                download_paper,
+                doi=args.doi, urls=all_urls,
+                output_dir=str(temp_dir), filename=args.slug,
+                retry_wayback=True,
+                verify_title=args.title, verify_author=args.author,
+            )
+    except PaperFetchBudgetExceeded:
+        print_json({
+            "status": "budget_exhausted",
+            "kind": "paper",
+            "doi": args.doi,
+            "urls": all_urls,
+            "budget_seconds": args.budget_seconds,
+            "candidates": _recover_budget_candidates(temp_dir, args.slug),
+        })
+        return 1
     if isinstance(result, dict) and result.get("status") == "identity_uncertain":
         print_json({
             "status": "identity_uncertain",
@@ -3411,6 +3535,33 @@ def _cmd_accept(args) -> int:
 
     src = resolve_project_path(args.path)
     out_dir = resolve_project_path(args.output_dir)
+    if args.kind == "paper":
+        reason = None
+        if src.suffix.lower() == ".pdf":
+            try:
+                readable = _is_pdf_data(src.read_bytes())
+            except OSError:
+                readable = False
+            if not readable:
+                reason = "paper_pdf_unreadable"
+        elif src.suffix.lower() == ".txt":
+            try:
+                readable = bool(src.read_text(encoding="utf-8").strip())
+            except (OSError, UnicodeError):
+                readable = False
+            if not readable:
+                reason = "paper_text_unusable"
+        else:
+            reason = "paper_source_format_unsupported"
+        if reason is not None:
+            print_json({
+                "status": "invalid_source",
+                "kind": "paper",
+                "path": str(src),
+                "reason": reason,
+                "published": False,
+            })
+            return 1
     dest = (out_dir / f"{args.slug}{src.suffix.lower()}").resolve()
     payload, code = _accept_to_output(
         src,
@@ -3481,6 +3632,12 @@ def _build_parser() -> argparse.ArgumentParser:
                       help=argparse.SUPPRESS)  # no-op since cascade always tries Wayback
     p_pf.add_argument("--temp-dir", default=str(_default_temp_dir()),
                       help="Temp output directory (default: .quasi/temp/downloads)")
+    p_pf.add_argument(
+        "--budget-seconds",
+        type=_bounded_paper_budget,
+        default=480,
+        help="Total foreground acquisition budget, 30-540 seconds (default: 480)",
+    )
     p_pf.add_argument("--json", action="store_true", help="Accepted for contract clarity; output is always JSON")
     p_pf.set_defaults(func=_cmd_paper_fetch)
 

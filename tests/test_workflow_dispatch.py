@@ -1236,10 +1236,39 @@ def test_paper_acquire_exposes_pdf_and_text_source_alternatives() -> None:
         {"format": "pdf", "path": "sources/exact-material.pdf"},
         {"format": "txt", "path": "sources/exact-material.txt"},
     ]
+    assert "--budget-seconds 30..540" in request["capabilities"][0]
     assert schema["properties"]["output_path"]["enum"] == [
         "sources/exact-material.pdf",
         "sources/exact-material.txt",
     ]
+
+
+def test_paper_acquire_admits_the_typed_budget_boundary() -> None:
+    report = _dispatch(
+        {
+            "invocation": _invocation("paper.acquire"),
+            "model_output": {
+                "output_path": "sources/exact-material.pdf",
+                "write_state": "not_written",
+                "identity_verified": False,
+                "terminal": {
+                    "status": "blocked",
+                    "issue": {
+                        "code": "paper.acquire_blocked",
+                        "operation": "paper.acquire",
+                        "summary": "The bounded cascade ended before a source was found.",
+                        "user_question": None,
+                        "retryable": True,
+                    },
+                },
+            },
+        }
+    )
+
+    assert report["result"]["kind"] == "receipt"
+    assert report["result"]["receipt"]["terminal"]["issue"]["code"] == (
+        "paper.acquire_blocked"
+    )
 
 
 def test_paper_acquire_unknown_write_state_is_incoherent_complete() -> None:

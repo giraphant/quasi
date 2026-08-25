@@ -83,6 +83,12 @@ sibling。只有内容完整且身份核验通过的 PDF/文本才能发布，HT
 `quasi-download accept`；判断完成后只删除该次 fetch 返回且未接受的 exact temp paths。若没有候选足以
 证明身份，清理全部返回候选并以已知失败结束，不把机械不确定冒充 `all_sources_failed`。
 
+Paper fetch 默认拥有 480 秒前台总预算；调用 Bash 时给该命令至少 540 秒 timeout，使 CLI 能先于
+宿主返回终态。`status:budget_exhausted` 是已知的 bounded stop：先按
+`identity_uncertain` 相同规则裁决其中 structurally complete 的 exact candidates；仍无可接受候选时返回
+`paper.acquire_blocked`、`retryable:true`，不得写成 cascade 已耗尽，也不得在同一请求再启动
+第二个完整 fetch。
+
 阅读每个候选的 inspect/front-page/file metadata，排除题名相似但版本、作者或作品不同的
 文件。通过核验的候选 accept 到 caller 允许的 output。Book 与 Paper 的成功 receipt 都必须
 命名稳定的 source（复用时为 `existing_file`）。
