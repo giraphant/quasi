@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.27** (2026-08-25): **扫描 Book OCR 可逐段恢复，Paper acquisition 以可验证交付而非 PDF 假设收敛。**
+  - `quasi-extract ocr --resume` 每次只处理一个 1–32 页的 exact page range，以 source hash、engine/config 与连续 part inventory 绑定 closed progress；part 与 progress 均原子提交，下一次由 fresh Book status 继续，最终按页序合并并清理中间状态。宿主中断不再迫使大型扫描书从第一页重做，并发 caller、source drift、坏 part 与孤儿 part 均 fail closed。
+  - Paper accepted source 现在是互斥的 `sources/{slug}.pdf|txt`。Prepare 对 PDF 继续抽取文本，对 strict UTF-8 text 只做换行与末尾 newline 的原子规范化；任意 host 返回的完整 scholarly HTML 在题名、作者与 article-shape 证据成立时可成为 fenced text candidate，登录页、元数据页与错误 shell 仍被拒绝。
+  - PDF 不再凭 MIME、`%PDF-` 前缀或“大且不像 HTML”通过：provider response 与 public accept 均要求 PyMuPDF 可打开且至少一页。Paper fetch 拥有 480 秒、可配置 30–540 秒的前台总预算，在宿主 ceiling 前返回 typed `budget_exhausted` 并保留已完成候选；同一 mirror 的证书验证失败不再机械重试。
+  - Metadata Search 能把已证实为普通公开网页文章的 Paper 请求返回为 `material.webpage_redirect`；direct Collect 复用现有 Webpage provisional flow。Author/Topic composition 明确拒绝静默替换成员类型。Paper Search 的 model schema 继续受 4096 字符 Auto 门保护。
+
 - **0.65.26** (2026-08-23): **Paper 的既有 owner 不再因本地化语义字段与检索身份的表示差异陷入观察死循环。**
   - `material.search` 已明确把当前作品绑定到同一个 `owner_slug`，且 fresh exact status 证明该 owner 的 canonical 可用时，Paper 现在接受 Search 的 owner 判定并继续 Prepare 与 Audit；中文标题、大小写或作者 wikilink 等库内表示不再要求与检索 identity 逐字相同。
   - 普通 canonical seed 仍需标题、作者与年份的严格磁盘 testimony 才能跳过 Search；Search 指向的新 route 没有 fresh observation、或 canonical 不可用时仍返回 `needs_observation`。Dant 型 source/canonical 已存在但 prepared 缺失的恢复因此能取得进展，而不会放宽任意同 slug 文档的身份边界。

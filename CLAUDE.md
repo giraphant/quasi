@@ -32,6 +32,8 @@ This file holds only the contracts a maintainer needs before editing. The detail
 - StructuredOutput may ask a still-running agent to repair malformed output; that provider-level correction is not a new stage dispatch. A receipt is consumed once. Cross-field checks that JSON Schema cannot express stay small and concrete in the owning descriptor row (exact path join, count equality, coherent manifest generation).
 - Unknown writer outcomes stop the run: no duplicate writers, no path discovery outside the envelope, no replay after an ambiguous write. Resume begins with a fresh disk observation.
 - Composition entries admit child materials from exact disk testimony supplied by the Skill's `quasi-status` calls. Audit has no durable status signal yet; a clean final audit is receipt-proven for the current invocation only.
+- Paper source testimony is an ordered PDF/TXT alternative set. Exactly one usable source may advance; both usable is a typed conflict. Paper complete must prove that selected source, its normalized text, and canonical page. A direct Paper may return a typed Webpage next route, but Author/Topic composition must not silently substitute it.
+- Resumable Book OCR commits one source/config-bound page range and progress observation per invocation. A partial range returns `needs_observation`; no background OCR process, hidden cursor, or blind replay is permitted.
 - Per-agent write ownership, Skill routing (`collect-material` / `research-topic` / `finalise-draft`), top-level concurrency, and topic products are specified in `docs/ARCHITECTURE.md`.
 
 ## Path roots

@@ -116,6 +116,17 @@ A Paper complete result names the exact accepted source, the normalized text sel
 Prepare, and the canonical page. An existing canonical owner therefore still reconciles
 Prepare before Audit; if its source is absent, Acquire runs first. Audit alone proves only
 the canonical page and cannot turn a missing source or prepared projection into complete.
+The accepted source is exactly one of `sources/{slug}.pdf` and `sources/{slug}.txt`;
+simultaneous alternatives are a visible conflict. PDF responses and Paper accept require a
+readable, non-empty PDF container, while verified scholarly HTML or strict UTF-8 text may be
+normalized into the text alternative. A bounded Paper fetch returns before the host ceiling
+instead of claiming an unfinished provider cascade was exhausted.
+
+Book Prepare projects resumable OCR progress through status. Each `quasi-extract ocr
+--resume` call owns one exact page range and atomically advances a source/config-bound part
+inventory; the Book entry returns `needs_observation` between ranges and finalizes only after
+the merged OCR output is durable. No background OCR process or hidden Workflow cursor is
+introduced.
 
 Inside a named plan, each descriptor row gives one specialist a goal, exact refs,
 declared capabilities, and a closed
@@ -194,6 +205,9 @@ observation:null,options:{}}`. Its `needs_observation` result supplies the canon
 Webpage route for the existing direct-leaf exact-status pump. A complete result is
 reported only after fresh Webpage status proves its snapshot, prepared, and canonical
 refs equal, present, and usable.
+When Paper Search instead proves that the requested item itself is a normal public web
+article, its typed Webpage next route enters that same provisional flow. Author and Topic
+surface the redirect as an unsupported child type rather than silently changing membership.
 
 For 2–32 top-level leaf materials, the skill preserves input order, coalesces only
 byte-identical known material keys before launch, and drives at most five independent
