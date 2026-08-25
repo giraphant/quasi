@@ -3414,6 +3414,20 @@ def _file_proof(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
+def _paper_source_validation_failure(path: Path, suffix: str) -> str | None:
+    if suffix == ".pdf":
+        try:
+            return None if _is_pdf_data(path.read_bytes()) else "paper_pdf_unreadable"
+        except OSError:
+            return "paper_pdf_unreadable"
+    if suffix == ".txt":
+        try:
+            return None if path.read_text(encoding="utf-8").strip() else "paper_text_unusable"
+        except (OSError, UnicodeError):
+            return "paper_text_unusable"
+    return "paper_source_format_unsupported"
+
+
 def _accept_to_output(
     source: Path,
     destination: Path,
@@ -3441,6 +3455,18 @@ def _accept_to_output(
                         "kind": kind,
                         "path": str(source),
                     }, 1
+                if kind == "paper":
+                    reason = _paper_source_validation_failure(
+                        destination, destination.suffix.lower()
+                    )
+                    if reason is not None:
+                        return {
+                            "status": "invalid_source",
+                            "kind": kind,
+                            "path": str(destination),
+                            "reason": reason,
+                            "published": False,
+                        }, 1
                 sha256, size_bytes = _file_proof(destination)
                 return {
                     "status": "ok",
@@ -3474,6 +3500,24 @@ def _accept_to_output(
                 source,
                 destination,
             )
+            if kind == "paper":
+                reason = _paper_source_validation_failure(
+                    stage, destination.suffix.lower()
+                )
+                if reason is not None:
+                    stage.unlink(missing_ok=True)
+                    stage = None
+                    return {
+                        "status": "invalid_source",
+                        "kind": kind,
+                        "path": str(destination),
+                        "temp_path": str(source),
+                        "reason": reason,
+                        "published": False,
+                        "previous_output_preserved": (
+                            previous_output and destination.exists()
+                        ),
+                    }, 1
             os.replace(stage, destination)
             stage = None
             published = True
@@ -3535,33 +3579,6 @@ def _cmd_accept(args) -> int:
 
     src = resolve_project_path(args.path)
     out_dir = resolve_project_path(args.output_dir)
-    if args.kind == "paper":
-        reason = None
-        if src.suffix.lower() == ".pdf":
-            try:
-                readable = _is_pdf_data(src.read_bytes())
-            except OSError:
-                readable = False
-            if not readable:
-                reason = "paper_pdf_unreadable"
-        elif src.suffix.lower() == ".txt":
-            try:
-                readable = bool(src.read_text(encoding="utf-8").strip())
-            except (OSError, UnicodeError):
-                readable = False
-            if not readable:
-                reason = "paper_text_unusable"
-        else:
-            reason = "paper_source_format_unsupported"
-        if reason is not None:
-            print_json({
-                "status": "invalid_source",
-                "kind": "paper",
-                "path": str(src),
-                "reason": reason,
-                "published": False,
-            })
-            return 1
     dest = (out_dir / f"{args.slug}{src.suffix.lower()}").resolve()
     payload, code = _accept_to_output(
         src,

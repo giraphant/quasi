@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.28** (2026-08-25): **Paper source validation now belongs to the atomic publication boundary.**
+  - Internal and public callers now share the same staged validation before `os.replace`: Paper PDF must be structurally readable and Paper text must be non-empty strict UTF-8. A damaged candidate cannot bypass validation by calling the lower-level accept helper, and an existing canonical source remains untouched when validation fails.
+  - The Paper fetch wall budget now has a real signal-interruption regression: once the deadline fires, later provider work is not executed. This closes the final verification gap left by 0.65.27 without changing its 480-second default or typed `budget_exhausted` contract.
+
 - **0.65.27** (2026-08-25): **扫描 Book OCR 可逐段恢复，Paper acquisition 以可验证交付而非 PDF 假设收敛。**
   - `quasi-extract ocr --resume` 每次只处理一个 1–32 页的 exact page range，以 source hash、engine/config 与连续 part inventory 绑定 closed progress；part 与 progress 均原子提交，下一次由 fresh Book status 继续，最终按页序合并并清理中间状态。宿主中断不再迫使大型扫描书从第一页重做，并发 caller、source drift、坏 part 与孤儿 part 均 fail closed。
   - Paper accepted source 现在是互斥的 `sources/{slug}.pdf|txt`。Prepare 对 PDF 继续抽取文本，对 strict UTF-8 text 只做换行与末尾 newline 的原子规范化；任意 host 返回的完整 scholarly HTML 在题名、作者与 article-shape 证据成立时可成为 fenced text candidate，登录页、元数据页与错误 shell 仍被拒绝。

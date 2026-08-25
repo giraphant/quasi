@@ -1804,6 +1804,27 @@ def test_accept_rejects_an_unreadable_paper_pdf_without_publishing(tmp_path):
     assert not (project / "sources" / "unreadable-paper.pdf").exists()
 
 
+def test_atomic_accept_boundary_rejects_unreadable_paper_before_replace(tmp_path):
+    mod = _load_module(DOWNLOAD, "paper_accept_boundary_under_test")
+    source = tmp_path / "candidate.pdf"
+    destination = tmp_path / "sources" / "paper.pdf"
+    source.write_bytes(b"%PDF-1.7\ntruncated")
+
+    payload, code = mod._accept_to_output(
+        source,
+        destination,
+        kind="paper",
+        overwrite=False,
+    )
+
+    assert code == 1
+    assert payload["status"] == "invalid_source"
+    assert payload["reason"] == "paper_pdf_unreadable"
+    assert source.exists()
+    assert not destination.exists()
+    assert not list(destination.parent.glob(f"{destination.name}.quasi-stage-*"))
+
+
 def test_accept_overwrite_uses_one_sibling_atomic_replace(tmp_path, monkeypatch):
     mod = _load_module(DOWNLOAD, "download_accept_atomic_under_test")
     source_dir = tmp_path / ".quasi" / "temp" / "downloads"
@@ -1832,7 +1853,7 @@ def test_accept_overwrite_uses_one_sibling_atomic_replace(tmp_path, monkeypatch)
     payload, code = mod._accept_to_output(
         src,
         dest,
-        kind="paper",
+        kind="book",
         overwrite=True,
     )
 
@@ -1865,7 +1886,7 @@ def test_accept_failure_before_replace_preserves_previous_output(tmp_path, monke
     payload, code = mod._accept_to_output(
         src,
         dest,
-        kind="paper",
+        kind="book",
         overwrite=True,
     )
 
@@ -1901,7 +1922,7 @@ def test_accept_post_replace_fsync_failure_reports_coherent_unknown(
     payload, code = mod._accept_to_output(
         src,
         dest,
-        kind="paper",
+        kind="book",
         overwrite=True,
     )
 
@@ -1943,7 +1964,7 @@ def test_accept_serializes_competing_writers_for_one_output(tmp_path, monkeypatc
         results[name] = mod._accept_to_output(
             source,
             dest,
-            kind="paper",
+            kind="book",
             overwrite=False,
         )
 
@@ -3585,6 +3606,19 @@ def test_paper_fetch_budget_exhaustion_returns_typed_json_without_partial(
         "candidates": [],
     }
     assert not partial.exists()
+
+
+def test_paper_fetch_budget_interrupts_before_followup_work():
+    mod = _load_module(DOWNLOAD, "paper_budget_signal_under_test")
+    calls = []
+
+    with pytest.raises(mod.PaperFetchBudgetExceeded):
+        with mod._paper_fetch_budget(0.02):
+            calls.append("first-provider")
+            time.sleep(0.2)
+            calls.append("later-provider")
+
+    assert calls == ["first-provider"]
 
 
 def test_verify_pdf_rechecks_sparse_extracted_text_with_first_page_ocr(
