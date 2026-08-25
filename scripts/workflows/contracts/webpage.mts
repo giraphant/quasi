@@ -61,7 +61,7 @@ export type WebpageRunInputResult =
 const WHOLE_SECOND_UTC =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/;
 
-const normalizeWebUrl = (value: unknown): string | null => {
+export const normalizeWebUrl = (value: unknown): string | null => {
   if (
     typeof value !== "string" ||
     value.length === 0 ||

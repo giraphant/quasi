@@ -322,6 +322,15 @@ def test_collect_material_transports_a_webpage_url_without_an_initial_observatio
     assert fields["options"].keys == []
 
 
+def test_collect_material_routes_paper_webpage_next_through_the_same_envelope() -> None:
+    text = (ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'next.kind=="webpage"' in text
+    assert "exact_url=next.url" in text
+
+
 def test_research_topic_routes_to_its_generated_named_entry() -> None:
     manifest = research_topic_workflow_manifest()
     assert manifest == {

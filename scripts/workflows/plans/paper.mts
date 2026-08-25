@@ -30,6 +30,7 @@ import {
   type MaterialResult,
   type MaterialResultSeed,
 } from "../shared/material-result.mts";
+import { normalizeWebUrl } from "../contracts/webpage.mts";
 import type {
   OperationName,
   StageReceipt,
@@ -357,6 +358,46 @@ async function runPaperPlanResult(
         gate,
         resumeSeed(input, state),
       );
+    }
+    if (
+      searched.kind === "receipt" &&
+      searched.receipt.terminal.status === "failed"
+    ) {
+      const terminal = searched.receipt.terminal as unknown as {
+        issue: { code: string };
+        webpage_url: unknown;
+      };
+      if (terminal.issue.code === "material.webpage_redirect") {
+        const url = normalizeWebUrl(terminal.webpage_url);
+        if (url === null)
+          return blockedMaterialResult(
+            resultSeed(state),
+            planIssue(
+              "workflow.incoherent_complete",
+              "material.search",
+              "The Webpage redirect omitted one valid public HTTP(S) URL.",
+            ),
+          );
+        return completeMaterialResult(
+          {
+            material: {
+              requested: { kind: "paper", slug: requestedSlug },
+              canonical: null,
+            },
+          },
+          [],
+          { kind: "webpage", url },
+        );
+      }
+      if (terminal.webpage_url !== null)
+        return blockedMaterialResult(
+          resultSeed(state),
+          planIssue(
+            "workflow.incoherent_complete",
+            "material.search",
+            "A non-redirect Search failure included a Webpage URL.",
+          ),
+        );
     }
     const searchStop = stopForOutcome(state, searched);
     if (searchStop !== null) return searchStop;

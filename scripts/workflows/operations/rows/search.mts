@@ -201,7 +201,20 @@ export const materialSearchOperationRows: OperationRow[] = [
         },
       },
       blocked: { properties: { issue: { $ref: "#/definitions/issue" } } },
-      failed: { properties: { issue: { $ref: "#/definitions/issue" } } },
+      failed: {
+        required: kind === "paper" ? ["webpage_url"] : [],
+        properties: {
+          issue: { $ref: "#/definitions/issue" },
+          ...(kind === "paper"
+            ? {
+                webpage_url: {
+                  type: ["string", "null"],
+                  maxLength: 2048,
+                },
+              }
+            : {}),
+        },
+      },
     }),
     complete: (receipt, context) => {
       const terminal = receipt.terminal as unknown as {

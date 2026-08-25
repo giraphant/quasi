@@ -23,6 +23,7 @@ from test_material_plans import (
     paper_observation,
     prepare_complete,
     search_complete,
+    search_webpage_redirect,
     search_needs_input,
     talk_analyse_complete,
     talk_observation,
@@ -489,6 +490,25 @@ def test_topic_seed_status_handshake_preserves_work_across_changed_recall() -> N
     assert resumed["result"]["terminal"] == "needs_input"
     assert resumed["result"]["gate"]["kind"] == "child"
     assert resumed["result"]["resume_seed"]["kind"] == "seed_child"
+
+
+def test_topic_refuses_to_substitute_a_webpage_for_a_paper_seed() -> None:
+    route = {"kind": "paper", "slug": "exact-paper"}
+    report = run_topic(
+        topic_input(
+            seeds=[paper_seed()],
+            children=[(route, paper_observation("exact-paper"))],
+        ),
+        [
+            recall_complete(),
+            search_webpage_redirect("https://example.org/public-essay"),
+        ],
+    )
+
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == (
+        "material.webpage_redirect_unsupported_in_composition"
+    )
 
 
 def test_topic_same_owner_provisional_seeds_run_one_leaf() -> None:

@@ -64,10 +64,15 @@ export interface ExactArtifactRef {
   path: string;
 }
 
-export type MaterialNextRoute = {
-  kind: "book";
-  identity: BookIdentity;
-};
+export type MaterialNextRoute =
+  | {
+      kind: "book";
+      identity: BookIdentity;
+    }
+  | {
+      kind: "webpage";
+      url: string;
+    };
 
 export interface MaterialIssue {
   code: string;

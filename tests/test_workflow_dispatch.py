@@ -1033,6 +1033,42 @@ def test_material_search_stage_terminal_union_has_four_closed_branches() -> None
         }
 
 
+def test_paper_search_failed_receipt_may_carry_only_one_webpage_redirect_url() -> None:
+    paper = _prepare("material.search")
+    book = _prepare("material.search", kind="book")
+    paper_failed = _terminal_branches(paper)["failed"]
+    book_failed = _terminal_branches(book)["failed"]
+
+    assert paper_failed["properties"]["webpage_url"] == {
+        "type": ["string", "null"],
+        "maxLength": 2048,
+    }
+    assert "webpage_url" not in book_failed["properties"]
+
+    report = _dispatch(
+        {
+            "invocation": _invocation("material.search"),
+            "model_output": {
+                "terminal": {
+                    "status": "failed",
+                    "issue": {
+                        "code": "material.webpage_redirect",
+                        "operation": "material.search",
+                        "summary": "The requested item is a public web article.",
+                        "user_question": None,
+                        "retryable": False,
+                    },
+                    "webpage_url": "https://example.org/essay",
+                },
+            },
+        }
+    )
+    assert report["result"]["kind"] == "receipt"
+    assert report["result"]["receipt"]["terminal"]["webpage_url"] == (
+        "https://example.org/essay"
+    )
+
+
 @pytest.mark.parametrize(
     ("output_exists", "action", "write_state"),
     [

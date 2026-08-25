@@ -600,6 +600,19 @@ def test_webpage_provisional_input_rejects_non_public_http_url(url: str) -> None
     assert result["ok"] is False
 
 
+def test_webpage_url_normalizer_is_shared_by_material_redirects() -> None:
+    assert run_workflow_export(
+        WEBPAGE_CONTRACT_MODULE,
+        "normalizeWebUrl",
+        "HTTPS://EXAMPLE.ORG:443/essay#section",
+    ) == "https://example.org/essay"
+    assert run_workflow_export(
+        WEBPAGE_CONTRACT_MODULE,
+        "normalizeWebUrl",
+        "file:///tmp/essay",
+    ) is None
+
+
 def test_webpage_canonical_input_adopts_same_url_observed_metadata() -> None:
     observed_identity = {
         **WEBPAGE_IDENTITY,

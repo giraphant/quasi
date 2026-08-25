@@ -638,6 +638,18 @@ const processLeafContinuation = async (
       receipt: null,
     };
   if (result.next !== null) {
+    if (result.next.kind === "webpage")
+      return {
+        result: blockedMaterialResult(
+          resultSeed(input),
+          planIssue(
+            "material.webpage_redirect_unsupported_in_composition",
+            "material.search",
+            "A Topic Paper member resolved to a Webpage; composition does not silently substitute material kinds.",
+          ),
+        ),
+        receipt: null,
+      };
     const bookLeaf: TopicSeedLeaf = {
       route: { kind: "book", slug: result.next.identity.slug },
       seed: {

@@ -87,6 +87,12 @@ canonical owner path。`helperRow.slug` 是实际交给 resolver 的 selected id
   超出 caller identity contract，也诚实返回已知的 unsupported publication type，而不把
   container 填进不相符的字段。
 
+Paper 调查若能证明请求对象本质上是一篇普通公开网页文章，而非期刊论文、working paper、
+thesis、conference paper、chapter 或有 HTML 全文载体的学术论文，则以 `failed`、
+`material.webpage_redirect`返回唯一经核实的 public HTTP(S) `webpage_url`。这是材料类型路由，不是
+下载 fallback；无法证明类型或没有 exact public URL 时不得使用。其他 Paper failed 必须返回
+`webpage_url:null`。
+
 ## 输出协议
 
 最后只返回 caller StructuredOutput schema 要求的 JSON。逐字回显 stage、operation、

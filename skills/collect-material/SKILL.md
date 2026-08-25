@@ -226,6 +226,9 @@ Author → exact Author status → discover/freeze → exact child status batch
      `next.identity.slug`，构造
      `{state:"canonical",material_slug:next.identity.slug,identity:next.identity}`，传 Book
      observation；绝不复用 Paper observation，也不重写 publication-type 规则。
+   - Paper `complete` 且 `next.kind=="webpage"`：只按 `next.kind` 选 Webpage entry，以
+     `exact_url=next.url` 构造上述唯一的 Webpage provisional envelope（`observation:null`）。
+     等 Webpage 返回 canonical route 后再做 exact status 并 resume；不把该 URL 伪装成 Paper source。
    - `needs_input`：原样展示 gate 的 question、candidates/conflicts/evidence，并保存本次返回的
      `resume_seed`。leaf 收到答案后只按 `resume_seed.route` 做 fresh exact status，再以
      `resume_seed.seed`、`resume_seed.options` 和这份 observation 调用 route 对应的同一 entry；

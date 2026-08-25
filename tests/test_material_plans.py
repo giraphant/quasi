@@ -805,6 +805,26 @@ def search_complete(
     }
 
 
+def search_webpage_redirect(
+    url: str | None = "https://example.org/essay#section",
+    *,
+    code: str = "material.webpage_redirect",
+) -> dict[str, Any]:
+    terminal: dict[str, Any] = {
+        "status": "failed",
+        "issue": {
+            "code": code,
+            "operation": "material.search",
+            "summary": "The requested item is a public web article.",
+            "user_question": None,
+            "retryable": False,
+        },
+    }
+    if url is not None:
+        terminal["webpage_url"] = url
+    return {"terminal": terminal}
+
+
 def acquire_complete(output_path: str = "sources/exact-paper.pdf") -> dict[str, Any]:
     return {
         "output_path": output_path,
@@ -1181,6 +1201,57 @@ def test_paper_book_decision_returns_typed_next_without_dispatch() -> None:
     assert report["result"]["terminal"] == "complete"
     assert report["result"]["artifacts"] == []
     assert report["result"]["next"] == selected
+
+
+def test_paper_search_routes_a_verified_web_article_to_webpage() -> None:
+    report = run_paper(provisional_input(), [search_webpage_redirect()])
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search"
+    ]
+    assert report["result"]["terminal"] == "complete"
+    assert report["result"]["material"]["canonical"] is None
+    assert report["result"]["artifacts"] == []
+    assert report["result"]["next"] == {
+        "kind": "webpage",
+        "url": "https://example.org/essay",
+    }
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        search_webpage_redirect(None),
+        search_webpage_redirect("file:///tmp/article"),
+        search_webpage_redirect(
+            "https://example.org/essay", code="material.search_failed"
+        ),
+    ],
+)
+def test_paper_rejects_incoherent_webpage_redirect_receipts(
+    receipt: dict[str, Any],
+) -> None:
+    report = run_paper(provisional_input(), [receipt])
+
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "workflow.incoherent_complete"
+
+
+def test_author_refuses_to_substitute_a_webpage_for_a_paper_member() -> None:
+    identity = paper_identity("paper-one", "Public Essay")
+    route = {"kind": "paper", "slug": "paper-one"}
+    report = run_author(
+        author_compose_input(
+            [author_member(route, route, identity)],
+            [(route, paper_observation("paper-one"))],
+        ),
+        [search_webpage_redirect("https://example.org/public-essay")],
+    )
+
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == (
+        "material.webpage_redirect_unsupported_in_composition"
+    )
 
 
 def test_paper_matching_but_incoherent_decision_stops_before_dispatch() -> None:

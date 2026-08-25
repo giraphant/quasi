@@ -421,6 +421,16 @@ const composeChildren = async (
           ),
         );
 
+      if (result.next?.kind === "webpage")
+        return blockedMaterialResult(
+          resultSeed(input.resumeSeed.seed),
+          planIssue(
+            "material.webpage_redirect_unsupported_in_composition",
+            "material.search",
+            "An Author Paper member resolved to a Webpage; composition does not silently substitute material kinds.",
+          ),
+        );
+
       if (result.next?.kind === "book") {
         const route: ChildRoute = {
           kind: "book",
