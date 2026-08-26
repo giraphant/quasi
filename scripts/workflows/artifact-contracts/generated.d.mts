@@ -2,7 +2,7 @@
 // Source of truth: scripts/schemas/ frontmatter models, BodySchema, and operations.py.
 
 export type KindName = "webpage" | "paper" | "book" | "talk" | "translation" | "topic" | "author";
-export type OperationName = "webpage.identify" | "webpage.capture" | "webpage.prepare" | "webpage.analyse" | "webpage.audit" | "material.search" | "paper.acquire" | "paper.prepare" | "paper.analyse" | "paper.audit" | "book.acquire" | "book.prepare" | "chapter.analyse" | "book.synthesise" | "book.audit" | "talk.prepare" | "talk.analyse" | "talk.audit" | "translation.prepare" | "topic.recall" | "topic.steer" | "topic.webcard" | "topic.synthesise.overview" | "topic.synthesise.resources" | "topic.audit" | "author.discover-books" | "author.discover-papers" | "author.resolve-membership" | "author.synthesise" | "author.audit";
+export type OperationName = "webpage.identify" | "webpage.capture" | "webpage.prepare" | "webpage.analyse" | "webpage.audit" | "material.search" | "paper.acquire" | "paper.prepare" | "paper.ocr" | "paper.analyse" | "paper.audit" | "book.acquire" | "book.prepare" | "book.ocr" | "chapter.analyse" | "book.synthesise" | "book.audit" | "talk.prepare" | "talk.analyse" | "talk.audit" | "translation.prepare" | "topic.recall" | "topic.steer" | "topic.webcard" | "topic.synthesise.overview" | "topic.synthesise.resources" | "topic.audit" | "author.discover-books" | "author.discover-papers" | "author.resolve-membership" | "author.synthesise" | "author.audit";
 export type PhaseName = "Search" | "Acquire" | "Prepare" | "Analyse" | "Audit" | "Synthesise" | "Recall";
 export type EffectName = "readonly" | "writer";
 

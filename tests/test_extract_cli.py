@@ -22,6 +22,7 @@ import ocr_dsocr2  # noqa: E402
 import split_chapters  # noqa: E402
 import extract as extract_cli  # noqa: E402
 import chapter_commit  # noqa: E402
+import ocr_generation  # noqa: E402
 
 
 def run_extract(
@@ -44,6 +45,7 @@ def test_extract_help_exposes_agent_contract():
     assert "quasi-extract epub" in result.stdout
     assert "quasi-extract text" in result.stdout
     assert "quasi-extract ocr" in result.stdout
+    assert "quasi-extract ocr-generation" in result.stdout
     assert "quasi-extract split" in result.stdout
     # OCR engine switch is part of the documented surface.
     assert "--engine dsocr2|tesseract" in result.stdout
@@ -663,6 +665,383 @@ def test_ocr_resume_cli_requires_closed_resume_arguments(
     assert rc == 2
     assert payload["failure"]["code"] == "invalid_arguments"
     assert "--progress-file" in payload["failure"]["message"]
+
+
+def _ocr_generation_runner(calls: list[tuple[int, tuple[str, ...]]]):
+    def run(
+        source: Path,
+        output: Path,
+        engines: tuple[str, ...],
+        language: str,
+        _validation_policy: str,
+    ) -> ocr_generation.EngineResult:
+        import fitz
+
+        assert language == "chi_sim+eng"
+        with fitz.open(source) as sliced:
+            count = sliced.page_count
+        calls.append((count, engines))
+        _write_pdf(output, [f"recovered page {index}" for index in range(1, count + 1)])
+        return ocr_generation.EngineResult(engine=engines[0], returncode=0)
+
+    return run
+
+
+@pytest.mark.parametrize(
+    ("kind", "root"),
+    [("paper", "processing/papers"), ("book", "processing/chapters")],
+)
+def test_ocr_generation_key_and_paths_are_material_safe(kind, root, tmp_path):
+    kwargs = {
+        "kind": kind,
+        "slug": "exact-material",
+        "source_path": "sources/exact-material.pdf",
+        "source_sha256": "a" * 64,
+        "profile_name": "dsocr2-text",
+    }
+    first = ocr_generation.generation_key(**kwargs)
+    same = ocr_generation.generation_key(**kwargs)
+    changed = ocr_generation.generation_key(
+        **{**kwargs, "source_sha256": "b" * 64}
+    )
+
+    assert first == same
+    assert len(first) == 64
+    assert first != changed
+    paths = ocr_generation.paths_for(
+        project_root=tmp_path, kind=kind, slug="exact-material", generation=first
+    )
+    assert paths["generation_dir"].relative_to(tmp_path).as_posix() == (
+        f"{root}/exact-material/ocr-generations/{first}"
+    )
+
+
+def test_ocr_generation_profiles_bind_engine_specific_range_sizes():
+    assert ocr_generation.resolve_profile("paper", "dsocr2-text")["chunk_pages"] == 16
+    assert ocr_generation.resolve_profile("book", "dsocr2-text")["chunk_pages"] == 16
+    assert ocr_generation.resolve_profile("paper", "tesseract-text")["chunk_pages"] == 32
+    assert ocr_generation.resolve_profile("book", "tesseract-text")["chunk_pages"] == 32
+
+
+def test_ocr_generation_dsocr_quality_failure_falls_back_to_tesseract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    source = tmp_path / "slice.pdf"
+    output = tmp_path / "candidate.pdf"
+    _write_pdf(source, ["", ""])
+    calls: list[list[str]] = []
+
+    def fake_call(command, **_kwargs):
+        calls.append(command)
+        candidate = Path(command[3])
+        if len(calls) == 1:
+            _write_pdf(candidate, ["DS page one", ""])
+        else:
+            _write_pdf(candidate, ["Tesseract page one", "Tesseract page two"])
+        return 0
+
+    monkeypatch.setattr(ocr_generation.subprocess, "call", fake_call)
+    runner = ocr_generation._engine_runner(EXTRACT_DIR)
+
+    result = runner(
+        source, output, ("dsocr2", "tesseract"),
+        "chi_sim+eng", "paper-text-v1",
+    )
+    assert result == ocr_generation.EngineResult(engine="tesseract", returncode=0)
+    assert len(calls) == 2
+    assert calls[0][1].endswith("ocr_dsocr2.py")
+    assert calls[1][1].endswith("ocr_pdf.sh")
+    assert ocr_generation.validate_pdf_quality(output, 2)["text_pages"] == 2
+
+
+@pytest.mark.parametrize(
+    ("kind", "profile_name", "pages", "first_range"),
+    [("paper", "dsocr2-text", 17, 16), ("book", "tesseract-text", 33, 32)],
+)
+def test_ocr_generation_advances_one_range_then_commits_manifest_last(
+    tmp_path: Path, kind: str, profile_name: str, pages: int, first_range: int,
+):
+    slug = "example-paper-2024"
+    source = tmp_path / "sources" / f"{slug}.pdf"
+    source.parent.mkdir()
+    _write_pdf(source, ["" for _ in range(pages)])
+    source_sha = ocr_generation.sha256_file(source)
+    generation = ocr_generation.generation_key(
+        kind=kind, slug=slug, source_path=f"sources/{slug}.pdf",
+        source_sha256=source_sha, profile_name=profile_name,
+    )
+    calls: list[tuple[int, tuple[str, ...]]] = []
+
+    first = ocr_generation.run_transaction(
+        project_root=tmp_path,
+        kind=kind,
+        slug=slug,
+        source_file=source,
+        expected_source_sha256=source_sha,
+        expected_generation_key=generation,
+        profile_name=profile_name,
+        runner=_ocr_generation_runner(calls),
+    )
+    second = ocr_generation.run_transaction(
+        project_root=tmp_path,
+        kind=kind,
+        slug=slug,
+        source_file=source,
+        expected_source_sha256=source_sha,
+        expected_generation_key=generation,
+        profile_name=profile_name,
+        runner=_ocr_generation_runner(calls),
+    )
+
+    assert first["status"] == "succeeded"
+    assert first["disposition"] == "partial"
+    assert first["progress"] == {
+        "completed_pages": first_range,
+        "total_pages": pages,
+        "next_page": first_range + 1,
+        "ranges": first["progress"]["ranges"],
+    }
+    assert second["status"] == "succeeded"
+    assert second["disposition"] == "created"
+    assert second["state"] == "committed"
+    assert second["progress"] is None
+    expected_engines = ("dsocr2", "tesseract") if profile_name == "dsocr2-text" else ("tesseract",)
+    assert calls == [(first_range, expected_engines), (pages - first_range, expected_engines)]
+    paths = ocr_generation.paths_for(
+        project_root=tmp_path, kind=kind, slug=slug, generation=generation
+    )
+    manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == ocr_generation.MANIFEST_SCHEMA
+    assert manifest["kind"] == kind
+    assert manifest["source"]["pages"] == pages
+    assert manifest["recovery_pdf"]["pages"] == pages
+    assert [item["engine"] for item in manifest["ranges"]] == [expected_engines[0]] * 2
+    observed = ocr_generation.observe_generation(
+        project_root=tmp_path,
+        kind=kind,
+        slug=slug,
+        source_sha256=source_sha,
+        source_size=source.stat().st_size,
+        source_pages=pages,
+        generation=generation,
+        profile_name=profile_name,
+    )
+    assert observed["state"] == "committed"
+
+
+def test_ocr_generation_rejects_a_tampered_committed_range(tmp_path: Path):
+    slug = "tampered-paper-2024"
+    source = tmp_path / "sources" / f"{slug}.pdf"
+    source.parent.mkdir()
+    _write_pdf(source, ["" for _ in range(17)])
+    source_sha = ocr_generation.sha256_file(source)
+    generation = ocr_generation.generation_key(
+        kind="paper",
+        slug=slug,
+        source_sha256=source_sha,
+        profile_name="dsocr2-text",
+    )
+    partial = ocr_generation.run_transaction(
+        project_root=tmp_path,
+        kind="paper",
+        slug=slug,
+        source_file=source,
+        expected_source_sha256=source_sha,
+        expected_generation_key=generation,
+        profile_name="dsocr2-text",
+        runner=_ocr_generation_runner([]),
+    )
+    part = tmp_path / partial["progress"]["ranges"][0]["path"]
+    part.write_bytes(b"tampered")
+
+    observed = ocr_generation.observe_generation(
+        project_root=tmp_path,
+        kind="paper",
+        slug=slug,
+        source_sha256=source_sha,
+        source_size=source.stat().st_size,
+        source_pages=17,
+        generation=generation,
+        profile_name="dsocr2-text",
+    )
+
+    assert observed["state"] == "invalid"
+    assert observed["failure"] == "ocr.generation_progress_invalid"
+
+
+def test_ocr_generation_stops_on_unknown_private_part_inventory(tmp_path: Path):
+    slug = "unknown-parts-paper-2024"
+    source = tmp_path / "sources" / f"{slug}.pdf"
+    source.parent.mkdir()
+    _write_pdf(source, ["" for _ in range(17)])
+    source_sha = ocr_generation.sha256_file(source)
+    generation = ocr_generation.generation_key(
+        kind="paper",
+        slug=slug,
+        source_sha256=source_sha,
+        profile_name="dsocr2-text",
+    )
+    partial = ocr_generation.run_transaction(
+        project_root=tmp_path,
+        kind="paper",
+        slug=slug,
+        source_file=source,
+        expected_source_sha256=source_sha,
+        expected_generation_key=generation,
+        profile_name="dsocr2-text",
+        runner=_ocr_generation_runner([]),
+    )
+    parts = (tmp_path / partial["paths"]["work_dir"] / "parts")
+    (parts / "unexpected.pdf").write_bytes(b"unknown")
+
+    observed = ocr_generation.observe_generation(
+        project_root=tmp_path,
+        kind="paper",
+        slug=slug,
+        source_sha256=source_sha,
+        source_size=source.stat().st_size,
+        source_pages=17,
+        generation=generation,
+        profile_name="dsocr2-text",
+    )
+
+    assert observed["state"] == "unknown"
+    assert observed["failure"] == "ocr.generation_part_inventory_unknown"
+
+
+def test_ocr_generation_rejects_tampered_committed_manifest_ranges(tmp_path: Path):
+    slug = "tampered-manifest-paper-2024"
+    source = tmp_path / "sources" / f"{slug}.pdf"
+    source.parent.mkdir()
+    _write_pdf(source, [""])
+    source_sha = ocr_generation.sha256_file(source)
+    generation = ocr_generation.generation_key(
+        kind="paper",
+        slug=slug,
+        source_sha256=source_sha,
+        profile_name="dsocr2-text",
+    )
+    created = ocr_generation.run_transaction(
+        project_root=tmp_path,
+        kind="paper",
+        slug=slug,
+        source_file=source,
+        expected_source_sha256=source_sha,
+        expected_generation_key=generation,
+        profile_name="dsocr2-text",
+        runner=_ocr_generation_runner([]),
+    )
+    assert created["disposition"] == "created"
+    paths = ocr_generation.paths_for(
+        project_root=tmp_path, kind="paper", slug=slug, generation=generation
+    )
+    manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
+    manifest["ranges"][0]["path"] = "processing/papers/foreign/part.pdf"
+    paths["manifest"].write_text(json.dumps(manifest), encoding="utf-8")
+
+    observed = ocr_generation.observe_generation(
+        project_root=tmp_path,
+        kind="paper",
+        slug=slug,
+        source_sha256=source_sha,
+        source_size=source.stat().st_size,
+        source_pages=1,
+        generation=generation,
+        profile_name="dsocr2-text",
+    )
+
+    assert observed["state"] == "invalid"
+    assert observed["failure"] == "ocr.generation_manifest_invalid"
+
+
+def test_ocr_generation_reconciles_without_rewriting_or_touching_legacy(tmp_path: Path):
+    slug = "legacy-paper-2020"
+    source = tmp_path / "sources" / f"{slug}.pdf"
+    source.parent.mkdir()
+    _write_pdf(source, [""])
+    paper_dir = tmp_path / "processing" / "papers" / slug
+    paper_dir.mkdir(parents=True)
+    legacy_pdf = paper_dir / "ocr.pdf"
+    legacy_text = paper_dir / "ocr.txt"
+    legacy_pdf.write_bytes(b"protected legacy PDF evidence")
+    legacy_text.write_text("protected legacy text evidence", encoding="utf-8")
+    legacy = (legacy_pdf.read_bytes(), legacy_text.read_bytes())
+    source_sha = ocr_generation.sha256_file(source)
+    generation = ocr_generation.generation_key(
+        kind="paper", slug=slug, source_path=f"sources/{slug}.pdf",
+        source_sha256=source_sha, profile_name="dsocr2-text",
+    )
+
+    created = ocr_generation.run_transaction(
+        project_root=tmp_path,
+        kind="paper",
+        slug=slug,
+        source_file=source,
+        expected_source_sha256=source_sha,
+        expected_generation_key=generation,
+        profile_name="dsocr2-text",
+        runner=_ocr_generation_runner([]),
+    )
+    paths = ocr_generation.paths_for(
+        project_root=tmp_path, kind="paper", slug=slug, generation=generation
+    )
+    mtimes = {
+        key: paths[key].stat().st_mtime_ns for key in ("pdf", "text", "manifest")
+    }
+    reconciled = ocr_generation.run_transaction(
+        project_root=tmp_path,
+        kind="paper",
+        slug=slug,
+        source_file=source,
+        expected_source_sha256=source_sha,
+        expected_generation_key=generation,
+        profile_name="dsocr2-text",
+        runner=lambda *_args: pytest.fail("committed generation must not rerun OCR"),
+    )
+
+    assert created["disposition"] == "created"
+    assert reconciled["disposition"] == "reconciled"
+    assert {
+        key: paths[key].stat().st_mtime_ns for key in ("pdf", "text", "manifest")
+    } == mtimes
+    assert (legacy_pdf.read_bytes(), legacy_text.read_bytes()) == legacy
+
+
+def test_ocr_generation_rejects_empty_text_page_without_publication(tmp_path: Path):
+    slug = "empty-middle-page-2021"
+    source = tmp_path / "sources" / f"{slug}.pdf"
+    source.parent.mkdir()
+    _write_pdf(source, ["", "", ""])
+    source_sha = ocr_generation.sha256_file(source)
+    generation = ocr_generation.generation_key(
+        kind="paper", slug=slug, source_path=f"sources/{slug}.pdf",
+        source_sha256=source_sha, profile_name="dsocr2-text",
+    )
+
+    def incomplete_runner(
+        _source: Path, output: Path, _engines: tuple[str, ...],
+        _language: str, _policy: str,
+    ) -> ocr_generation.EngineResult:
+        _write_pdf(output, ["page one", "", "page three"])
+        return ocr_generation.EngineResult(engine="dsocr2", returncode=0)
+
+    result = ocr_generation.run_transaction(
+        project_root=tmp_path,
+        kind="paper",
+        slug=slug,
+        source_file=source,
+        expected_source_sha256=source_sha,
+        expected_generation_key=generation,
+        profile_name="dsocr2-text",
+        runner=incomplete_runner,
+    )
+    paths = ocr_generation.paths_for(
+        project_root=tmp_path, kind="paper", slug=slug, generation=generation
+    )
+
+    assert result["status"] == "failed"
+    assert result["failure"]["code"] == "ocr.generation_empty_text_pages"
+    assert paths["generation_dir"].exists() is False
 
 
 @pytest.mark.skipif(shutil.which("pdftotext") is None, reason="pdftotext unavailable")

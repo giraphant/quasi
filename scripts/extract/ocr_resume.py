@@ -30,6 +30,7 @@ PROGRESS_KEYS = {
     "next_page",
 }
 Runner = Callable[[Path, Path, str, Optional[str]], int]
+PartValidator = Callable[[Path, int], None]
 
 
 def _regular_file(path: Path, *, allow_missing: bool = False) -> bool:
@@ -233,6 +234,7 @@ def run_ocr_step(
     language: str | None,
     *,
     runner: Runner,
+    part_validator: PartValidator | None = None,
 ) -> dict[str, object]:
     """Run exactly one missing OCR range and publish durable progress."""
 
@@ -286,8 +288,11 @@ def run_ocr_step(
         }
         for start, end in committed_ranges:
             part = _part_path(parts_dir, start, end)
-            if _pdf_pages(part) != end - start + 1:
+            expected_pages = end - start + 1
+            if _pdf_pages(part) != expected_pages:
                 raise ValueError(f"committed OCR part has wrong page count: {part}")
+            if part_validator is not None:
+                part_validator(part, expected_pages)
         for child in parts_dir.iterdir():
             if child.name not in expected_names:
                 # Only the exact next part may be an orphan from a crash between
@@ -301,8 +306,11 @@ def run_ocr_step(
         end = min(start + chunk_pages - 1, total)
         part = _part_path(parts_dir, start, end)
         if part.exists() or part.is_symlink():
-            if _pdf_pages(part) != end - start + 1:
+            expected_pages = end - start + 1
+            if _pdf_pages(part) != expected_pages:
                 raise ValueError(f"orphan OCR part has wrong page count: {part}")
+            if part_validator is not None:
+                part_validator(part, expected_pages)
         else:
             work_dir = Path(
                 tempfile.mkdtemp(prefix=f".{part.name}.", dir=str(parts_dir))
@@ -314,8 +322,11 @@ def run_ocr_step(
                 rc = runner(source_slice, candidate, engine, language)
                 if rc != 0:
                     raise RuntimeError(f"OCR engine exited {rc}")
-                if _pdf_pages(candidate) != end - start + 1:
+                expected_pages = end - start + 1
+                if _pdf_pages(candidate) != expected_pages:
                     raise ValueError("OCR engine returned the wrong page count")
+                if part_validator is not None:
+                    part_validator(candidate, expected_pages)
                 os.replace(candidate, part)
                 _fsync_directory(parts_dir)
             finally:
@@ -338,8 +349,11 @@ def run_ocr_step(
         all_ranges = _expected_ranges(total, chunk_pages, total)
         all_parts = [_part_path(parts_dir, first, last) for first, last in all_ranges]
         for current, (first, last) in zip(all_parts, all_ranges):
-            if _pdf_pages(current) != last - first + 1:
+            expected_pages = last - first + 1
+            if _pdf_pages(current) != expected_pages:
                 raise ValueError(f"OCR part has wrong page count: {current}")
+            if part_validator is not None:
+                part_validator(current, expected_pages)
         descriptor, staged_name = tempfile.mkstemp(
             prefix=f".{output.name}.", suffix=".tmp", dir=str(output.parent)
         )

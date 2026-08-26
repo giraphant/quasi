@@ -109,21 +109,31 @@ def test_named_entries_reject_unknown_input_before_agent_dispatch(entry: str) ->
 @pytest.mark.parametrize(
     ("entry", "catalogs", "rows", "contracts"),
     [
-        ("paper", {"paper"}, {"paper", "search"}, {"paper", "book", "search"}),
-        ("book", {"book"}, {"book", "search"}, {"book", "paper", "search"}),
+        (
+            "paper",
+            {"paper"},
+            {"paper", "search", "ocr-generation"},
+            {"paper", "book", "search", "ocr-generation"},
+        ),
+        (
+            "book",
+            {"book"},
+            {"book", "search", "ocr-generation"},
+            {"book", "paper", "search", "ocr-generation"},
+        ),
         ("talk", {"talk"}, {"talk"}, {"talk"}),
         ("translation", {"translation"}, {"translation"}, {"translation"}),
         (
             "author",
             {"author", "paper", "book"},
-            {"author", "paper", "book", "search"},
-            {"author", "paper", "book", "search"},
+            {"author", "paper", "book", "search", "ocr-generation"},
+            {"author", "paper", "book", "search", "ocr-generation"},
         ),
         (
             "topic",
             {"topic", "paper", "book", "talk"},
-            {"topic", "paper", "book", "talk", "search"},
-            {"topic", "paper", "book", "talk", "search"},
+            {"topic", "paper", "book", "talk", "search", "ocr-generation"},
+            {"topic", "paper", "book", "talk", "search", "ocr-generation"},
         ),
         ("webpage", {"webpage"}, {"webpage"}, {"webpage"}),
     ],

@@ -1,5 +1,6 @@
 import { PAPER_ARTIFACT_CONTRACT } from "../../artifact-contracts/generated.mjs";
 import { InputContractError } from "../../context-base.mts";
+import { makeOcrGenerationRow } from "./ocr-generation.mts";
 import {
   ATTEMPT_SCHEMA,
   PREPARE_STEP_SCHEMA,
@@ -14,22 +15,60 @@ type AnyFunction = (...args: any[]) => any;
 
 const preparedArtifactSchema: AnyFunction = (paths) => ({
   type: "array",
-  maxItems: 256,
+  minItems: 1,
+  maxItems: paths.length,
+  uniqueItems: true,
   items: {
     type: "object",
     additionalProperties: false,
     required: ["role", "path", "exists", "usable"],
     properties: {
-      role: {
-        type: "string",
-        enum: ["normalized_text", "recovery_source"],
-      },
+      role: { const: "normalized_text" },
       path: { type: "string", enum: paths },
       exists: { type: "boolean" },
       usable: { type: ["boolean", "null"] },
     },
   },
 });
+
+const generationTextPath = (slug: string, generationKey: string): string =>
+  `processing/papers/${slug}/ocr-generations/${generationKey}/ocr.txt`;
+
+const paperPrepareContext: AnyFunction = (rawContext, base) => {
+  const source = rawContext.source;
+  const input = rawContext.input ?? source;
+  const sourcePdf = `sources/${base.slug}.pdf`;
+  const sourceText = `sources/${base.slug}.txt`;
+  if (![sourcePdf, sourceText].includes(source))
+    throw new InputContractError(
+      "paper.prepare source must be one declared Paper source",
+    );
+  if (input === source)
+    return {
+      ...base,
+      source,
+      input,
+      inputKind: source === sourcePdf ? "source_pdf" : "source_text",
+      generationKey: null,
+    };
+  const generationKey = rawContext.generationKey;
+  if (
+    source !== sourcePdf ||
+    typeof generationKey !== "string" ||
+    !/^[0-9a-f]{64}$/.test(generationKey) ||
+    input !== generationTextPath(base.slug, generationKey)
+  )
+    throw new InputContractError(
+      "paper.prepare generation input must be the exact committed OCR text",
+    );
+  return {
+    ...base,
+    source,
+    input,
+    inputKind: "generation_text",
+    generationKey,
+  };
+};
 
 const quoteOrNull: AnyFunction = (value) =>
   value == null || value === "" ? null : posixSingleQuote(value);
@@ -140,73 +179,147 @@ export const paperOperationRows: OperationRow[] = [
   },
   {
     operation: "paper.prepare",
-    context: (rawContext, base) => ({
-      ...base,
-      source: rawContext.source,
-    }),
-    refs: ({ source, sourcePdf, sourceText, normalized, recoverySource, recoveryText }) => {
-      if (![sourcePdf, sourceText].includes(source))
+    context: paperPrepareContext,
+    refs: ({
+      source,
+      input,
+      inputKind,
+      generationKey,
+      sourcePdf,
+      sourceText,
+      normalized,
+      legacyRecoverySource,
+      legacyRecoveryText,
+    }) => {
+      const expectedInput =
+        inputKind === "generation_text"
+          ? generationTextPath(
+              sourcePdf.slice("sources/".length, -".pdf".length),
+              generationKey,
+            )
+          : source;
+      if (input !== expectedInput)
         throw new InputContractError(
-          "paper.prepare source must be one declared Paper source",
+          "paper.prepare input does not match its declared role",
         );
       return {
         source,
+        input,
+        inputKind,
+        generationKey,
         sourcePdf,
         sourceText,
         normalized,
-        recoverySource,
-        recoveryText,
+        legacyRecoverySource,
+        legacyRecoveryText,
       };
     },
-    writeTargets: ({ normalized, recoverySource, recoveryText }) => [
+    writeTargets: ({ normalized }) => [
       { scope: "exact", path: normalized },
-      { scope: "exact", path: recoverySource },
-      { scope: "exact", path: recoveryText },
     ],
-    payloadProperties: (refs) => ({
-      required: [
-        "source_path",
-        "selected_input",
-        "artifacts",
-        "steps",
-        "diagnostics",
-      ],
-      properties: {
-        source_path: { const: refs.source },
-        selected_input: {
-          type: ["string", "null"],
-          enum: [refs.normalized, refs.recoveryText, null],
+    payloadProperties: (refs) => {
+      const selected =
+        refs.inputKind === "generation_text" ? refs.input : refs.normalized;
+      return {
+        required: [
+          "source_path",
+          "input_path",
+          "input_kind",
+          "selected_input",
+          "artifacts",
+          "steps",
+          "diagnostics",
+        ],
+        properties: {
+          source_path: { const: refs.source },
+          input_path: { const: refs.input },
+          input_kind: { const: refs.inputKind },
+          selected_input: {
+            type: ["string", "null"],
+            enum: [selected, null],
+          },
+          artifacts: preparedArtifactSchema(
+            refs.inputKind === "generation_text"
+              ? [refs.input]
+              : [refs.normalized],
+          ),
+          steps: { type: "array", maxItems: 64, items: PREPARE_STEP_SCHEMA },
+          diagnostics: {
+            type: "array",
+            maxItems: 64,
+            items: { type: "string", maxLength: 4000 },
+          },
         },
-        artifacts: preparedArtifactSchema([
-          refs.normalized,
-          refs.recoverySource,
-          refs.recoveryText,
-        ]),
-        steps: { type: "array", maxItems: 64, items: PREPARE_STEP_SCHEMA },
-        diagnostics: {
-          type: "array",
-          maxItems: 64,
-          items: { type: "string", maxLength: 4000 },
+      };
+    },
+    terminalPayloads: (refs) => ({
+      complete: {
+        required: ["disposition"],
+        properties: {
+          disposition: {
+            type: "string",
+            enum: ["prepared", "ocr_required"],
+          },
+        },
+      },
+      failed: {
+        properties: {
+          issue: issueSchema(
+            "paper.prepare",
+            refs.inputKind === "generation_text"
+              ? "paper.ocr_unreadable"
+              : refs.inputKind === "source_text"
+                ? "paper.source_unreadable"
+                : "paper.prepare_failed",
+          ),
+        },
+      },
+      blocked: {
+        properties: {
+          issue: issueSchema("paper.prepare", "paper.prepare_blocked"),
         },
       },
     }),
     complete: (receipt, context) => {
-      const allowed = new Set([
-        context.normalized,
-        context.recoverySource,
-        context.recoveryText,
-      ]);
+      const disposition = receipt.terminal.disposition;
+      const selected =
+        context.inputKind === "generation_text"
+          ? context.input
+          : context.normalized;
+      const allowed = new Set(
+        context.inputKind === "generation_text"
+          ? [context.input]
+          : [context.normalized],
+      );
+      const artifactsAreBound = receipt.artifacts.every((artifact: any) =>
+        allowed.has(artifact.path),
+      );
+      if (disposition === "prepared")
+        return (
+          receipt.selected_input === selected &&
+          artifactsAreBound &&
+          receipt.artifacts.some(
+            (artifact: any) =>
+              artifact.role === "normalized_text" &&
+              artifact.path === selected &&
+              artifact.exists === true &&
+              artifact.usable === true,
+          )
+        );
       return (
-        typeof receipt.selected_input === "string" &&
-        receipt.artifacts.every((artifact: any) =>
-          allowed.has(artifact.path),
-        ) &&
+        disposition === "ocr_required" &&
+        context.inputKind === "source_pdf" &&
+        receipt.selected_input === null &&
+        artifactsAreBound &&
         receipt.artifacts.some(
           (artifact: any) =>
             artifact.role === "normalized_text" &&
-            artifact.path === receipt.selected_input &&
+            artifact.path === context.normalized &&
             artifact.exists === true &&
-            artifact.usable === true,
+            artifact.usable === false,
+        ) &&
+        receipt.artifacts.every(
+          (artifact: any) => artifact.usable !== true,
         )
       );
     },
@@ -217,23 +330,37 @@ export const paperOperationRows: OperationRow[] = [
       material_key: materialKey,
       effect: "writer",
       objective:
-        "Produce one readable normalized text for the exact accepted Paper source.",
+        refs.inputKind === "generation_text"
+          ? "Semantically verify the exact committed Paper OCR generation text."
+          : "Extract and semantically verify readable text from the exact accepted Paper source.",
+      source: { path: refs.source },
+      input: { role: refs.inputKind, path: refs.input },
       refs: {
-        source: refs.source,
         normalized: refs.normalized,
-        recovery_source: refs.recoverySource,
-        recovery_text: refs.recoveryText,
+        legacy_recovery_source: refs.legacyRecoverySource,
+        legacy_recovery_text: refs.legacyRecoveryText,
       },
-      capabilities: [
-        "quasi-extract text INPUT OUTPUT --json",
-        ...(refs.source === refs.sourcePdf
-          ? ["quasi-extract ocr INPUT OUTPUT --no-clobber --json"]
-          : []),
-        "Read exact normalized text artifacts",
-      ],
-      artifact_roles: ["normalized_text", "recovery_source"],
+      capabilities:
+        refs.inputKind === "generation_text"
+          ? [
+              "Read only the exact generation_text input named by this request; do not read or compare the fixed normalized or legacy recovery refs.",
+            ]
+          : [
+              `quasi-extract text ${posixSingleQuote(refs.input)} ${posixSingleQuote(refs.normalized)} --json`,
+              "Read the exact input and normalized text artifacts named by this request",
+            ],
+      legacy_recovery_rule:
+        "The fixed legacy recovery refs are read-only evidence. Never write, replace, delete, rename, link, or select them.",
+      disposition_contract: {
+        prepared:
+          "Return only after selected_input was actually read and is semantically usable.",
+        ocr_required:
+          "Allowed only for a direct PDF input whose extracted normalized text exists but is semantically unusable.",
+      },
+      artifact_roles: ["normalized_text"],
     }),
   },
+  makeOcrGenerationRow({ operation: "paper.ocr", kind: "paper", validationPolicy: "paper-text-v1" }),
   {
     operation: "paper.analyse",
     context: (rawContext, base) => ({

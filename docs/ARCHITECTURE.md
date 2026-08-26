@@ -36,7 +36,7 @@ separate:
 |---|---|
 | `quasi-search` | `book|paper` metadata discovery |
 | `quasi-download` | `book candidates|fetch`; `paper fetch|diagnose`; `accept` |
-| `quasi-extract` | `epub|text|ocr|split` text extraction and normalisation (`ocr` default engine DS OCR2, `--engine dsocr2\|tesseract`, `--layout` replacement text layer) |
+| `quasi-extract` | `epub|text|ocr|ocr-generation|split` text extraction and normalisation (`ocr` default engine DS OCR2, `--engine dsocr2\|tesseract`, `--layout` replacement text layer; `ocr-generation` is the shared source/profile-bound immutable Paper/Book OCR transaction) |
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
 | `quasi-status` | read-only disk oracle: `--kind paper|book|talk|author|topic|webpage --slug SLUG --json`; Translation additionally requires `--target-language TAG`; `--scan --json` |
 | `quasi-transcribe` | `run|classify|silent` talk transcript engines |

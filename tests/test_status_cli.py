@@ -8,8 +8,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import fitz
 import pytest
 
+from scripts.extract import ocr_generation
 from scripts.status import status as status_module
 
 
@@ -44,6 +46,31 @@ def frontmatter(kind: str, fields: str = "") -> str:
 
 def observation(path: str, *, present: bool, usable: bool) -> dict[str, object]:
     return {"path": path, "present": present, "usable": usable}
+
+
+def write_pdf(path: Path, page_texts: list[str]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = fitz.open()
+    try:
+        for text in page_texts:
+            page = document.new_page()
+            page.insert_text((72, 72), text)
+        document.save(path)
+    finally:
+        document.close()
+    return path
+
+
+def copying_ocr_runner(
+    source: Path,
+    output: Path,
+    engines: tuple[str, ...],
+    _language: str,
+    _validation_policy: str,
+) -> ocr_generation.EngineResult:
+    with fitz.open(source) as document:
+        document.save(output)
+    return ocr_generation.EngineResult(engine=engines[0], returncode=0)
 
 
 def write_webarchive(path: Path, *, url: str, title: str = "Saved title", site: str = "Example Site") -> Path:
@@ -285,6 +312,19 @@ def test_empty_paper_status_is_one_closed_factual_observation(tmp_path: Path):
                     usable=False,
                 ),
             ],
+            "legacy_recovery": {
+                "pdf": observation(
+                    "processing/papers/missing-paper/ocr.pdf",
+                    present=False,
+                    usable=False,
+                ),
+                "text": observation(
+                    "processing/papers/missing-paper/ocr.txt",
+                    present=False,
+                    usable=False,
+                ),
+            },
+            "ocr_generation": None,
             "canonical": observation(
                 "vault/papers/missing-paper.md", present=False, usable=False
             ),
@@ -350,6 +390,10 @@ def test_paper_source_fingerprint_changes_with_candidate_bytes(tmp_path: Path):
     assert first["facts"]["sources"][0]["candidate"]["sha256"] != (
         second["facts"]["sources"][0]["candidate"]["sha256"]
     )
+    assert first["facts"]["ocr_generation"]["state"] == "invalid"
+    assert first["facts"]["ocr_generation"]["failure"] == (
+            "ocr.generation_pdf_invalid"
+    )
 
 
 def test_paper_status_fails_closed_on_symlinked_source_candidate(tmp_path: Path):
@@ -375,6 +419,169 @@ def test_paper_status_fails_closed_on_symlinked_source_candidate(tmp_path: Path)
     assert payload["facts"]["source_candidates_fingerprint"] == (
         status_module.fingerprint([])
     )
+
+
+def test_paper_status_projects_missing_generation_separately_from_legacy(
+    tmp_path: Path,
+):
+    project = tmp_path / "project"
+    slug = "generation-paper"
+    source = write_pdf(
+        project / "sources" / f"{slug}.pdf",
+        ["First page", "Second page"],
+    )
+    write(project / "processing" / "papers" / slug / "ocr.pdf", b"legacy pdf")
+    write(project / "processing" / "papers" / slug / "ocr.txt", "legacy text")
+
+    payload = json.loads(
+        run_status(project, "--kind", "paper", "--slug", slug, "--json").stdout
+    )
+
+    generation = ocr_generation.generation_key(
+        slug=slug,
+        source_sha256=ocr_generation.sha256_file(source),
+    )
+    facts = payload["facts"]
+    assert facts["legacy_recovery"] == {
+        "pdf": observation(
+            f"processing/papers/{slug}/ocr.pdf", present=True, usable=True
+        ),
+        "text": observation(
+            f"processing/papers/{slug}/ocr.txt", present=True, usable=True
+        ),
+    }
+    assert facts["ocr_generation"]["state"] == "missing"
+    assert facts["ocr_generation"]["generation_key"] == generation
+    assert facts["ocr_generation"]["source"] == {
+        "path": f"sources/{slug}.pdf",
+        "sha256": ocr_generation.sha256_file(source),
+        "size": source.stat().st_size,
+        "pages": 2,
+    }
+    assert facts["ocr_generation"]["normalized_text"] == {
+        "path": f"processing/papers/{slug}/ocr-generations/{generation}/ocr.txt",
+        "exists": False,
+        "regular": None,
+        "sha256": None,
+        "size": 0,
+        "utf8": None,
+        "chars": 0,
+        "non_whitespace_chars": 0,
+    }
+
+
+def test_paper_status_projects_one_resumable_generation_range(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "partial-generation"
+    source = write_pdf(
+        project / "sources" / f"{slug}.pdf",
+        [f"Page {index}" for index in range(1, 18)],
+    )
+    source_sha = ocr_generation.sha256_file(source)
+    generation = ocr_generation.generation_key(slug=slug, source_sha256=source_sha)
+
+    receipt = ocr_generation.run_transaction(
+        project_root=project,
+        slug=slug,
+        source_file=source,
+        expected_source_sha256=source_sha,
+        expected_generation_key=generation,
+        runner=copying_ocr_runner,
+    )
+    payload = json.loads(
+        run_status(project, "--kind", "paper", "--slug", slug, "--json").stdout
+    )
+
+    assert receipt["state"] == "in_progress"
+    assert payload["facts"]["ocr_generation"]["state"] == "in_progress"
+    assert payload["facts"]["ocr_generation"]["progress"] == {
+        "completed_pages": 16,
+        "total_pages": 17,
+        "next_page": 17,
+        "ranges": receipt["progress"]["ranges"],
+    }
+
+
+def test_paper_status_projects_committed_generation_artifacts(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "committed-generation"
+    source = write_pdf(
+        project / "sources" / f"{slug}.pdf",
+        ["First page", "Second page"],
+    )
+    source_sha = ocr_generation.sha256_file(source)
+    generation = ocr_generation.generation_key(slug=slug, source_sha256=source_sha)
+
+    receipt = ocr_generation.run_transaction(
+        project_root=project,
+        slug=slug,
+        source_file=source,
+        expected_source_sha256=source_sha,
+        expected_generation_key=generation,
+        runner=copying_ocr_runner,
+    )
+    payload = json.loads(
+        run_status(project, "--kind", "paper", "--slug", slug, "--json").stdout
+    )
+    observed = payload["facts"]["ocr_generation"]
+
+    assert receipt["state"] == "committed"
+    assert observed["state"] == "committed"
+    assert observed["progress"] is None
+    assert observed["manifest"]["exists"] is True
+    assert observed["manifest"]["regular"] is True
+    assert observed["recovery_pdf"]["pages"] == 2
+    assert observed["normalized_text"]["utf8"] is True
+    assert observed["normalized_text"]["non_whitespace_chars"] > 0
+
+
+def test_paper_status_projects_uncommitted_final_inventory_as_unknown(
+    tmp_path: Path,
+):
+    project = tmp_path / "project"
+    slug = "unknown-generation"
+    source = write_pdf(project / "sources" / f"{slug}.pdf", ["One page"])
+    source_sha = ocr_generation.sha256_file(source)
+    generation = ocr_generation.generation_key(slug=slug, source_sha256=source_sha)
+    paths = ocr_generation.paths_for(
+        project_root=project,
+        slug=slug,
+        generation=generation,
+    )
+    paths["generation_dir"].mkdir(parents=True)
+    with fitz.open(source) as document:
+        document.save(paths["pdf"])
+
+    payload = json.loads(
+        run_status(project, "--kind", "paper", "--slug", slug, "--json").stdout
+    )
+
+    observed = payload["facts"]["ocr_generation"]
+    assert observed["state"] == "unknown"
+    assert observed["failure"] == "ocr.generation_uncommitted_generation"
+    assert observed["recovery_pdf"]["exists"] is True
+    assert observed["manifest"]["exists"] is False
+
+
+def test_paper_status_changes_expected_generation_when_source_bytes_change(
+    tmp_path: Path,
+):
+    project = tmp_path / "project"
+    slug = "changing-generation"
+    source = write_pdf(project / "sources" / f"{slug}.pdf", ["Version one"])
+    first = json.loads(
+        run_status(project, "--kind", "paper", "--slug", slug, "--json").stdout
+    )
+    first_generation = first["facts"]["ocr_generation"]["generation_key"]
+
+    source.unlink()
+    write_pdf(source, ["Version two"])
+    second = json.loads(
+        run_status(project, "--kind", "paper", "--slug", slug, "--json").stdout
+    )
+
+    assert second["facts"]["ocr_generation"]["state"] == "missing"
+    assert second["facts"]["ocr_generation"]["generation_key"] != first_generation
 
 
 def test_book_status_keeps_complete_manifest_rows_and_observes_each_output(
@@ -489,7 +696,7 @@ def test_book_status_projects_closed_resumable_ocr_progress(tmp_path: Path):
     result = run_status(project, "--kind", "book", "--slug", slug, "--json")
 
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["facts"]["ocr_progress"] == {
+    assert json.loads(result.stdout)["facts"]["legacy_ocr"] == {
         "path": f"processing/chapters/{slug}/ocr.progress.json",
         "present": True,
         "usable": True,
@@ -504,7 +711,7 @@ def test_book_status_projects_closed_resumable_ocr_progress(tmp_path: Path):
     malformed = run_status(
         project, "--kind", "book", "--slug", slug, "--json"
     )
-    observed = json.loads(malformed.stdout)["facts"]["ocr_progress"]
+    observed = json.loads(malformed.stdout)["facts"]["legacy_ocr"]
     assert observed["present"] is True
     assert observed["usable"] is False
     assert observed["source_sha256"] is None

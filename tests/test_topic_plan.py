@@ -515,7 +515,7 @@ def test_topic_same_owner_provisional_seeds_run_one_leaf() -> None:
     first_seed = paper_seed()
     second_seed = paper_seed()
     second_seed["seed"]["hints"] = {"title": "A second hint for the same owner"}
-    report = run_topic(
+    acquired = run_topic(
         topic_input(
             seeds=[first_seed, second_seed],
             children=[(
@@ -527,6 +527,31 @@ def test_topic_same_owner_provisional_seeds_run_one_leaf() -> None:
             recall_complete(),
             search_complete(),
             acquire_complete(),
+        ],
+    )
+
+    acquired_operations = [
+        call["request"]["operation"] for call in acquired["calls"]
+    ]
+    assert acquired_operations.count("material.search") == 1
+    assert acquired_operations.count("paper.acquire") == 1
+    assert acquired["result"]["terminal"] == "needs_observation"
+    assert acquired["result"]["routes"] == [
+        {"kind": "paper", "slug": "exact-paper"}
+    ]
+
+    report = run_topic(
+        topic_input(
+            seeds=[first_seed, second_seed],
+            children=[(
+                {"kind": "paper", "slug": "exact-paper"},
+                paper_observation("exact-paper", source=True),
+            )],
+            resume={"resume_seed": acquired["result"]["resume_seed"]},
+        ),
+        [
+            recall_complete(),
+            search_complete(),
             prepare_complete(),
             analyse_complete(),
             audit_complete(),
@@ -545,7 +570,7 @@ def test_topic_same_owner_provisional_seeds_run_one_leaf() -> None:
 
     operations = [call["request"]["operation"] for call in report["calls"]]
     assert operations.count("material.search") == 1
-    assert operations.count("paper.acquire") == 1
+    assert "paper.acquire" not in operations
     assert report["result"]["terminal"] == "complete"
 
 
@@ -961,7 +986,7 @@ def test_topic_checkpoint_unknown_stops_queue_and_status_resume_never_replays_wr
         demands=[demand()],
         tasks=[web_task()],
     )
-    stopped = run_topic(
+    acquired = run_topic(
         topic_input(
             observation=starting,
             children=[(
@@ -974,6 +999,25 @@ def test_topic_checkpoint_unknown_stops_queue_and_status_resume_never_replays_wr
             opening,
             search_complete(),
             acquire_complete(),
+        ],
+    )
+    assert acquired["result"]["terminal"] == "needs_observation"
+    assert acquired["result"]["routes"] == [
+        {"kind": "paper", "slug": "exact-paper"}
+    ]
+
+    stopped = run_topic(
+        topic_input(
+            observation=starting,
+            children=[(
+                {"kind": "paper", "slug": "exact-paper"},
+                paper_observation("exact-paper", source=True),
+            )],
+            resume={"resume_seed": acquired["result"]["resume_seed"]},
+        ),
+        [
+            recall_complete(),
+            search_complete(),
             prepare_complete(),
             analyse_complete(),
             audit_complete(),
@@ -1019,7 +1063,7 @@ def test_topic_changed_canonical_seed_checkpoint_resume_skips_original_seed() ->
     seed = paper_seed()
     seed["seed"]["requested_slug"] = "request-paper"
     request_status = paper_observation("request-paper")
-    stopped = run_topic(
+    acquired = run_topic(
         topic_input(
             seeds=[seed],
             children=[(
@@ -1031,6 +1075,31 @@ def test_topic_changed_canonical_seed_checkpoint_resume_skips_original_seed() ->
             recall_complete(),
             search_complete(),
             acquire_complete(),
+        ],
+    )
+    assert acquired["result"]["terminal"] == "needs_observation"
+    assert acquired["result"]["routes"] == [
+        {"kind": "paper", "slug": "exact-paper"}
+    ]
+
+    stopped = run_topic(
+        topic_input(
+            seeds=[seed],
+            children=[
+                (
+                    {"kind": "paper", "slug": "request-paper"},
+                    request_status,
+                ),
+                (
+                    {"kind": "paper", "slug": "exact-paper"},
+                    paper_observation("exact-paper", source=True),
+                ),
+            ],
+            resume={"resume_seed": acquired["result"]["resume_seed"]},
+        ),
+        [
+            recall_complete(),
+            search_complete(),
             prepare_complete(),
             analyse_complete(),
             audit_complete(),
@@ -1110,7 +1179,7 @@ def test_topic_resumed_material_work_reuses_resolved_owner_for_refined_demand() 
     refined["query"] = "refine the exact paper evidence"
     refined["reason"] = "The same resolved owner still fills this exact gap."
 
-    resumed = run_topic(
+    acquired = run_topic(
         topic_input(
             observation=starting,
             children=[(
@@ -1134,6 +1203,31 @@ def test_topic_resumed_material_work_reuses_resolved_owner_for_refined_demand() 
             recall_complete(),
             search_complete(),
             acquire_complete(),
+        ],
+    )
+    assert acquired["result"]["terminal"] == "needs_observation"
+    assert acquired["result"]["routes"] == [
+        {"kind": "paper", "slug": "exact-paper"}
+    ]
+
+    resumed = run_topic(
+        topic_input(
+            observation=starting,
+            children=[
+                (
+                    {"kind": "paper", "slug": "request-paper"},
+                    paper_observation("request-paper"),
+                ),
+                (
+                    {"kind": "paper", "slug": "exact-paper"},
+                    paper_observation("exact-paper", source=True),
+                ),
+            ],
+            resume={"resume_seed": acquired["result"]["resume_seed"]},
+        ),
+        [
+            recall_complete(),
+            search_complete(),
             prepare_complete(),
             analyse_complete(),
             audit_complete(),

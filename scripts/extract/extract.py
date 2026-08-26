@@ -6,8 +6,9 @@ implementation files, but callers route through this file via bin/quasi-extract.
 
     epub   process_epub.py        EPUB → chapter md
     text   extract_text.py        PDF → normalized UTF-8 text + signals
-    ocr    ocr_pdf.sh             PDF → searchable PDF (OCR)
-    split  split_chapters.py      PDF → per-chapter files (by TOC / pages)
+    ocr       ocr_pdf.sh          PDF → searchable PDF (OCR)
+    ocr-generation ocr_generation.py  PDF → shared immutable OCR generation
+    split     split_chapters.py   PDF → per-chapter files (by TOC / pages)
 """
 from __future__ import annotations
 
@@ -30,6 +31,10 @@ Usage:
   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine dsocr2|tesseract]
                                 [--layout] [--no-clobber] [--json]
                                 [--resume --progress-file PATH --chunk-pages N]
+  quasi-extract ocr-generation --kind paper|book --slug SLUG
+                                --source-file PATH --expected-source-sha256 SHA256
+                                --generation-key SHA256
+                                --profile dsocr2-text|tesseract-text [--json]
   quasi-extract split INPUT.pdf --output-dir DIR
                                 [--method toc|pattern]
                                 [--max-chapters N]
@@ -41,6 +46,7 @@ Each subcommand has its own --help with full args:
   quasi-extract epub --help
   quasi-extract text --help
   quasi-extract ocr --help
+  quasi-extract ocr-generation --help
   quasi-extract split --help
 """
 
@@ -589,11 +595,13 @@ def main() -> int:
         return subprocess.call([sys.executable, str(here / "extract_text.py"), *rest])
     if subcmd == "ocr":
         return _run_ocr(here, rest)
+    if subcmd == "ocr-generation":
+        return subprocess.call([sys.executable, str(here / "ocr_generation.py"), *rest])
     if subcmd == "split":
         return subprocess.call([sys.executable, str(here / "split_chapters.py"), *rest])
 
     print(f"quasi-extract: unknown subcommand: {subcmd}", file=sys.stderr)
-    print("valid subcommands: epub | text | ocr | split", file=sys.stderr)
+    print("valid subcommands: epub | text | ocr | ocr-generation | split", file=sys.stderr)
     return 2
 
 

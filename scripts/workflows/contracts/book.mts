@@ -31,6 +31,10 @@ import {
   validBookTempPath,
   type BookYearEvidence,
 } from "../operations/book-year-evidence.mts";
+import {
+  parseOcrGenerationObservation,
+  type OcrGenerationObservation,
+} from "./ocr-generation.mts";
 
 export interface BookIdentity {
   slug: string;
@@ -84,7 +88,8 @@ export interface BookStatusFacts {
     artifact: ArtifactObservation;
   }>;
   manifest: ArtifactObservation & { valid: boolean };
-  ocr_progress: ArtifactObservation & {
+  ocr_generation: OcrGenerationObservation | null;
+  legacy_ocr: ArtifactObservation & {
     source_sha256: string | null;
     total_pages: number | null;
     completed_pages: number | null;
@@ -235,7 +240,7 @@ export const parseBookStatusObservation = (
   if (observation === null) return null;
   const facts = observation.facts;
   const manifest = facts.manifest;
-  const ocrProgress = facts.ocr_progress;
+  const legacyOcr = facts.legacy_ocr;
   const slug = observation.slug;
   const expectedSources = [
     { format: "epub", path: `sources/${slug}.epub` },
@@ -249,7 +254,8 @@ export const parseBookStatusObservation = (
       "kind",
       "sources",
       "manifest",
-      "ocr_progress",
+      "ocr_generation",
+      "legacy_ocr",
       "chapters",
       "overview",
     ]) ||
@@ -273,8 +279,8 @@ export const parseBookStatusObservation = (
     }) ||
     typeof manifest.valid !== "boolean" ||
     manifest.path !== bookManifestPath(slug) ||
-    !isRecord(ocrProgress) ||
-    !exactEnvelopeKeys(ocrProgress, [
+    !isRecord(legacyOcr) ||
+    !exactEnvelopeKeys(legacyOcr, [
       "path",
       "present",
       "usable",
@@ -284,32 +290,32 @@ export const parseBookStatusObservation = (
       "next_page",
     ]) ||
     !isArtifactObservation({
-      path: ocrProgress.path,
-      present: ocrProgress.present,
-      usable: ocrProgress.usable,
+      path: legacyOcr.path,
+      present: legacyOcr.present,
+      usable: legacyOcr.usable,
     }) ||
-    ocrProgress.path !==
+    legacyOcr.path !==
       `processing/chapters/${slug}/ocr.progress.json` ||
-    (ocrProgress.usable
-      ? typeof ocrProgress.source_sha256 !== "string" ||
-        !/^[0-9a-f]{64}$/.test(ocrProgress.source_sha256) ||
-        !Number.isInteger(ocrProgress.total_pages) ||
-        (ocrProgress.total_pages as number) < 1 ||
-        !Number.isInteger(ocrProgress.completed_pages) ||
-        (ocrProgress.completed_pages as number) < 0 ||
-        (ocrProgress.completed_pages as number) >
-          (ocrProgress.total_pages as number) ||
-        (ocrProgress.next_page !== null &&
-          (!Number.isInteger(ocrProgress.next_page) ||
-            ocrProgress.next_page !==
-              (ocrProgress.completed_pages as number) + 1)) ||
-        ((ocrProgress.completed_pages as number) <
-          (ocrProgress.total_pages as number)) !==
-          (ocrProgress.next_page !== null)
-      : ocrProgress.source_sha256 !== null ||
-        ocrProgress.total_pages !== null ||
-        ocrProgress.completed_pages !== null ||
-        ocrProgress.next_page !== null) ||
+    (legacyOcr.usable
+      ? typeof legacyOcr.source_sha256 !== "string" ||
+        !/^[0-9a-f]{64}$/.test(legacyOcr.source_sha256) ||
+        !Number.isInteger(legacyOcr.total_pages) ||
+        (legacyOcr.total_pages as number) < 1 ||
+        !Number.isInteger(legacyOcr.completed_pages) ||
+        (legacyOcr.completed_pages as number) < 0 ||
+        (legacyOcr.completed_pages as number) >
+          (legacyOcr.total_pages as number) ||
+        (legacyOcr.next_page !== null &&
+          (!Number.isInteger(legacyOcr.next_page) ||
+            legacyOcr.next_page !==
+              (legacyOcr.completed_pages as number) + 1)) ||
+        ((legacyOcr.completed_pages as number) <
+          (legacyOcr.total_pages as number)) !==
+          (legacyOcr.next_page !== null)
+      : legacyOcr.source_sha256 !== null ||
+        legacyOcr.total_pages !== null ||
+        legacyOcr.completed_pages !== null ||
+        legacyOcr.next_page !== null) ||
     chapters === null ||
     !chapters.every(
       (chapter) =>
@@ -357,6 +363,25 @@ export const parseBookStatusObservation = (
     facts.overview.path !== bookOverviewPath(slug)
   )
     return null;
+  const pdfSource = facts.sources[1] as Record<string, unknown>;
+  const pdfArtifact = pdfSource.artifact as ArtifactObservation;
+  if (!pdfArtifact.usable) {
+    if (facts.ocr_generation !== null) return null;
+  } else {
+    const generation = facts.ocr_generation;
+    if (
+      !isRecord(generation) || !isRecord(generation.source) ||
+      parseOcrGenerationObservation(generation, {
+        kind: "book",
+        slug,
+        source: generation.source as {
+          path: string;
+          sha256: string;
+          size: number;
+        },
+      }) === null
+    ) return null;
+  }
   return observation as unknown as BookStatusObservation;
 };
 

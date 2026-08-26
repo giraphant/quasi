@@ -663,7 +663,7 @@ async function runBookPlanResult(
       path: receipt.output_path as string,
       format: receipt.format as BookFormat,
     };
-    if (state.observation === null)
+    if (receipt.format === "pdf" || state.observation === null)
       return needsObservationMaterialResult(
         resultSeed(state),
         [{ kind: "book", slug: state.runtimeSlug as string }],
@@ -677,6 +677,70 @@ async function runBookPlanResult(
   } else {
     const slug = state.runtimeSlug as string;
     const currentKey = `book:${slug}`;
+    const ocrGeneration =
+      source!.format === "pdf"
+        ? state.observation?.facts.ocr_generation ?? null
+        : null;
+    const legacyOcr = state.observation?.facts.legacy_ocr ?? null;
+    if (source!.format === "pdf" && ocrGeneration === null)
+      return blockedMaterialResult(
+        resultSeed(state),
+        planIssue(
+          "book.ocr_status_missing",
+          "book.ocr",
+          "The accepted Book PDF has no current expected OCR generation status.",
+        ),
+      );
+    if (
+      ocrGeneration !== null &&
+      ["invalid", "unknown"].includes(ocrGeneration.state)
+    )
+      return blockedMaterialResult(
+        resultSeed(state),
+        planIssue(
+          ocrGeneration.failure ?? "book.ocr_generation_unavailable",
+          "book.ocr",
+          `The current expected Book OCR generation is ${ocrGeneration.state} and cannot be advanced safely.`,
+        ),
+      );
+    if (
+      legacyOcr?.usable === true &&
+      ocrGeneration?.state === "in_progress"
+    )
+      return blockedMaterialResult(
+        resultSeed(state),
+        planIssue(
+          "book.ocr_state_ambiguous",
+          "book.ocr",
+          "Released fixed-path OCR progress and a current shared generation are both active.",
+        ),
+      );
+
+    const recoverySource = `processing/chapters/${slug}/ocr.pdf`;
+    let prepareInput = source!.path;
+    let incompleteLegacyOcr: typeof legacyOcr = null;
+    if (ocrGeneration?.state === "committed") {
+      prepareInput = ocrGeneration.paths.pdf;
+    } else if (source!.format === "pdf" && legacyOcr?.usable === true) {
+      if (legacyOcr.completed_pages! < legacyOcr.total_pages!)
+        incompleteLegacyOcr = legacyOcr;
+      else
+        prepareInput = recoverySource;
+    } else if (ocrGeneration?.state === "in_progress") {
+      const ocr = await dispatch(runtime, "book.ocr", slug, {
+        meta: state.identity,
+        materialKey: currentKey,
+        ocrGeneration,
+      });
+      const ocrStop = stopForOutcome(state, ocr);
+      if (ocrStop !== null) return ocrStop;
+      return needsObservationMaterialResult(
+        resultSeed(state),
+        [{ kind: "book", slug }],
+        resumeSeed(input, state),
+      );
+    }
+
     let structureDecision: BookStructureDecisionValue | null = null;
     const matchedStructureEnvelope =
       input.userDecision?.operation === "book.prepare" &&
@@ -691,9 +755,8 @@ async function runBookPlanResult(
             "The Book structure decision is structurally incoherent.",
           ),
         );
-      const recoverySource = `processing/chapters/${slug}/ocr.pdf`;
       if (
-        [source!.path, recoverySource].includes(
+        [source!.path, prepareInput, recoverySource].includes(
           parsedStructureDecision.source_path,
         )
       )
@@ -704,7 +767,11 @@ async function runBookPlanResult(
       meta: state.identity,
       materialKey: currentKey,
       source: source!.path,
+      input: prepareInput,
       format: source!.format,
+      ...(incompleteLegacyOcr === null
+        ? {}
+        : { legacyOcr: incompleteLegacyOcr }),
       ...(structureDecision === null ? {} : { structureDecision }),
     });
     if (
@@ -728,22 +795,52 @@ async function runBookPlanResult(
             resumeSeed(input, state),
           );
     }
+    const prepareStop = stopForOutcome(state, prepared);
+    if (prepareStop !== null) return prepareStop;
+    const prepareReceipt = prepared.receipt as StageReceipt;
+    const prepareDisposition = prepareReceipt.terminal.disposition;
     if (
-      prepared.kind === "receipt" &&
-      prepared.receipt.terminal.status === "blocked" &&
-      prepared.receipt.terminal.issue.code ===
-        "book.prepare.ocr_in_progress" &&
-      prepared.receipt.terminal.issue.retryable === true
+      prepareDisposition === "legacy_partial" ||
+      prepareDisposition === "legacy_completed"
     )
       return needsObservationMaterialResult(
         resultSeed(state),
         [{ kind: "book", slug }],
         resumeSeed(input, state),
       );
-    const prepareStop = stopForOutcome(state, prepared);
-    if (prepareStop !== null) return prepareStop;
-    chapters = (prepared.receipt as StageReceipt)
-      .chapters as ChapterInventoryRow[];
+    if (prepareDisposition === "ocr_required") {
+      if (ocrGeneration?.state !== "missing" || incompleteLegacyOcr !== null)
+        return blockedMaterialResult(
+          resultSeed(state),
+          planIssue(
+            "workflow.incoherent_complete",
+            "book.prepare",
+            "Book Prepare requested shared OCR without one missing current generation.",
+          ),
+        );
+      const ocr = await dispatch(runtime, "book.ocr", slug, {
+        meta: state.identity,
+        materialKey: currentKey,
+        ocrGeneration,
+      });
+      const ocrStop = stopForOutcome(state, ocr);
+      if (ocrStop !== null) return ocrStop;
+      return needsObservationMaterialResult(
+        resultSeed(state),
+        [{ kind: "book", slug }],
+        resumeSeed(input, state),
+      );
+    }
+    if (prepareDisposition !== "prepared")
+      return blockedMaterialResult(
+        resultSeed(state),
+        planIssue(
+          "workflow.incoherent_complete",
+          "book.prepare",
+          "Book Prepare returned an unknown complete disposition.",
+        ),
+      );
+    chapters = prepareReceipt.chapters as ChapterInventoryRow[];
   }
 
   const slug = state.runtimeSlug as string;

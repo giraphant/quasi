@@ -95,6 +95,23 @@ def test_collect_material_has_generic_user_decision_envelope() -> None:
     } == {"material_key", "operation", "value"}
 
 
+def collect_material_paper_completion_manifest() -> dict[str, str]:
+    path = ROOT / "skills" / "collect-material" / "SKILL.md"
+    text = path.read_text(encoding="utf-8")
+    for source in re.findall(r"```json\n(.*?)\n```", text, re.DOTALL):
+        try:
+            value = json.loads(source)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(value, dict)
+            and set(value) == {"paper_completion"}
+            and isinstance(value["paper_completion"], dict)
+        ):
+            return value["paper_completion"]
+    raise AssertionError("collect-material has no closed Paper completion manifest")
+
+
 def research_topic_workflow_manifest() -> dict[str, object]:
     path = ROOT / "skills" / "research-topic" / "SKILL.md"
     text = path.read_text(encoding="utf-8")
@@ -329,6 +346,17 @@ def test_collect_material_routes_paper_webpage_next_through_the_same_envelope() 
 
     assert 'next.kind=="webpage"' in text
     assert "exact_url=next.url" in text
+
+
+def test_collect_material_verifies_current_paper_ocr_generation_not_legacy() -> None:
+    assert collect_material_paper_completion_manifest() == {
+        "source_fact": "facts.sources[].artifact",
+        "fixed_normalized_fact": "facts.prepared[0]",
+        "generation_state": "committed",
+        "generation_text_fact": "facts.ocr_generation.normalized_text",
+        "legacy_text_forbidden": "processing/papers/{slug}/ocr.txt",
+        "canonical_fact": "facts.canonical",
+    }
 
 
 def test_research_topic_routes_to_its_generated_named_entry() -> None:

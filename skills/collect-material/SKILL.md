@@ -87,6 +87,22 @@ seed；严格 hint、identity、owner 与路径验证只由 TypeScript entry par
 }
 ```
 
+Paper 完成后的 status 绑定使用闭合投影；Book 使用同形的 shared OCR capsule，只是 material root
+和后续 chapter manifest 不同：
+
+```json
+{
+  "paper_completion": {
+    "source_fact": "facts.sources[].artifact",
+    "fixed_normalized_fact": "facts.prepared[0]",
+    "generation_state": "committed",
+    "generation_text_fact": "facts.ocr_generation.normalized_text",
+    "legacy_text_forbidden": "processing/papers/{slug}/ocr.txt",
+    "canonical_fact": "facts.canonical"
+  }
+}
+```
+
 - 一条 Workflow 只处理一个逻辑材料；Author 只顺序复合其 Paper/Book 成员，只有 Book 可在内部并发章节。主线程最多同时保持五条
   不同 exact material key 的 Workflow 在飞，同一已知 key 至多一条。Paper/Book/Talk key
   包含 kind+slug；Translation key 还包含 canonical target tag。
@@ -221,8 +237,13 @@ Author → exact Author status → discover/freeze → exact child status batch
      `vault/authors/{slug}.md` present/usable 且 `identity.name` 逐字等于本次
      `resume_seed.seed.full_name`（初次调用则为 `seed.full_name`）时才报告完成。Webpage 的 snapshot、
      prepared、canonical 三个 returned refs 都必须与该 observation 相等、present 且 usable。Paper 的
-     source、Workflow 选定的 normalized_text、canonical 三个 returned refs 也都必须与该 observation
-     相等、present 且 usable；只审计 canonical 不能证明 Paper complete。
+     source 与 canonical returned refs 必须分别命中当前 observation 的 exact source/canonical 且
+     present、usable。Workflow 选定的 normalized_text 若是 fixed `processing/papers/{slug}/source.txt`，
+     必须命中 `facts.prepared` 的 exact present/usable artifact；若是 immutable generation text，必须逐字
+     等于 `facts.ocr_generation.paths.text`，且该 capsule 为 `committed`，其 `normalized_text` fact 必须
+     `exists:true`、`regular:true`、`utf8:true`、`size>0`、`non_whitespace_chars>0`。固定 legacy
+     `processing/papers/{slug}/ocr.txt` 永不构成新的 normalized completion。只审计 canonical 不能证明
+     Paper complete；Workflow 的 complete 还必须来自 mutation-free final Audit。
    - Paper `complete` 且 `next.kind=="book"`：只按 `next.kind` 选 Book entry。先观察
      `next.identity.slug`，构造
      `{state:"canonical",material_slug:next.identity.slug,identity:next.identity}`，传 Book
@@ -239,9 +260,12 @@ Author → exact Author status → discover/freeze → exact child status batch
    - `needs_observation`：不展示问题；对返回的每条 `routes` 做 fresh exact status，逐字复制 opaque
      `resume_seed`，并重新调用同一 named Workflow。direct leaf 用
      `resume_seed.{seed,options}` 与一条 fresh route observation 重建普通 closed input；Author 保持
-     exact child observation array 的 composed input。对相同返回 routes 的完整 status observations
+     exact child observation array 的 composed input。Paper/Book OCR 每次 Workflow invocation 至多推进一个
+     profile-owned page range；Skill 只按 fresh `ocr_generation` capsule 继续，不能选择 fixed legacy OCR、换
+     generation key、决定 chunk size 或在同一 observation 上重放 writer。已存在的 Book legacy progress
+     只由 Workflow 的显式兼容分支处理，Skill 不选择它。对相同返回 routes 的完整 status observations
      逐字节比较：只有字节不同才算推进并继续；连续两次 recovery observations 字节完全相同则停止，
-     并报告最后的 typed result 与 exact status。Skill 不检查章节或其它内部进度，也不引入
+     并报告最后的 typed result 与 exact status。Skill 不检查章节、OCR 页码或其它内部进度，也不引入
      fingerprint、counter 或 retry controller。
    - `blocked|failed`：展示 issue 与 observation request（若有）并停止；不自动改写或重发。
 
@@ -291,6 +315,7 @@ issue。Batch 恢复原输入顺序并标出 exact-key coalescing。
 ```text
 sources/{slug}.{pdf|epub|txt}
 processing/papers/{slug}/source.txt
+processing/papers/{slug}/ocr-generations/{generation-key}/ocr.txt
 processing/chapters/{slug}/{manifest.json,*.txt}
 vault/papers/{slug}.md
 vault/books/{slug}/{00-overview.md,ch{slot}-*.md}

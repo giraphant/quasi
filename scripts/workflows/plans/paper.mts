@@ -568,16 +568,91 @@ async function runPaperPlanResult(
     const acquired = await dispatch(runtime, "paper.acquire", slug, common);
     const acquireStop = stopForOutcome(state, acquired);
     if (acquireStop !== null) return acquireStop;
-    sourcePath = (acquired.receipt as StageReceipt).output_path as string;
+    return needsObservationMaterialResult(
+      resultSeed(state),
+      [{ kind: "paper", slug }],
+      resumeSeed(input, state),
+    );
+  }
+
+  const pdfSource = `sources/${slug}.pdf`;
+  const ocrGeneration =
+    sourcePath === pdfSource
+      ? state.observation?.facts.ocr_generation ?? null
+      : null;
+  if (sourcePath === pdfSource && ocrGeneration === null)
+    return blockedMaterialResult(
+      resultSeed(state),
+      planIssue(
+        "paper.ocr_status_missing",
+        "paper.ocr",
+        "The accepted Paper PDF has no current expected OCR generation status.",
+      ),
+    );
+  if (
+    ocrGeneration !== null &&
+    ["invalid", "unknown"].includes(ocrGeneration.state)
+  )
+    return blockedMaterialResult(
+      resultSeed(state),
+      planIssue(
+        ocrGeneration.failure ?? "paper.ocr_generation_unavailable",
+        "paper.ocr",
+        `The current expected Paper OCR generation is ${ocrGeneration.state} and cannot be advanced safely.`,
+      ),
+    );
+
+  if (ocrGeneration?.state === "in_progress") {
+    const ocr = await dispatch(runtime, "paper.ocr", slug, {
+      ...common,
+      ocrGeneration,
+    });
+    const ocrStop = stopForOutcome(state, ocr);
+    if (ocrStop !== null) return ocrStop;
+    return needsObservationMaterialResult(
+      resultSeed(state),
+      [{ kind: "paper", slug }],
+      resumeSeed(input, state),
+    );
   }
 
   const prepared = await dispatch(runtime, "paper.prepare", slug, {
     ...common,
     source: sourcePath,
+    ...(ocrGeneration?.state === "committed"
+      ? {
+          input: ocrGeneration.paths.text,
+          generationKey: ocrGeneration.generation_key,
+        }
+      : { input: sourcePath }),
   });
   const prepareStop = stopForOutcome(state, prepared);
   if (prepareStop !== null) return prepareStop;
-  const selectedInput = (prepared.receipt as StageReceipt).selected_input;
+  const prepareReceipt = prepared.receipt as StageReceipt;
+  const disposition = prepareReceipt.terminal.disposition;
+  if (disposition === "ocr_required") {
+    if (ocrGeneration?.state !== "missing")
+      return blockedMaterialResult(
+        resultSeed(state),
+        planIssue(
+          "workflow.incoherent_complete",
+          "paper.prepare",
+          "Paper Prepare requested OCR without one missing current expected generation.",
+        ),
+      );
+    const ocr = await dispatch(runtime, "paper.ocr", slug, {
+      ...common,
+      ocrGeneration,
+    });
+    const ocrStop = stopForOutcome(state, ocr);
+    if (ocrStop !== null) return ocrStop;
+    return needsObservationMaterialResult(
+      resultSeed(state),
+      [{ kind: "paper", slug }],
+      resumeSeed(input, state),
+    );
+  }
+  const selectedInput = prepareReceipt.selected_input as string;
 
   if (!canonicalReady) {
     const analysed = await dispatch(runtime, "paper.analyse", slug, {

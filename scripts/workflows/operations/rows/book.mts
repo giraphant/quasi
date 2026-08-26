@@ -4,6 +4,7 @@ import {
 } from "../../artifact-contracts/generated.mjs";
 import { InputContractError } from "../../context-base.mts";
 import { sameClosedValue, validText } from "../../runtime.mts";
+import { makeOcrGenerationRow } from "./ocr-generation.mts";
 import {
   BOOK_TEMP_PATH,
   BOOK_YEAR_EVIDENCE_SCHEMA,
@@ -415,12 +416,15 @@ export const bookOperationRows: OperationRow[] = [
         identity: base.meta,
         format: rawContext.format,
         structureDecision,
+        input: rawContext.input ?? rawContext.source,
+        legacyOcr: rawContext.legacyOcr ?? null,
         ...(rawContext.source ? { source: rawContext.source } : {}),
       };
     },
     refs: (
       {
         source,
+        input,
         format,
         normalized,
         recoverySource,
@@ -429,18 +433,48 @@ export const bookOperationRows: OperationRow[] = [
         outputDir,
         manifest,
         structureDecision,
+        legacyOcr,
       },
     ) => {
+      const generationPdfPattern = new RegExp(
+        `^processing/chapters/[^/]+/ocr-generations/[a-f0-9]{64}/ocr\\.pdf$`,
+      );
+      const generationText = generationPdfPattern.test(input)
+        ? input.replace(/\/ocr\.pdf$/, "/ocr.txt")
+        : null;
+      if (
+        typeof input !== "string" ||
+        (input !== source &&
+          input !== recoverySource &&
+          generationText === null)
+      )
+        throw new InputContractError(
+          "book.prepare input is not one exact current source",
+        );
+      if (
+        legacyOcr !== null &&
+        (!legacyOcr ||
+          legacyOcr.usable !== true ||
+          legacyOcr.path !== ocrProgress ||
+          !Number.isInteger(legacyOcr.total_pages) ||
+          !Number.isInteger(legacyOcr.completed_pages) ||
+          legacyOcr.completed_pages < 0 ||
+          legacyOcr.completed_pages >= legacyOcr.total_pages)
+      )
+        throw new InputContractError(
+          "book.prepare legacy OCR mode requires one incomplete released progress file",
+        );
       if (
         structureDecision !== null &&
         (format !== "pdf" ||
-          ![source, recoverySource].includes(structureDecision.source_path))
+          ![source, input, recoverySource].includes(structureDecision.source_path))
       )
         throw new InputContractError(
           "book.prepare structure decision does not bind the current PDF source",
         );
       return {
         source,
+        input,
         format,
         normalized,
         recoverySource,
@@ -449,6 +483,8 @@ export const bookOperationRows: OperationRow[] = [
         outputDir,
         manifest,
         structureDecision,
+        generationText,
+        legacyOcr,
       };
     },
     writeTargets: ({ outputDir }) => [
@@ -475,11 +511,18 @@ export const bookOperationRows: OperationRow[] = [
         output_dir: { const: refs.outputDir },
         selected_source: {
           type: ["string", "null"],
-          enum: [refs.source, refs.recoverySource, null],
+          enum: [...new Set([refs.source, refs.input, refs.recoverySource]), null],
         },
         normalized_path: {
           type: ["string", "null"],
-          enum: [refs.normalized, refs.recoveryText, null],
+          enum: [
+            ...new Set(
+              [refs.normalized, refs.generationText, refs.recoveryText].filter(
+                (path) => path !== null,
+              ),
+            ),
+            null,
+          ],
         },
         manifest_path: { const: refs.manifest },
         manifest_fingerprint: {
@@ -505,8 +548,22 @@ export const bookOperationRows: OperationRow[] = [
         },
       },
     }),
-    terminalPayloads: ({ format, source, recoverySource }) =>
-      format === "pdf"
+    terminalPayloads: ({ format, source, input, recoverySource }) => ({
+      complete: {
+        required: ["disposition"],
+        properties: {
+          disposition: {
+            type: "string",
+            enum: [
+              "prepared",
+              "ocr_required",
+              "legacy_partial",
+              "legacy_completed",
+            ],
+          },
+        },
+      },
+      ...(format === "pdf"
         ? {
             needs_input: {
               required: ["source_path", "candidates", "conflicts"],
@@ -518,7 +575,7 @@ export const bookOperationRows: OperationRow[] = [
                 ),
                 source_path: {
                   type: "string",
-                  enum: [source, recoverySource],
+                  enum: [...new Set([source, input, recoverySource])],
                 },
                 candidates: {
                   type: "array",
@@ -543,8 +600,40 @@ export const bookOperationRows: OperationRow[] = [
               },
             },
           }
-        : {},
+        : {}),
+    }),
     complete: (receipt, context) => {
+      const terminalDisposition = receipt.terminal.disposition;
+      if (terminalDisposition === "ocr_required")
+        return (
+          context.format === "pdf" &&
+          context.input === context.source &&
+          context.legacyOcr === null &&
+          receipt.selected_source === null &&
+          receipt.normalized_path === null &&
+          receipt.manifest_fingerprint === null &&
+          receipt.mode === null &&
+          receipt.disposition === null &&
+          receipt.chapter_count === 0 &&
+          receipt.chapters.length === 0 &&
+          receipt.artifacts.length === 0
+        );
+      if (
+        terminalDisposition === "legacy_partial" ||
+        terminalDisposition === "legacy_completed"
+      )
+        return (
+          context.legacyOcr !== null &&
+          receipt.selected_source === context.source &&
+          receipt.normalized_path === null &&
+          receipt.manifest_fingerprint === null &&
+          receipt.mode === null &&
+          receipt.disposition === null &&
+          receipt.chapter_count === 0 &&
+          receipt.chapters.length === 0 &&
+          receipt.artifacts.length === 0
+        );
+      if (terminalDisposition !== "prepared") return false;
       const chapterPaths = receipt.chapters.map(
         (chapter: any) =>
           `${context.outputDir}/${chapter.filename}`,
@@ -553,6 +642,7 @@ export const bookOperationRows: OperationRow[] = [
         context.normalized,
         context.recoverySource,
         context.recoveryText,
+        ...(context.generationText === null ? [] : [context.generationText]),
         context.manifest,
         ...chapterPaths,
       ]);
@@ -595,14 +685,16 @@ export const bookOperationRows: OperationRow[] = [
       material_key: materialKey,
       effect: "writer",
       objective:
-        "Produce and semantically verify one coherent chapter set for the exact accepted Book source.",
+        "Produce and semantically verify one coherent chapter set for the exact accepted Book source, or report that the direct PDF requires shared OCR.",
       identity,
       refs: {
         source: refs.source,
+        input: refs.input,
         format: refs.format,
         normalized_document: refs.normalized,
+        generation_text: refs.generationText,
         recovery_source: refs.recoverySource,
-        ocr_progress: refs.ocrProgress,
+        legacy_ocr_progress: refs.legacyOcr === null ? null : refs.ocrProgress,
         recovery_text: refs.recoveryText,
         output_dir: refs.outputDir,
         manifest: refs.manifest,
@@ -610,18 +702,18 @@ export const bookOperationRows: OperationRow[] = [
       structure_decision: refs.structureDecision,
       capabilities: [
         "quasi-extract text INPUT OUTPUT --json",
-        ...(refs.format === "pdf"
+        ...(refs.legacyOcr !== null
           ? [
               `quasi-extract ocr ${posixSingleQuote(refs.source)} ${posixSingleQuote(refs.recoverySource)} --resume --progress-file ${posixSingleQuote(refs.ocrProgress)} --chunk-pages 8 --no-clobber --json`,
             ]
           : []),
         "quasi-extract epub INPUT OUTPUT_DIR --json",
         ...(refs.format === "pdf"
-          ? [refs.source, refs.recoverySource].flatMap((input) => [
-              `quasi-extract split ${posixSingleQuote(input)} --output-dir ${posixSingleQuote(refs.outputDir)} --method toc|pattern --json`,
-              `quasi-extract split ${posixSingleQuote(input)} --output-dir ${posixSingleQuote(refs.outputDir)} --chapters JSON --json`,
-              `quasi-extract split ${posixSingleQuote(input)} --output-dir ${posixSingleQuote(refs.outputDir)} --pages START-END --title TITLE --slot SLOT --expected-manifest-fingerprint SHA --json`,
-            ])
+          ? [
+              `quasi-extract split ${posixSingleQuote(refs.input)} --output-dir ${posixSingleQuote(refs.outputDir)} --method toc|pattern --json`,
+              `quasi-extract split ${posixSingleQuote(refs.input)} --output-dir ${posixSingleQuote(refs.outputDir)} --chapters JSON --json`,
+              `quasi-extract split ${posixSingleQuote(refs.input)} --output-dir ${posixSingleQuote(refs.outputDir)} --pages START-END --title TITLE --slot SLOT --expected-manifest-fingerprint SHA --json`,
+            ]
           : []),
         "Read the exact source, manifest, normalized document, and manifest-listed chapter texts",
       ],
@@ -634,6 +726,11 @@ export const bookOperationRows: OperationRow[] = [
       output_limit: { max_chapters: 150 },
     }),
   },
+  makeOcrGenerationRow({
+    operation: "book.ocr",
+    kind: "book",
+    validationPolicy: "book-pdf-v1",
+  }),
   {
     operation: "chapter.analyse",
     context: (rawContext, base) => {

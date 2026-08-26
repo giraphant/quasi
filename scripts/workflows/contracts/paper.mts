@@ -22,6 +22,10 @@ import {
   invalidMaterialInputResult,
   type MaterialResult,
 } from "../shared/material-result.mts";
+import {
+  parseOcrGenerationObservation,
+  type OcrGenerationObservation,
+} from "./ocr-generation.mts";
 
 const SHA256 = /^[0-9a-f]{64}$/;
 
@@ -94,6 +98,11 @@ export interface PaperStatusFacts {
   }>;
   source_candidates_fingerprint: string;
   prepared: ArtifactObservation[];
+  legacy_recovery: {
+    pdf: ArtifactObservation;
+    text: ArtifactObservation;
+  };
+  ocr_generation: OcrGenerationObservation | null;
   canonical: ArtifactObservation;
 }
 
@@ -300,6 +309,8 @@ export const parsePaperStatusObservation = (
       "sources",
       "source_candidates_fingerprint",
       "prepared",
+      "legacy_recovery",
+      "ocr_generation",
       "canonical",
     ]) ||
     facts.kind !== "paper" ||
@@ -328,8 +339,30 @@ export const parsePaperStatusObservation = (
     !facts.prepared.every(
       (artifact, index) => artifact.path === expectedPrepared[index],
     ) ||
+    !isRecord(facts.legacy_recovery) ||
+    !exactKeys(facts.legacy_recovery, ["pdf", "text"]) ||
+    !isArtifactObservation(facts.legacy_recovery.pdf) ||
+    facts.legacy_recovery.pdf.path !==
+      `processing/papers/${slug}/ocr.pdf` ||
+    !isArtifactObservation(facts.legacy_recovery.text) ||
+    facts.legacy_recovery.text.path !==
+      `processing/papers/${slug}/ocr.txt` ||
     !isArtifactObservation(facts.canonical) ||
     facts.canonical.path !== `vault/papers/${slug}.md`
+  )
+    return null;
+
+  const firstSource = facts.sources[0] as Record<string, unknown>;
+  const pdfCandidate = parsePaperSourceCandidate(firstSource.candidate);
+  if (pdfCandidate === null) {
+    if (facts.ocr_generation !== null) return null;
+  } else if (
+    pdfCandidate.format !== "pdf" ||
+    parseOcrGenerationObservation(facts.ocr_generation, {
+      kind: "paper",
+      slug,
+      source: pdfCandidate,
+    }) === null
   )
     return null;
   return observation as unknown as PaperStatusObservation;

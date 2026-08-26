@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from typing import Any
 
@@ -122,6 +124,19 @@ PAPER_OBSERVATION = {
                 "usable": False,
             },
         ],
+        "legacy_recovery": {
+            "pdf": {
+                "path": "processing/papers/exact-paper/ocr.pdf",
+                "present": False,
+                "usable": False,
+            },
+            "text": {
+                "path": "processing/papers/exact-paper/ocr.txt",
+                "present": False,
+                "usable": False,
+            },
+        },
+        "ocr_generation": None,
         "canonical": {
             "path": "vault/papers/exact-paper.md",
             "present": False,
@@ -140,6 +155,12 @@ def paper_observation_for_slug(slug: str) -> dict[str, Any]:
         f"processing/papers/{slug}/source.txt"
     )
     value["facts"]["prepared"][1]["path"] = (
+        f"processing/papers/{slug}/ocr.txt"
+    )
+    value["facts"]["legacy_recovery"]["pdf"]["path"] = (
+        f"processing/papers/{slug}/ocr.pdf"
+    )
+    value["facts"]["legacy_recovery"]["text"]["path"] = (
         f"processing/papers/{slug}/ocr.txt"
     )
     value["facts"]["canonical"]["path"] = f"vault/papers/{slug}.md"
@@ -177,7 +198,8 @@ BOOK_OBSERVATION = {
             "usable": False,
             "valid": False,
         },
-        "ocr_progress": {
+        "ocr_generation": None,
+        "legacy_ocr": {
             "path": "processing/chapters/request-book-1/ocr.progress.json",
             "present": False,
             "usable": False,
@@ -322,6 +344,85 @@ def test_paper_status_parser_binds_the_status_producer_paths() -> None:
     ) is None
 
 
+def missing_paper_ocr_generation() -> dict[str, Any]:
+    profile = {
+        "schema_version": "quasi.ocr.profile/0.2",
+        "language": "chi_sim+eng",
+        "text_extractor": "pymupdf",
+        "engine_order": ["dsocr2", "tesseract"],
+        "chunk_pages": 16,
+        "name": "dsocr2-text",
+        "validation_policy": "paper-text-v1",
+    }
+    config_fingerprint = hashlib.sha256(
+        json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    request = {
+        "schema_version": "quasi.ocr.generation.request/0.1",
+        "material_key": "paper:exact-paper",
+        "source_path": "sources/exact-paper.pdf",
+        "source_sha256": "a" * 64,
+        "profile": profile,
+    }
+    generation = hashlib.sha256(
+        json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    paper_root = "processing/papers/exact-paper"
+    work_root = f"{paper_root}/.ocr-work/{generation}"
+    generation_root = f"{paper_root}/ocr-generations/{generation}"
+    return {
+        "state": "missing",
+        "material_key": "paper:exact-paper",
+        "kind": "paper",
+        "slug": "exact-paper",
+        "generation_key": generation,
+        "profile": profile,
+        "config_fingerprint": config_fingerprint,
+        "source": {
+            "path": "sources/exact-paper.pdf",
+            "sha256": "a" * 64,
+            "size": 123,
+            "pages": 40,
+        },
+        "paths": {
+            "lock": f"{paper_root}/.ocr-generation.lock",
+            "work_dir": work_root,
+            "progress": f"{work_root}/ocr.progress.json",
+            "generation_dir": generation_root,
+            "manifest": f"{generation_root}/manifest.json",
+            "pdf": f"{generation_root}/ocr.pdf",
+            "text": f"{generation_root}/ocr.txt",
+        },
+        "progress": None,
+        "manifest": {
+            "path": f"{generation_root}/manifest.json",
+            "exists": False,
+            "regular": None,
+            "sha256": None,
+            "size": 0,
+        },
+        "recovery_pdf": {
+            "path": f"{generation_root}/ocr.pdf",
+            "exists": False,
+            "regular": None,
+            "sha256": None,
+            "size": 0,
+            "pages": 0,
+        },
+        "normalized_text": {
+            "path": f"{generation_root}/ocr.txt",
+            "exists": False,
+            "regular": None,
+            "sha256": None,
+            "size": 0,
+            "utf8": None,
+            "chars": 0,
+            "non_whitespace_chars": 0,
+        },
+        "failure": None,
+    }
+
+
 def usable_paper_source_observation() -> dict[str, Any]:
     value = deepcopy(PAPER_OBSERVATION)
     value["facts"]["sources"][0] = {
@@ -339,6 +440,7 @@ def usable_paper_source_observation() -> dict[str, Any]:
         },
     }
     value["facts"]["source_candidates_fingerprint"] = "f" * 64
+    value["facts"]["ocr_generation"] = missing_paper_ocr_generation()
     return value
 
 
@@ -350,6 +452,150 @@ def test_paper_status_parser_binds_usable_source_candidate_evidence() -> None:
         "parsePaperStatusObservation",
         value,
     ) == value
+
+
+@pytest.mark.parametrize(
+    "state",
+    ["missing", "in_progress", "committed", "invalid", "unknown"],
+)
+def test_paper_status_parser_accepts_each_closed_ocr_generation_state(
+    state: str,
+) -> None:
+    value = usable_paper_source_observation()
+    generation = value["facts"]["ocr_generation"]
+    if state == "in_progress":
+        generation.update(
+            {
+                    "state": state,
+                    "progress": {
+                        "completed_pages": 16,
+                        "total_pages": 40,
+                        "next_page": 17,
+                        "ranges": [
+                            {
+                                "start_page": 1,
+                                "end_page": 16,
+                                "engine": "dsocr2",
+                                "path": (
+                                    f"{generation['paths']['work_dir']}/parts/"
+                                    "part-000001-000016.dsocr2.pdf"
+                                ),
+                                "sha256": "f" * 64,
+                                "pages": 16,
+                            }
+                        ],
+                },
+            }
+        )
+    elif state == "committed":
+        generation["state"] = state
+        generation["manifest"].update(
+            {"exists": True, "regular": True, "sha256": "b" * 64, "size": 100}
+        )
+        generation["recovery_pdf"].update(
+            {
+                "exists": True,
+                "regular": True,
+                "sha256": "c" * 64,
+                "size": 200,
+                    "pages": 40,
+            }
+        )
+        generation["normalized_text"].update(
+            {
+                "exists": True,
+                "regular": True,
+                "sha256": "d" * 64,
+                "size": 300,
+                "utf8": True,
+                "chars": 240,
+                "non_whitespace_chars": 180,
+            }
+        )
+    elif state == "invalid":
+        generation.update(
+            {"state": state, "failure": "paper.ocr_pdf_invalid"}
+        )
+        generation["source"]["pages"] = 0
+    elif state == "unknown":
+        generation.update(
+            {"state": state, "failure": "paper.ocr_uncommitted_generation"}
+        )
+
+    assert run_workflow_export(
+        PAPER_CONTRACT_MODULE,
+        "parsePaperStatusObservation",
+        value,
+    ) == value
+
+
+def test_paper_status_parser_rejects_noncanonical_ocr_range_slot() -> None:
+    value = usable_paper_source_observation()
+    generation = value["facts"]["ocr_generation"]
+    generation.update(
+        {
+            "state": "in_progress",
+            "progress": {
+                "completed_pages": 16,
+                "total_pages": 40,
+                "next_page": 17,
+                "ranges": [
+                    {
+                        "start_page": 1,
+                        "end_page": 16,
+                        "engine": "dsocr2",
+                        "path": f"{generation['paths']['work_dir']}/parts/foreign.pdf",
+                        "sha256": "f" * 64,
+                        "pages": 16,
+                    }
+                ],
+            },
+        }
+    )
+
+    assert run_workflow_export(
+        PAPER_CONTRACT_MODULE,
+        "parsePaperStatusObservation",
+        value,
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value["facts"]["ocr_generation"].update(
+            {"generation_key": "b" * 64}
+        ),
+        lambda value: value["facts"]["ocr_generation"]["source"].update(
+            {"sha256": "b" * 64}
+        ),
+        lambda value: value["facts"]["ocr_generation"]["paths"].update(
+            {"text": "processing/papers/exact-paper/ocr.txt"}
+        ),
+        lambda value: value["facts"]["ocr_generation"].update(
+            {
+                "state": "in_progress",
+                "progress": {
+                    "completed_pages": 8,
+                    "total_pages": 10,
+                    "next_page": 10,
+                },
+            }
+        ),
+        lambda value: value["facts"]["ocr_generation"].update(
+            {"state": "committed"}
+        ),
+    ],
+)
+def test_paper_status_parser_rejects_unbound_ocr_generation(mutate) -> None:
+    value = usable_paper_source_observation()
+    mutate(value)
+
+    assert run_workflow_export(
+        PAPER_CONTRACT_MODULE,
+        "parsePaperStatusObservation",
+        value,
+    ) is None
 
 
 @pytest.mark.parametrize(

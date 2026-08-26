@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.30** (2026-08-27): **Paper 与 Book 共用 source/profile-bound OCR generation，不再按材料复制恢复机制。**
+  - 新的 `quasi-extract ocr-generation` 同时服务 Paper 与 Book：DS OCR2 profile 每次推进最多 16 页，Tesseract-only profile 最多 32 页；DS OCR2 失败或质量不足时只在同一 16 页 range 内回退 Tesseract，并在 progress 与最终 manifest 记录实际 engine。
+  - 两种材料现在都使用 source hash、完整 profile 与 material root 绑定的 generation key，在私有 work tree 中逐段验证并原子提交 progress，最终以 immutable `ocr.pdf`、`ocr.txt`、`manifest.json` manifest-last 发布。恢复会重新核对 part 路径、摘要、页数、文本质量与完整 inventory；来源/profile 漂移、未知文件或不完整发布不会被盲重放。
+  - Workflow 仍保留 `paper.ocr` 与 `book.ocr` 这两个材料 operation，但它们由同一个 row factory、同一 Agent 方法和同一 status capsule 驱动；每次 writer receipt 后都回到 fresh observation。Paper/Book Prepare 只保留各自的可读性与章节判断，不再拥有新 OCR 状态机。
+  - 固定 Paper `ocr.pdf|ocr.txt` 继续只是只读历史证据。已由旧版本启动的 Book `ocr.progress.json` 可通过唯一显式的 8 页 legacy 分支完成；新工作不会创建该状态，且已 committed 的共享 generation 会优先于遗留 progress。
+
 - **0.65.29** (2026-08-26): **Paper 恢复以持久来源事实与稳定 Audit 收敛，组合流程保留来源选择 gate。**
   - Paper fresh status 现在把 PDF/TXT 记录为带格式、路径、摘要和大小的有序候选集合；两种来源同时可用时不再机械失败，而是返回绑定候选 fingerprint 的 `paper_source` gate。选择只对当前 exact inventory 生效，来源漂移会重新询问，Author 与 Topic 会原样提升该 child gate，而不会误报 `workflow.incoherent_gate`。
   - `material.search` 已明确确认既有 owner 时，canonical 页面中的本地化标题、作者表示等差异不再让 Paper continuation 丢失 owner testimony；普通未确认 route 仍需 fresh disk identity，且 route 或 owner 状态变化继续先请求观察。

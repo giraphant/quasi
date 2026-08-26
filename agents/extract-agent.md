@@ -11,9 +11,9 @@ invocation 内完成必要的观察、转换和语义复核。
 
 ## 输入与产物协议
 
-Request 是自足 JSON，包含 `paper.prepare` 或 `book.prepare`、material key、材料身份、exact
-source、全部允许的输出 refs、可用的 public `quasi-extract` 能力与 artifact roles。相对路径
-按 `$CLAUDE_PROJECT_DIR` 解析；receipt 保留 request 的原始相对路径。
+Request 是自足 JSON，包含 `paper.prepare`、`paper.ocr`、`book.prepare` 或 `book.ocr`、material key、
+exact source/input、全部允许的输出 refs、可用的 public `quasi-extract` 能力与 artifact roles。
+相对路径按 `$CLAUDE_PROJECT_DIR` 解析；receipt 保留 request 的原始相对路径。
 
 第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
 output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；
@@ -25,20 +25,48 @@ JSON receipt；若 durable outcome 不清楚，停止并返回 `blocked`，把�
 
 ## Paper Prepare
 
-目标是得到一个可供学术分析的 normalized text。先提取 source 的文本层并实际阅读有代表性
-的开头、中段和结尾。机器字符数只是线索；正文是否连贯、是否大面积乱码、是否只有页眉
-页脚，才决定可读性。
+目标是对 request 指定的 exact input 形成或确认一个可供学术分析的 normalized text。机器字符数
+只是线索；必须实际阅读有代表性的开头、中段和结尾，依据正文是否连贯、是否大面积乱码、
+是否只有页眉页脚判断语义可读性。
 
-文本层可用时选择 primary normalized path。扫描件或损坏文本层可用 request 指定的 recovery
-source 做 OCR，再提取和复核 recovery text。已有 recovery artifact 应先观察和协调；未知
-writer outcome 不以再次写入来猜测。成功 receipt 的 `selected_input` 必须是已实际阅读且标记
-usable 的 exact normalized artifact。
+- `source_pdf` / `source_text`：只运行 request 明列的 exact `quasi-extract text` capability，产出
+  fixed normalized path，再实际阅读。`.txt` 必须通过严格 UTF-8 与换行归一化；文本载体永不
+  进入 OCR。
+- `generation_text`：它已经是 CLI committed 的 immutable OCR generation。不得复制、重写或
+  再 OCR；只读取 exact generation text 并做同一语义复核。
+- request 中 fixed `legacy_recovery_source` / `legacy_recovery_text` 只是历史证据。永远不得写入、
+  覆盖、删除、改名、链接，也不得把它们选作本次 `selected_input`。
 
-若 accepted source 是 `.txt`，使用 request 的 `quasi-extract text` 能力做严格 UTF-8 与换行
-归一化并实际阅读；文本载体不运行 OCR。若 accepted source 是 PDF，才允许使用 recovery OCR。
+`terminal.complete.disposition="prepared"` 只在 `selected_input` 已实际阅读且对应 artifact 标记
+`exists:true, usable:true` 时使用。direct PDF 的文本层已提取到 fixed normalized path、但语义上
+确实不可读时，返回 `terminal.complete.disposition="ocr_required"`，并令 `selected_input:null`、
+normalized artifact 为 `exists:true, usable:false`；不要在本 operation 内运行任何 OCR。
 
-Paper Prepare 没有用户选择分支：exact source 或 writer ownership 不能确认时返回 `blocked`；
-在现有 bounded capabilities 下不能形成可读文本时返回 `failed`。
+TXT source 不可读时以 `paper.source_unreadable` failed；committed generation text 仍不可读时以
+`paper.ocr_unreadable` failed，不能再次返回 `ocr_required`。Paper Prepare 没有用户选择分支：
+exact input 或 writer ownership 不能确认时以 `paper.prepare_blocked` 返回 `blocked`。
+
+## Shared OCR Generation
+
+`paper.ocr` 与 `book.ocr` 是同一个共享 OCR generation 合同的 material-specific operation，
+不是自由 OCR 任务。request 已绑定 material kind、current source SHA-256、generation key、
+profile fingerprint、锁、private work subtree 与 immutable final subtree。只运行唯一明列的
+`quasi-extract ocr-generation ... --json` capability，而且每次 invocation 至多一次：
+
+- CLI `succeeded/partial`：原样回显 state、progress、final artifact facts 与空 failure，并返回
+  `terminal.complete.disposition="partial"`；本 invocation 立即结束，不推进下一页段。
+- CLI `succeeded/created|reconciled`：只有 CLI 已证明 committed generation 时，原样回显 facts 并
+  使用对应 complete disposition；必须保留 CLI 的 `progress:null`，不得根据已完成页数合成 progress 对象。
+- CLI `blocked|failed`：按相同 terminal 类别回显 failure evidence；不自行清理、修复、换 engine、
+  改 generation key 或启动第二个 writer。
+- 没有完整 CLI JSON receipt、宿主截断或 durable outcome 不明确：立即 `blocked`，不得根据文件
+  是否存在猜测成功，也不得重放 writer。
+
+profile 决定 range 大小：`dsocr2-text` 为 16 页，`tesseract-text` 为 32 页。DS OCR2 的质量
+拒绝可在同一 16 页 range 内切换到 Tesseract；receipt 与 manifest 必须保留实际采用的 engine，
+但 Agent 不自行选 chunk size、改 profile 或额外启动 fallback command。generic `quasi-extract ocr`
+不属于新的 Paper/Book OCR generation 能力。generation 的锁、页段恢复、逐页质量证明、source
+drift 检查和 manifest-last 发布全部由 CLI 拥有；Agent 不重现这些逻辑。
 
 ## Book Prepare
 
@@ -49,12 +77,15 @@ Paper Prepare 没有用户选择分支：exact source 或 writer ownership 不�
   PDF 继续切分；缺少目录、TOC/pattern 切分失败、章节边界不理想或需要 manual ranges，
   都只是结构问题，不是 OCR 依据。只有抽取文本本身没有正文、持续乱码或实际为无可用
   文本层的扫描页时，才走 request 指定的 exact OCR recovery。
-- Book OCR 逐字使用 request 授权的 resumable 前台 capability，不添加 `--layout`，也不以
-  shell background、`nohup` 或脱离宿主的进程运行。CLI 返回 `partial` 时，本 invocation
-  不继续下一页段，以 `book.prepare.ocr_in_progress`、`retryable:true` 返回 `blocked`；此时
-  已提交的 exact progress 是下一轮 fresh status 的唯一恢复依据。宿主截断且没有 CLI JSON
-  receipt 时，writer outcome 未知，立即返回 `blocked`；不把截断解释成文本不可读，也不
-  启动第二个 writer。
+- direct PDF 的抽取文本确实不可读时，返回 `terminal.complete.disposition="ocr_required"`，
+  不在 `book.prepare` 内启动新的 OCR。caller 随后以同一共享 generation 合同 dispatch
+  `book.ocr`。当 request 的 exact input 已是 committed generation PDF 时，直接从该 input
+  规划和切分章节，不再 OCR。
+- 只有 request 明确带有已发布版本遗留的 `legacy_ocr_progress` 和对应 capability 时，才可在
+  `book.prepare` 内运行一次 fixed legacy recovery step。该 capability 只完成这一个已存在的
+  progress，不创建新 legacy progress；返回 partial 后本 invocation 立即结束并等待 fresh
+  observation。不得添加 `--layout`，不得用 shell background、`nohup` 或脱离宿主的进程。
+  宿主截断且没有 CLI JSON receipt 时 writer outcome 未知，立即返回 `blocked`，不得重放。
 - 阅读目录、页码和正文结构，选择 TOC、pattern 或 manual ranges 作为最合适的切分方法。
 - 抽取后检查串章、截断、碎片化、目录页误收、乱码、页眉页脚污染和章节顺序。章节数量与
   size 是证据，不替代阅读判断。
@@ -88,11 +119,13 @@ Paper Prepare 没有用户选择分支：exact source 或 writer ownership 不�
 
 ## 阶段判断
 
-- `complete`：下一阶段所需的 normalized Paper text 或 Book chapter set 已存在且通过实际阅读。
+- `complete`：Paper Prepare 已形成 `prepared|ocr_required` 的闭合判断，共享 Paper/Book OCR 已
+  完成本次唯一 transaction（包括 `partial`），或 Book Prepare 已形成 `ocr_required`、完成一
+  次明确 legacy step、或交付了通过实际阅读的 chapter set。
 - `needs_input`：仅限上述 Book PDF 章节结构 gate；Paper 与 EPUB 不使用此分支。
 - `blocked`：某次 writer 的 durable outcome、generation ownership 或 exact path 无法确认。
-- `failed`：source 确实无效，或在现有能力下无法形成可读文本/可靠章节；说明证据和未来可行
-  的新输入。
+- `failed`：source 确实无效，committed OCR text 语义不可读，或在现有能力下无法形成可读文本/
+  可靠章节；说明证据和未来可行的新输入。
 
 ## 输出
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -157,6 +158,8 @@ def book_observation(
     overview: bool = False,
     admitted: bool = False,
     ocr_completed_pages: int | None = None,
+    ocr_state: str = "missing",
+    ocr_failure: str | None = None,
 ) -> dict[str, Any]:
     rows = inventory or BOOK_CHAPTERS
     chapters = []
@@ -214,7 +217,16 @@ def book_observation(
                 "usable": manifest,
                 "valid": manifest,
             },
-            "ocr_progress": {
+            "ocr_generation": (
+                book_ocr_generation(
+                    slug,
+                    state=ocr_state,
+                    failure=ocr_failure,
+                )
+                if source_format == "pdf"
+                else None
+            ),
+            "legacy_ocr": {
                 "path": f"processing/chapters/{slug}/ocr.progress.json",
                 "present": ocr_completed_pages is not None,
                 "usable": ocr_completed_pages is not None,
@@ -262,6 +274,8 @@ def canonical_book_input(
     overview: bool = True,
     admitted: bool = True,
     ocr_completed_pages: int | None = None,
+    ocr_state: str = "missing",
+    ocr_failure: str | None = None,
 ) -> dict[str, Any]:
     return {
         "seed": {
@@ -279,6 +293,8 @@ def canonical_book_input(
             overview=overview,
             admitted=admitted,
             ocr_completed_pages=ocr_completed_pages,
+            ocr_state=ocr_state,
+            ocr_failure=ocr_failure,
         ),
         "options": {},
     }
@@ -444,11 +460,12 @@ def book_prepare_complete(
     *,
     format_name: str = "epub",
     chapters: list[dict[str, Any]] | None = None,
+    input_path: str | None = None,
 ) -> dict[str, Any]:
     inventory = deepcopy(chapters or BOOK_CHAPTERS)
     chapter_root = f"processing/chapters/{slug}"
     return {
-        "selected_source": f"sources/{slug}.{format_name}",
+        "selected_source": input_path or f"sources/{slug}.{format_name}",
         "normalized_path": f"{chapter_root}/source.txt",
         "manifest_fingerprint": "a" * 64,
         "mode": "epub" if format_name == "epub" else "toc",
@@ -474,22 +491,46 @@ def book_prepare_complete(
         ],
         "steps": [],
         "diagnostics": [],
-        "terminal": {"status": "complete", "issue": None},
-    }
-
-
-def book_prepare_ocr_in_progress(*, retryable: bool = True) -> dict[str, Any]:
-    receipt = book_prepare_complete(format_name="pdf")
-    receipt["terminal"] = {
-        "status": "blocked",
-        "issue": {
-            "code": "book.prepare.ocr_in_progress",
-            "operation": "book.prepare",
-            "summary": "One OCR page range was committed; more pages remain.",
-            "user_question": None,
-            "retryable": retryable,
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "disposition": "prepared",
         },
     }
+
+
+def book_prepare_ocr_required(slug: str = "exact-book") -> dict[str, Any]:
+    receipt = book_prepare_complete(slug=slug, format_name="pdf")
+    receipt.update(
+        {
+            "selected_source": None,
+            "normalized_path": None,
+            "manifest_fingerprint": None,
+            "mode": None,
+            "disposition": None,
+            "chapter_count": 0,
+            "chapters": [],
+            "artifacts": [],
+        }
+    )
+    receipt["terminal"] = {
+        "status": "complete",
+        "issue": None,
+        "disposition": "ocr_required",
+    }
+    return receipt
+
+
+def book_prepare_legacy_progress(
+    slug: str = "exact-book",
+    *,
+    completed: bool = False,
+) -> dict[str, Any]:
+    receipt = book_prepare_ocr_required(slug)
+    receipt["selected_source"] = f"sources/{slug}.pdf"
+    receipt["terminal"]["disposition"] = (
+        "legacy_completed" if completed else "legacy_partial"
+    )
     return receipt
 
 
@@ -658,6 +699,167 @@ def run_book(value: dict[str, Any], outputs: list[Any]) -> dict[str, Any]:
     return json.loads(proc.stdout)
 
 
+def ocr_generation(
+    slug: str,
+    *,
+    kind: str = "paper",
+    profile_name: str = "dsocr2-text",
+    state: str = "missing",
+    completed_pages: int | None = None,
+    source_sha256: str = "a" * 64,
+    source_size: int = 100,
+    source_pages: int = 40,
+    failure: str | None = None,
+) -> dict[str, Any]:
+    profile = {
+        "schema_version": "quasi.ocr.profile/0.2",
+        "language": "chi_sim+eng",
+        "text_extractor": "pymupdf",
+        "engine_order": (
+            ["dsocr2", "tesseract"]
+            if profile_name == "dsocr2-text"
+            else ["tesseract"]
+        ),
+        "chunk_pages": 16 if profile_name == "dsocr2-text" else 32,
+        "name": profile_name,
+        "validation_policy": (
+            "paper-text-v1" if kind == "paper" else "book-pdf-v1"
+        ),
+    }
+    config_fingerprint = hashlib.sha256(
+        json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    request = {
+        "material_key": f"{kind}:{slug}",
+        "schema_version": "quasi.ocr.generation.request/0.1",
+        "source_path": f"sources/{slug}.pdf",
+        "source_sha256": source_sha256,
+        "profile": profile,
+    }
+    generation_key = hashlib.sha256(
+        json.dumps(
+            request,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+    ).hexdigest()
+    material_root = f"processing/{'papers' if kind == 'paper' else 'chapters'}/{slug}"
+    work_root = f"{material_root}/.ocr-work/{generation_key}"
+    generation_root = f"{material_root}/ocr-generations/{generation_key}"
+    paths = {
+        "lock": f"{material_root}/.ocr-generation.lock",
+        "work_dir": work_root,
+        "progress": f"{work_root}/ocr.progress.json",
+        "generation_dir": generation_root,
+        "manifest": f"{generation_root}/manifest.json",
+        "pdf": f"{generation_root}/ocr.pdf",
+        "text": f"{generation_root}/ocr.txt",
+    }
+    absent = {
+        "exists": False,
+        "regular": None,
+        "sha256": None,
+        "size": 0,
+    }
+    manifest = {"path": paths["manifest"], **absent}
+    recovery_pdf = {"path": paths["pdf"], **absent, "pages": 0}
+    normalized_text = {
+        "path": paths["text"],
+        **absent,
+        "utf8": None,
+        "chars": 0,
+        "non_whitespace_chars": 0,
+    }
+    progress = None
+    if state == "in_progress":
+        completed = profile["chunk_pages"] if completed_pages is None else completed_pages
+        ranges = []
+        cursor = 1
+        while cursor <= completed:
+            end = min(cursor + profile["chunk_pages"] - 1, completed)
+            part = f"{work_root}/parts/part-{cursor:06d}-{end:06d}.{profile['engine_order'][0]}.pdf"
+            ranges.append(
+                {
+                    "start_page": cursor,
+                    "end_page": end,
+                    "engine": profile["engine_order"][0],
+                    "path": part,
+                    "sha256": "f" * 64,
+                    "pages": end - cursor + 1,
+                }
+            )
+            cursor = end + 1
+        progress = {
+            "completed_pages": completed,
+            "total_pages": source_pages,
+            "next_page": completed + 1 if completed < source_pages else None,
+            "ranges": ranges,
+        }
+    elif state == "committed":
+        manifest = {
+            "path": paths["manifest"],
+            "exists": True,
+            "regular": True,
+            "sha256": "c" * 64,
+            "size": 300,
+        }
+        recovery_pdf = {
+            "path": paths["pdf"],
+            "exists": True,
+            "regular": True,
+            "sha256": "d" * 64,
+            "size": 2000,
+            "pages": source_pages,
+        }
+        normalized_text = {
+            "path": paths["text"],
+            "exists": True,
+            "regular": True,
+            "sha256": "e" * 64,
+            "size": 1000,
+            "utf8": True,
+            "chars": 900,
+            "non_whitespace_chars": 700,
+        }
+    elif state in {"invalid", "unknown"}:
+        failure = failure or f"paper.ocr_{state}"
+    return {
+        "state": state,
+        "material_key": f"{kind}:{slug}",
+        "kind": kind,
+        "slug": slug,
+        "generation_key": generation_key,
+        "profile": profile,
+        "config_fingerprint": config_fingerprint,
+        "source": {
+            "path": f"sources/{slug}.pdf",
+            "sha256": source_sha256,
+            "size": source_size,
+            "pages": source_pages,
+        },
+        "paths": paths,
+        "progress": progress,
+        "manifest": manifest,
+        "recovery_pdf": recovery_pdf,
+        "normalized_text": normalized_text,
+        "failure": failure,
+    }
+
+
+def paper_ocr_generation(
+    slug: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    return ocr_generation(slug, kind="paper", **kwargs)
+
+
+def book_ocr_generation(
+    slug: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    return ocr_generation(slug, kind="book", source_pages=100, **kwargs)
+
+
 def paper_observation(
     slug: str,
     *,
@@ -666,6 +868,11 @@ def paper_observation(
     prepared: bool = False,
     canonical: bool = False,
     admitted: bool = False,
+    ocr_state: str = "missing",
+    ocr_completed_pages: int | None = None,
+    ocr_failure: str | None = None,
+    ocr_profile_name: str = "dsocr2-text",
+    ocr_source_pages: int = 40,
 ) -> dict[str, Any]:
     return {
         "schema_version": "quasi.status/0.2",
@@ -735,6 +942,30 @@ def paper_observation(
                     "usable": False,
                 },
             ],
+            "legacy_recovery": {
+                "pdf": {
+                    "path": f"processing/papers/{slug}/ocr.pdf",
+                    "present": False,
+                    "usable": False,
+                },
+                "text": {
+                    "path": f"processing/papers/{slug}/ocr.txt",
+                    "present": False,
+                    "usable": False,
+                },
+            },
+            "ocr_generation": (
+                paper_ocr_generation(
+                    slug,
+                    profile_name=ocr_profile_name,
+                    state=ocr_state,
+                    completed_pages=ocr_completed_pages,
+                    source_pages=ocr_source_pages,
+                    failure=ocr_failure,
+                )
+                if source
+                else None
+            ),
             "canonical": {
                 "path": f"vault/papers/{slug}.md",
                 "present": canonical,
@@ -764,6 +995,11 @@ def canonical_input(
     prepared: bool = False,
     canonical: bool = False,
     admitted: bool = False,
+    ocr_state: str = "missing",
+    ocr_completed_pages: int | None = None,
+    ocr_failure: str | None = None,
+    ocr_profile_name: str = "dsocr2-text",
+    ocr_source_pages: int = 40,
 ) -> dict[str, Any]:
     return {
         "seed": {
@@ -778,6 +1014,11 @@ def canonical_input(
             prepared=prepared,
             canonical=canonical,
             admitted=admitted,
+            ocr_state=ocr_state,
+            ocr_completed_pages=ocr_completed_pages,
+            ocr_failure=ocr_failure,
+            ocr_profile_name=ocr_profile_name,
+            ocr_source_pages=ocr_source_pages,
         ),
         "options": {},
     }
@@ -885,21 +1126,155 @@ def acquire_complete(output_path: str = "sources/exact-paper.pdf") -> dict[str, 
     }
 
 
-def prepare_complete(slug: str = "exact-paper") -> dict[str, Any]:
-    selected = f"processing/papers/{slug}/source.txt"
+def prepare_complete(
+    slug: str = "exact-paper",
+    *,
+    source_path: str | None = None,
+    input_path: str | None = None,
+    disposition: str = "prepared",
+) -> dict[str, Any]:
+    source = source_path or f"sources/{slug}.pdf"
+    exact_input = input_path or source
+    input_kind = (
+        "generation_text"
+        if exact_input != source
+        else "source_text"
+        if source.endswith(".txt")
+        else "source_pdf"
+    )
+    normalized = f"processing/papers/{slug}/source.txt"
+    selected = exact_input if input_kind == "generation_text" else normalized
+    usable = disposition == "prepared"
     return {
-        "selected_input": selected,
+        "source_path": source,
+        "input_path": exact_input,
+        "input_kind": input_kind,
+        "selected_input": selected if usable else None,
         "artifacts": [
             {
                 "role": "normalized_text",
-                "path": selected,
+                "path": selected if usable else normalized,
                 "exists": True,
-                "usable": True,
+                "usable": usable,
             }
         ],
         "steps": [],
         "diagnostics": [],
-        "terminal": {"status": "complete", "issue": None},
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "disposition": disposition,
+        },
+    }
+
+
+def paper_ocr_complete(
+    generation: dict[str, Any],
+    *,
+    disposition: str = "partial",
+) -> dict[str, Any]:
+    committed = disposition in {"created", "reconciled"}
+    previous = generation["progress"]
+    completed = previous["completed_pages"] if previous is not None else 0
+    chunk = generation["profile"]["chunk_pages"]
+    next_completed = min(completed + chunk, generation["source"]["pages"])
+    ranges = deepcopy(previous["ranges"]) if previous is not None else []
+    if not committed:
+        ranges.append(
+            {
+                "start_page": completed + 1,
+                "end_page": next_completed,
+                "engine": generation["profile"]["engine_order"][0],
+                "path": (
+                    f"{generation['paths']['work_dir']}/parts/"
+                    f"part-{completed + 1:06d}-{next_completed:06d}."
+                    f"{generation['profile']['engine_order'][0]}.pdf"
+                ),
+                "sha256": "f" * 64,
+                "pages": next_completed - completed,
+            }
+        )
+    progress = (
+        None
+        if committed
+        else {
+            "completed_pages": next_completed,
+            "total_pages": generation["source"]["pages"],
+            "next_page": next_completed + 1,
+            "ranges": ranges,
+        }
+    )
+    if committed:
+        artifacts = [
+            {
+                "path": generation["paths"]["pdf"],
+                "exists": True,
+                "regular": True,
+                "sha256": "d" * 64,
+                "size": 2000,
+                "pages": generation["source"]["pages"],
+            },
+            {
+                "path": generation["paths"]["text"],
+                "exists": True,
+                "regular": True,
+                "sha256": "e" * 64,
+                "size": 1000,
+                "utf8": True,
+                "chars": 900,
+                "non_whitespace_chars": 700,
+            },
+            {
+                "path": generation["paths"]["manifest"],
+                "exists": True,
+                "regular": True,
+                "sha256": "c" * 64,
+                "size": 300,
+            },
+        ]
+    else:
+        artifacts = [
+            {
+                "path": generation["paths"]["pdf"],
+                "exists": False,
+                "regular": None,
+                "sha256": None,
+                "size": 0,
+                "pages": 0,
+            },
+            {
+                "path": generation["paths"]["text"],
+                "exists": False,
+                "regular": None,
+                "sha256": None,
+                "size": 0,
+                "utf8": None,
+                "chars": 0,
+                "non_whitespace_chars": 0,
+            },
+            {
+                "path": generation["paths"]["manifest"],
+                "exists": False,
+                "regular": None,
+                "sha256": None,
+                "size": 0,
+            },
+        ]
+    return {
+        "generation_key": generation["generation_key"],
+        "profile": deepcopy(generation["profile"]),
+        "config_fingerprint": generation["config_fingerprint"],
+        "source": deepcopy(generation["source"]),
+        "paths": deepcopy(generation["paths"]),
+        "state": "committed" if committed else "in_progress",
+        "progress": progress,
+        "artifacts": artifacts,
+        "failure": None,
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "disposition": disposition,
+        },
     }
 
 
@@ -946,11 +1321,25 @@ def run_paper(value: dict[str, Any], outputs: list[Any]) -> dict[str, Any]:
 
 
 def test_paper_provisional_happy_path_carries_prepare_selected_input() -> None:
-    report = run_paper(
+    acquired = run_paper(
         provisional_input(),
+        [search_complete(), acquire_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in acquired["calls"]] == [
+        "material.search",
+        "paper.acquire",
+    ]
+    assert acquired["result"]["terminal"] == "needs_observation"
+    resume_seed = acquired["result"]["resume_seed"]
+    report = run_paper(
+        {
+            "seed": resume_seed["seed"],
+            "observation": paper_observation("exact-paper", source=True),
+            "options": resume_seed["options"],
+        },
         [
             search_complete(),
-            acquire_complete(),
             prepare_complete(),
             analyse_complete(),
             audit_complete(),
@@ -959,12 +1348,11 @@ def test_paper_provisional_happy_path_carries_prepare_selected_input() -> None:
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
         "material.search",
-        "paper.acquire",
         "paper.prepare",
         "paper.analyse",
         "paper.audit",
     ]
-    assert report["calls"][3]["request"]["input"] == {
+    assert report["calls"][2]["request"]["input"] == {
         "role": "normalized_text",
         "path": "processing/papers/exact-paper/source.txt",
     }
@@ -1037,7 +1425,7 @@ def test_paper_text_source_flows_through_prepare_and_completion() -> None:
         "paper.prepare",
         "paper.audit",
     ]
-    assert report["calls"][0]["request"]["refs"]["source"] == (
+    assert report["calls"][0]["request"]["source"]["path"] == (
         "sources/exact-paper.txt"
     )
     assert report["result"]["artifacts"][0] == {
@@ -1106,7 +1494,7 @@ def test_paper_source_gate_selects_one_exact_prepare_input(
         "paper.prepare",
         "paper.audit",
     ]
-    assert report["calls"][0]["request"]["refs"]["source"] == source_path
+    assert report["calls"][0]["request"]["source"]["path"] == source_path
     assert report["result"]["terminal"] == "complete"
     assert report["result"]["artifacts"][0] == {
         "role": "source",
@@ -1182,23 +1570,41 @@ def test_paper_source_decision_is_ignored_after_drift_to_one_source() -> None:
 
     report = run_paper(value, [prepare_complete(), audit_complete()])
 
-    assert report["calls"][0]["request"]["refs"]["source"] == (
+    assert report["calls"][0]["request"]["source"]["path"] == (
         "sources/exact-paper.pdf"
     )
     assert report["result"]["terminal"] == "complete"
 
 
 def test_paper_acquire_may_select_the_text_output() -> None:
-    report = run_paper(
+    acquired = run_paper(
         canonical_input(canonical=True, admitted=True),
+        [acquire_complete("sources/exact-paper.txt")],
+    )
+
+    assert [call["request"]["operation"] for call in acquired["calls"]] == [
+        "paper.acquire"
+    ]
+    assert acquired["result"]["terminal"] == "needs_observation"
+    resume_seed = acquired["result"]["resume_seed"]
+    report = run_paper(
+        {
+            "seed": resume_seed["seed"],
+            "observation": paper_observation(
+                "exact-paper",
+                text_source=True,
+                canonical=True,
+                admitted=True,
+            ),
+            "options": resume_seed["options"],
+        },
         [
-            acquire_complete("sources/exact-paper.txt"),
-            prepare_complete(),
+            prepare_complete(source_path="sources/exact-paper.txt"),
             audit_complete(),
         ],
     )
 
-    assert report["calls"][1]["request"]["refs"]["source"] == (
+    assert report["calls"][0]["request"]["source"]["path"] == (
         "sources/exact-paper.txt"
     )
     assert report["result"]["artifacts"][0]["path"] == (
@@ -1216,18 +1622,36 @@ def test_paper_acquire_may_select_the_text_output() -> None:
 
 
 def test_paper_existing_canonical_recovers_missing_source_before_prepare() -> None:
-    report = run_paper(
+    acquired = run_paper(
         canonical_input(
             source=False,
             prepared=False,
             canonical=True,
             admitted=True,
         ),
-        [acquire_complete(), prepare_complete(), audit_complete()],
+        [acquire_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in acquired["calls"]] == [
+        "paper.acquire"
+    ]
+    assert acquired["result"]["terminal"] == "needs_observation"
+    resume_seed = acquired["result"]["resume_seed"]
+    report = run_paper(
+        {
+            "seed": resume_seed["seed"],
+            "observation": paper_observation(
+                "exact-paper",
+                source=True,
+                canonical=True,
+                admitted=True,
+            ),
+            "options": resume_seed["options"],
+        },
+        [prepare_complete(), audit_complete()],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
-        "paper.acquire",
         "paper.prepare",
         "paper.audit",
     ]
@@ -1240,6 +1664,175 @@ def test_paper_existing_canonical_recovers_missing_source_before_prepare() -> No
         },
         {"role": "canonical", "path": "vault/papers/exact-paper.md"},
     ]
+
+
+def test_paper_ocr_advances_one_range_per_fresh_observation() -> None:
+    first_value = canonical_input(
+        source=True,
+        canonical=True,
+        admitted=True,
+        ocr_state="missing",
+    )
+    first_generation = first_value["observation"]["facts"]["ocr_generation"]
+    first = run_paper(
+        first_value,
+        [
+            prepare_complete(disposition="ocr_required"),
+            paper_ocr_complete(first_generation),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in first["calls"]] == [
+        "paper.prepare",
+        "paper.ocr",
+    ]
+    assert first["result"]["terminal"] == "needs_observation"
+    assert first["result"]["routes"] == [
+        {"kind": "paper", "slug": "exact-paper"}
+    ]
+
+    second_value = canonical_input(
+        source=True,
+        canonical=True,
+        admitted=True,
+        ocr_state="in_progress",
+        ocr_completed_pages=16,
+    )
+    second_generation = second_value["observation"]["facts"]["ocr_generation"]
+    second = run_paper(
+        second_value,
+        [paper_ocr_complete(second_generation, disposition="created")],
+    )
+
+    assert [call["request"]["operation"] for call in second["calls"]] == [
+        "paper.ocr"
+    ]
+    assert second["result"]["terminal"] == "needs_observation"
+
+    final_value = canonical_input(
+        source=True,
+        canonical=True,
+        admitted=True,
+        ocr_state="committed",
+    )
+    final_generation = final_value["observation"]["facts"]["ocr_generation"]
+    report = run_paper(
+        final_value,
+        [
+            prepare_complete(input_path=final_generation["paths"]["text"]),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "paper.prepare",
+        "paper.audit",
+    ]
+    prepare_request = report["calls"][0]["request"]
+    assert prepare_request["input"] == {
+        "role": "generation_text",
+        "path": final_generation["paths"]["text"],
+    }
+    assert "paper.analyse" not in [
+        call["request"]["operation"] for call in report["calls"]
+    ]
+    assert report["result"]["terminal"] == "complete"
+    assert report["result"]["artifacts"][1] == {
+        "role": "normalized_text",
+        "path": final_generation["paths"]["text"],
+    }
+
+
+def test_paper_tesseract_profile_advances_32_then_final_page() -> None:
+    first_value = canonical_input(
+        source=True,
+        canonical=True,
+        admitted=True,
+        ocr_state="missing",
+        ocr_profile_name="tesseract-text",
+        ocr_source_pages=33,
+    )
+    first_generation = first_value["observation"]["facts"]["ocr_generation"]
+    first = run_paper(
+        first_value,
+        [
+            prepare_complete(disposition="ocr_required"),
+            paper_ocr_complete(first_generation),
+        ],
+    )
+
+    assert first["result"]["terminal"] == "needs_observation"
+    request = first["calls"][1]["request"]
+    assert request["generation"]["profile"]["chunk_pages"] == 32
+    assert request["generation"]["profile"]["engine_order"] == ["tesseract"]
+    assert "--profile 'tesseract-text'" in request["capabilities"][0]
+
+    second_value = canonical_input(
+        source=True,
+        canonical=True,
+        admitted=True,
+        ocr_state="in_progress",
+        ocr_completed_pages=32,
+        ocr_profile_name="tesseract-text",
+        ocr_source_pages=33,
+    )
+    second_generation = second_value["observation"]["facts"]["ocr_generation"]
+    second = run_paper(
+        second_value,
+        [paper_ocr_complete(second_generation, disposition="created")],
+    )
+
+    assert second["result"]["terminal"] == "needs_observation"
+    assert [call["request"]["operation"] for call in second["calls"]] == [
+        "paper.ocr"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("state", "failure"),
+    [
+        ("invalid", "paper.ocr_manifest_invalid"),
+        ("unknown", "paper.ocr_work_inventory_unknown"),
+    ],
+)
+def test_paper_invalid_or_unknown_generation_blocks_without_writer(
+    state: str,
+    failure: str,
+) -> None:
+    report = run_paper(
+        canonical_input(
+            source=True,
+            canonical=True,
+            admitted=True,
+            ocr_state=state,
+            ocr_failure=failure,
+        ),
+        [],
+    )
+
+    assert report["calls"] == []
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["operation"] == "paper.ocr"
+    assert report["result"]["issue"]["code"] == failure
+
+
+def test_paper_unknown_ocr_writer_stops_without_replay() -> None:
+    report = run_paper(
+        canonical_input(
+            source=True,
+            canonical=True,
+            admitted=True,
+            ocr_state="in_progress",
+            ocr_completed_pages=16,
+        ),
+        ["__throw__"],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "paper.ocr"
+    ]
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"
 
 
 def test_paper_search_owner_admits_usable_canonical_with_localized_identity() -> None:
@@ -2034,11 +2627,22 @@ def test_book_identity_selection_later_gate_returns_effective_canonical_resume_s
     assert [call["request"]["operation"] for call in resumed["calls"]] == [
         "material.search",
         "book.acquire",
-        "book.prepare",
     ]
     assert resumed["calls"][1]["request"]["year_decision"] == year_decision
-    assert resumed["result"]["gate"]["kind"] == "book_structure"
+    assert resumed["result"]["terminal"] == "needs_observation"
     assert resumed["result"]["resume_seed"] == resume_seed
+    observed = run_book(
+        {
+            "seed": resume_seed["seed"],
+            "observation": book_observation(
+                "exact-book", source_format="pdf", admitted=True, overview=True
+            ),
+            "options": resume_seed["options"],
+        },
+        [book_prepare_structure_gate()],
+    )
+    assert observed["result"]["terminal"] == "needs_input"
+    assert observed["result"]["gate"]["kind"] == "book_structure"
 
 
 def test_book_recommended_year_inner_search_gate_keeps_canonical_resume_seed() -> None:
@@ -2440,47 +3044,106 @@ def test_book_manifest_with_a_missing_input_reconciles_prepare() -> None:
     )
 
 
-def test_book_retryable_ocr_progress_requests_fresh_observation() -> None:
+def test_book_missing_generation_runs_one_shared_ocr_range_then_observes() -> None:
     value = canonical_book_input(source_format="pdf")
+    generation = value["observation"]["facts"]["ocr_generation"]
 
-    report = run_book(value, [book_prepare_ocr_in_progress()])
+    report = run_book(
+        value,
+        [book_prepare_ocr_required(), paper_ocr_complete(generation)],
+    )
 
     assert report["result"]["terminal"] == "needs_observation"
     assert report["result"]["routes"] == [{"kind": "book", "slug": "exact-book"}]
-    assert report["calls"][0]["request"]["operation"] == "book.prepare"
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.prepare",
+        "book.ocr",
+    ]
+    assert report["calls"][1]["request"]["generation"]["profile"][
+        "chunk_pages"
+    ] == 16
 
 
-@pytest.mark.parametrize(
-    ("code", "retryable"),
-    [
-        ("book.prepare.ocr_in_progress", False),
-        ("book.prepare.source_invalid", True),
-    ],
-)
-def test_book_only_retryable_qualified_ocr_progress_resumes(
-    code: str, retryable: bool
+def test_book_in_progress_generation_dispatches_ocr_without_prepare(
 ) -> None:
-    value = canonical_book_input(source_format="pdf")
-    receipt = book_prepare_ocr_in_progress(retryable=retryable)
-    receipt["terminal"]["issue"]["code"] = code
+    value = canonical_book_input(source_format="pdf", ocr_state="in_progress")
+    generation = value["observation"]["facts"]["ocr_generation"]
 
-    report = run_book(value, [receipt])
+    report = run_book(value, [paper_ocr_complete(generation)])
 
-    assert report["result"]["terminal"] == "blocked"
-    assert report["result"]["issue"]["code"] == code
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.ocr"
+    ]
+    assert report["result"]["terminal"] == "needs_observation"
 
 
-def test_book_higher_ocr_progress_dispatches_the_next_prepare_step() -> None:
+def test_book_committed_generation_is_the_exact_prepare_input() -> None:
+    value = canonical_book_input(source_format="pdf", ocr_state="committed")
+    generation = value["observation"]["facts"]["ocr_generation"]
+
+    report = run_book(
+        value,
+        [
+            book_prepare_complete(
+                format_name="pdf", input_path=generation["paths"]["pdf"]
+            ),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    assert report["calls"][0]["request"]["operation"] == "book.prepare"
+    assert report["calls"][0]["request"]["refs"]["input"] == (
+        generation["paths"]["pdf"]
+    )
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_book_committed_generation_supersedes_released_legacy_progress() -> None:
+    value = canonical_book_input(
+        source_format="pdf",
+        ocr_state="committed",
+        ocr_completed_pages=16,
+    )
+    generation = value["observation"]["facts"]["ocr_generation"]
+
+    report = run_book(
+        value,
+        [
+            book_prepare_complete(
+                format_name="pdf", input_path=generation["paths"]["pdf"]
+            ),
+            chapter_complete(),
+            chapter_complete(),
+            book_synthesise_complete("repair"),
+            audit_complete(),
+        ],
+    )
+
+    request = report["calls"][0]["request"]
+    assert request["operation"] == "book.prepare"
+    assert request["refs"]["input"] == generation["paths"]["pdf"]
+    assert request["refs"]["legacy_ocr_progress"] is None
+    assert not any("--chunk-pages 8" in item for item in request["capabilities"])
+
+
+def test_book_released_legacy_progress_uses_only_the_bounded_adapter() -> None:
     value = canonical_book_input(
         source_format="pdf", ocr_completed_pages=16
     )
 
-    report = run_book(value, [book_prepare_ocr_in_progress()])
+    report = run_book(value, [book_prepare_legacy_progress()])
 
-    assert report["calls"][0]["request"]["operation"] == "book.prepare"
-    assert report["calls"][0]["request"]["refs"]["ocr_progress"] == (
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.prepare"
+    ]
+    request = report["calls"][0]["request"]
+    assert request["refs"]["legacy_ocr_progress"] == (
         "processing/chapters/exact-book/ocr.progress.json"
     )
+    assert any("--chunk-pages 8" in capability for capability in request["capabilities"])
     assert report["result"]["terminal"] == "needs_observation"
 
 
@@ -4101,7 +4764,7 @@ def test_author_unknown_child_outcome_stops_before_later_members_or_writers() ->
     assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"
 
 
-def test_author_lifts_book_gate_with_the_verified_source_isbn() -> None:
+def test_author_lifts_book_pdf_observation_with_the_verified_source_isbn() -> None:
     identity = book_identity("book-one", "Book One")
     source_isbn = "9780000000043"
     route = {"kind": "book", "slug": "book-one"}
@@ -4124,8 +4787,8 @@ def test_author_lifts_book_gate_with_the_verified_source_isbn() -> None:
         ],
     )
 
-    assert report["result"]["terminal"] == "needs_input"
-    assert report["result"]["gate"]["gate"]["kind"] == "book_structure"
+    assert report["result"]["terminal"] == "needs_observation"
+    assert report["result"]["routes"] == [route]
     resumed_book = report["result"]["resume_seed"]["members"][0]["leaf"]
     assert resumed_book["seed"]["identity"]["isbn"] == source_isbn
 

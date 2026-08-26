@@ -24,6 +24,12 @@ from scripts.schemas.operations import OPERATION_CATALOG  # noqa: E402
 from scripts.schemas.chapter_manifest import valid_chapter_page_pair  # noqa: E402
 from scripts.schemas.topic import TopicSchema  # noqa: E402
 from scripts.schemas.webpage import WebpageSchema  # noqa: E402
+from scripts.extract.ocr_generation import (  # noqa: E402
+    OcrGenerationContractError,
+    generation_key as ocr_generation_key,
+    observe_generation,
+    pdf_page_count,
+)
 from scripts.translate.translate_commit import (  # noqa: E402
     TranslateContractError,
     fingerprint,
@@ -379,6 +385,41 @@ def paper_source_fact(
     }
 
 
+def ocr_generation_status(
+    root: Path, kind: str, slug: str, candidate: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    if not isinstance(candidate, dict) or candidate.get("path") != f"sources/{slug}.pdf":
+        return None
+    source_path = root / candidate["path"]
+    profile_name = "dsocr2-text"
+    generation = ocr_generation_key(
+        kind=kind, slug=slug, source_path=candidate["path"],
+        source_sha256=candidate["sha256"], profile_name=profile_name,
+    )
+    try:
+        source_pages = pdf_page_count(source_path)
+        if (
+            source_path.stat().st_size != candidate["size"]
+            or sha256_file(source_path) != candidate["sha256"]
+        ):
+            raise OSError("PDF changed while OCR status was observed")
+        return observe_generation(
+            project_root=root, kind=kind, slug=slug,
+            source_sha256=candidate["sha256"], source_size=candidate["size"],
+            source_pages=source_pages, generation=generation,
+            profile_name=profile_name,
+        )
+    except (OSError, OcrGenerationContractError):
+        observed = observe_generation(
+            project_root=root, kind=kind, slug=slug,
+            source_sha256=candidate["sha256"], source_size=candidate["size"],
+            source_pages=0, generation=generation, profile_name=profile_name,
+        )
+        observed["state"] = "invalid"
+        observed["failure"] = "ocr.generation_pdf_invalid"
+        return observed
+
+
 def paper_status(root: Path, slug: str) -> dict[str, Any]:
     sources = [
         (
@@ -390,9 +431,17 @@ def paper_status(root: Path, slug: str) -> dict[str, Any]:
             artifact_path(root, "paper.acquire", "outputText", slug=slug),
         ),
     ]
+    legacy_recovery = {
+        "pdf": artifact_path(
+            root, "paper.prepare", "legacyRecoverySource", slug=slug
+        ),
+        "text": artifact_path(
+            root, "paper.prepare", "legacyRecoveryText", slug=slug
+        ),
+    }
     prepared = [
         artifact_path(root, "paper.prepare", "normalized", slug=slug),
-        artifact_path(root, "paper.prepare", "recoveryText", slug=slug),
+        legacy_recovery["text"],
     ]
     canonical = artifact_path(root, "paper.analyse", "output", slug=slug)
     canonical_fact, frontmatter = canonical_observation(root, canonical)
@@ -405,6 +454,7 @@ def paper_status(root: Path, slug: str) -> dict[str, Any]:
         for source in source_facts
         if source["candidate"] is not None
     ]
+    ocr_generation = ocr_generation_status(root, "paper", slug, source_facts[0]["candidate"])
     return status_payload(
         "paper",
         slug,
@@ -414,6 +464,11 @@ def paper_status(root: Path, slug: str) -> dict[str, Any]:
             "sources": source_facts,
             "source_candidates_fingerprint": fingerprint(candidates),
             "prepared": [artifact_observation(root, path) for path in prepared],
+            "legacy_recovery": {
+                "pdf": artifact_observation(root, legacy_recovery["pdf"]),
+                "text": artifact_observation(root, legacy_recovery["text"]),
+            },
+            "ocr_generation": ocr_generation,
             "canonical": canonical_fact,
         },
     )
@@ -644,21 +699,28 @@ def book_status(root: Path, slug: str) -> dict[str, Any]:
     ]
     overview = artifact_path(root, "book.synthesise", "output", slug=slug)
     overview_fact, frontmatter = canonical_observation(root, overview)
+    source_rows = [
+        {
+            "format": format_name,
+            "artifact": artifact_observation(root, path),
+        }
+        for format_name, path in sources
+    ]
+    pdf_path = dict(sources)["pdf"]
+    pdf_fact = paper_source_fact(root, "pdf", pdf_path)
+    generation = ocr_generation_status(
+        root, "book", slug, pdf_fact.get("candidate")
+    )
     return status_payload(
         "book",
         slug,
         frontmatter_identity(frontmatter) if overview_fact["usable"] else None,
         {
             "kind": "book",
-            "sources": [
-                {
-                    "format": format_name,
-                    "artifact": artifact_observation(root, path),
-                }
-                for format_name, path in sources
-            ],
+            "sources": source_rows,
             "manifest": manifest_fact,
-            "ocr_progress": book_ocr_progress(root, slug),
+            "ocr_generation": generation,
+            "legacy_ocr": book_ocr_progress(root, slug),
             "chapters": chapters,
             "overview": overview_fact,
         },

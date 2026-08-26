@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -113,6 +114,141 @@ BASE_META = {
     "description": "Exact topic",
     "engines": ["whisper"],
 }
+
+
+def _ocr_generation(
+    *,
+    kind: str = "paper",
+    slug: str = "exact-material",
+    profile_name: str = "dsocr2-text",
+    source_sha256: str = "a" * 64,
+    state: str = "missing",
+    completed_pages: int = 0,
+    source_pages: int = 15,
+) -> dict[str, Any]:
+    profile = {
+        "schema_version": "quasi.ocr.profile/0.2",
+        "language": "chi_sim+eng",
+        "text_extractor": "pymupdf",
+        "engine_order": (
+            ["dsocr2", "tesseract"]
+            if profile_name == "dsocr2-text"
+            else ["tesseract"]
+        ),
+        "chunk_pages": 16 if profile_name == "dsocr2-text" else 32,
+        "name": profile_name,
+        "validation_policy": (
+            "paper-text-v1" if kind == "paper" else "book-pdf-v1"
+        ),
+    }
+    config_fingerprint = hashlib.sha256(
+        json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    request = {
+        "schema_version": "quasi.ocr.generation.request/0.1",
+        "material_key": f"{kind}:{slug}",
+        "source_path": f"sources/{slug}.pdf",
+        "source_sha256": source_sha256,
+        "profile": profile,
+    }
+    generation = hashlib.sha256(
+        json.dumps(
+            request,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    root = f"processing/{'papers' if kind == 'paper' else 'chapters'}/{slug}"
+    generation_dir = f"{root}/ocr-generations/{generation}"
+    work_dir = f"{root}/.ocr-work/{generation}"
+    progress = None
+    if state == "in_progress":
+        ranges = []
+        cursor = 1
+        while cursor <= completed_pages:
+            end = min(cursor + profile["chunk_pages"] - 1, completed_pages)
+            ranges.append(
+                {
+                    "start_page": cursor,
+                    "end_page": end,
+                    "engine": profile["engine_order"][0],
+                    "path": (
+                        f"{work_dir}/parts/part-{cursor:06d}-{end:06d}."
+                        f"{profile['engine_order'][0]}.pdf"
+                    ),
+                    "sha256": "f" * 64,
+                    "pages": end - cursor + 1,
+                }
+            )
+            cursor = end + 1
+        progress = {
+            "completed_pages": completed_pages,
+            "total_pages": source_pages,
+            "next_page": (
+                completed_pages + 1 if completed_pages < source_pages else None
+            ),
+            "ranges": ranges,
+        }
+    return {
+        "state": state,
+        "material_key": f"{kind}:{slug}",
+        "kind": kind,
+        "slug": slug,
+        "generation_key": generation,
+        "profile": profile,
+        "config_fingerprint": config_fingerprint,
+        "source": {
+            "path": f"sources/{slug}.pdf",
+            "sha256": source_sha256,
+            "size": 1234,
+            "pages": source_pages,
+        },
+        "paths": {
+            "lock": f"{root}/.ocr-generation.lock",
+            "work_dir": work_dir,
+            "progress": f"{work_dir}/ocr.progress.json",
+            "generation_dir": generation_dir,
+            "manifest": f"{generation_dir}/manifest.json",
+            "pdf": f"{generation_dir}/ocr.pdf",
+            "text": f"{generation_dir}/ocr.txt",
+        },
+        "progress": progress,
+        "manifest": {
+            "path": f"{generation_dir}/manifest.json",
+            "exists": False,
+            "regular": None,
+            "sha256": None,
+            "size": 0,
+        },
+        "recovery_pdf": {
+            "path": f"{generation_dir}/ocr.pdf",
+            "exists": False,
+            "regular": None,
+            "sha256": None,
+            "size": 0,
+            "pages": 0,
+        },
+        "normalized_text": {
+            "path": f"{generation_dir}/ocr.txt",
+            "exists": False,
+            "regular": None,
+            "sha256": None,
+            "size": 0,
+            "utf8": None,
+            "chars": 0,
+            "non_whitespace_chars": 0,
+        },
+        "failure": None,
+    }
+
+
+def _paper_ocr_generation(**kwargs: Any) -> dict[str, Any]:
+    return _ocr_generation(kind="paper", **kwargs)
+
+
+def _book_ocr_generation(**kwargs: Any) -> dict[str, Any]:
+    return _ocr_generation(kind="book", source_pages=100, **kwargs)
 
 
 def _context(**overrides: Any) -> dict[str, Any]:
@@ -232,7 +368,14 @@ OPERATION_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
     "paper.acquire": ("paper", _context()),
     "paper.prepare": (
         "paper",
-        _context(source="sources/exact-material.pdf"),
+        _context(
+            source="sources/exact-material.pdf",
+            input="sources/exact-material.pdf",
+        ),
+    ),
+    "paper.ocr": (
+        "paper",
+        _context(ocrGeneration=_paper_ocr_generation()),
     ),
     "paper.analyse": ("paper", _context()),
     "paper.audit": ("paper", _context(target="vault/papers/exact-material.md")),
@@ -240,7 +383,14 @@ OPERATION_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
         "book",
         _context(meta={key: value for key, value in BASE_META.items() if key != "format"}),
     ),
-    "book.prepare": ("book", _context()),
+    "book.prepare": (
+        "book",
+        _context(input="sources/exact-material.epub"),
+    ),
+    "book.ocr": (
+        "book",
+        _context(ocrGeneration=_book_ocr_generation()),
+    ),
     "chapter.analyse": ("book", _context()),
     "book.synthesise": ("book", _context()),
     "book.audit": ("book", _context(target="vault/books/exact-material")),
@@ -394,6 +544,96 @@ def _audit_output(*, coherent: bool = True) -> dict[str, Any]:
         "mutated_paths": [],
         "terminal": {"status": "complete", "issue": None},
     }
+
+
+def _paper_prepare_output(
+    *,
+    selected_input: str | None,
+    artifact_path: str,
+    usable: bool,
+    disposition: str,
+) -> dict[str, Any]:
+    return {
+        "selected_input": selected_input,
+        "artifacts": [
+            {
+                "role": "normalized_text",
+                "path": artifact_path,
+                "exists": True,
+                "usable": usable,
+            }
+        ],
+        "steps": [],
+        "diagnostics": [],
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "disposition": disposition,
+        },
+    }
+
+
+def _paper_ocr_artifacts(
+    generation: dict[str, Any],
+    *,
+    committed: bool,
+) -> list[dict[str, Any]]:
+    paths = generation["paths"]
+    if not committed:
+        return [
+            {
+                "path": paths["pdf"],
+                "exists": False,
+                "regular": None,
+                "sha256": None,
+                "size": 0,
+                "pages": 0,
+            },
+            {
+                "path": paths["text"],
+                "exists": False,
+                "regular": None,
+                "sha256": None,
+                "size": 0,
+                "utf8": None,
+                "chars": 0,
+                "non_whitespace_chars": 0,
+            },
+            {
+                "path": paths["manifest"],
+                "exists": False,
+                "regular": None,
+                "sha256": None,
+                "size": 0,
+            },
+        ]
+    return [
+        {
+            "path": paths["pdf"],
+            "exists": True,
+            "regular": True,
+            "sha256": "b" * 64,
+            "size": 2400,
+            "pages": generation["source"]["pages"],
+        },
+        {
+            "path": paths["text"],
+            "exists": True,
+            "regular": True,
+            "sha256": "c" * 64,
+            "size": 1800,
+            "utf8": True,
+            "chars": 1700,
+            "non_whitespace_chars": 1400,
+        },
+        {
+            "path": paths["manifest"],
+            "exists": True,
+            "regular": True,
+            "sha256": "d" * 64,
+            "size": 900,
+        },
+    ]
 
 
 def _search_identity(
@@ -1326,6 +1566,278 @@ def test_paper_acquire_unknown_write_state_is_incoherent_complete() -> None:
     assert report["result"]["kind"] == "incoherent_complete"
 
 
+def test_paper_prepare_separates_direct_text_from_immutable_ocr() -> None:
+    direct = _prepare(
+        "paper.prepare",
+        context=_context(
+            source="sources/exact-material.pdf",
+            input="sources/exact-material.pdf",
+        ),
+    )
+    direct_request = _prompt_request(direct["prompt"])
+    assert direct["writeTargets"] == [
+        {"scope": "exact", "path": "processing/papers/exact-material/source.txt"}
+    ]
+    assert direct_request["input"] == {
+        "role": "source_pdf",
+        "path": "sources/exact-material.pdf",
+    }
+    assert direct_request["refs"]["legacy_recovery_source"] == (
+        "processing/papers/exact-material/ocr.pdf"
+    )
+    assert direct_request["refs"]["legacy_recovery_text"] == (
+        "processing/papers/exact-material/ocr.txt"
+    )
+    assert all("quasi-extract ocr " not in item for item in direct_request["capabilities"])
+
+    generation = _paper_ocr_generation()
+    generation_text = generation["paths"]["text"]
+    prepared_generation = _prepare(
+        "paper.prepare",
+        context=_context(
+            source="sources/exact-material.pdf",
+            input=generation_text,
+            generationKey=generation["generation_key"],
+        ),
+    )
+    generation_request = _prompt_request(prepared_generation["prompt"])
+    assert generation_request["input"] == {
+        "role": "generation_text",
+        "path": generation_text,
+    }
+    assert generation_request["capabilities"] == [
+        "Read only the exact generation_text input named by this request; "
+        "do not read or compare the fixed normalized or legacy recovery refs."
+    ]
+    generation_artifacts = prepared_generation["options"]["schema"]["properties"][
+        "artifacts"
+    ]
+    assert generation_artifacts["maxItems"] == 1
+    assert generation_artifacts["items"]["properties"]["path"]["enum"] == [
+        generation_text
+    ]
+
+
+def test_paper_prepare_dispositions_enforce_input_semantics() -> None:
+    normalized = "processing/papers/exact-material/source.txt"
+    prepared = _dispatch(
+        {
+            "invocation": _invocation(
+                "paper.prepare",
+                context=_context(
+                    source="sources/exact-material.pdf",
+                    input="sources/exact-material.pdf",
+                ),
+            ),
+            "model_output": _paper_prepare_output(
+                selected_input=normalized,
+                artifact_path=normalized,
+                usable=True,
+                disposition="prepared",
+            ),
+        }
+    )
+    ocr_required = _dispatch(
+        {
+            "invocation": _invocation(
+                "paper.prepare",
+                context=_context(
+                    source="sources/exact-material.pdf",
+                    input="sources/exact-material.pdf",
+                ),
+            ),
+            "model_output": _paper_prepare_output(
+                selected_input=None,
+                artifact_path=normalized,
+                usable=False,
+                disposition="ocr_required",
+            ),
+        }
+    )
+    txt_cannot_request_ocr = _dispatch(
+        {
+            "invocation": _invocation(
+                "paper.prepare",
+                context=_context(
+                    source="sources/exact-material.txt",
+                    input="sources/exact-material.txt",
+                ),
+            ),
+            "model_output": _paper_prepare_output(
+                selected_input=None,
+                artifact_path=normalized,
+                usable=False,
+                disposition="ocr_required",
+            ),
+        }
+    )
+
+    assert prepared["result"]["kind"] == "receipt"
+    assert prepared["result"]["receipt"]["input_kind"] == "source_pdf"
+    assert ocr_required["result"]["kind"] == "receipt"
+    assert txt_cannot_request_ocr["result"]["kind"] == "incoherent_complete"
+
+
+def test_paper_prepare_generation_text_must_match_its_exact_key() -> None:
+    generation = _paper_ocr_generation()
+    context = _context(
+        source="sources/exact-material.pdf",
+        input=generation["paths"]["text"],
+        generationKey="b" * 64,
+    )
+    report = _dispatch(
+        {
+            "invocation": _invocation("paper.prepare", context=context),
+            "model_output": None,
+        }
+    )
+
+    assert report["agentCalls"] == 0
+    assert report["thrown"]["name"] == "InputContractError"
+
+
+def test_paper_ocr_owns_only_the_exact_generation_transaction() -> None:
+    generation = _paper_ocr_generation()
+    prepared = _prepare(
+        "paper.ocr",
+        context=_context(ocrGeneration=generation),
+    )
+    request = _prompt_request(prepared["prompt"])
+
+    assert prepared["stampedValues"]["generation_key"] == generation["generation_key"]
+    assert prepared["stampedValues"]["config_fingerprint"] == (
+        generation["config_fingerprint"]
+    )
+    assert prepared["stampedValues"]["source"] == generation["source"]
+    assert prepared["stampedValues"]["paths"] == generation["paths"]
+    assert request["capabilities"] == [
+        "quasi-extract ocr-generation --kind paper --slug 'exact-material' "
+        "--source-file 'sources/exact-material.pdf' "
+        f"--expected-source-sha256 '{generation['source']['sha256']}' "
+        f"--generation-key '{generation['generation_key']}' "
+        "--profile 'dsocr2-text' --json"
+    ]
+    progress_schema = prepared["options"]["schema"]["properties"]["progress"]
+    assert progress_schema["anyOf"][1]["properties"]["next_page"] == {
+        "type": ["integer", "null"],
+        "minimum": 1,
+    }
+    assert all("generic OCR" not in item for item in request["capabilities"])
+
+
+def test_paper_ocr_accepts_one_profile_range_and_rejects_extra_progress() -> None:
+    generation = _paper_ocr_generation(source_pages=40)
+    invocation = _invocation(
+        "paper.ocr",
+        context=_context(ocrGeneration=generation),
+    )
+    model_output = {
+        "state": "in_progress",
+        "progress": {
+            "completed_pages": 16,
+            "total_pages": 40,
+            "next_page": 17,
+            "ranges": [
+                {
+                    "start_page": 1,
+                    "end_page": 16,
+                    "engine": "dsocr2",
+                    "path": (
+                        f"{generation['paths']['work_dir']}/parts/"
+                        "part-000001-000016.dsocr2.pdf"
+                    ),
+                    "sha256": "f" * 64,
+                    "pages": 16,
+                }
+            ],
+        },
+        "artifacts": _paper_ocr_artifacts(generation, committed=False),
+        "failure": None,
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "disposition": "partial",
+        },
+    }
+    accepted = _dispatch(
+        {"invocation": invocation, "model_output": deepcopy(model_output)}
+    )
+    model_output["progress"]["completed_pages"] = 17
+    model_output["progress"]["next_page"] = 18
+    rejected = _dispatch({"invocation": invocation, "model_output": model_output})
+
+    assert accepted["result"]["kind"] == "receipt"
+    assert rejected["result"]["kind"] == "incoherent_complete"
+
+
+def test_paper_ocr_requires_committed_artifacts_for_publication() -> None:
+    generation = _paper_ocr_generation(source_pages=7)
+    invocation = _invocation(
+        "paper.ocr",
+        context=_context(ocrGeneration=generation),
+    )
+    model_output = {
+        "state": "committed",
+        "progress": None,
+        "artifacts": _paper_ocr_artifacts(generation, committed=True),
+        "failure": None,
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "disposition": "created",
+        },
+    }
+    accepted = _dispatch(
+        {"invocation": invocation, "model_output": deepcopy(model_output)}
+    )
+    completed_progress = deepcopy(model_output)
+    completed_progress["progress"] = {
+        "completed_pages": 7,
+        "total_pages": 7,
+        "next_page": None,
+        "ranges": [
+            {
+                "start_page": 1,
+                "end_page": 7,
+                "engine": "dsocr2",
+                "path": (
+                    f"{generation['paths']['work_dir']}/parts/"
+                    "part-000001-000007.dsocr2.pdf"
+                ),
+                "sha256": "f" * 64,
+                "pages": 7,
+            }
+        ],
+    }
+    progress_rejected = _dispatch(
+        {"invocation": invocation, "model_output": completed_progress}
+    )
+    model_output["artifacts"][1]["non_whitespace_chars"] = 0
+    artifact_rejected = _dispatch(
+        {"invocation": invocation, "model_output": model_output}
+    )
+
+    assert accepted["result"]["kind"] == "receipt"
+    assert progress_rejected["result"]["kind"] == "incoherent_complete"
+    assert artifact_rejected["result"]["kind"] == "incoherent_complete"
+
+
+def test_paper_ocr_rejects_non_current_generation_before_dispatch() -> None:
+    generation = _paper_ocr_generation(state="committed")
+    report = _dispatch(
+        {
+            "invocation": _invocation(
+                "paper.ocr",
+                context=_context(ocrGeneration=generation),
+            ),
+            "model_output": None,
+        }
+    )
+
+    assert report["agentCalls"] == 0
+    assert report["thrown"]["name"] == "InputContractError"
+
+
 def test_only_operations_with_typed_gates_expose_needs_input() -> None:
     actual = set()
     for operation, definition in _registered_operations().items():
@@ -1335,6 +1847,7 @@ def test_only_operations_with_typed_gates_expose_needs_input() -> None:
             overrides["context"] = _context(
                 format="pdf",
                 source="sources/exact-material.pdf",
+                input="sources/exact-material.pdf",
             )
         if "needs_input" in _terminal_statuses(_prepare(operation, **overrides)):
             actual.add(operation)
@@ -1369,8 +1882,21 @@ def test_every_writer_has_normalized_project_relative_targets():
 def test_prepare_rows_expose_only_paths_they_can_publish():
     assert _prepare("paper.prepare")["writeTargets"] == [
         {"scope": "exact", "path": "processing/papers/exact-material/source.txt"},
-        {"scope": "exact", "path": "processing/papers/exact-material/ocr.pdf"},
-        {"scope": "exact", "path": "processing/papers/exact-material/ocr.txt"},
+    ]
+    generation = _paper_ocr_generation()["generation_key"]
+    assert _prepare("paper.ocr")["writeTargets"] == [
+        {
+            "scope": "exact",
+            "path": "processing/papers/exact-material/.ocr-generation.lock",
+        },
+        {
+            "scope": "subtree",
+            "path": f"processing/papers/exact-material/.ocr-work/{generation}",
+        },
+        {
+            "scope": "subtree",
+            "path": f"processing/papers/exact-material/ocr-generations/{generation}",
+        },
     ]
     assert _prepare("book.prepare")["writeTargets"] == [
         {"scope": "subtree", "path": "processing/chapters/exact-material"}
@@ -2013,6 +2539,7 @@ def test_pdf_book_structure_gate_uses_direct_manual_split_specs() -> None:
         context=_context(
             format="pdf",
             source="sources/exact-material.pdf",
+            input="sources/exact-material.pdf",
         ),
     )
     terminal = prepared["options"]["schema"]["properties"]["terminal"]
@@ -2040,7 +2567,11 @@ def test_pdf_book_structure_gate_uses_direct_manual_split_specs() -> None:
 def test_book_prepare_artifact_schema_requires_project_relative_paths() -> None:
     prepared = _prepare(
         "book.prepare",
-        context=_context(format="pdf", source="sources/exact-material.pdf"),
+        context=_context(
+            format="pdf",
+            source="sources/exact-material.pdf",
+            input="sources/exact-material.pdf",
+        ),
     )
     path_schema = prepared["options"]["schema"]["properties"]["artifacts"][
         "items"
@@ -2060,7 +2591,11 @@ def test_book_prepare_artifact_schema_requires_project_relative_paths() -> None:
 def test_book_prepare_split_capabilities_bind_exact_pdf_inputs() -> None:
     prepared = _prepare(
         "book.prepare",
-        context=_context(format="pdf", source="sources/exact-material.pdf"),
+        context=_context(
+            format="pdf",
+            source="sources/exact-material.pdf",
+            input="sources/exact-material.pdf",
+        ),
     )
     request = _prompt_request(prepared["prompt"])
     split = [
@@ -2069,30 +2604,35 @@ def test_book_prepare_split_capabilities_bind_exact_pdf_inputs() -> None:
         if capability.startswith("quasi-extract split ")
     ]
     source_prefix = "quasi-extract split 'sources/exact-material.pdf' "
-    recovery_prefix = (
-        "quasi-extract split "
-        "'processing/chapters/exact-material/ocr.pdf' "
-    )
-
     assert split
     assert any(capability.startswith(source_prefix) for capability in split)
-    assert any(capability.startswith(recovery_prefix) for capability in split)
-    assert all(
-        capability.startswith((source_prefix, recovery_prefix))
-        for capability in split
-    )
+    assert all(capability.startswith(source_prefix) for capability in split)
     assert all("source.txt" not in capability for capability in split)
     assert all("ocr.txt" not in capability for capability in split)
 
 
-def test_book_prepare_exposes_exact_resumable_ocr_progress_contract() -> None:
+def test_book_prepare_exposes_fixed_ocr_only_for_released_legacy_progress() -> None:
+    legacy = {
+        "path": "processing/chapters/exact-material/ocr.progress.json",
+        "present": True,
+        "usable": True,
+        "source_sha256": "a" * 64,
+        "total_pages": 100,
+        "completed_pages": 16,
+        "next_page": 17,
+    }
     prepared = _prepare(
         "book.prepare",
-        context=_context(format="pdf", source="sources/exact-material.pdf"),
+        context=_context(
+            format="pdf",
+            source="sources/exact-material.pdf",
+            input="sources/exact-material.pdf",
+            legacyOcr=legacy,
+        ),
     )
     request = _prompt_request(prepared["prompt"])
 
-    assert request["refs"]["ocr_progress"] == (
+    assert request["refs"]["legacy_ocr_progress"] == (
         "processing/chapters/exact-material/ocr.progress.json"
     )
     assert (
@@ -2101,6 +2641,23 @@ def test_book_prepare_exposes_exact_resumable_ocr_progress_contract() -> None:
         "'processing/chapters/exact-material/ocr.progress.json' --chunk-pages 8 "
         "--no-clobber --json"
     ) in request["capabilities"]
+
+
+def test_book_ocr_uses_the_same_generation_contract_with_book_paths() -> None:
+    generation = _book_ocr_generation()
+    prepared = _prepare(
+        "book.ocr",
+        context=_context(ocrGeneration=generation),
+    )
+    request = _prompt_request(prepared["prompt"])
+
+    assert request["generation"]["profile"]["chunk_pages"] == 16
+    assert request["refs"]["lock"] == (
+        "processing/chapters/exact-material/.ocr-generation.lock"
+    )
+    assert request["capabilities"][0].startswith(
+        "quasi-extract ocr-generation --kind book "
+    )
 
 
 def test_translation_gate_is_required_only_inside_needs_input_terminal() -> None:

@@ -1521,11 +1521,30 @@ export const OPERATION_CATALOG = {
     "effect": "writer",
     "agent": "quasi:extract-agent",
     "artifacts": {
+      "input": "{input}",
       "sourcePdf": "sources/{slug}.pdf",
       "sourceText": "sources/{slug}.txt",
       "normalized": "processing/papers/{slug}/source.txt",
-      "recoverySource": "processing/papers/{slug}/ocr.pdf",
-      "recoveryText": "processing/papers/{slug}/ocr.txt"
+      "legacyRecoverySource": "processing/papers/{slug}/ocr.pdf",
+      "legacyRecoveryText": "processing/papers/{slug}/ocr.txt"
+    }
+  },
+  "paper.ocr": {
+    "kinds": [
+      "paper"
+    ],
+    "phase": "Prepare",
+    "effect": "writer",
+    "agent": "quasi:extract-agent",
+    "artifacts": {
+      "source": "sources/{slug}.pdf",
+      "lock": "processing/papers/{slug}/.ocr-generation.lock",
+      "workDir": "processing/papers/{slug}/.ocr-work/{generationKey}",
+      "progress": "processing/papers/{slug}/.ocr-work/{generationKey}/ocr.progress.json",
+      "generationDir": "processing/papers/{slug}/ocr-generations/{generationKey}",
+      "recoveryPdf": "processing/papers/{slug}/ocr-generations/{generationKey}/ocr.pdf",
+      "recoveryText": "processing/papers/{slug}/ocr-generations/{generationKey}/ocr.txt",
+      "manifest": "processing/papers/{slug}/ocr-generations/{generationKey}/manifest.json"
     }
   },
   "paper.analyse": {
@@ -1567,6 +1586,7 @@ export const OPERATION_CATALOG = {
     "effect": "writer",
     "agent": "quasi:extract-agent",
     "artifacts": {
+      "input": "{input}",
       "source": "sources/{slug}.{format}",
       "normalized": "processing/chapters/{slug}/source.txt",
       "recoverySource": "processing/chapters/{slug}/ocr.pdf",
@@ -1574,6 +1594,24 @@ export const OPERATION_CATALOG = {
       "recoveryText": "processing/chapters/{slug}/ocr.txt",
       "outputDir": "processing/chapters/{slug}",
       "manifest": "processing/chapters/{slug}/manifest.json"
+    }
+  },
+  "book.ocr": {
+    "kinds": [
+      "book"
+    ],
+    "phase": "Prepare",
+    "effect": "writer",
+    "agent": "quasi:extract-agent",
+    "artifacts": {
+      "source": "sources/{slug}.pdf",
+      "lock": "processing/chapters/{slug}/.ocr-generation.lock",
+      "workDir": "processing/chapters/{slug}/.ocr-work/{generationKey}",
+      "progress": "processing/chapters/{slug}/.ocr-work/{generationKey}/ocr.progress.json",
+      "generationDir": "processing/chapters/{slug}/ocr-generations/{generationKey}",
+      "recoveryPdf": "processing/chapters/{slug}/ocr-generations/{generationKey}/ocr.pdf",
+      "recoveryText": "processing/chapters/{slug}/ocr-generations/{generationKey}/ocr.txt",
+      "manifest": "processing/chapters/{slug}/ocr-generations/{generationKey}/manifest.json"
     }
   },
   "chapter.analyse": {
