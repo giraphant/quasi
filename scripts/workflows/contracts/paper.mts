@@ -23,6 +23,8 @@ import {
   type MaterialResult,
 } from "../shared/material-result.mts";
 
+const SHA256 = /^[0-9a-f]{64}$/;
+
 export interface PaperIdentity {
   slug: string;
   title: string;
@@ -45,14 +47,52 @@ export interface PaperIntake {
   url?: string;
 }
 
-export type PaperSeed = LeafSeed<PaperIntake, PaperIdentity>;
+export interface PaperOwnerConfirmation {
+  operation: "material.search";
+  identity_slug: string;
+  owner_slug: string;
+}
+
+export interface PaperSourceCandidate {
+  format: "pdf" | "txt";
+  path: string;
+  sha256: string;
+  size: number;
+}
+
+export interface PaperSourceDecisionValue {
+  candidates_fingerprint: string;
+  source_path: string;
+}
+
+export interface PaperSourceGate {
+  kind: "paper_source";
+  operation: "paper.prepare";
+  material_key: string;
+  question: string;
+  candidates: PaperSourceCandidate[];
+  candidates_fingerprint: string;
+}
+
+type BasePaperSeed = LeafSeed<PaperIntake, PaperIdentity>;
+
+export type PaperSeed =
+  | BasePaperSeed
+  | {
+      state: "canonical";
+      material_slug: string;
+      identity: PaperIdentity;
+      owner_confirmation: PaperOwnerConfirmation;
+    };
 
 export interface PaperStatusFacts {
   kind: "paper";
   sources: Array<{
     format: "pdf" | "txt";
     artifact: ArtifactObservation;
+    candidate: PaperSourceCandidate | null;
   }>;
+  source_candidates_fingerprint: string;
   prepared: ArtifactObservation[];
   canonical: ArtifactObservation;
 }
@@ -142,6 +182,21 @@ const parsePaperIntake = (value: unknown): PaperIntake | null => {
   return value as PaperIntake;
 };
 
+const parsePaperOwnerConfirmation = (
+  value: unknown,
+): PaperOwnerConfirmation | null => {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ["operation", "identity_slug", "owner_slug"]) ||
+    value.operation !== "material.search" ||
+    !validMaterialSlug(value.identity_slug) ||
+    !validMaterialSlug(value.owner_slug) ||
+    value.identity_slug === value.owner_slug
+  )
+    return null;
+  return value as unknown as PaperOwnerConfirmation;
+};
+
 export const parsePaperSeed = (value: unknown): PaperSeed | null => {
   if (!isRecord(value)) return null;
   if (
@@ -156,15 +211,72 @@ export const parsePaperSeed = (value: unknown): PaperSeed | null => {
   }
   if (
     value.state === "canonical" &&
-    exactKeys(value, ["state", "material_slug", "identity"]) &&
+    exactKeys(
+      value,
+      ["state", "material_slug", "identity"],
+      ["owner_confirmation"],
+    ) &&
     validMaterialSlug(value.material_slug)
   ) {
     const identity = parsePaperIdentity(value.identity);
-    return identity === null
-      ? null
-      : { state: "canonical", material_slug: value.material_slug, identity };
+    if (identity === null) return null;
+    if (!Object.hasOwn(value, "owner_confirmation"))
+      return { state: "canonical", material_slug: value.material_slug, identity };
+    const ownerConfirmation = parsePaperOwnerConfirmation(
+      value.owner_confirmation,
+    );
+    if (
+      ownerConfirmation === null ||
+      ownerConfirmation.identity_slug !== identity.slug ||
+      ownerConfirmation.owner_slug !== value.material_slug
+    )
+      return null;
+    return {
+      state: "canonical",
+      material_slug: value.material_slug,
+      identity,
+      owner_confirmation: ownerConfirmation,
+    };
   }
   return null;
+};
+
+export const validSelectablePaperSource = (
+  path: string,
+  slug: string,
+): boolean =>
+  [`sources/${slug}.pdf`, `sources/${slug}.txt`].includes(path);
+
+export const parsePaperSourceCandidate = (
+  value: unknown,
+): PaperSourceCandidate | null => {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ["format", "path", "sha256", "size"]) ||
+    !["pdf", "txt"].includes(value.format as string) ||
+    typeof value.path !== "string" ||
+    typeof value.sha256 !== "string" ||
+    !SHA256.test(value.sha256) ||
+    !Number.isInteger(value.size) ||
+    (value.size as number) < 1
+  )
+    return null;
+  return value as unknown as PaperSourceCandidate;
+};
+
+export const parsePaperSourceDecisionValue = (
+  value: unknown,
+): PaperSourceDecisionValue | null => {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ["candidates_fingerprint", "source_path"]) ||
+    typeof value.candidates_fingerprint !== "string" ||
+    !SHA256.test(value.candidates_fingerprint) ||
+    typeof value.source_path !== "string" ||
+    value.source_path.length === 0
+  )
+    return null;
+  return value as unknown as PaperSourceDecisionValue;
 };
 
 export const parsePaperStatusObservation = (
@@ -183,18 +295,34 @@ export const parsePaperStatusObservation = (
     { format: "txt", path: `sources/${slug}.txt` },
   ];
   if (
-    !exactKeys(facts, ["kind", "sources", "prepared", "canonical"]) ||
+    !exactKeys(facts, [
+      "kind",
+      "sources",
+      "source_candidates_fingerprint",
+      "prepared",
+      "canonical",
+    ]) ||
     facts.kind !== "paper" ||
+    typeof facts.source_candidates_fingerprint !== "string" ||
+    !SHA256.test(facts.source_candidates_fingerprint) ||
     !Array.isArray(facts.sources) ||
     facts.sources.length !== expectedSources.length ||
-    !facts.sources.every(
-      (item, index) =>
-        isRecord(item) &&
-        exactKeys(item, ["format", "artifact"]) &&
-        item.format === expectedSources[index]!.format &&
-        isArtifactObservation(item.artifact) &&
-        item.artifact.path === expectedSources[index]!.path,
-    ) ||
+    !facts.sources.every((item, index) => {
+      if (
+        !isRecord(item) ||
+        !exactKeys(item, ["format", "artifact", "candidate"]) ||
+        item.format !== expectedSources[index]!.format ||
+        !isArtifactObservation(item.artifact) ||
+        item.artifact.path !== expectedSources[index]!.path
+      )
+        return false;
+      const candidate = parsePaperSourceCandidate(item.candidate);
+      return item.artifact.usable
+        ? candidate !== null &&
+            candidate.format === item.format &&
+            candidate.path === item.artifact.path
+        : item.candidate === null;
+    }) ||
     !isArtifactList(facts.prepared) ||
     facts.prepared.length !== expectedPrepared.length ||
     !facts.prepared.every(
@@ -226,6 +354,26 @@ export const paperObservationAdmitsIdentity = (
   );
 };
 
+const validPaperDiskIdentity = (value: unknown): boolean =>
+  isRecord(value) &&
+  validString(value.title, 1, 500) &&
+  validAuthors(value.authors) &&
+  Number.isInteger(value.year) &&
+  (value.year as number) >= 1500 &&
+  (value.year as number) <= 2030;
+
+export const paperObservationAdmitsOwnerContinuation = (
+  observation: PaperStatusObservation,
+  seed: Extract<PaperSeed, { owner_confirmation: PaperOwnerConfirmation }>,
+): boolean =>
+  seed.material_slug === seed.owner_confirmation.owner_slug &&
+  seed.identity.slug === seed.owner_confirmation.identity_slug &&
+  seed.material_slug !== seed.identity.slug &&
+  observation.slug === seed.material_slug &&
+  observation.facts.canonical.present &&
+  observation.facts.canonical.usable &&
+  validPaperDiskIdentity(observation.identity);
+
 export const parsePaperRunInput = (
   raw: unknown,
 ): PaperRunInputResult => {
@@ -253,12 +401,18 @@ export const parsePaperRunInput = (
     observations?.get(
       observationKey({ kind: "paper", slug: materialSlug }),
     ) ?? null;
+  const ownerSeed =
+    seed.state === "canonical" && "owner_confirmation" in seed
+      ? seed
+      : null;
   if (
     observations === null ||
     (seed.state === "canonical" &&
       seed.material_slug !== seed.identity.slug &&
       (bound === null ||
-        !paperObservationAdmitsIdentity(bound, seed.identity)))
+        (!paperObservationAdmitsIdentity(bound, seed.identity) &&
+          (ownerSeed === null ||
+            !paperObservationAdmitsOwnerContinuation(bound, ownerSeed)))))
   )
     return invalid();
   return {

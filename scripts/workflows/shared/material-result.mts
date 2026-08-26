@@ -5,7 +5,10 @@ import type {
   ObservationRoute,
 } from "./material-input.mts";
 import type { IdentityConflictGate } from "../contracts/search.mts";
-import type { PaperSeed } from "../contracts/paper.mts";
+import type {
+  PaperSeed,
+  PaperSourceGate,
+} from "../contracts/paper.mts";
 import type {
   BookIdentity,
   BookSeed,
@@ -84,6 +87,7 @@ export interface MaterialIssue {
 
 export type LeafGate =
   | IdentityConflictGate
+  | PaperSourceGate
   | BookYearGate
   | BookStructureGate
   | TranslationSourceGate

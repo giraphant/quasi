@@ -154,6 +154,35 @@ themes: [chimerism, feminist technoscience]""",
     assert "themes:\n- chimerism\n- feminist technoscience" in updated
 
 
+def test_audit_second_invocation_is_mutation_free_and_byte_stable(tmp_path: Path):
+    project = tmp_path / "project"
+    paper = project / "vault" / "papers" / "stable-paper-2020.md"
+    write_paper(
+        paper,
+        """type: paper
+title: Stable Paper
+authors: [Aryn Martin]
+year: 2020
+journal: Endeavour
+themes: [audit stability]""",
+    )
+
+    first = run_audit(project, "--path", str(paper))
+
+    assert first.returncode == 0, first.stderr
+    first_payload = json.loads(first.stdout)
+    assert first_payload["summary"]["files_modified"] == 1
+    settled_bytes = paper.read_bytes()
+
+    second = run_audit(project, "--path", str(paper))
+
+    assert second.returncode == 0, second.stderr
+    second_payload = json.loads(second.stdout)
+    assert second_payload["status"] == "clean"
+    assert second_payload["summary"]["files_modified"] == 0
+    assert paper.read_bytes() == settled_bytes
+
+
 def test_audit_quote_style_fixes_body_and_skips_frontmatter_code_and_links(tmp_path: Path):
     project = tmp_path / "project"
     paper = project / "vault" / "papers" / "quote-test-2020.md"

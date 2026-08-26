@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.29** (2026-08-26): **Paper 恢复以持久来源事实与稳定 Audit 收敛，组合流程保留来源选择 gate。**
+  - Paper fresh status 现在把 PDF/TXT 记录为带格式、路径、摘要和大小的有序候选集合；两种来源同时可用时不再机械失败，而是返回绑定候选 fingerprint 的 `paper_source` gate。选择只对当前 exact inventory 生效，来源漂移会重新询问，Author 与 Topic 会原样提升该 child gate，而不会误报 `workflow.incoherent_gate`。
+  - `material.search` 已明确确认既有 owner 时，canonical 页面中的本地化标题、作者表示等差异不再让 Paper continuation 丢失 owner testimony；普通未确认 route 仍需 fresh disk identity，且 route 或 owner 状态变化继续先请求观察。
+  - Paper Audit 只有在 clean 结果未再修改 canonical 时才完成；clean-but-mutated 会自动复审一次，第二次仍修改则以 `workflow.audit_unstable` 停止。Audit receipt 的 mutation testimony 只描述最终一次 `quasi-audit` 调用，避免累计路径制造假不稳定。
+
 - **0.65.28** (2026-08-25): **Paper source validation now belongs to the atomic publication boundary.**
   - Internal and public callers now share the same staged validation before `os.replace`: Paper PDF must be structurally readable and Paper text must be non-empty strict UTF-8. A damaged candidate cannot bypass validation by calling the lower-level accept helper, and an existing canonical source remains untouched when validation fails.
   - The Paper fetch wall budget now has a real signal-interruption regression: once the deadline fires, later provider work is not executed. This closes the final verification gap left by 0.65.27 without changing its 480-second default or typed `budget_exhausted` contract.

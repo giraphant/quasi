@@ -26,7 +26,9 @@ from scripts.schemas.topic import TopicSchema  # noqa: E402
 from scripts.schemas.webpage import WebpageSchema  # noqa: E402
 from scripts.translate.translate_commit import (  # noqa: E402
     TranslateContractError,
+    fingerprint,
     output_paths,
+    sha256_file,
     validate_language,
 )
 from scripts.webpage.webarchive import (  # noqa: E402
@@ -337,6 +339,46 @@ def status_payload(
     }
 
 
+def paper_source_fact(
+    root: Path,
+    format_name: str,
+    path: Path,
+) -> dict[str, Any]:
+    """Observe and fingerprint one exact regular Paper source candidate."""
+
+    artifact = artifact_observation(root, path)
+    candidate = None
+    if artifact["usable"]:
+        try:
+            before = path.lstat()
+            if not stat.S_ISREG(before.st_mode) or before.st_size <= 0:
+                raise OSError("Paper source is not one non-empty regular file")
+            digest = sha256_file(path)
+            after = path.lstat()
+            stable = (
+                stat.S_ISREG(after.st_mode)
+                and before.st_dev == after.st_dev
+                and before.st_ino == after.st_ino
+                and before.st_size == after.st_size
+                and before.st_mtime_ns == after.st_mtime_ns
+            )
+            if not stable:
+                raise OSError("Paper source changed while it was fingerprinted")
+            candidate = {
+                "format": format_name,
+                "path": artifact["path"],
+                "sha256": digest,
+                "size": before.st_size,
+            }
+        except OSError:
+            artifact["usable"] = False
+    return {
+        "format": format_name,
+        "artifact": artifact,
+        "candidate": candidate,
+    }
+
+
 def paper_status(root: Path, slug: str) -> dict[str, Any]:
     sources = [
         (
@@ -354,19 +396,23 @@ def paper_status(root: Path, slug: str) -> dict[str, Any]:
     ]
     canonical = artifact_path(root, "paper.analyse", "output", slug=slug)
     canonical_fact, frontmatter = canonical_observation(root, canonical)
+    source_facts = [
+        paper_source_fact(root, format_name, path)
+        for format_name, path in sources
+    ]
+    candidates = [
+        source["candidate"]
+        for source in source_facts
+        if source["candidate"] is not None
+    ]
     return status_payload(
         "paper",
         slug,
         frontmatter_identity(frontmatter) if canonical_fact["usable"] else None,
         {
             "kind": "paper",
-            "sources": [
-                {
-                    "format": format_name,
-                    "artifact": artifact_observation(root, path),
-                }
-                for format_name, path in sources
-            ],
+            "sources": source_facts,
+            "source_candidates_fingerprint": fingerprint(candidates),
             "prepared": [artifact_observation(root, path) for path in prepared],
             "canonical": canonical_fact,
         },

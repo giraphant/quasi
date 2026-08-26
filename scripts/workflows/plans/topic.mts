@@ -601,7 +601,7 @@ const processLeafContinuation = async (
   if (result.terminal === "needs_input") {
     if (
       !("resume_seed" in result) ||
-      !["identity_conflict", "book_year", "book_structure"].includes(result.gate.kind) ||
+      !["identity_conflict", "book_year", "book_structure", "paper_source"].includes(result.gate.kind) ||
       !sameClosedValue(result.resume_seed, outcome.leaf)
     )
       return { result: blockedMaterialResult(

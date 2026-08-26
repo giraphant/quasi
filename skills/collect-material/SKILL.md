@@ -183,7 +183,8 @@ workflow_input = {
 逐字复制后重新调用同一 named Workflow。direct leaf resume 从
 `resume_seed.{seed,options}` 和一条 fresh route observation 重建其普通 closed input；Author
 保持 `{observation, resume_seed, child_observations}` 的 composed input，并保持 route 绑定和顺序。
-Skill 不展开或修改 opaque seed，也不解释 membership。
+Skill 不展开或修改 opaque seed，也不解释 membership；尤其不得自行构造、删除或改写 Paper
+Search 写入的 `owner_confirmation`。
 
 ## 工作流
 
@@ -253,14 +254,17 @@ user_decision = {
 workflow_input["userDecision"] = user_decision
 ```
 
-6. 恢复 `identity_conflict|book_year|book_structure|translation_source` 时，`UserDecision` 的
-   `material_key` 与 `operation` 必须逐字复制 gate。用户只提供选择或 action；Skill 把 gate
-   testimony 原样带回 owner parser 要求的完整 value：
+6. 恢复 `identity_conflict|paper_source|book_year|book_structure|translation_source` 时，
+   `UserDecision` 的 `material_key` 与 `operation` 必须逐字复制 gate。用户只提供选择或 action；
+   Skill 把 gate testimony 原样带回 owner parser 要求的完整 value：
    - identity：`candidates + conflicts + selected_candidate`；
+   - Paper source：`candidates_fingerprint + source_path`；
    - Book year：`current_identity + tmp_path + year_evidence + action`；
    - Book structure：`source_path + candidates + conflicts + selected_candidate`；
    - Translation source：`candidates_fingerprint + source_path`。
-   不从 canonical identity、route 或 diagnostics 推导 binding，也不在 Skill 硬编码 action token。
+   Paper source 只能选择 gate 当前列出的 exact `sources/{slug}.pdf|txt` 路径；不得按扩展名、mtime、
+   大小或自行重算的 fingerprint 替用户选择。不从 canonical identity、route 或 diagnostics 推导
+   binding，也不在 Skill 硬编码 action token。
 7. `translation_configuration` 没有 acknowledgement decision。展示缺少的 Configure 字段；
    配置改变后按返回的 `resume_seed` 与 fresh target-aware status 重新调用，不添加
    `userDecision`。如果它发生在一次 source selection 之后，Workflow 已把选中的 exact source

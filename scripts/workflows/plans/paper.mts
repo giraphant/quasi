@@ -1,7 +1,12 @@
 import {
   paperObservationAdmitsIdentity,
+  paperObservationAdmitsOwnerContinuation,
+  parsePaperSourceDecisionValue,
   type PaperIdentity,
+  type PaperOwnerConfirmation,
   type PaperRunInput,
+  type PaperSourceCandidate,
+  type PaperSourceGate,
   type PaperStatusObservation,
 } from "../contracts/paper.mts";
 import {
@@ -41,6 +46,7 @@ interface PaperState {
   requestedSlug: string;
   runtimeSlug: string | null;
   identity: PaperIdentity | null;
+  ownerConfirmation: PaperOwnerConfirmation | null;
   observation: PaperStatusObservation | null;
 }
 
@@ -60,11 +66,18 @@ const resumeSeed = (
 ): Extract<ComposedLeafResumeSeed, { route: { kind: "paper" } }> => {
   const seed =
     state.runtimeSlug !== null && state.identity !== null
-      ? {
-          state: "canonical" as const,
-          material_slug: state.runtimeSlug,
-          identity: state.identity,
-        }
+      ? state.ownerConfirmation === null
+        ? {
+            state: "canonical" as const,
+            material_slug: state.runtimeSlug,
+            identity: state.identity,
+          }
+        : {
+            state: "canonical" as const,
+            material_slug: state.runtimeSlug,
+            identity: state.identity,
+            owner_confirmation: state.ownerConfirmation,
+          }
       : input.seed;
   return {
     route: {
@@ -166,6 +179,42 @@ const completedPaper = (
     null,
   );
 
+const auditIsClean = (receipt: StageReceipt): boolean =>
+  receipt.remaining_violations === 0 && receipt.escalated.length === 0;
+
+const auditIsSettled = (receipt: StageReceipt): boolean =>
+  auditIsClean(receipt) && receipt.mutated_paths.length === 0;
+
+const auditOwnsTarget = (
+  receipt: StageReceipt,
+  target: string,
+): boolean =>
+  receipt.target_path === target &&
+  receipt.escalated.every(
+    (diagnostic: { path: string }) => diagnostic.path === target,
+  ) &&
+  receipt.mutated_paths.every((path: string) => path === target);
+
+const auditOwnershipBlock = (state: PaperState): MaterialResult =>
+  blockedMaterialResult(
+    resultSeed(state),
+    planIssue(
+      "workflow.owner_ambiguity",
+      "paper.audit",
+      "Audit evidence targeted an artifact outside this Paper.",
+    ),
+  );
+
+const auditUnstableBlock = (state: PaperState): MaterialResult =>
+  blockedMaterialResult(
+    resultSeed(state),
+    planIssue(
+      "workflow.audit_unstable",
+      "paper.audit",
+      "The final Paper audit was not stable and mutation-free.",
+    ),
+  );
+
 const auditPaper = async (
   runtime: MaterialRuntime,
   input: PaperRunInput,
@@ -188,21 +237,25 @@ const auditPaper = async (
 
   const firstReceipt = firstAudit.receipt as StageReceipt;
   const target = firstReceipt.target_path as string;
-  if (firstReceipt.remaining_violations === 0)
+  if (!auditOwnsTarget(firstReceipt, target))
+    return auditOwnershipBlock(state);
+  if (auditIsSettled(firstReceipt))
     return completedPaper(state, sourcePath, selectedInput, target);
-  if (
-    firstReceipt.escalated.some(
-      (diagnostic: { path: string }) => diagnostic.path !== target,
-    )
-  )
-    return blockedMaterialResult(
-      resultSeed(state),
-      planIssue(
-        "workflow.owner_ambiguity",
-        "paper.audit",
-        "Audit escalation targeted an artifact outside this Paper.",
-      ),
-    );
+
+  if (auditIsClean(firstReceipt)) {
+    const stabilityAudit = await dispatch(runtime, "paper.audit", slug, {
+      ...common,
+      pass: 2,
+    });
+    const stabilityStop = stopForOutcome(state, stabilityAudit);
+    if (stabilityStop !== null) return stabilityStop;
+    const stabilityReceipt = stabilityAudit.receipt as StageReceipt;
+    if (!auditOwnsTarget(stabilityReceipt, target))
+      return auditOwnershipBlock(state);
+    return auditIsSettled(stabilityReceipt)
+      ? completedPaper(state, sourcePath, selectedInput, target)
+      : auditUnstableBlock(state);
+  }
 
   const repaired = await dispatch(runtime, "paper.analyse", slug, {
     ...common,
@@ -220,26 +273,11 @@ const auditPaper = async (
   const secondStop = stopForOutcome(state, secondAudit);
   if (secondStop !== null) return secondStop;
   const secondReceipt = secondAudit.receipt as StageReceipt;
-  if (
-    secondReceipt.escalated.some(
-      (diagnostic: { path: string }) => diagnostic.path !== target,
-    )
-  )
-    return blockedMaterialResult(
-      resultSeed(state),
-      planIssue(
-        "workflow.owner_ambiguity",
-        "paper.audit",
-        "Audit escalation targeted an artifact outside this Paper.",
-      ),
-    );
-  if (secondReceipt.remaining_violations === 0)
-    return completedPaper(
-      state,
-      sourcePath,
-      selectedInput,
-      secondReceipt.target_path as string,
-    );
+  if (!auditOwnsTarget(secondReceipt, target))
+    return auditOwnershipBlock(state);
+  if (auditIsSettled(secondReceipt))
+    return completedPaper(state, sourcePath, selectedInput, target);
+  if (auditIsClean(secondReceipt)) return auditUnstableBlock(state);
   return blockedMaterialResult(
     resultSeed(state),
     planIssue(
@@ -273,17 +311,27 @@ async function runPaperPlanResult(
       input.seed.state === "canonical" ? input.seed.material_slug : null,
     identity:
       input.seed.state === "canonical" ? input.seed.identity : null,
+    ownerConfirmation:
+      input.seed.state === "canonical" &&
+      "owner_confirmation" in input.seed
+        ? input.seed.owner_confirmation
+        : null,
     observation: initialObservation,
   };
   rememberContinuation(resumeSeed(input, state));
-  let canonicalReady = false;
 
   const admittedCanonical =
     input.seed.state === "canonical" &&
-    paperObservationAdmitsIdentity(
+    (paperObservationAdmitsIdentity(
       initialObservation,
       input.seed.identity,
-    );
+    ) ||
+      ("owner_confirmation" in input.seed &&
+        paperObservationAdmitsOwnerContinuation(
+          initialObservation,
+          input.seed,
+        )));
+  let canonicalReady = admittedCanonical;
 
   if (!admittedCanonical) {
     const searchKey = `paper:${requestedSlug}`;
@@ -413,6 +461,14 @@ async function runPaperPlanResult(
         ? state.identity.slug
         : search.owner_slug;
     state.runtimeSlug = runtimeSlug;
+    state.ownerConfirmation =
+      search.owner_slug !== null && search.owner_slug !== state.identity.slug
+        ? {
+            operation: "material.search",
+            identity_slug: state.identity.slug,
+            owner_slug: search.owner_slug,
+          }
+        : null;
     state.observation =
       input.observations.get(
         observationKey({ kind: "paper", slug: runtimeSlug }),
@@ -449,19 +505,65 @@ async function runPaperPlanResult(
     meta: state.identity,
     materialKey: `paper:${slug}`,
   };
-  const usableSources = (state.observation?.facts.sources ?? [])
-    .filter(({ artifact }) => artifact.usable)
-    .map(({ artifact }) => artifact.path);
-  if (usableSources.length > 1)
-    return blockedMaterialResult(
-      resultSeed(state),
-      planIssue(
-        "paper.source_conflict",
-        null,
-        "Both canonical Paper source alternatives are usable; exact ownership is ambiguous.",
-      ),
-    );
+  const usableSourceFacts = (state.observation?.facts.sources ?? [])
+    .filter(({ artifact }) => artifact.usable);
+  const usableSources = usableSourceFacts.map(({ artifact }) => artifact.path);
   let sourcePath = usableSources[0] ?? null;
+  if (usableSourceFacts.length > 1) {
+    const materialKey = `paper:${slug}`;
+    const candidates = usableSourceFacts.map(
+      ({ candidate }) => candidate as PaperSourceCandidate,
+    );
+    const candidatesFingerprint = state.observation!
+      .facts.source_candidates_fingerprint;
+    const gate: PaperSourceGate = {
+      kind: "paper_source",
+      operation: "paper.prepare",
+      material_key: materialKey,
+      question: "Which exact Paper source should Prepare use?",
+      candidates,
+      candidates_fingerprint: candidatesFingerprint,
+    };
+    const matchingDecision =
+      input.userDecision?.material_key === materialKey &&
+      input.userDecision.operation === "paper.prepare";
+    const rawDecision = decisionForOperation(
+      input.userDecision,
+      materialKey,
+      "paper.prepare",
+      false,
+    );
+    const sourceDecision = matchingDecision
+      ? parsePaperSourceDecisionValue(rawDecision)
+      : null;
+    if (matchingDecision && sourceDecision === null)
+      return blockedMaterialResult(
+        resultSeed(state),
+        planIssue(
+          "workflow.incoherent_gate",
+          "paper.prepare",
+          "The Paper source decision does not bind one candidate fingerprint and source path.",
+        ),
+      );
+    const selectedCandidate =
+      sourceDecision?.candidates_fingerprint === candidatesFingerprint
+        ? candidates.find(
+            (candidate) => candidate.path === sourceDecision.source_path,
+          ) ?? null
+        : null;
+    if (selectedCandidate === null)
+      return needsInputMaterialResult(
+        resultSeed(state),
+        planIssue(
+          "paper.source_selection_required",
+          "paper.prepare",
+          "Two exact Paper source alternatives are usable and require one bound selection.",
+        ),
+        gate,
+        resumeSeed(input, state),
+      );
+    sourcePath = selectedCandidate.path;
+  }
   if (sourcePath === null) {
     const acquired = await dispatch(runtime, "paper.acquire", slug, common);
     const acquireStop = stopForOutcome(state, acquired);

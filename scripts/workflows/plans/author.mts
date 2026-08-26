@@ -384,6 +384,7 @@ const composeChildren = async (
             "identity_conflict",
             "book_year",
             "book_structure",
+            "paper_source",
           ].includes(result.gate.kind)
         )
           return blockedMaterialResult(

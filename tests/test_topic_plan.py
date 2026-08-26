@@ -688,6 +688,34 @@ def test_topic_zero_bound_gates_provisional_seed_but_runs_canonical_book() -> No
     assert canonical["result"]["gate"]["gate"]["kind"] == "book_structure"
 
 
+def test_topic_lifts_paper_source_gate_for_canonical_seed() -> None:
+    route = {"kind": "paper", "slug": "exact-paper"}
+    observation = paper_observation(
+        "exact-paper",
+        source=True,
+        text_source=True,
+        admitted=True,
+    )
+
+    report = run_topic(
+        topic_input(
+            max_rounds=0,
+            seeds=[paper_seed(provisional=False)],
+            children=[(route, observation)],
+        ),
+        [recall_complete(), search_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "topic.recall",
+        "material.search",
+    ]
+    assert report["result"]["terminal"] == "needs_input"
+    assert report["result"]["gate"]["route"] == route
+    assert report["result"]["gate"]["gate"]["kind"] == "paper_source"
+    assert report["result"]["resume_seed"]["leaf"]["route"] == route
+
+
 def test_topic_lifts_partial_book_observation_request() -> None:
     gap = {**SUBQUESTION, "coverage": "gap"}
     route = {"kind": "book", "slug": "exact-book"}

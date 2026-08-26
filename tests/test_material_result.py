@@ -97,6 +97,7 @@ PAPER_OBSERVATION = {
                     "present": False,
                     "usable": False,
                 },
+                "candidate": None,
             },
             {
                 "format": "txt",
@@ -105,8 +106,10 @@ PAPER_OBSERVATION = {
                     "present": False,
                     "usable": False,
                 },
+                "candidate": None,
             },
         ],
+        "source_candidates_fingerprint": "0" * 64,
         "prepared": [
             {
                 "path": "processing/papers/exact-paper/source.txt",
@@ -316,6 +319,67 @@ def test_paper_status_parser_binds_the_status_producer_paths() -> None:
         PAPER_CONTRACT_MODULE,
         "parsePaperStatusObservation",
         foreign_value,
+    ) is None
+
+
+def usable_paper_source_observation() -> dict[str, Any]:
+    value = deepcopy(PAPER_OBSERVATION)
+    value["facts"]["sources"][0] = {
+        "format": "pdf",
+        "artifact": {
+            "path": "sources/exact-paper.pdf",
+            "present": True,
+            "usable": True,
+        },
+        "candidate": {
+            "format": "pdf",
+            "path": "sources/exact-paper.pdf",
+            "sha256": "a" * 64,
+            "size": 123,
+        },
+    }
+    value["facts"]["source_candidates_fingerprint"] = "f" * 64
+    return value
+
+
+def test_paper_status_parser_binds_usable_source_candidate_evidence() -> None:
+    value = usable_paper_source_observation()
+
+    assert run_workflow_export(
+        PAPER_CONTRACT_MODULE,
+        "parsePaperStatusObservation",
+        value,
+    ) == value
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value["facts"]["sources"][0]["candidate"].update(
+            {"format": "txt"}
+        ),
+        lambda value: value["facts"]["sources"][0]["candidate"].update(
+            {"path": "sources/other-paper.pdf"}
+        ),
+        lambda value: value["facts"]["sources"][0]["candidate"].update(
+            {"sha256": "not-a-digest"}
+        ),
+        lambda value: value["facts"]["sources"][0].update(
+            {"candidate": None}
+        ),
+        lambda value: value["facts"].update(
+            {"source_candidates_fingerprint": "not-a-digest"}
+        ),
+    ],
+)
+def test_paper_status_parser_rejects_unbound_source_candidate_evidence(mutate):
+    value = usable_paper_source_observation()
+    mutate(value)
+
+    assert run_workflow_export(
+        PAPER_CONTRACT_MODULE,
+        "parsePaperStatusObservation",
+        value,
     ) is None
 
 
@@ -881,6 +945,76 @@ def test_owner_drift_keeps_material_slug_separate_from_identity_slug():
     )
 
     assert result["material"]["canonical"]["slug"] == "owned-paper"
+
+
+def localized_owner_input() -> dict[str, Any]:
+    value = valid_input()
+    value["seed"]["material_slug"] = "owned-paper"
+    value["observation"] = paper_observation_for_slug("owned-paper")
+    value["observation"]["identity"] = {
+        "title": "精确论文",
+        "authors": ["[[ada-example|Ada Example]]"],
+        "year": PAPER_IDENTITY["year"],
+    }
+    value["observation"]["facts"]["canonical"] = {
+        "path": "vault/papers/owned-paper.md",
+        "present": True,
+        "usable": True,
+    }
+    return value
+
+
+def test_localized_owner_drift_requires_search_confirmation():
+    value = localized_owner_input()
+
+    assert_invalid_input(parse_paper(value), "owned-paper")
+
+
+def test_search_confirmed_owner_admits_localized_disk_identity():
+    value = localized_owner_input()
+    value["seed"]["owner_confirmation"] = {
+        "operation": "material.search",
+        "identity_slug": "exact-paper",
+        "owner_slug": "owned-paper",
+    }
+
+    parsed = parse_paper(value)
+
+    assert parsed["ok"] is True
+    assert parsed["value"]["seed"] == value["seed"]
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value["seed"]["owner_confirmation"].update(
+            {"operation": "paper.prepare"}
+        ),
+        lambda value: value["seed"]["owner_confirmation"].update(
+            {"identity_slug": "other-paper"}
+        ),
+        lambda value: value["seed"]["owner_confirmation"].update(
+            {"owner_slug": "other-paper"}
+        ),
+        lambda value: value["seed"]["owner_confirmation"].update(
+            {"cursor": "hidden-state"}
+        ),
+        lambda value: value["observation"]["facts"]["canonical"].update(
+            {"usable": False}
+        ),
+        lambda value: value["observation"].update({"identity": None}),
+    ],
+)
+def test_search_confirmed_owner_rejects_mismatched_or_unusable_evidence(mutate):
+    value = localized_owner_input()
+    value["seed"]["owner_confirmation"] = {
+        "operation": "material.search",
+        "identity_slug": "exact-paper",
+        "owner_slug": "owned-paper",
+    }
+    mutate(value)
+
+    assert_invalid_input(parse_paper(value), "owned-paper")
 
 
 def test_owner_drift_rejects_an_empty_status_query_echo():
@@ -1486,6 +1620,87 @@ def test_book_structure_decision_echoes_gate_and_selects_a_member():
         value,
         gate,
     ) is None
+
+
+def test_paper_source_decision_parser_accepts_only_closed_testimony() -> None:
+    value = {
+        "candidates_fingerprint": "c" * 64,
+        "source_path": "sources/exact-paper.pdf",
+    }
+
+    assert run_workflow_export(
+        PAPER_CONTRACT_MODULE,
+        "parsePaperSourceDecisionValue",
+        value,
+    ) == value
+
+    for invalid in (
+        {**value, "candidates_fingerprint": "invalid"},
+        {**value, "source_path": ""},
+        {**value, "cursor": "hidden-state"},
+    ):
+        assert run_workflow_export(
+            PAPER_CONTRACT_MODULE,
+            "parsePaperSourceDecisionValue",
+            invalid,
+        ) is None
+
+
+def test_paper_source_gate_crosses_the_closed_material_result_boundary() -> None:
+    gate = {
+        "kind": "paper_source",
+        "operation": "paper.prepare",
+        "material_key": "paper:exact-paper",
+        "question": "Which exact Paper source should Prepare use?",
+        "candidates": [
+            {
+                "format": "pdf",
+                "path": "sources/exact-paper.pdf",
+                "sha256": "a" * 64,
+                "size": 123,
+            },
+            {
+                "format": "txt",
+                "path": "sources/exact-paper.txt",
+                "sha256": "b" * 64,
+                "size": 456,
+            },
+        ],
+        "candidates_fingerprint": "c" * 64,
+    }
+    resume_seed = {
+        "route": {"kind": "paper", "slug": "exact-paper"},
+        "seed": {
+            "state": "canonical",
+            "material_slug": "exact-paper",
+            "identity": deepcopy(PAPER_IDENTITY),
+        },
+        "options": {},
+    }
+    issue = {
+        "code": "paper.source_selection_required",
+        "operation": "paper.prepare",
+        "summary": "Select one source.",
+        "retryable": False,
+        "observation_request": None,
+    }
+
+    result = run_workflow_export(
+        RESULT_MODULE,
+        "needsInputMaterialResult",
+        {
+            "material": {
+                "requested": {"kind": "paper", "slug": "exact-paper"},
+                "canonical": {"kind": "paper", "slug": "exact-paper"},
+            }
+        },
+        issue,
+        gate,
+        resume_seed,
+    )
+
+    assert result["gate"] == gate
+    assert result["resume_seed"] == resume_seed
 
 
 def translation_gate_receipt(kind: str) -> dict[str, Any]:

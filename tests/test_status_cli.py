@@ -262,14 +262,17 @@ def test_empty_paper_status_is_one_closed_factual_observation(tmp_path: Path):
                     "artifact": observation(
                         "sources/missing-paper.pdf", present=False, usable=False
                     ),
+                    "candidate": None,
                 },
                 {
                     "format": "txt",
                     "artifact": observation(
                         "sources/missing-paper.txt", present=False, usable=False
                     ),
+                    "candidate": None,
                 },
             ],
+            "source_candidates_fingerprint": status_module.fingerprint([]),
             "prepared": [
                 observation(
                     "processing/papers/missing-paper/source.txt",
@@ -292,25 +295,86 @@ def test_empty_paper_status_is_one_closed_factual_observation(tmp_path: Path):
 def test_paper_status_observes_pdf_and_text_source_alternatives(tmp_path: Path):
     project = tmp_path / "project"
     slug = "text-paper"
-    write(project / "sources" / f"{slug}.txt", "complete article text")
+    source = write(
+        project / "sources" / f"{slug}.txt",
+        "complete article text",
+    )
+    candidate = {
+        "format": "txt",
+        "path": f"sources/{slug}.txt",
+        "sha256": status_module.sha256_file(source),
+        "size": source.stat().st_size,
+    }
 
     result = run_status(project, "--kind", "paper", "--slug", slug, "--json")
 
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["facts"]["sources"] == [
+    facts = json.loads(result.stdout)["facts"]
+    assert facts["sources"] == [
         {
             "format": "pdf",
             "artifact": observation(
                 f"sources/{slug}.pdf", present=False, usable=False
             ),
+            "candidate": None,
         },
         {
             "format": "txt",
             "artifact": observation(
                 f"sources/{slug}.txt", present=True, usable=True
             ),
+            "candidate": candidate,
         },
     ]
+    assert facts["source_candidates_fingerprint"] == (
+        status_module.fingerprint([candidate])
+    )
+
+
+def test_paper_source_fingerprint_changes_with_candidate_bytes(tmp_path: Path):
+    project = tmp_path / "project"
+    slug = "changing-paper"
+    source = write(project / "sources" / f"{slug}.pdf", b"version-one")
+
+    first = json.loads(
+        run_status(project, "--kind", "paper", "--slug", slug, "--json").stdout
+    )
+    source.write_bytes(b"version-two")
+    second = json.loads(
+        run_status(project, "--kind", "paper", "--slug", slug, "--json").stdout
+    )
+
+    assert first["facts"]["source_candidates_fingerprint"] != (
+        second["facts"]["source_candidates_fingerprint"]
+    )
+    assert first["facts"]["sources"][0]["candidate"]["sha256"] != (
+        second["facts"]["sources"][0]["candidate"]["sha256"]
+    )
+
+
+def test_paper_status_fails_closed_on_symlinked_source_candidate(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    slug = "unsafe-paper"
+    external = write(tmp_path / "external.pdf", b"external source")
+    source = project / "sources" / f"{slug}.pdf"
+    source.parent.mkdir(parents=True)
+    source.symlink_to(external)
+
+    payload = json.loads(
+        run_status(project, "--kind", "paper", "--slug", slug, "--json").stdout
+    )
+
+    assert payload["facts"]["sources"][0] == {
+        "format": "pdf",
+        "artifact": observation(
+            f"sources/{slug}.pdf", present=True, usable=False
+        ),
+        "candidate": None,
+    }
+    assert payload["facts"]["source_candidates_fingerprint"] == (
+        status_module.fingerprint([])
+    )
 
 
 def test_book_status_keeps_complete_manifest_rows_and_observes_each_output(
@@ -891,9 +955,19 @@ def test_paper_status_uses_live_operation_catalog_artifact_template(
 
     payload = status_module.paper_status(project, slug)
 
+    candidate = {
+        "format": "pdf",
+        "path": source.relative_to(project).as_posix(),
+        "sha256": status_module.sha256_file(source),
+        "size": source.stat().st_size,
+    }
     assert payload["facts"]["sources"][0] == {
         "format": "pdf",
         "artifact": observation(
             source.relative_to(project).as_posix(), present=True, usable=True
         ),
+        "candidate": candidate,
     }
+    assert payload["facts"]["source_candidates_fingerprint"] == (
+        status_module.fingerprint([candidate])
+    )

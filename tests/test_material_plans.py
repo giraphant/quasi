@@ -106,6 +106,12 @@ PAPER_IDENTITY = {
     "journal": "Exact Joins",
     "confidence": "high",
 }
+PAPER_SOURCE_FINGERPRINTS = {
+    (False, False): "0" * 64,
+    (True, False): "1" * 64,
+    (False, True): "2" * 64,
+    (True, True): "3" * 64,
+}
 
 BOOK_IDENTITY = {
     "slug": "exact-book",
@@ -684,6 +690,16 @@ def paper_observation(
                         "present": source,
                         "usable": source,
                     },
+                    "candidate": (
+                        {
+                            "format": "pdf",
+                            "path": f"sources/{slug}.pdf",
+                            "sha256": "a" * 64,
+                            "size": 100,
+                        }
+                        if source
+                        else None
+                    ),
                 },
                 {
                     "format": "txt",
@@ -692,7 +708,20 @@ def paper_observation(
                         "present": text_source,
                         "usable": text_source,
                     },
+                    "candidate": (
+                        {
+                            "format": "txt",
+                            "path": f"sources/{slug}.txt",
+                            "sha256": "b" * 64,
+                            "size": 200,
+                        }
+                        if text_source
+                        else None
+                    ),
                 },
+            ],
+            "source_candidates_fingerprint": PAPER_SOURCE_FINGERPRINTS[
+                (source, text_source)
             ],
             "prepared": [
                 {
@@ -766,6 +795,23 @@ def identity_decision(selected: dict[str, Any]) -> dict[str, Any]:
             "candidates": candidates,
             "conflicts": ["publication_type"],
             "selected_candidate": deepcopy(selected),
+        },
+    }
+
+
+def paper_source_decision(
+    source_path: str,
+    *,
+    material_slug: str = "exact-paper",
+    fingerprint: str = "3" * 64,
+    operation: str = "paper.prepare",
+) -> dict[str, Any]:
+    return {
+        "material_key": f"paper:{material_slug}",
+        "operation": operation,
+        "value": {
+            "candidates_fingerprint": fingerprint,
+            "source_path": source_path,
         },
     }
 
@@ -867,12 +913,13 @@ def analyse_complete(action: str = "create") -> dict[str, Any]:
 def audit_complete(
     *,
     escalated: list[dict[str, str]] | None = None,
+    mutated_paths: list[str] | None = None,
 ) -> dict[str, Any]:
     diagnostics = escalated or []
     return {
         "remaining_violations": len(diagnostics),
         "escalated": diagnostics,
-        "mutated_paths": [],
+        "mutated_paths": mutated_paths or [],
         "terminal": {"status": "complete", "issue": None},
     }
 
@@ -999,7 +1046,7 @@ def test_paper_text_source_flows_through_prepare_and_completion() -> None:
     }
 
 
-def test_paper_conflicting_source_alternatives_stop_before_dispatch() -> None:
+def test_paper_conflicting_source_alternatives_return_typed_gate() -> None:
     report = run_paper(
         canonical_input(
             source=True,
@@ -1011,8 +1058,134 @@ def test_paper_conflicting_source_alternatives_stop_before_dispatch() -> None:
     )
 
     assert report["calls"] == []
+    assert report["result"]["terminal"] == "needs_input"
+    assert report["result"]["issue"]["code"] == (
+        "paper.source_selection_required"
+    )
+    assert report["result"]["gate"] == {
+        "kind": "paper_source",
+        "operation": "paper.prepare",
+        "material_key": "paper:exact-paper",
+        "question": "Which exact Paper source should Prepare use?",
+        "candidates": [
+            {
+                "format": "pdf",
+                "path": "sources/exact-paper.pdf",
+                "sha256": "a" * 64,
+                "size": 100,
+            },
+            {
+                "format": "txt",
+                "path": "sources/exact-paper.txt",
+                "sha256": "b" * 64,
+                "size": 200,
+            },
+        ],
+        "candidates_fingerprint": "3" * 64,
+    }
+
+
+@pytest.mark.parametrize(
+    "source_path",
+    ["sources/exact-paper.pdf", "sources/exact-paper.txt"],
+)
+def test_paper_source_gate_selects_one_exact_prepare_input(
+    source_path: str,
+) -> None:
+    value = canonical_input(
+        source=True,
+        text_source=True,
+        canonical=True,
+        admitted=True,
+    )
+    value["userDecision"] = paper_source_decision(source_path)
+
+    report = run_paper(value, [prepare_complete(), audit_complete()])
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "paper.prepare",
+        "paper.audit",
+    ]
+    assert report["calls"][0]["request"]["refs"]["source"] == source_path
+    assert report["result"]["terminal"] == "complete"
+    assert report["result"]["artifacts"][0] == {
+        "role": "source",
+        "path": source_path,
+    }
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        paper_source_decision(
+            "sources/exact-paper.pdf",
+            fingerprint="4" * 64,
+        ),
+        paper_source_decision("sources/other-paper.pdf"),
+        paper_source_decision(
+            "sources/exact-paper.pdf",
+            material_slug="other-paper",
+        ),
+        paper_source_decision(
+            "sources/exact-paper.pdf",
+            operation="translation.prepare",
+        ),
+    ],
+)
+def test_paper_stale_or_foreign_source_decision_regates_without_dispatch(
+    decision: dict[str, Any],
+) -> None:
+    value = canonical_input(
+        source=True,
+        text_source=True,
+        canonical=True,
+        admitted=True,
+    )
+    value["userDecision"] = decision
+
+    report = run_paper(value, [])
+
+    assert report["calls"] == []
+    assert report["result"]["terminal"] == "needs_input"
+    assert report["result"]["gate"]["candidates_fingerprint"] == "3" * 64
+
+
+def test_paper_malformed_matching_source_decision_blocks_before_dispatch() -> None:
+    value = canonical_input(
+        source=True,
+        text_source=True,
+        canonical=True,
+        admitted=True,
+    )
+    value["userDecision"] = paper_source_decision(
+        "sources/exact-paper.pdf",
+        fingerprint="not-a-fingerprint",
+    )
+
+    report = run_paper(value, [])
+
+    assert report["calls"] == []
     assert report["result"]["terminal"] == "blocked"
-    assert report["result"]["issue"]["code"] == "paper.source_conflict"
+    assert report["result"]["issue"]["code"] == "workflow.incoherent_gate"
+
+
+def test_paper_source_decision_is_ignored_after_drift_to_one_source() -> None:
+    value = canonical_input(
+        source=True,
+        text_source=False,
+        canonical=True,
+        admitted=True,
+    )
+    value["userDecision"] = paper_source_decision(
+        "sources/exact-paper.txt",
+    )
+
+    report = run_paper(value, [prepare_complete(), audit_complete()])
+
+    assert report["calls"][0]["request"]["refs"]["source"] == (
+        "sources/exact-paper.pdf"
+    )
+    assert report["result"]["terminal"] == "complete"
 
 
 def test_paper_acquire_may_select_the_text_output() -> None:
@@ -1190,6 +1363,51 @@ def test_paper_search_owner_requires_fresh_admitted_owner_observation() -> None:
     ]
 
 
+def test_paper_search_owner_resume_admits_localized_canonical() -> None:
+    first = run_paper(
+        provisional_input(),
+        [search_complete(owner_slug="owned-paper")],
+    )
+
+    assert first["result"]["terminal"] == "needs_observation"
+    resume_seed = first["result"]["resume_seed"]
+    assert resume_seed["seed"]["owner_confirmation"] == {
+        "operation": "material.search",
+        "identity_slug": "exact-paper",
+        "owner_slug": "owned-paper",
+    }
+
+    observation = paper_observation(
+        "owned-paper",
+        source=True,
+        canonical=True,
+    )
+    observation["identity"] = {
+        "title": "精确论文",
+        "authors": ["[[ada-example|Ada Example]]"],
+        "year": 2024,
+    }
+    resumed = {
+        "seed": resume_seed["seed"],
+        "observation": observation,
+        "options": resume_seed["options"],
+    }
+    second = run_paper(
+        resumed,
+        [prepare_complete("owned-paper"), audit_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in second["calls"]] == [
+        "paper.prepare",
+        "paper.audit",
+    ]
+    assert second["result"]["terminal"] == "complete"
+    assert second["result"]["material"]["canonical"] == {
+        "kind": "paper",
+        "slug": "owned-paper",
+    }
+
+
 def test_paper_book_decision_returns_typed_next_without_dispatch() -> None:
     selected = {"kind": "book", "identity": deepcopy(BOOK_IDENTITY)}
     value = provisional_input()
@@ -1329,6 +1547,88 @@ def test_paper_existing_canonical_reconciles_prepare_then_repairs_once() -> None
     assert report["calls"][2]["request"]["repair_diagnostics"] == [diagnostic]
     assert report["calls"][3]["request"]["pass"] == 2
     assert report["result"]["terminal"] == "complete"
+
+
+def test_paper_clean_mutating_audit_requires_stability_pass() -> None:
+    target = "vault/papers/exact-paper.md"
+    report = run_paper(
+        canonical_input(
+            source=True,
+            prepared=True,
+            canonical=True,
+            admitted=True,
+        ),
+        [
+            prepare_complete(),
+            audit_complete(mutated_paths=[target]),
+            audit_complete(),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "paper.prepare",
+        "paper.audit",
+        "paper.audit",
+    ]
+    assert report["calls"][2]["request"]["pass"] == 2
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_paper_repeated_clean_audit_mutation_blocks_as_unstable() -> None:
+    target = "vault/papers/exact-paper.md"
+    report = run_paper(
+        canonical_input(
+            source=True,
+            prepared=True,
+            canonical=True,
+            admitted=True,
+        ),
+        [
+            prepare_complete(),
+            audit_complete(mutated_paths=[target]),
+            audit_complete(mutated_paths=[target]),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "paper.prepare",
+        "paper.audit",
+        "paper.audit",
+    ]
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "workflow.audit_unstable"
+
+
+def test_paper_repaired_but_mutating_final_audit_blocks_as_unstable() -> None:
+    target = "vault/papers/exact-paper.md"
+    diagnostic = {
+        "path": target,
+        "kind": "missing-section",
+        "reason": "The Analysis section is absent.",
+    }
+    report = run_paper(
+        canonical_input(
+            source=True,
+            prepared=True,
+            canonical=True,
+            admitted=True,
+        ),
+        [
+            prepare_complete(),
+            audit_complete(escalated=[diagnostic]),
+            analyse_complete("repair"),
+            audit_complete(mutated_paths=[target]),
+        ],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "paper.prepare",
+        "paper.audit",
+        "paper.analyse",
+        "paper.audit",
+    ]
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "workflow.audit_unstable"
 
 
 def test_paper_second_audit_escalation_stops_as_repair_exhausted() -> None:
@@ -3828,6 +4128,38 @@ def test_author_lifts_book_gate_with_the_verified_source_isbn() -> None:
     assert report["result"]["gate"]["gate"]["kind"] == "book_structure"
     resumed_book = report["result"]["resume_seed"]["members"][0]["leaf"]
     assert resumed_book["seed"]["identity"]["isbn"] == source_isbn
+
+
+def test_author_lifts_paper_source_gate_for_one_member() -> None:
+    identity = paper_identity("paper-one", "Paper One")
+    route = {"kind": "paper", "slug": "paper-one"}
+    observation = paper_observation(
+        "paper-one",
+        source=True,
+        text_source=True,
+        prepared=True,
+        canonical=True,
+        admitted=True,
+    )
+    observation["identity"] = {
+        "title": identity["title"],
+        "authors": identity["authors"],
+        "year": identity["year"],
+    }
+
+    report = run_author(
+        author_compose_input(
+            [author_member(route, route, identity)],
+            [(route, observation)],
+        ),
+        [],
+    )
+
+    assert report["calls"] == []
+    assert report["result"]["terminal"] == "needs_input"
+    assert report["result"]["gate"]["route"] == route
+    assert report["result"]["gate"]["gate"]["kind"] == "paper_source"
+    assert report["result"]["resume_seed"]["decision_member"] == route
 
 
 def test_author_lifts_partial_book_observation_request() -> None:
