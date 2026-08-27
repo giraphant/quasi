@@ -1,5 +1,6 @@
 import { PAPER_ARTIFACT_CONTRACT } from "../../artifact-contracts/generated.mjs";
 import { InputContractError } from "../../context-base.mts";
+import { parsePaperSourceCandidate } from "../../contracts/paper.mts";
 import { makeOcrGenerationRow } from "./ocr-generation.mts";
 import {
   ATTEMPT_SCHEMA,
@@ -37,16 +38,26 @@ const generationTextPath = (slug: string, generationKey: string): string =>
 const paperPrepareContext: AnyFunction = (rawContext, base) => {
   const source = rawContext.source;
   const input = rawContext.input ?? source;
+  const sourceCandidate = parsePaperSourceCandidate(rawContext.sourceCandidate);
   const sourcePdf = `sources/${base.slug}.pdf`;
   const sourceText = `sources/${base.slug}.txt`;
   if (![sourcePdf, sourceText].includes(source))
     throw new InputContractError(
       "paper.prepare source must be one declared Paper source",
     );
+  if (
+    sourceCandidate === null ||
+    sourceCandidate.path !== source ||
+    sourceCandidate.format !== (source === sourcePdf ? "pdf" : "txt")
+  )
+    throw new InputContractError(
+      "paper.prepare source candidate must bind the exact observed source",
+    );
   if (input === source)
     return {
       ...base,
       source,
+      sourceCandidate,
       input,
       inputKind: source === sourcePdf ? "source_pdf" : "source_text",
       generationKey: null,
@@ -64,6 +75,7 @@ const paperPrepareContext: AnyFunction = (rawContext, base) => {
   return {
     ...base,
     source,
+    sourceCandidate,
     input,
     inputKind: "generation_text",
     generationKey,
@@ -182,6 +194,7 @@ export const paperOperationRows: OperationRow[] = [
     context: paperPrepareContext,
     refs: ({
       source,
+      sourceCandidate,
       input,
       inputKind,
       generationKey,
@@ -204,6 +217,7 @@ export const paperOperationRows: OperationRow[] = [
         );
       return {
         source,
+        sourceCandidate,
         input,
         inputKind,
         generationKey,
@@ -258,7 +272,7 @@ export const paperOperationRows: OperationRow[] = [
         properties: {
           disposition: {
             type: "string",
-            enum: ["prepared", "ocr_required"],
+            enum: ["full_text_prepared", "ocr_required"],
           },
         },
       },
@@ -269,7 +283,7 @@ export const paperOperationRows: OperationRow[] = [
             refs.inputKind === "generation_text"
               ? "paper.ocr_unreadable"
               : refs.inputKind === "source_text"
-                ? "paper.source_unreadable"
+                ? "paper.source_incomplete"
                 : "paper.prepare_failed",
           ),
         },
@@ -294,7 +308,7 @@ export const paperOperationRows: OperationRow[] = [
       const artifactsAreBound = receipt.artifacts.every((artifact: any) =>
         allowed.has(artifact.path),
       );
-      if (disposition === "prepared")
+      if (disposition === "full_text_prepared")
         return (
           receipt.selected_input === selected &&
           artifactsAreBound &&
@@ -333,7 +347,7 @@ export const paperOperationRows: OperationRow[] = [
         refs.inputKind === "generation_text"
           ? "Semantically verify the exact committed Paper OCR generation text."
           : "Extract and semantically verify readable text from the exact accepted Paper source.",
-      source: { path: refs.source },
+      source: refs.sourceCandidate,
       input: { role: refs.inputKind, path: refs.input },
       refs: {
         normalized: refs.normalized,
@@ -352,8 +366,8 @@ export const paperOperationRows: OperationRow[] = [
       legacy_recovery_rule:
         "The fixed legacy recovery refs are read-only evidence. Never write, replace, delete, rename, link, or select them.",
       disposition_contract: {
-        prepared:
-          "Return only after selected_input was actually read and is semantically usable.",
+        full_text_prepared:
+          "Return only after selected_input was actually read and contains the complete substantive Paper, not a landing page, abstract, preview, or metadata shell.",
         ocr_required:
           "Allowed only for a direct PDF input whose extracted normalized text exists but is semantically unusable.",
       },

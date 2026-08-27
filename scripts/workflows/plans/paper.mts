@@ -507,8 +507,9 @@ async function runPaperPlanResult(
   };
   const usableSourceFacts = (state.observation?.facts.sources ?? [])
     .filter(({ artifact }) => artifact.usable);
-  const usableSources = usableSourceFacts.map(({ artifact }) => artifact.path);
-  let sourcePath = usableSources[0] ?? null;
+  let sourceCandidate =
+    (usableSourceFacts[0]?.candidate as PaperSourceCandidate | null) ?? null;
+  let sourcePath = sourceCandidate?.path ?? null;
   if (usableSourceFacts.length > 1) {
     const materialKey = `paper:${slug}`;
     const candidates = usableSourceFacts.map(
@@ -562,6 +563,7 @@ async function runPaperPlanResult(
         gate,
         resumeSeed(input, state),
       );
+    sourceCandidate = selectedCandidate;
     sourcePath = selectedCandidate.path;
   }
   if (sourcePath === null) {
@@ -619,6 +621,7 @@ async function runPaperPlanResult(
   const prepared = await dispatch(runtime, "paper.prepare", slug, {
     ...common,
     source: sourcePath,
+    sourceCandidate,
     ...(ocrGeneration?.state === "committed"
       ? {
           input: ocrGeneration.paths.text,

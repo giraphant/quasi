@@ -1131,7 +1131,7 @@ def prepare_complete(
     *,
     source_path: str | None = None,
     input_path: str | None = None,
-    disposition: str = "prepared",
+    disposition: str = "full_text_prepared",
 ) -> dict[str, Any]:
     source = source_path or f"sources/{slug}.pdf"
     exact_input = input_path or source
@@ -1144,7 +1144,7 @@ def prepare_complete(
     )
     normalized = f"processing/papers/{slug}/source.txt"
     selected = exact_input if input_kind == "generation_text" else normalized
-    usable = disposition == "prepared"
+    usable = disposition == "full_text_prepared"
     return {
         "source_path": source,
         "input_path": exact_input,
@@ -1164,6 +1164,41 @@ def prepare_complete(
             "status": "complete",
             "issue": None,
             "disposition": disposition,
+        },
+    }
+
+
+def prepare_source_incomplete(
+    slug: str = "exact-paper",
+    *,
+    source_path: str | None = None,
+) -> dict[str, Any]:
+    source = source_path or f"sources/{slug}.txt"
+    normalized = f"processing/papers/{slug}/source.txt"
+    return {
+        "source_path": source,
+        "input_path": source,
+        "input_kind": "source_text",
+        "selected_input": None,
+        "artifacts": [
+            {
+                "role": "normalized_text",
+                "path": normalized,
+                "exists": True,
+                "usable": False,
+            }
+        ],
+        "steps": [],
+        "diagnostics": ["The accepted text is a landing-page extract, not the full paper."],
+        "terminal": {
+            "status": "failed",
+            "issue": {
+                "code": "paper.source_incomplete",
+                "operation": "paper.prepare",
+                "summary": "The exact TXT source does not contain the complete paper.",
+                "user_question": None,
+                "retryable": False,
+            },
         },
     }
 
@@ -1425,13 +1460,33 @@ def test_paper_text_source_flows_through_prepare_and_completion() -> None:
         "paper.prepare",
         "paper.audit",
     ]
-    assert report["calls"][0]["request"]["source"]["path"] == (
-        "sources/exact-paper.txt"
-    )
+    assert report["calls"][0]["request"]["source"] == {
+        "format": "txt",
+        "path": "sources/exact-paper.txt",
+        "sha256": "b" * 64,
+        "size": 200,
+    }
     assert report["result"]["artifacts"][0] == {
         "role": "source",
         "path": "sources/exact-paper.txt",
     }
+
+
+def test_paper_incomplete_text_source_stops_before_analyse_and_audit() -> None:
+    report = run_paper(
+        canonical_input(
+            text_source=True,
+            canonical=True,
+            admitted=True,
+        ),
+        [prepare_source_incomplete()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "paper.prepare"
+    ]
+    assert report["result"]["terminal"] == "failed"
+    assert report["result"]["issue"]["code"] == "paper.source_incomplete"
 
 
 def test_paper_conflicting_source_alternatives_return_typed_gate() -> None:

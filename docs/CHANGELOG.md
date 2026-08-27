@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.31** (2026-08-27): **Paper HTML 候选不再冒充全文，Prepare 以 exact source 事实与完整正文判断收敛。**
+  - Paper 下载器不再依据题名与 `Abstract`、`Highlights`、`References` 等页面标记把 HTML 自动转换并晋升为 TXT；普通 HTML 只作为隔离的 `.html` candidate 保留，PDF 路径仍会继续穷尽。Download Agent 可在同一临时目录显式检查并转换真正的完整 HTML 正文，landing page、摘要、preview、导航壳和元数据页不得发布。
+  - Paper Workflow 现在把 fresh status 已观察的 source format、path、SHA-256 与 size 一并绑定到 Prepare request；这些机械事实由 caller 提供，不要求模型在 receipt 中重复抄写。来源路径、格式或 observation 不一致会在 Agent dispatch 前 fail closed。
+  - Paper Prepare 的成功语义收窄为 `full_text_prepared`：只有实际阅读并确认完整学术正文后才能继续 Analyse/Audit；可读但不完整的 TXT 以 `paper.source_incomplete` 停止，PDF 文本层确实不可读时仍沿既有 `ocr_required` generation 路径恢复。
+
 - **0.65.30** (2026-08-27): **Paper 与 Book 共用 source/profile-bound OCR generation，不再按材料复制恢复机制。**
   - 新的 `quasi-extract ocr-generation` 同时服务 Paper 与 Book：DS OCR2 profile 每次推进最多 16 页，Tesseract-only profile 最多 32 页；DS OCR2 失败或质量不足时只在同一 16 页 range 内回退 Tesseract，并在 progress 与最终 manifest 记录实际 engine。
   - 两种材料现在都使用 source hash、完整 profile 与 material root 绑定的 generation key，在私有 work tree 中逐段验证并原子提交 progress，最终以 immutable `ocr.pdf`、`ocr.txt`、`manifest.json` manifest-last 发布。恢复会重新核对 part 路径、摘要、页数、文本质量与完整 inventory；来源/profile 漂移、未知文件或不完整发布不会被盲重放。

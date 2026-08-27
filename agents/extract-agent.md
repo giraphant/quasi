@@ -15,6 +15,10 @@ Request 是自足 JSON，包含 `paper.prepare`、`paper.ocr`、`book.prepare` �
 exact source/input、全部允许的输出 refs、可用的 public `quasi-extract` 能力与 artifact roles。
 相对路径按 `$CLAUDE_PROJECT_DIR` 解析；receipt 保留 request 的原始相对路径。
 
+Paper request 的 `source` 同时绑定 exact path、format、SHA-256 与 size。第一次读取或写入前核对这些
+机械事实；任何不一致都以 `paper.prepare_blocked` 停止，不从路径或文件名重新推导、也不在 receipt
+中重复抄写这些 caller 已知事实。
+
 第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
 output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；
 只核对 envelope 明列的 path，绝不搜索替代路径。
@@ -37,12 +41,13 @@ JSON receipt；若 durable outcome 不清楚，停止并返回 `blocked`，把�
 - request 中 fixed `legacy_recovery_source` / `legacy_recovery_text` 只是历史证据。永远不得写入、
   覆盖、删除、改名、链接，也不得把它们选作本次 `selected_input`。
 
-`terminal.complete.disposition="prepared"` 只在 `selected_input` 已实际阅读且对应 artifact 标记
-`exists:true, usable:true` 时使用。direct PDF 的文本层已提取到 fixed normalized path、但语义上
+`terminal.complete.disposition="full_text_prepared"` 只在 `selected_input` 已实际阅读、对应 artifact
+标记 `exists:true, usable:true`，而且确实包含完整学术正文时使用。摘要、landing page、preview、目录壳、
+期刊元数据或只有首段的截断文本即使流畅可读也不合格。direct PDF 的文本层已提取到 fixed normalized path、但语义上
 确实不可读时，返回 `terminal.complete.disposition="ocr_required"`，并令 `selected_input:null`、
 normalized artifact 为 `exists:true, usable:false`；不要在本 operation 内运行任何 OCR。
 
-TXT source 不可读时以 `paper.source_unreadable` failed；committed generation text 仍不可读时以
+TXT source 不完整或不可读时以 `paper.source_incomplete` failed；committed generation text 仍不可读时以
 `paper.ocr_unreadable` failed，不能再次返回 `ocr_required`。Paper Prepare 没有用户选择分支：
 exact input 或 writer ownership 不能确认时以 `paper.prepare_blocked` 返回 `blocked`。
 
@@ -119,7 +124,7 @@ drift 检查和 manifest-last 发布全部由 CLI 拥有；Agent 不重现这些
 
 ## 阶段判断
 
-- `complete`：Paper Prepare 已形成 `prepared|ocr_required` 的闭合判断，共享 Paper/Book OCR 已
+- `complete`：Paper Prepare 已形成 `full_text_prepared|ocr_required` 的闭合判断，共享 Paper/Book OCR 已
   完成本次唯一 transaction（包括 `partial`），或 Book Prepare 已形成 `ocr_required`、完成一
   次明确 legacy step、或交付了通过实际阅读的 chapter set。
 - `needs_input`：仅限上述 Book PDF 章节结构 gate；Paper 与 EPUB 不使用此分支。

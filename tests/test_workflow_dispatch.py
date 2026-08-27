@@ -251,6 +251,19 @@ def _book_ocr_generation(**kwargs: Any) -> dict[str, Any]:
     return _ocr_generation(kind="book", source_pages=100, **kwargs)
 
 
+def _paper_source_candidate(
+    *,
+    format: str = "pdf",
+    slug: str = "exact-material",
+) -> dict[str, Any]:
+    return {
+        "format": format,
+        "path": f"sources/{slug}.{format}",
+        "sha256": ("a" if format == "pdf" else "b") * 64,
+        "size": 1234 if format == "pdf" else 4321,
+    }
+
+
 def _context(**overrides: Any) -> dict[str, Any]:
     value: dict[str, Any] = {
         "meta": dict(BASE_META),
@@ -371,6 +384,7 @@ OPERATION_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
         _context(
             source="sources/exact-material.pdf",
             input="sources/exact-material.pdf",
+            sourceCandidate=_paper_source_candidate(),
         ),
     ),
     "paper.ocr": (
@@ -1572,6 +1586,7 @@ def test_paper_prepare_separates_direct_text_from_immutable_ocr() -> None:
         context=_context(
             source="sources/exact-material.pdf",
             input="sources/exact-material.pdf",
+            sourceCandidate=_paper_source_candidate(),
         ),
     )
     direct_request = _prompt_request(direct["prompt"])
@@ -1582,6 +1597,9 @@ def test_paper_prepare_separates_direct_text_from_immutable_ocr() -> None:
         "role": "source_pdf",
         "path": "sources/exact-material.pdf",
     }
+    assert direct_request["source"] == _paper_source_candidate()
+    for mechanical_field in ("source_format", "source_sha256", "source_size"):
+        assert mechanical_field not in direct["options"]["schema"]["properties"]
     assert direct_request["refs"]["legacy_recovery_source"] == (
         "processing/papers/exact-material/ocr.pdf"
     )
@@ -1598,6 +1616,7 @@ def test_paper_prepare_separates_direct_text_from_immutable_ocr() -> None:
             source="sources/exact-material.pdf",
             input=generation_text,
             generationKey=generation["generation_key"],
+            sourceCandidate=_paper_source_candidate(),
         ),
     )
     generation_request = _prompt_request(prepared_generation["prompt"])
@@ -1627,13 +1646,14 @@ def test_paper_prepare_dispositions_enforce_input_semantics() -> None:
                 context=_context(
                     source="sources/exact-material.pdf",
                     input="sources/exact-material.pdf",
+                    sourceCandidate=_paper_source_candidate(),
                 ),
             ),
             "model_output": _paper_prepare_output(
                 selected_input=normalized,
                 artifact_path=normalized,
                 usable=True,
-                disposition="prepared",
+                disposition="full_text_prepared",
             ),
         }
     )
@@ -1644,6 +1664,7 @@ def test_paper_prepare_dispositions_enforce_input_semantics() -> None:
                 context=_context(
                     source="sources/exact-material.pdf",
                     input="sources/exact-material.pdf",
+                    sourceCandidate=_paper_source_candidate(),
                 ),
             ),
             "model_output": _paper_prepare_output(
@@ -1661,6 +1682,7 @@ def test_paper_prepare_dispositions_enforce_input_semantics() -> None:
                 context=_context(
                     source="sources/exact-material.txt",
                     input="sources/exact-material.txt",
+                    sourceCandidate=_paper_source_candidate(format="txt"),
                 ),
             ),
             "model_output": _paper_prepare_output(
@@ -1677,6 +1699,64 @@ def test_paper_prepare_dispositions_enforce_input_semantics() -> None:
     assert ocr_required["result"]["kind"] == "receipt"
     assert txt_cannot_request_ocr["result"]["kind"] == "incoherent_complete"
 
+    legacy_prepared = _dispatch(
+        {
+            "invocation": _invocation(
+                "paper.prepare",
+                context=_context(
+                    source="sources/exact-material.pdf",
+                    input="sources/exact-material.pdf",
+                    sourceCandidate=_paper_source_candidate(),
+                ),
+            ),
+            "model_output": _paper_prepare_output(
+                selected_input=normalized,
+                artifact_path=normalized,
+                usable=True,
+                disposition="prepared",
+            ),
+        }
+    )
+    assert legacy_prepared["result"]["kind"] != "receipt"
+
+
+def test_paper_prepare_rejects_source_candidate_mismatch_before_dispatch() -> None:
+    mismatched = _paper_source_candidate()
+    mismatched["sha256"] = "c" * 64
+    report = _dispatch(
+        {
+            "invocation": _invocation(
+                "paper.prepare",
+                context=_context(
+                    source="sources/exact-material.txt",
+                    input="sources/exact-material.txt",
+                    sourceCandidate=mismatched,
+                ),
+            ),
+            "model_output": None,
+        }
+    )
+
+    assert report["agentCalls"] == 0
+    assert report["thrown"]["name"] == "InputContractError"
+
+
+def test_paper_prepare_text_failure_is_source_incomplete() -> None:
+    prepared = _prepare(
+        "paper.prepare",
+        context=_context(
+            source="sources/exact-material.txt",
+            input="sources/exact-material.txt",
+            sourceCandidate=_paper_source_candidate(format="txt"),
+        ),
+    )
+    failed = _terminal_branches(prepared)["failed"]
+
+    assert (
+        failed["properties"]["issue"]["properties"]["code"]["const"]
+        == "paper.source_incomplete"
+    )
+
 
 def test_paper_prepare_generation_text_must_match_its_exact_key() -> None:
     generation = _paper_ocr_generation()
@@ -1684,6 +1764,7 @@ def test_paper_prepare_generation_text_must_match_its_exact_key() -> None:
         source="sources/exact-material.pdf",
         input=generation["paths"]["text"],
         generationKey="b" * 64,
+        sourceCandidate=_paper_source_candidate(),
     )
     report = _dispatch(
         {

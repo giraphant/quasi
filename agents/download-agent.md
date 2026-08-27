@@ -76,12 +76,15 @@ sibling。只有内容完整且身份核验通过的 PDF/文本才能发布，HT
 冒充 text source。
 
 `paper fetch` 的 `status:identity_uncertain` 不是下载失败：CLI 已确认这些 exact
-`candidates[].temp_path` 是可读候选，只是机械题名/作者检查不足以裁决。逐个阅读其
+`candidates[].temp_path` 是可观察候选，只是机械题名/作者检查不足以裁决。HTML 响应只会作为
+隔离的 `.html` 候选返回，绝不会由 CLI 自动晋升为 accepted TXT；逐个阅读其
 `inspect.front_text`，必要时再用 Read 或 Bash 查看该 exact 临时文件的首页、末页版权信息与少量正文；结合题名、作者、
 期刊、年份、正文主题和嵌入 DOI 作专业判断。排版拆字、旧文本层或轻微 OCR 错字不能单独构成拒绝理由；
 但嵌入的不同 DOI 或明确不同作者/作品是排除证据。至多对一个已证明候选执行现有
 `quasi-download accept`；判断完成后只删除该次 fetch 返回且未接受的 exact temp paths。若没有候选足以
-证明身份，清理全部返回候选并以已知失败结束，不把机械不确定冒充 `all_sources_failed`。
+证明身份与完整正文，清理全部返回候选并以已知失败结束，不把机械不确定冒充 `all_sources_failed`。
+完整 HTML 正文可在同一临时目录由已有确定性工具显式转换为严格 UTF-8 TXT sibling，再按全文完整性与身份
+证据核验后 accept；摘要、landing page、preview、导航壳和元数据页一律不得转换后发布。
 
 Paper fetch 默认拥有 480 秒前台总预算；调用 Bash 时给该命令至少 540 秒 timeout，使 CLI 能先于
 宿主返回终态。`status:budget_exhausted` 是已知的 bounded stop：先按

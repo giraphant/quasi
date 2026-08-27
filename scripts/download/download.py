@@ -270,7 +270,7 @@ def _with_ezproxy_refresh(attempt):
 
 
 def _try_ezproxy_with_refresh(doi, output_path, sciencedirect_urls=None,
-                              cell_pdf_urls=None, text_fallback_path=None,
+                              cell_pdf_urls=None, html_candidate_path=None,
                               expected_author=None, expected_title=None):
     """Try the DOI EZProxy download, refreshing expired cookies once."""
     return _with_ezproxy_refresh(lambda: try_ezproxy_download(
@@ -278,19 +278,19 @@ def _try_ezproxy_with_refresh(doi, output_path, sciencedirect_urls=None,
         output_path,
         sciencedirect_urls=sciencedirect_urls,
         cell_pdf_urls=cell_pdf_urls,
-        text_fallback_path=text_fallback_path,
+        html_candidate_path=html_candidate_path,
         expected_author=expected_author,
         expected_title=expected_title,
     ))
 
 
-def _try_ezproxy_urls_with_refresh(urls, output_path, text_fallback_path=None,
+def _try_ezproxy_urls_with_refresh(urls, output_path, html_candidate_path=None,
                                    expected_author=None, expected_title=None):
     """Try the URL EZProxy download, refreshing expired cookies once."""
     return _with_ezproxy_refresh(lambda: try_ezproxy_url_download(
         urls,
         output_path,
-        text_fallback_path=text_fallback_path,
+        html_candidate_path=html_candidate_path,
         expected_author=expected_author,
         expected_title=expected_title,
     ))
@@ -1053,11 +1053,10 @@ def _pdf_urls_from_article_url(url: str) -> list[str]:
 
 
 def _is_article_html_url(url: str) -> bool:
-    """Whether a URL may return scholarly HTML worth evidence checking.
+    """Whether a URL may return scholarly HTML worth fencing for review.
 
-    Host names are not evidence.  Every normal HTTP(S) response may be offered
-    to the existing title/author/article-shape predicate after PDF, login, and
-    challenge classification has rejected it.
+    Host names are not evidence. Every normal HTTP(S) response may be retained
+    as an uncertain candidate after PDF, login, and challenge classification.
     """
     return urllib.parse.urlparse(url).scheme.lower() in {"http", "https"}
 
@@ -1086,26 +1085,13 @@ def _html_to_text(data) -> str:
     return "\n".join(line for line in lines if line)
 
 
-def _looks_like_article_text(text, expected_author=None, expected_title=None) -> bool:
-    if len(text.strip()) < 500:
-        return False
-    if expected_title and not _verify_text_content(text, expected_author, expected_title):
-        return False
-    lower = text.lower()
-    markers = [
-        "abstract",
-        "highlights",
-        "references",
-        "introduction",
-        "keywords",
-        "article info",
-    ]
-    return any(marker in lower for marker in markers)
+def _write_html_candidate(data, output_path, *, headers=None,
+                          source_label="HTML"):
+    """Fence one ordinary HTML response for specialist review.
 
-
-def _write_text_fallback_from_html(data, output_path, *, headers=None,
-                                   expected_author=None, expected_title=None,
-                                   source_label="HTML"):
+    HTML shape is not proof of a complete paper.  This helper deliberately
+    preserves the response bytes without converting or promoting them to TXT.
+    """
     if _is_pdf_response(data, headers):
         return False
     if _is_cloudflare_challenge(data, headers):
@@ -1114,17 +1100,18 @@ def _write_text_fallback_from_html(data, output_path, *, headers=None,
     if _looks_like_shibboleth_login(data):
         return False
     content_type = _header_value(headers, "content-type").lower()
-    if content_type and not any(part in content_type for part in ("html", "text/plain", "text/html")):
+    prefix = bytes(data).lstrip()[:256].lower()
+    if "html" not in content_type and not (
+        prefix.startswith(b"<!doctype html") or prefix.startswith(b"<html")
+    ):
         return False
 
-    text = _html_to_text(data)
-    if not _looks_like_article_text(text, expected_author, expected_title):
-        print(f"  {source_label}: HTML not article-like", file=sys.stderr)
-        return False
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(text)
-        f.write("\n")
-    print(f"  {source_label}: saved text fallback -> {os.path.basename(output_path)}", file=sys.stderr)
+    with open(output_path, "wb") as f:
+        f.write(data)
+    print(
+        f"  {source_label}: fenced HTML candidate -> {os.path.basename(output_path)}",
+        file=sys.stderr,
+    )
     return True
 
 
@@ -1502,12 +1489,13 @@ def _build_ezproxy_session(config):
 
 
 def _ezproxy_fetch_candidate(session, config, candidate_url, output_path, label,
-                             *, text_fallback_path=None, expected_author=None,
+                             *, html_candidate_path=None, expected_author=None,
                              expected_title=None):
     """Fetch one candidate URL through the proxy; write output_path on a PDF.
 
-    Returns True on a written PDF, the text path on an accepted text fallback,
-    False otherwise. A URL already on the proxy host is requested as-is;
+    Returns True on a written PDF and otherwise False. A fenced HTML candidate
+    is a side effect observed by the owning cascade only after all PDF routes
+    have been tried. A URL already on the proxy host is requested as-is;
     anything else is wrapped in the EZProxy login redirect.
     """
     login_url = config["login_url"]
@@ -1540,22 +1528,21 @@ def _ezproxy_fetch_candidate(session, config, candidate_url, output_path, label,
                     return _ezproxy_fetch_candidate(
                         session, config, meta_pdf, output_path,
                         f"{label} citation_pdf_url",
+                        html_candidate_path=html_candidate_path,
                     )
-            if text_fallback_path and _write_text_fallback_from_html(
+            if html_candidate_path and _write_html_candidate(
                 data,
-                text_fallback_path,
+                html_candidate_path,
                 headers=response_headers,
-                expected_author=expected_author,
-                expected_title=expected_title,
                 source_label=f"EZProxy {label}",
             ):
-                return text_fallback_path
+                continue
         except (requests.RequestException, TimeoutError, OSError):
             pass
     return False
 
 
-def try_ezproxy_url_download(urls, output_path, text_fallback_path=None,
+def try_ezproxy_url_download(urls, output_path, html_candidate_path=None,
                              expected_author=None, expected_title=None):
     """Fetch caller-provided publisher URLs through EZProxy.
 
@@ -1564,7 +1551,8 @@ def try_ezproxy_url_download(urls, output_path, text_fallback_path=None,
     fetched unauthenticated no matter how good the institutional session was.
     One session and one throttle slot cover every candidate.
 
-    Returns True / the text path on success, False otherwise.
+    Returns True for a written PDF, the fenced HTML path only after every PDF
+    route is exhausted, and False otherwise.
     Raises EZProxyCookieExpired if the session is expired.
     """
     candidates = [u for u in (urls or []) if u]
@@ -1583,7 +1571,7 @@ def try_ezproxy_url_download(urls, output_path, text_fallback_path=None,
     for candidate_url in candidates:
         result = _ezproxy_fetch_candidate(
             session, config, candidate_url, output_path, "URL hint",
-            text_fallback_path=text_fallback_path if _is_article_html_url(candidate_url) else None,
+            html_candidate_path=html_candidate_path if _is_article_html_url(candidate_url) else None,
             expected_author=expected_author,
             expected_title=expected_title,
         )
@@ -1591,15 +1579,18 @@ def try_ezproxy_url_download(urls, output_path, text_fallback_path=None,
             return result
 
     print(f"  EZProxy: no PDF found for {len(candidates)} URL hint(s)", file=sys.stderr)
+    if html_candidate_path and os.path.exists(html_candidate_path):
+        return html_candidate_path
     return False
 
 
 def try_ezproxy_download(doi, output_path, sciencedirect_urls=None, cell_pdf_urls=None,
-                         text_fallback_path=None, expected_author=None,
+                         html_candidate_path=None, expected_author=None,
                          expected_title=None):
     """Download paper via EZProxy: login redirect → publisher PDF pattern → HTML scrape.
 
-    Returns True on success (file written to output_path), False otherwise.
+    Returns True for a written PDF, the fenced HTML path only after every PDF
+    route is exhausted, and False otherwise.
     Raises EZProxyCookieExpired if session is expired.
     """
     config = load_ezproxy_config()
@@ -1644,10 +1635,10 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None, cell_pdf_url
     ):
         sciencedirect_urls.append(final_url)
 
-    def _try_ezproxy_candidate_url(candidate_url, label, allow_text_fallback=False):
+    def _try_ezproxy_candidate_url(candidate_url, label, allow_html_candidate=False):
         return _ezproxy_fetch_candidate(
             session, config, candidate_url, output_path, label,
-            text_fallback_path=text_fallback_path if allow_text_fallback else None,
+            html_candidate_path=html_candidate_path if allow_html_candidate else None,
             expected_author=expected_author,
             expected_title=expected_title,
         )
@@ -1663,7 +1654,7 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None, cell_pdf_url
             return result
 
     for sd_url in sciencedirect_urls or []:
-        result = _try_ezproxy_candidate_url(sd_url, "ScienceDirect hint", allow_text_fallback=True)
+        result = _try_ezproxy_candidate_url(sd_url, "ScienceDirect hint", allow_html_candidate=True)
         if result:
             return result
         for sd_pdf_url in _pdf_urls_from_article_url(sd_url):
@@ -1779,6 +1770,8 @@ def try_ezproxy_download(doi, output_path, sciencedirect_urls=None, cell_pdf_url
             pass
 
     print(f"  EZProxy: no PDF found", file=sys.stderr)
+    if html_candidate_path and os.path.exists(html_candidate_path):
+        return html_candidate_path
     return False
 
 
@@ -2364,9 +2357,9 @@ def find_wayback_url(doi):
     return None
 
 
-def download_pdf_from_url(url, output_path, timeout=60, *, text_fallback_path=None,
+def download_pdf_from_url(url, output_path, timeout=60, *, html_candidate_path=None,
                           expected_author=None, expected_title=None):
-    """Download a PDF from URL. Returns True on success.
+    """Download a PDF or fence one HTML response for specialist review.
 
     Auto-injects EZProxy cookie for matching domains.
     Raises EZProxyCookieExpired if response looks like a login page.
@@ -2416,19 +2409,17 @@ def download_pdf_from_url(url, output_path, timeout=60, *, text_fallback_path=No
                         meta_pdf,
                         output_path,
                         timeout=timeout,
-                        text_fallback_path=text_fallback_path,
+                        html_candidate_path=html_candidate_path,
                         expected_author=expected_author,
                         expected_title=expected_title,
                     )
-        if text_fallback_path and _write_text_fallback_from_html(
+        if html_candidate_path and _write_html_candidate(
             data,
-            text_fallback_path,
+            html_candidate_path,
             headers=response_headers,
-            expected_author=expected_author,
-            expected_title=expected_title,
             source_label="Direct URL",
         ):
-            return text_fallback_path
+            return html_candidate_path
         print(f"  SKIP not-a-pdf ({len(data)} bytes)", file=sys.stderr)
         return False
     except EZProxyCookieExpired:
@@ -2617,6 +2608,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
     os.makedirs(output_dir, exist_ok=True)
     dest = os.path.join(output_dir, f"{safe_name}.pdf")
     text_dest = os.path.join(output_dir, f"{safe_name}.txt")
+    html_dest = os.path.join(output_dir, f"{safe_name}.html")
     uncertain_candidates: list[dict] = []
 
     def _cleanup_uncertain_candidates():
@@ -2647,12 +2639,22 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
     def _verify_and_accept(path, source_name):
         """Verify downloaded file. Returns True if accepted, False if rejected."""
+        if Path(path).suffix.lower() in {".html", ".htm"}:
+            print(
+                f"  {source_name}: HTML candidate requires specialist review",
+                file=sys.stderr,
+            )
+            if os.path.exists(path):
+                _retain_uncertain_candidate(path, source_name)
+            return False
         if not verify_author and not verify_title:
             _cleanup_uncertain_candidates()
+            Path(html_dest).unlink(missing_ok=True)
             return True
         if verify_source_content(path, verify_author, verify_title,
                                  expected_doi=requested_doi):
             _cleanup_uncertain_candidates()
+            Path(html_dest).unlink(missing_ok=True)
             return True
         print(f"  {source_name}: identity uncertain; retaining for specialist review",
               file=sys.stderr)
@@ -2665,7 +2667,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
             candidate_url,
             dest,
             timeout=timeout,
-            text_fallback_path=text_dest,
+            html_candidate_path=html_dest,
             expected_author=verify_author,
             expected_title=verify_title,
         )
@@ -2680,7 +2682,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
 
     # A leftover temp file is a candidate like any other, not proof: a prior
     # run may have parked a wrong-identity PDF here that its caller rejected.
-    for existing in (dest, text_dest):
+    for existing in (dest, text_dest, html_dest):
         if os.path.exists(existing) and os.path.getsize(existing) > 1000:
             if _verify_and_accept(existing, "Existing temp"):
                 print(f"  EXISTS {existing}", file=sys.stderr)
@@ -2791,7 +2793,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                 dest,
                 sciencedirect_urls=article_html_urls + sciencedirect_urls,
                 cell_pdf_urls=cell_pdf_urls,
-                text_fallback_path=text_dest,
+                html_candidate_path=html_dest,
                 expected_author=verify_author,
                 expected_title=verify_title,
             )
@@ -2818,7 +2820,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
             url_proxy_result = _try_ezproxy_urls_with_refresh(
                 pending_proxy_urls,
                 dest,
-                text_fallback_path=text_dest,
+                html_candidate_path=html_dest,
                 expected_author=verify_author,
                 expected_title=verify_title,
             )
@@ -2911,7 +2913,7 @@ def download_paper(doi=None, url=None, urls=None, output_dir="sources",
                 kagi_proxy_result = _try_ezproxy_urls_with_refresh(
                     kagi_proxy_urls,
                     dest,
-                    text_fallback_path=text_dest,
+                    html_candidate_path=html_dest,
                     expected_author=verify_author,
                     expected_title=verify_title,
                 )
@@ -3077,6 +3079,11 @@ def _inspect_downloaded_file(path: Path) -> dict:
         try:
             with path.open("r", encoding="utf-8", errors="ignore") as f:
                 front_text = f.read(6000)
+        except OSError:
+            front_text = ""
+    elif suffix in {"html", "htm"}:
+        try:
+            front_text = _html_to_text(path.read_bytes())[:6000]
         except OSError:
             front_text = ""
     elif suffix == "epub":

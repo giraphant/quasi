@@ -2701,68 +2701,111 @@ def test_ezproxy_tries_cell_showpdf_candidate_first(monkeypatch, tmp_path):
     assert (tmp_path / "paper.pdf").read_bytes().startswith(b"%PDF-")
 
 
-def test_write_text_fallback_from_article_html(tmp_path):
-    mod = _load_module(DOWNLOAD, "download_cell_text_fallback_under_test")
-    html = b"""
-    <html><body><article>
-    <h1>Timescapes of non-human experience</h1>
-    <h2>Abstract</h2><p>Timescapes of non-human experience are discussed here.</p>
-    <h2>References</h2><p>Reference content.</p>
-    </article></body></html>
-    """ + b"article text " * 80
-    out = tmp_path / "paper.txt"
+def test_zhou_shaped_landing_html_is_never_promoted_to_paper_text(
+    monkeypatch, tmp_path
+):
+    mod = _load_module(DOWNLOAD, "download_zhou_landing_under_test")
+    url = "https://www.sciencedirect.com/science/article/pii/S0000000000000000"
+    html = (
+        "<html><body><main><h1>Distributed cognition in the wild</h1>"
+        "<h2>Highlights</h2><p>One short highlight.</p>"
+        "<h2>Abstract</h2><p>" + "summary " * 90 + "</p>"
+        "<h2>Keywords</h2><p>cognition; practice</p>"
+        "<footer>Elsevier navigation and access links</footer>"
+        "</main></body></html>"
+    ).encode("utf-8")
+    output_pdf = tmp_path / "paper.pdf"
+    output_text = tmp_path / "paper.txt"
+    output_html = tmp_path / "paper.html"
 
-    assert mod._write_text_fallback_from_html(
-        html,
-        str(out),
-        headers={"content-type": "text/html"},
-        expected_title="Timescapes of non-human experience",
+    monkeypatch.setattr(mod, "load_ezproxy_config", lambda: None)
+    monkeypatch.setattr(
+        mod.urllib.request,
+        "urlopen",
+        lambda _request, timeout: _FakeUrlResponse(
+            url,
+            html,
+            headers={"content-type": "text/html; charset=utf-8"},
+        ),
     )
-    assert "Timescapes of non-human experience" in out.read_text(encoding="utf-8")
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+
+    result = mod.download_pdf_from_url(
+        url,
+        str(output_pdf),
+        html_candidate_path=str(output_html),
+        expected_title="Distributed cognition in the wild",
+    )
+
+    assert result == str(output_html)
+    assert not output_text.exists()
+    assert not output_pdf.exists()
+    assert output_html.read_bytes() == html
 
 
-def test_generic_article_html_repository_is_eligible_for_text_fallback(tmp_path):
-    mod = _load_module(DOWNLOAD, "download_generic_html_fallback_under_test")
+def test_full_article_html_is_fenced_for_specialist_review_not_promoted(
+    monkeypatch, tmp_path
+):
+    mod = _load_module(DOWNLOAD, "download_generic_html_candidate_under_test")
     url = "https://repository.example.edu/items/full-article"
     html = (
         "<html><body><article><h1>Situated repair in public life</h1>"
         "<p>Alex Example</p><h2>Abstract</h2><p>" + "argument " * 90 +
         "</p><h2>References</h2><p>Sources</p></article></body></html>"
     ).encode("utf-8")
-    output = tmp_path / "paper.txt"
 
-    assert mod._is_article_html_url(url)
-    assert mod._write_text_fallback_from_html(
-        html,
-        str(output),
-        headers={"content-type": "text/html; charset=utf-8"},
-        expected_title="Situated repair in public life",
-        expected_author="Alex Example",
+    def fake_download(_url, _output_path, timeout=60, **kwargs):
+        candidate_path = kwargs.get("html_candidate_path")
+        if candidate_path is None:
+            return False
+        Path(candidate_path).write_bytes(html)
+        return candidate_path
+
+    monkeypatch.setattr(mod, "download_pdf_from_url", fake_download)
+    monkeypatch.setattr(mod, "_try_ezproxy_urls_with_refresh", lambda *a, **k: False)
+    monkeypatch.setattr(mod, "_kagi_discover_paper", lambda *a, **k: ([], []))
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+
+    result = mod.download_paper(
+        url=url,
+        output_dir=str(tmp_path),
+        filename="situated-repair",
+        verify_title="Situated repair in public life",
+        verify_author="Alex Example",
     )
-    assert output.read_text(encoding="utf-8").endswith("\n")
+
+    assert result["status"] == "identity_uncertain"
+    assert len(result["candidates"]) == 1
+    candidate = result["candidates"][0]
+    assert Path(candidate["temp_path"]).suffix == ".html"
+    assert candidate["inspect"]["format"] == "html"
+    assert "Situated repair in public life" in candidate["inspect"]["front_text"]
+    assert not (tmp_path / "situated-repair.txt").exists()
 
 
 @pytest.mark.parametrize(
-    ("body", "title"),
+    ("body", "content_type"),
     [
-        ("<html><body><form>Sign in</form>" + "login " * 200 + "</body></html>", "Target"),
-        ("<html><body><h1>Different work</h1><h2>Abstract</h2>" + "text " * 200 + "</body></html>", "Target article"),
-        ("<html><body><nav>Abstract References</nav>" + "menu " * 200 + "</body></html>", "Target article"),
+        (
+            "<html><body><form>Sign in</form>"
+            + "Shibboleth login " * 100
+            + "</body></html>",
+            "text/html",
+        ),
+        ("plain response", "application/octet-stream"),
     ],
-    ids=("login", "wrong-title", "navigation-shell"),
+    ids=("login", "non-html"),
 )
-def test_generic_article_text_fallback_rejects_non_articles(
-    tmp_path, body, title
+def test_html_candidate_fence_rejects_non_content_responses(
+    tmp_path, body, content_type
 ):
     mod = _load_module(DOWNLOAD, "download_generic_html_rejection_under_test")
-    output = tmp_path / "paper.txt"
+    output = tmp_path / "paper.html"
 
-    assert not mod._write_text_fallback_from_html(
+    assert not mod._write_html_candidate(
         body.encode("utf-8"),
         str(output),
-        headers={"content-type": "text/html"},
-        expected_title=title,
-        expected_author="Alex Example",
+        headers={"content-type": content_type},
     )
     assert not output.exists()
 
