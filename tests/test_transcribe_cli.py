@@ -313,6 +313,107 @@ def test_prepared_video_observe_uses_prepared_source_fingerprint(
     assert calls == []
 
 
+def test_prepared_video_added_after_transcription_keeps_raw_generation_current(
+    tmp_path: Path, monkeypatch, capsys
+):
+    original = tmp_path / "sources/input.mov"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"original-video")
+    calls: list[str] = []
+    _stub_audio(monkeypatch, calls)
+    run = _args(tmp_path, "video-talk")
+    run[run.index("sources/talk.wav")] = "sources/input.mov"
+    run[run.index("Strict Talk")] = "Video Talk"
+    assert transcribe.main(run) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["disposition"] == "created"
+    calls.clear()
+
+    monkeypatch.setattr(compress_media.shutil, "which", lambda _name: "/ffmpeg")
+
+    def compress(command, text):
+        del text
+        Path(command[-1]).write_bytes(b"prepared-video")
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(compress_media.subprocess, "run", compress)
+    prepare_args = type(
+        "Args",
+        (),
+        {
+            "project_dir": str(tmp_path),
+            "media": "sources/input.mov",
+            "output": "vault/talks/video-talk/recording.mp4",
+            "crf": "28",
+            "preset": "veryfast",
+            "audio_bitrate": "96k",
+            "force": False,
+            "json": True,
+        },
+    )()
+    assert compress_media.run(prepare_args)[0] == 0
+
+    observe = run.copy()
+    observe.extend(["--date", "2026-07-30"])
+    observe[observe.index("run")] = "observe"
+    assert transcribe.main(observe) == 0
+    observed = json.loads(capsys.readouterr().out)
+    assert observed["request_fingerprint"] == first["request_fingerprint"]
+    assert observed["prepared_path"] == "vault/talks/video-talk/recording.mp4"
+    assert observed["classification"] == "live"
+    assert observed["transcript_path"] is not None
+    roles = {row["role"] for row in observed["artifacts"]}
+    assert {"transcript", "prepared_media"} <= roles
+    assert calls == []
+
+
+def test_prepared_video_does_not_revive_a_generation_from_another_source(
+    tmp_path: Path, monkeypatch, capsys
+):
+    _media(tmp_path)
+    calls: list[str] = []
+    _stub_audio(monkeypatch, calls)
+    run = _args(tmp_path, "video-talk")
+    assert transcribe.main(run) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["disposition"] == "created"
+
+    original = tmp_path / "sources/input.mov"
+    original.write_bytes(b"original-video")
+    monkeypatch.setattr(compress_media.shutil, "which", lambda _name: "/ffmpeg")
+
+    def compress(command, text):
+        del text
+        Path(command[-1]).write_bytes(b"prepared-video")
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(compress_media.subprocess, "run", compress)
+    prepare_args = type(
+        "Args",
+        (),
+        {
+            "project_dir": str(tmp_path),
+            "media": "sources/input.mov",
+            "output": "vault/talks/video-talk/recording.mp4",
+            "crf": "28",
+            "preset": "veryfast",
+            "audio_bitrate": "96k",
+            "force": False,
+            "json": True,
+        },
+    )()
+    assert compress_media.run(prepare_args)[0] == 0
+
+    observe = run.copy()
+    observe.extend(["--date", "2026-07-30"])
+    observe[observe.index("run")] = "observe"
+    observe[observe.index("sources/talk.wav")] = "sources/input.mov"
+    assert transcribe.main(observe) == 0
+    observed = json.loads(capsys.readouterr().out)
+    assert observed["request_fingerprint"] is None
+    assert [row["role"] for row in observed["artifacts"]] == ["prepared_media"]
+
+
 def test_silent_json_safe_yaml_create_then_reconcile(
     tmp_path: Path, capsys
 ):

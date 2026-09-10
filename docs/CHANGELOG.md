@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.33** (2026-09-10): **先转写、后补视频的 Talk generation 在 `observe` 中仍视为 current。**
+  - `quasi-transcribe observe` 在 prepared media 存在时，除按 `recording.mp4` 计算的 fingerprint 外，也接受以本次 exact 原始 source 转写出来的 generation：sidecar `input_sha256` 已证明 prepared media 派生自该 source，因此它们是同一请求。此前这类旧讲座会被报告为 `request_fingerprint:null`，一旦重入 Prepare 就整套重转写。
+  - `run`、`classify`、`silent` 与 Workflow 层不变；显式 `run --media recording.mp4` 仍按 prepared 路径建立新 generation。`transcribe-agent` 明确 `observe` 报告 current 时直接复用，不再调用 `run`。
+
 - **0.65.32** (2026-09-10): **视频 Talk 缺省准备 prepared media，并把它纳入完成条件。**
   - 视频类媒体（`mov|mp4|m4v|mkv|webm`）的 Talk 省略 `prepare_media` 时由 entry parser 缺省为 `true`，音频仍为 `false`，显式值优先。此前缺省 `false` 让新 Talk 只剩 `talk.md`，没有 `vault/talks/{slug}/recording.mp4`。
   - `prepare_media:true` 时，`talk.prepare` receipt 必须包含 exact `prepared_media` artifact，material result 也返回该 ref；`quasi-status --kind talk` 新增 `facts.prepared`，只有 `recording.mp4` 与 `.recording.mp4.quasi-compress.json` sidecar 成对且 size 一致才 usable，Skill 的 post-status 据此证明完成。

@@ -732,13 +732,23 @@ def cmd_observe(args) -> int:
             # graph's reconcile contract.
             fingerprint = None
         else:
-            if (
-                manifest["request_fingerprint"] != fingerprint
-                or manifest["source"].get("sha256")
-                != transcription_source.get("sha256")
-                or manifest["source"].get("size")
-                != transcription_source.get("size")
-            ):
+            candidates = [transcription_source]
+            if prepared_identity is not None:
+                # inspect_prepared already proved recording.mp4 derives from this exact
+                # source, so a generation transcribed from the raw source is the same request.
+                candidates.append(source)
+            matched = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if manifest["request_fingerprint"]
+                    == request_fingerprint(candidate, engines, lang, title)
+                    and manifest["source"].get("sha256") == candidate.get("sha256")
+                    and manifest["source"].get("size") == candidate.get("size")
+                ),
+                None,
+            )
+            if matched is None:
                 # The old generation is internally trustworthy but belongs to
                 # a different explicit request.  Do not advertise its
                 # transcript as reusable; transcribe may replace it under the
@@ -746,6 +756,7 @@ def cmd_observe(args) -> int:
                 manifest = None
                 fingerprint = None
             else:
+                fingerprint = manifest["request_fingerprint"]
                 transcript = talk_dir / "transcript.md"
                 if manifest["status"] == "succeeded":
                     if not regular_file(transcript):

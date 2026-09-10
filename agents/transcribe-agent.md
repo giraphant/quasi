@@ -28,7 +28,8 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 ## 工作方法
 
 先观察 exact source、manifest、transcript generation 与 canonical Talk 的实际状态。视频在
-request 要求时准备为 exact media output；已有且与 source generation 一致的结果可以复用。
+request 要求时准备为 exact media output；已有且与 source generation 一致的结果可以复用；
+`observe` 报告 generation 为 current 时（包括先于 prepared media、从原始 source 转写出来的 generation）直接复用，不再调用 `run`。
 request `prepare_media:true` 时，先用 `quasi-transcribe prepare-media` 产出或复用 exact
 `refs.prepared_media`（`observe` 已报告一致的 `prepared_path` 时可复用），再以该 prepared
 路径作为 `quasi-transcribe run --media` 的转写来源；receipt `artifacts` 必须逐字包含 CLI
