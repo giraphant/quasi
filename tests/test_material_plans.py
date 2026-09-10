@@ -3683,6 +3683,8 @@ def talk_observation(
     *,
     transcripts: tuple[str, ...] = (),
     canonical: bool = False,
+    prepared: bool = False,
+    media_extension: str = "mp3",
 ) -> dict[str, Any]:
     slug = "exact-talk"
     return {
@@ -3695,11 +3697,16 @@ def talk_observation(
             "media": [
                 {
                     "path": f"sources/{slug}.{extension}",
-                    "present": extension == "mp3",
-                    "usable": extension == "mp3",
+                    "present": extension == media_extension,
+                    "usable": extension == media_extension,
                 }
                 for extension in TALK_MEDIA_EXTENSIONS
             ],
+            "prepared": {
+                "path": f"vault/talks/{slug}/recording.mp4",
+                "present": prepared,
+                "usable": prepared,
+            },
             "transcripts": [
                 {
                     "path": f"processing/talks/{slug}/{name}",
@@ -3721,17 +3728,23 @@ def canonical_talk_input(
     *,
     transcripts: tuple[str, ...] = (),
     canonical: bool = False,
+    prepared: bool = False,
+    media_extension: str = "mp3",
     options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    identity = deepcopy(TALK_IDENTITY)
+    identity["media"] = f"sources/exact-talk.{media_extension}"
     return {
         "seed": {
             "state": "canonical",
             "material_slug": "exact-talk",
-            "identity": deepcopy(TALK_IDENTITY),
+            "identity": identity,
         },
         "observation": talk_observation(
             transcripts=transcripts,
             canonical=canonical,
+            prepared=prepared,
+            media_extension=media_extension,
         ),
         "options": options or {},
     }
@@ -3741,6 +3754,8 @@ def talk_prepare_complete(
     classification: str,
     *,
     canonical_present: bool = False,
+    prepared: bool = False,
+    media_extension: str = "mp3",
     canonical_action: str | None = None,
 ) -> dict[str, Any]:
     slug = "exact-talk"
@@ -3766,6 +3781,8 @@ def talk_prepare_complete(
             )
         ],
     ]
+    if prepared:
+        artifacts.append({"role": "prepared_media", "path": f"vault/talks/{slug}/recording.mp4", "sha256": "9" * 64, "size": 500})
     if classification in {"dead", "empty"}:
         canonical_present = True
         canonical_action = canonical_action or "create"
@@ -3779,7 +3796,7 @@ def talk_prepare_complete(
         )
     return {
         "source_observation": {
-            "path": f"sources/{slug}.mp3",
+            "path": f"sources/{slug}.{media_extension}",
             "sha256": "f" * 64,
         },
         "generation_observation": {
@@ -4911,3 +4928,45 @@ def test_author_lifts_partial_book_observation_request() -> None:
     assert report["result"]["terminal"] == "needs_observation"
     assert report["result"]["routes"] == [route]
     assert report["result"]["resume_seed"]["members"][0]["leaf"]["route"] == route
+
+
+@pytest.mark.parametrize("media_extension", ["mov", "mp4", "m4v", "mkv", "webm"])
+def test_talk_video_media_defaults_prepare_media_true(media_extension):
+    report = run_talk(
+        canonical_talk_input(media_extension=media_extension),
+        [talk_prepare_complete("live", prepared=True, media_extension=media_extension), talk_analyse_complete(), audit_complete()],
+    )
+    assert report["calls"][0]["request"]["prepare_media"] is True
+    assert report["result"]["terminal"] == "complete"
+    assert {"role": "prepared_media", "path": "vault/talks/exact-talk/recording.mp4"} in report["result"]["artifacts"]
+
+
+def test_talk_video_prepare_without_prepared_artifact_is_incoherent():
+    report = run_talk(canonical_talk_input(media_extension="mp4"), [talk_prepare_complete("live", media_extension="mp4")])
+    assert [call["request"]["operation"] for call in report["calls"]] == ["talk.prepare"]
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "workflow.incoherent_complete"
+
+
+def test_talk_usable_canonical_without_prepared_media_reenters_prepare():
+    report = run_talk(
+        canonical_talk_input(media_extension="mp4", canonical=True),
+        [talk_prepare_complete("live", prepared=True, media_extension="mp4", canonical_present=True), talk_analyse_complete("repair"), audit_complete()],
+    )
+    assert [call["request"]["operation"] for call in report["calls"]] == ["talk.prepare", "talk.analyse", "talk.audit"]
+    assert report["calls"][1]["request"]["mode"] == "repair"
+    assert report["result"]["terminal"] == "complete"
+
+
+def test_talk_usable_canonical_with_prepared_media_starts_at_audit():
+    report = run_talk(canonical_talk_input(media_extension="mp4", canonical=True, prepared=True), [audit_complete()])
+    assert [call["request"]["operation"] for call in report["calls"]] == ["talk.audit"]
+    assert report["result"]["terminal"] == "complete"
+    assert {"role": "prepared_media", "path": "vault/talks/exact-talk/recording.mp4"} in report["result"]["artifacts"]
+
+
+def test_talk_video_explicit_prepare_media_false_skips_prepared_media():
+    report = run_talk(canonical_talk_input(media_extension="mp4", canonical=True, options={"prepare_media": False}), [audit_complete()])
+    assert [call["request"]["operation"] for call in report["calls"]] == ["talk.audit"]
+    assert report["result"]["terminal"] == "complete"
+    assert all(row["role"] != "prepared_media" for row in report["result"]["artifacts"])

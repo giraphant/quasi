@@ -51,6 +51,7 @@ export type TalkRunInputResult =
 export interface TalkStatusFacts {
   kind: "talk";
   media: ArtifactObservation[];
+  prepared: ArtifactObservation;
   transcripts: ArtifactObservation[];
   canonical: ArtifactObservation;
 }
@@ -59,6 +60,10 @@ export type TalkStatusObservation = QuasiStatusObservation<
   "talk",
   TalkStatusFacts
 >;
+
+export const TALK_VIDEO_EXTENSIONS = ["mov", "mp4", "m4v", "mkv", "webm"] as const;
+export const talkMediaIsVideo = (media: string): boolean =>
+  TALK_VIDEO_EXTENSIONS.some((extension) => media.endsWith(`.${extension}`));
 
 const TALK_MEDIA_EXTENSIONS = [
   "mov",
@@ -122,7 +127,7 @@ export const parseTalkSeed = (value: unknown): TalkSeed | null => {
     : { state: "canonical", material_slug: value.material_slug, identity };
 };
 
-export const parseTalkOptions = (value: unknown): TalkOptions | null => {
+export const parseTalkOptions = (value: unknown, media: string): TalkOptions | null => {
   if (
     !isRecord(value) ||
     !exactKeys(value, [], ["engines", "lang", "prepare_media"])
@@ -134,7 +139,7 @@ export const parseTalkOptions = (value: unknown): TalkOptions | null => {
   const lang = Object.hasOwn(value, "lang") ? value.lang : "auto";
   const prepareMedia = Object.hasOwn(value, "prepare_media")
     ? value.prepare_media
-    : false;
+    : talkMediaIsVideo(media);
   if (
     !Array.isArray(engines) ||
     engines.length === 0 ||
@@ -167,13 +172,15 @@ export const parseTalkStatusObservation = (
   );
   const transcriptRoot = `processing/talks/${observation.slug}/`;
   if (
-    !exactKeys(facts, ["kind", "media", "transcripts", "canonical"]) ||
+    !exactKeys(facts, ["kind", "media", "prepared", "transcripts", "canonical"]) ||
     facts.kind !== "talk" ||
     !isArtifactList(facts.media) ||
     facts.media.length !== mediaPaths.length ||
     facts.media.some(
       (artifact, index) => artifact.path !== mediaPaths[index],
     ) ||
+    !isArtifactObservation(facts.prepared) ||
+    facts.prepared.path !== `vault/talks/${observation.slug}/recording.mp4` ||
     !isArtifactList(facts.transcripts) ||
     facts.transcripts.some((artifact) => {
       if (!artifact.path.startsWith(transcriptRoot)) return true;
@@ -208,10 +215,10 @@ export const parseTalkRunInput = (raw: unknown): TalkRunInputResult => {
   )
     return invalid();
   const seed = parseTalkSeed(raw.seed);
+  if (seed === null) return invalid();
   const observation = parseTalkStatusObservation(raw.observation);
-  const options = parseTalkOptions(raw.options);
+  const options = parseTalkOptions(raw.options, seed.identity.media);
   if (
-    seed === null ||
     observation === null ||
     options === null ||
     observation.slug !== seed.material_slug

@@ -119,7 +119,7 @@ const carryFromPrepare = (receipt: StageReceipt): TalkCarry => {
   } as TalkCarry;
 };
 
-const completedTalk = (state: TalkState): MaterialResult =>
+const completedTalk = (state: TalkState, prepareMedia: boolean): MaterialResult =>
   completeMaterialResult(
     resultSeed(state),
     [
@@ -127,6 +127,9 @@ const completedTalk = (state: TalkState): MaterialResult =>
         role: "canonical",
         path: `vault/talks/${state.slug}/talk.md`,
       },
+      ...(prepareMedia
+        ? [{ role: "prepared_media" as const, path: `vault/talks/${state.slug}/recording.mp4` }]
+        : []),
     ],
     null,
   );
@@ -163,7 +166,7 @@ const auditTalk = async (
 
   const firstReceipt = firstAudit.receipt as StageReceipt;
   const target = firstReceipt.target_path as string;
-  if (firstReceipt.remaining_violations === 0) return completedTalk(state);
+  if (firstReceipt.remaining_violations === 0) return completedTalk(state, input.options.prepare_media);
   if (auditHasForeignTarget(firstReceipt, target))
     return blockedMaterialResult(
       resultSeed(state),
@@ -213,7 +216,7 @@ const auditTalk = async (
         "Audit escalation targeted an artifact outside this Talk.",
       ),
     );
-  if (secondReceipt.remaining_violations === 0) return completedTalk(state);
+  if (secondReceipt.remaining_violations === 0) return completedTalk(state, input.options.prepare_media);
   return blockedMaterialResult(
     resultSeed(state),
     planIssue(
@@ -234,7 +237,10 @@ export async function runTalkPlan(
   ) as TalkStatusObservation;
   const state = { slug };
 
-  if (observation.facts.canonical.usable)
+  if (
+    observation.facts.canonical.usable &&
+    (!input.options.prepare_media || observation.facts.prepared.usable)
+  )
     return auditTalk(runtime, input, state, null);
 
   const common = {

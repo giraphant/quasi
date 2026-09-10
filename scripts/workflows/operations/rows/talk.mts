@@ -205,6 +205,10 @@ export const talkOperationRows: OperationRow[] = [
                 row.path === context.canonical &&
                 row.sha256 === receipt.canonical_observation.sha256,
             )) &&
+        (!context.prepareMedia ||
+          receipt.artifacts.some(
+            (row: any) => row.role === "prepared_media" && row.path === context.prepared,
+          )) &&
         (!context.repair ||
           (receipt.classification === "live"
             ? receipt.canonical_action === null

@@ -382,7 +382,8 @@ const parseSeedMaterial = (value: unknown): TopicSeedMaterial | null => {
   }
   if (value.kind === "talk") {
     const seed = parseTalkSeed(value.seed);
-    const options = parseTalkOptions(value.options);
+    if (seed === null) return null;
+    const options = parseTalkOptions(value.options, seed.identity.media);
     return seed === null || options === null ? null : { kind: "talk", seed, options };
   }
   return null;
@@ -437,7 +438,8 @@ const parseSeedLeaf = (value: unknown): TopicSeedLeaf | null => {
     return seed === null ? null : { route, seed, options: value.options } as TopicSeedLeaf;
   }
   const seed = parseTalkSeed(value.seed);
-  const options = parseTalkOptions(value.options);
+  if (seed === null) return null;
+  const options = parseTalkOptions(value.options, seed.identity.media);
   return seed === null || options === null
     ? null
     : { route, seed, options } as TopicSeedLeaf;

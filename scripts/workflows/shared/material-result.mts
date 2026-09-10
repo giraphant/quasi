@@ -57,6 +57,7 @@ export interface ExactArtifactRef {
     | "source"
     | "snapshot"
     | "normalized_text"
+    | "prepared_media"
     | "manifest"
     | "chapter"
     | "canonical"

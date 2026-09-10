@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.32** (2026-09-10): **视频 Talk 缺省准备 prepared media，并把它纳入完成条件。**
+  - 视频类媒体（`mov|mp4|m4v|mkv|webm`）的 Talk 省略 `prepare_media` 时由 entry parser 缺省为 `true`，音频仍为 `false`，显式值优先。此前缺省 `false` 让新 Talk 只剩 `talk.md`，没有 `vault/talks/{slug}/recording.mp4`。
+  - `prepare_media:true` 时，`talk.prepare` receipt 必须包含 exact `prepared_media` artifact，material result 也返回该 ref；`quasi-status --kind talk` 新增 `facts.prepared`，只有 `recording.mp4` 与 `.recording.mp4.quasi-compress.json` sidecar 成对且 size 一致才 usable，Skill 的 post-status 据此证明完成。
+  - canonical `talk.md` 已 usable 但 prepared media 缺失时不再直接 Audit，而是重新进入 Prepare；`transcribe-agent` 明确先 `prepare-media` 再以 prepared 路径转写。
+  - 未改动 `quasi-transcribe` 的 generation fingerprint 合同：`observe` 见到 prepared media 就按它计算 fingerprint，先转写后补视频的旧讲座在重入 Prepare 时会重新转写。
+
 - **0.65.31** (2026-08-27): **Paper HTML 候选不再冒充全文，Prepare 以 exact source 事实与完整正文判断收敛。**
   - Paper 下载器不再依据题名与 `Abstract`、`Highlights`、`References` 等页面标记把 HTML 自动转换并晋升为 TXT；普通 HTML 只作为隔离的 `.html` candidate 保留，PDF 路径仍会继续穷尽。Download Agent 可在同一临时目录显式检查并转换真正的完整 HTML 正文，landing page、摘要、preview、导航壳和元数据页不得发布。
   - Paper Workflow 现在把 fresh status 已观察的 source format、path、SHA-256 与 size 一并绑定到 Prepare request；这些机械事实由 caller 提供，不要求模型在 receipt 中重复抄写。来源路径、格式或 observation 不一致会在 Agent dispatch 前 fail closed。

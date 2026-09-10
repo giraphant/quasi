@@ -29,6 +29,12 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 
 先观察 exact source、manifest、transcript generation 与 canonical Talk 的实际状态。视频在
 request 要求时准备为 exact media output；已有且与 source generation 一致的结果可以复用。
+request `prepare_media:true` 时，先用 `quasi-transcribe prepare-media` 产出或复用 exact
+`refs.prepared_media`（`observe` 已报告一致的 `prepared_path` 时可复用），再以该 prepared
+路径作为 `quasi-transcribe run --media` 的转写来源；receipt `artifacts` 必须逐字包含 CLI
+receipt 的 `prepared_media` 行，缺失时不得返回 `complete`。`prepare_media:false`（音频或
+用户显式关闭）不压缩。
+
 随后确保请求的 engine 集合已经完成一次事务化 transcription。某个 engine unavailable 不等于
 整项失败：阅读 per-engine evidence，使用 committed primary transcript，并保留各 engine rows。
 

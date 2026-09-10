@@ -17,7 +17,7 @@ description: Use when the user wants to preserve a public webpage, process or co
 - Paper：`title|doi` 至少一个；可带 `authors/year/journal/oa_url/url`。
 - Book：`title|isbn` 至少一个；identity hints 可带 `authors/year/publisher/category`；`format`
   只作为下载偏好，不属于 identity hints。
-- Talk：一个已经接受到 `sources/{slug}.{media-ext}` 的媒体，以及 `slug/title/date`；可带 `engines/lang/prepare_media`。
+- Talk：一个已经接受到 `sources/{slug}.{media-ext}` 的媒体，以及 `slug/title/date`；可带 `engines/lang/prepare_media`；`prepare_media` 省略时由 entry parser 按媒体类型决定（视频 true，音频 false）。
 - Translation：Paper 的 canonical slug；可带 `target_language/source_file/toc_json/toc_page_side`，用户未指定 target 时用 `zh`。
 - Author：`slug/full_name/topic`；可用 `maxBooks/maxPapers` 向下限制默认的 5/10 个代表作。
 - Webpage：仅当用户要保存该公共 URL 对应的网页本身时使用；明确作为 Paper/Book clue 提供的 URL 仍归属原材料。
@@ -236,7 +236,9 @@ Author → exact Author status → discover/freeze → exact child status batch
      必须继续带同一个 `normalized_target`。Author 还必须在 exact
      `vault/authors/{slug}.md` present/usable 且 `identity.name` 逐字等于本次
      `resume_seed.seed.full_name`（初次调用则为 `seed.full_name`）时才报告完成。Webpage 的 snapshot、
-     prepared、canonical 三个 returned refs 都必须与该 observation 相等、present 且 usable。Paper 的
+     prepared、canonical 三个 returned refs 都必须与该 observation 相等、present 且 usable。Talk 的
+     canonical returned ref 必须命中 `facts.canonical`；返回 `prepared_media` ref 时必须命中
+     `facts.prepared` 且 present、usable。Paper 的
      source 与 canonical returned refs 必须分别命中当前 observation 的 exact source/canonical 且
      present、usable。Workflow 选定的 normalized_text 若是 fixed `processing/papers/{slug}/source.txt`，
      必须命中 `facts.prepared` 的 exact present/usable artifact；若是 immutable generation text，必须逐字
@@ -313,6 +315,7 @@ issue。Batch 恢复原输入顺序并标出 exact-key coalescing。
 常见成功产物：
 
 ```text
+vault/talks/{slug}/recording.mp4
 sources/{slug}.{pdf|epub|txt}
 processing/papers/{slug}/source.txt
 processing/papers/{slug}/ocr-generations/{generation-key}/ocr.txt

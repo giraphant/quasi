@@ -2114,11 +2114,13 @@ def test_talk_prepare_repair_accepts_only_the_current_classification_owner(
 
 def _dispatch_talk_prepare_artifacts(
     artifacts: list[dict[str, Any]],
+    *,
+    meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     slug = "exact-talk"
     output = {
         "source_observation": {
-            "path": f"sources/{slug}.mp3",
+            "path": (meta or {}).get("media", f"sources/{slug}.mp3"),
             "sha256": "a" * 64,
         },
         "generation_observation": {
@@ -2145,6 +2147,7 @@ def _dispatch_talk_prepare_artifacts(
                         "date": "2024-01-02",
                         "media": f"sources/{slug}.mp3",
                         "engines": ["soniox"],
+                        **(meta or {}),
                     },
                 ),
             ),
@@ -2757,3 +2760,13 @@ def test_translation_gate_is_required_only_inside_needs_input_terminal() -> None
         variant["properties"]["kind"]["const"] for variant in gate_variants
     } == {"source_selection", "configuration_required"}
     assert all(variant["type"] == "object" for variant in gate_variants)
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_talk_prepare_requires_requested_prepared_media_artifact(prepared):
+    artifacts = [{"role": "transcript", "path": "vault/talks/exact-talk/transcript.md", "sha256": "a" * 64, "size": 100}]
+    artifacts.append({"role": "engine_transcript", "path": "processing/talks/exact-talk/transcript.soniox.srt", "sha256": "b" * 64, "size": 80})
+    if prepared:
+        artifacts.append({"role": "prepared_media", "path": "vault/talks/exact-talk/recording.mp4", "sha256": "9" * 64, "size": 500})
+    report = _dispatch_talk_prepare_artifacts(artifacts, meta={"media": "sources/exact-talk.mp4", "prepareMedia": True})
+    assert report["result"]["kind"] == ("receipt" if prepared else "incoherent_complete")

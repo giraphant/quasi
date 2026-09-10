@@ -803,6 +803,7 @@ def test_talk_status_reports_media_transcripts_and_canonical_identity(tmp_path: 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["identity"] == {"title": "Exact Talk", "year": 2024}
+    assert payload["facts"]["prepared"] == observation(f"vault/talks/{slug}/recording.mp4", present=False, usable=False)
     assert [item for item in payload["facts"]["media"] if item["present"]] == [
         observation(f"sources/{slug}.mp3", present=True, usable=True)
     ]
@@ -1178,3 +1179,22 @@ def test_paper_status_uses_live_operation_catalog_artifact_template(
     assert payload["facts"]["source_candidates_fingerprint"] == (
         status_module.fingerprint([candidate])
     )
+
+
+@pytest.mark.parametrize("manifest_size,usable", [(None, False), (5, True), (6, False)])
+def test_talk_prepared_media_requires_matching_sidecar(tmp_path, manifest_size, usable):
+    project = tmp_path / "project"
+    slug = "exact-talk"
+    prepared = project / "vault" / "talks" / slug / "recording.mp4"
+    write(prepared, b"video")
+    if manifest_size is not None:
+        write(prepared.with_name(".recording.mp4.quasi-compress.json"), json.dumps({
+            "schema_version": "quasi.talk.prepared-media.manifest/0.1",
+            "request_fingerprint": "1" * 64,
+            "input_sha256": "2" * 64,
+            "output_sha256": "3" * 64,
+            "size": manifest_size,
+        }))
+    result = run_status(project, "--kind", "talk", "--slug", slug, "--json")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["facts"]["prepared"] == observation(f"vault/talks/{slug}/recording.mp4", present=True, usable=usable)

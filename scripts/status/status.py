@@ -740,6 +740,37 @@ def talk_transcripts(root: Path, slug: str) -> list[Path]:
     ]
 
 
+PREPARED_MEDIA_MANIFEST_SCHEMA = "quasi.talk.prepared-media.manifest/0.1"
+PREPARED_MEDIA_MANIFEST_KEYS = {
+    "schema_version", "request_fingerprint", "input_sha256", "output_sha256", "size",
+}
+
+
+def talk_prepared_observation(root: Path, slug: str) -> dict[str, Any]:
+    """Prepared media is usable only with a well-formed sidecar whose size matches."""
+    prepared = artifact_path(root, "talk.prepare", "prepared", slug=slug)
+    fact = artifact_observation(root, prepared)
+    if not fact["usable"]:
+        return fact
+    sidecar = prepared.with_name(f".{prepared.name}.quasi-compress.json")
+    usable = False
+    try:
+        if stat.S_ISREG(sidecar.lstat().st_mode):
+            value = json.loads(sidecar.read_text(encoding="utf-8"))
+            usable = (
+                isinstance(value, dict)
+                and set(value) == PREPARED_MEDIA_MANIFEST_KEYS
+                and value["schema_version"] == PREPARED_MEDIA_MANIFEST_SCHEMA
+                and isinstance(value["size"], int)
+                and not isinstance(value["size"], bool)
+                and value["size"] == prepared.stat().st_size
+            )
+    except (OSError, UnicodeError, ValueError):
+        usable = False
+    fact["usable"] = usable
+    return fact
+
+
 def talk_status(root: Path, slug: str) -> dict[str, Any]:
     media = [root / "sources" / f"{slug}.{extension}" for extension in MEDIA_EXTENSIONS]
     transcripts = talk_transcripts(root, slug)
@@ -752,6 +783,7 @@ def talk_status(root: Path, slug: str) -> dict[str, Any]:
         {
             "kind": "talk",
             "media": [artifact_observation(root, path) for path in media],
+            "prepared": talk_prepared_observation(root, slug),
             "transcripts": [artifact_observation(root, path) for path in transcripts],
             "canonical": canonical_fact,
         },

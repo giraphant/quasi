@@ -167,7 +167,7 @@ so unrelated subagents retain Claude Code's default row.
 - `steer-agent` owns `vault/topics/{slug}/02-outline.md` (the topic research outline; users may hand-edit it between runs) and returns sub-question-targeted candidates; it writes nothing else.
 - `webcard-agent` turns one topic `web_task` into one evidence card at the caller-named `vault/topics/{slug}/cards/{card-slug}.md`; it writes nothing else, and returns `status: empty` rather than writing a card it could not verify. Cards travel on their own `cards` channel (outline `subquestions[].cards`, synth `card_paths`) and never enter the `book|paper|talk` corpus table.
 - `audit-agent` runs `quasi-audit --path`; it may apply local mechanical fixes but does not own workflow state.
-- `transcribe-agent` and `translate-agent` own Talk and Translation Prepare with the same terminal shape, preserving media reconciliation and fenced-generation publication contracts.
+- `transcribe-agent` and `translate-agent` own Talk and Translation Prepare with the same terminal shape, preserving media reconciliation and fenced-generation publication contracts. Video Talks prepare `vault/talks/{slug}/recording.mp4` by default; when `prepare_media:true`, this file and its sidecar are part of Prepare and material completion, exposed by `quasi-status` as `facts.prepared`.
 - `webpage-agent` owns exact-URL inspection, `vault/webpages/{slug}/snapshot.webarchive`, and `processing/webpages/{slug}/source.md`; `analyse-agent` owns `vault/webpages/{slug}/webpage.md` and `audit-agent` owns its mechanical repair.
 
 Deprecated agents live under `deprecated/agents/` and must not be dispatched by

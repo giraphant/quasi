@@ -723,6 +723,7 @@ def test_talk_status_parser_matches_the_exact_status_producer_projection():
                 }
                 for extension in extensions
             ],
+            "prepared": {"path": f"vault/talks/{slug}/recording.mp4", "present": False, "usable": False},
             "transcripts": [
                 {
                     "path": f"processing/talks/{slug}/transcript.apple.srt",
@@ -760,6 +761,10 @@ def test_talk_status_parser_matches_the_exact_status_producer_projection():
         "parseTalkStatusObservation",
         foreign,
     ) is None
+
+    foreign_prepared = deepcopy(producer_value)
+    foreign_prepared["facts"]["prepared"]["path"] = "vault/talks/elsewhere/recording.mp4"
+    assert run_workflow_export(TALK_CONTRACT_MODULE, "parseTalkStatusObservation", foreign_prepared) is None
 
 
 def test_translation_status_parser_binds_null_identity_and_exact_target_paths():
