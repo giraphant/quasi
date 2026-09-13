@@ -34,9 +34,13 @@ const runtime = () => {
 if (request.action === "run-generated") {
   const generated = await readFile(source, "utf8");
   const body = generated.replace(/^export const meta =/m, "const meta =");
+  // The real Workflow sandbox provides core ECMAScript plus the host's own
+  // helpers only. A bare vm context is the closest available stand-in: nothing
+  // web-platform (URL, fetch, TextEncoder) may be injected here, or a generated
+  // entry that depends on one passes in test and fails in the sandbox.
   const execute = runInNewContext(
     `(async (agent, pipeline, args) => {\n${body}\n})`,
-    Object.assign(Object.create(null), { URL }),
+    Object.create(null),
   );
   const { host, report } = runtime();
   const value = await execute(host.agent, host.pipeline, request.input);

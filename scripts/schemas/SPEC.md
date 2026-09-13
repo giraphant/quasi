@@ -1,30 +1,30 @@
 # quasi-vault Schema Specification
 
 ```
-Version : 0.7.0
-Status  : active — canonical schema source for lint / autofix / generation
-Last    : 2026-07-19
+Version : 0.8.0
+Status  : active — synchronized with scripts/schemas/ executable contracts
+Last    : 2026-09-03
 ```
 
 ## 0. 文档定位
 
 这份 SPEC **是**:
-- vault 中"被打 type 的实体文档"的形状权威定义
+- vault 中「被打 type 的实体文档」的人读契约
 - 所有 LLM 生成代理在生成新文档时应当遵循的约定
-- `typecheck.mjs` 验证器和 `autofix.mjs` 迁移器(待写)的输入
+- `scripts/typecheck/typecheck.py` 与 `scripts/typecheck/autofix_mechanical.py` 的规范说明
 
 这份 SPEC **不是**:
-- 实现代码(在 `*.schema.ts` 里)
-- 迁移计划(在 `MIGRATION.md`,待写)
-- vault 当前实际状态(在 `data/schema-inference.md`)
+- executable schema 本身；结构权威位于 `scripts/schemas/*.py`，registry 权威位于 `scripts/schemas/registry.py`
+- 迁移计划或 vault 当前实际状态报告
+- 对默认 audit 自动修改 vault 的授权
 
-**任何 vault 文件的修改在 SPEC + MIGRATION 双双批准之前都不会发生。**
+SPEC 与 executable schema 不一致时必须先停止数据迁移、核对并同步契约；不得以过期文档覆盖当前 schema。
 
 ## 1. 类型系统总览
 
-vault 中的被打 `type` 文档使用 10 个 canonical type。短名是唯一合法 schema;旧的长名(`paper-analysis` / `book-overview` / `chapter-summary` / `author-profile` 等)只作为 deprecated diagnostics 或 migration input,不再是合法 type。
+vault 中的被打 `type` 文档使用 11 个 canonical type。短名是唯一合法 schema；旧的长名（`paper-analysis` / `book-overview` / `chapter-summary` / `author-profile` 等）只作为 deprecated diagnostics 或 migration input，不再是合法 type。类型集合与顺序由 `TYPE_REGISTRY` 派生，不另维护隐藏列表。
 
-| `type`    | 文档                  | 主要路径                                 | 当前数量 |
+| `type`    | 文档                  | 主要路径                                 | 历史快照数量（非契约） |
 | --------- | --------------------- | ---------------------------------------- | -------- |
 | `author`  | 学者档案              | `vault/authors/<slug>.md`                | 312 |
 | `book`    | 一本书的整体分析      | `vault/books/<slug>/00-overview.md`      | 1067 |
@@ -36,6 +36,7 @@ vault 中的被打 `type` 文档使用 10 个 canonical type。短名是唯一�
 | `image`   | 本地图片对象 metadata | `vault/images/<slug>/image.md`           | 8 |
 | `talk`    | 会议/讲座录制的摘要   | `vault/talks/<slug>/talk.md`             | 0 |
 | `transcript` | 讲座的带时间戳转写 | `vault/talks/<slug>/transcript.md`       | 0 |
+| `webpage` | 已捕获网页的语义分析页 | `vault/webpages/<slug>/webpage.md`       | — |
 
 ### 不在 type 体系内
 
@@ -115,9 +116,9 @@ export const Title = z.string().min(2).max(280);
 
 ## 3. Type Schemas
 
-每个 type 给出:**Zod 形状 + frontmatter 示例 + 与现状差异**。
+每个 type 给出：**简写形状 + frontmatter 示例 + 历史迁移说明**。
 
-完整 Zod 代码到 `*.schema.ts` 实现时落地,此处用伪 Zod 表达意图。
+以下代码块沿用简洁的 Zod 风格伪代码帮助阅读；实际约束已经由 `scripts/schemas/*.py` 中的 Pydantic V2 model 实现，二者冲突时以 executable schema 为准并同步修正文档。
 
 ---
 
@@ -133,7 +134,7 @@ export const AuthorSchema = z.object({
   topics:  z.array(z.string()).optional(),  // 所属 topic 语料的 slug 数组(可选,默认 [])
   rating:  Rating.optional(),       // 整体学术评分(可选,数字 1..5)
 });
-// 不开 .strict() —— 迁移期保留未知字段为 lint warning
+// executable schema 使用 ConfigDict(extra="forbid", strict=True)
 // wikilink 形式 [[slug|Sara Ahmed]] 由 reader 从文件路径派生,不在 frontmatter
 ```
 
@@ -179,6 +180,7 @@ export const BookSchema = z.object({
 
   // 唯一识别码 + 书籍类别
   isbn:      z.string().optional(),               // schema 不强制格式,lint 检查
+  doi:       z.string().optional(),               // 可选书籍 DOI
   category:  z.enum(['monograph', 'edited-volume', 'handbook', 'other'])
              .default('monograph').optional(),    // 决定 BibTeX export 用 author 还是 editor
 
@@ -231,19 +233,19 @@ rating: 5
 ---
 ```
 
-**与现状差异**(779 条,44 字段 → 9 字段):
+**与现状差异**(779 条，44 字段 → 11 字段):
 - `type: book-overview` → `type: book`
-- **保留并 canonical 化**:`title` / `author` / `year` / `themes` / `rating` / `publisher`
-- **新增字段**:`isbn`、`category`(默认 monograph)
+- **保留并 canonical 化**：`title` / `authors` / `year` / `themes` / `rating` / `publisher`
+- **新增字段**：`isbn`、`doi`、`category`（默认 monograph）
 - **删除字段**(原有但不再保留):
   - `chapters_analyzed`(83% 在用)—— reader 从子章节 count 派生
   - `edition`(1 条)—— rare,需要时写 note
   - `source`(70 条)—— 与 title 信息重叠
 - **新增字段**:`topics`(可选,默认 `[]`)——所属 topic 语料的 slug 数组,格式同 `themes`。供前端阅读器按「`topics` 包含 `<slug>`」反查 topic 成员;与 topic 页的 `[[wikilink]]` 互补(双向可达)。
 - **同义字段合并**(autofix):
-  - `book_title` / `book_author` / `book_year` → `title` / `author` / `year`
-  - `authors` → `author`
-  - `editors` → `author` + `category: edited-volume`
+  - `book_title` / `book_author` / `book_year` → `title` / `authors` / `year`
+  - 旧单值 `author` → `authors` 数组
+  - `editors` → `authors` + `category: edited-volume`
   - `tags` → `themes`
   - 9 个 `chapters_*` 变体 → 全删(派生)
 - **publisher 大量补全**:当前仅 6% 填,fix-agent 调 WorldCat / OpenAlex 批量补
@@ -354,7 +356,7 @@ doi: "10.1215/9780822393047-001"
 
 > ⚠️ Happy Objects 实际收录于一本论文集(Reader),不是期刊。若严格执行"paper = 期刊论文",这类文件应迁移到 `vault/books/affect-theory-reader/ch-happy-objects.md` 转为 chapter 类型。**autofix 在迁移阶段会做启发式分类**(看 source 像不像书),提议清单等用户 review。
 
-**与现状差异**(1651 条,28 字段 → 8 字段):
+**与现状差异**(1651 条，28 字段 → 9 字段):
 - `type: paper-analysis` / `journal-article-analysis` / `article-analysis` / `paper-summary` → `type: paper`
 - **`author` → `authors`**(单字符串 → 数组)
 - **`source` → `journal`**(语义收紧:paper 只指期刊文章)
@@ -634,7 +636,8 @@ vault 中每个文件除了 frontmatter("硬属性"),还有正文 markdown("软�
 
 - H2 标题即"判别符"(类似 frontmatter `type` 字段)
 - H2 之下的 markdown 内容有**期望的 block 形状**(`kind`):`paragraph` / `bullet-list` /
-  `numbered-list` / `table` / `blockquote-list` / `definition-list` / `h3-project-tabs` / `freeform`
+  `numbered-list` / `table` / `blockquote-list` / `definition-list` / `h3-project-tabs` /
+  `h3-sections` / `freeform` / `mixed`
 - lint 只检查 **(a) 必填 H2 存在 (b) 形状匹配**,**不查字数 / 语义**
 - reader 可按 kind **类型化渲染**:table 显示交互表;blockquote 显示引用卡片;
   bullet-list 显示可点击 chips
@@ -650,6 +653,7 @@ type BlockKind =
   | 'blockquote-list'        // 多个 `> quote`
   | 'definition-list'        // **term**: description 模式
   | 'h3-project-tabs'        // H2 下分 H3,每个 H3 是一个 project 子节(reader 渲染为 tabs)
+  | 'h3-sections'            // H2 下分 H3,每个 H3 是原文小节
   | 'freeform'               // 已知 H2 内任意非空 Markdown 形状
   | 'mixed';                 // 杂(暂时容忍,长期靠 autofix 收敛)
 ```
@@ -676,83 +680,21 @@ type BlockKind =
 
 reader 端:每个 H3 渲染为一个 tab,用户点 tab 切换项目视角。
 
-### 4.4 BodySchema 起草(v0.2 候选)
+### 4.4 当前 executable BodySchema
 
-> 基于 `reader/data/body-audit.md` 的实际数据起草。每个 type 的"必填 H2"是
-> vault 里覆盖 ≥80% 的高频骨架,放心收紧。剩下的归 optional。
+下表摘要必须与 `scripts/schemas/body.py` 一致；aliases、columns、condition 与 evidence rules 的完整定义以该文件为准。
 
-```ts
-// schemas/author.body.ts
-export const AuthorBodySchema = {
-  sections: {
-    '学术轨迹':           { required: true,  kind: 'paragraph' },
-    '核心概念谱系':       { required: true,  kind: 'table' },
-    '理论网络':           { required: true,  kind: 'bullet-list',
-                          aliases: ['思想肖像'] },
-    '可引用观点':         { required: true,  kind: 'numbered-list' },  // TBD: 也可能 blockquote-list
-    '与项目主题的关联':   { required: true,  kind: 'h3-project-tabs',
-                          childKind: 'paragraph',
-                          aliases: [/^与 .+ 的关联$/, /^与"[^"]+"的关联$/, '与本项目主题的关联'] },
-    '代表作概览':         { required: false, kind: 'table',
-                          aliases: ['代表著作'] },
-  },
-  strict: false,
-};
+| Type | 必填 H2（kind） | 可选 H2（kind） |
+|---|---|---|
+| `author` | `思想肖像`（paragraph）；`学术轨迹`（paragraph）；`关键概念`（table）；`理论网络`（bullet-list）；`金句要点`（blockquote-list）；`项目关联`（h3-project-tabs） | `代表著作`（paragraph） |
+| `book` | `核心论点`（paragraph）；`章节逻辑`（paragraph）；`关键概念`（table）；`理论贡献`（paragraph）；`精读章节`（numbered-list） | `项目关联`（h3-project-tabs） |
+| `chapter` | `核心论点`（paragraph）；`理论框架`（paragraph）；`分节摘要`（h3-sections）；`关键概念`（table）；`核心引用`（numbered-list） | `金句要点`（blockquote-list）；`项目关联`（h3-project-tabs） |
+| `paper` | `核心论点`（paragraph）；`理论框架`（paragraph）；`分节摘要`（h3-sections）；`关键概念`（table）；`核心引用`（numbered-list） | `金句要点`（blockquote-list）；`项目关联`（h3-project-tabs） |
+| `talk` | `核心论点`（paragraph）；`分节摘要`（h3-sections）；`关键概念`（table）；`项目关联`（bullet-list）；`文献人物`（bullet-list）；`时间脉络`（bullet-list） | — |
+| `webpage` | `Summary`（paragraph）；`Content`（freeform） | — |
+| `topic` / `journal` / `note` / `image` / `transcript` | 正文自由，不设固定 H2 | — |
 
-// schemas/book.body.ts
-export const BookBodySchema = {
-  sections: {
-    '核心论点':           { required: true,  kind: 'paragraph',
-                          aliases: ['全书核心论点', '一、全书核心论点'] },
-    '关键概念表':         { required: true,  kind: 'table',
-                          aliases: ['三、核心概念表', '关键概念谱系', '关键概念'] },
-    '章节间逻辑':         { required: true,  kind: 'paragraph' },
-    '理论贡献':           { required: true,  kind: 'paragraph',
-                          aliases: ['核心理论贡献'] },
-    '推荐精读章节':       { required: true,  kind: 'numbered-list' },
-    '与项目主题的关联':   { required: false, kind: 'h3-project-tabs',
-                          childKind: 'paragraph',
-                          aliases: [/^与 .+ 的关联$/] },
-  },
-  strict: false,
-};
-
-// schemas/chapter.body.ts
-export const ChapterBodySchema = {
-  sections: {
-    '核心论点':           { required: true,  kind: 'paragraph' },
-    '关键概念':           { required: true,  kind: 'paragraph' },
-    '分节摘要':           { required: true,  kind: 'paragraph' },
-    '理论框架':           { required: true,  kind: 'paragraph' },
-    '价值评估':           { required: true,  kind: 'paragraph' },
-    '核心引用文献':       { required: true,  kind: 'numbered-list' },   // 当前 mixed,迁移期归一
-    '与项目主题的关联':   { required: false, kind: 'h3-project-tabs',
-                          childKind: 'numbered-list',
-                          aliases: [/^与 .+ 的关联$/, /^★+ 与 .+/] },
-    '相关引用文献':       { required: false, kind: 'h3-project-tabs',
-                          childKind: 'paragraph',
-                          aliases: [/^直接相关的 .+ 引用文献$/] },
-  },
-  strict: false,
-};
-
-// schemas/paper.body.ts
-export const PaperBodySchema = {
-  sections: {
-    '核心论点':           { required: true,  kind: 'paragraph' },
-    '关键概念':           { required: true,  kind: 'paragraph' },
-    '理论框架':           { required: true,  kind: 'paragraph' },
-    '分节摘要':           { required: true,  kind: 'paragraph' },
-    '价值评估':           { required: true,  kind: 'paragraph' },
-    '核心引用文献':       { required: true,  kind: 'numbered-list' },
-    '可引用段落':         { required: false, kind: 'blockquote-list' },
-    '与项目主题的关联':   { required: false, kind: 'h3-project-tabs',
-                          childKind: 'numbered-list',
-                          aliases: [/^与 .+ 的关联$/, /^★+ 与/] },
-  },
-  strict: false,
-};
-```
+所有当前 registry 对象的 `BodySchema.strict` 默认为 `false`。required H2 缺失、heading drift 与 block-kind mismatch 始终是 blocking violation；alias 先解析到 canonical section，再报告可机械规范化的 `h2_alias`；未知 H2 在 `strict: false` 时仅为 advisory warning，在 `strict: true` 时才是 blocking violation。
 
 ### 4.5 已经"自然 typed"的高价值 block
 
@@ -858,15 +800,14 @@ rating: 5
 
 reader 看 frontmatter type 决定如何渲染同名 H2。
 
-## 6. `.strict()` 渐进开关
+## 6. 两种 strictness
 
-不在 SPEC v0.1.0 中开 `.strict()`。分三阶段引入:
+frontmatter 与正文的 strictness 是两套独立契约，不得混用：
 
-| 阶段 | 时间 | 行为 |
-|---|---|---|
-| **Phase 1**(SPEC 落地后) | 立即 | schema 实现完,跑 typecheck,不开 .strict()。未知字段进 lint warning |
-| **Phase 2**(autofix 跑完) | 漂移清理后 | 跑一次大 autofix,清掉同义字段、孤儿字段,人工 review 边界 |
-| **Phase 3**(稳态) | autofix 后再观察一周 | 开 .strict()。新出现的未知字段直接 fail,强制干净 |
+1. **Frontmatter schema**：当前 11 个 Pydantic model 均使用 `ConfigDict(extra="forbid", strict=True)`。未知字段、错误值类型和缺失必填字段属于 blocking validation error，不是 warning。
+2. **`BodySchema.strict`**：只控制「未知 H2」的严重性。`false` 时未知 H2 是 non-blocking advisory；`true` 时未知 H2 是 blocking violation。它不改变 required H2、alias 或 block-kind 校验。
+
+只读检查使用 `quasi-audit --report typecheck --format json`。`fields`、`toc` 与 `typecheck` 三种 report 都只写 stdout：不得创建 `.quasi/schema.json`、`.quasi/audit/` 或 project-local temp files。默认不带 `--report` 的 audit 仍是 writer，会执行机械修复并刷新 schema snapshot。
 
 ## 7. 决策记录(rationale)
 
@@ -876,7 +817,7 @@ reader 看 frontmatter type 决定如何渲染同名 H2。
 - **Q2 themes 空 → warning 不 fail**:author/chapter 大量条目确实没标签,空数组允许;但 paper 必须有
 - **Q3 author 的 year/source 删除**:8% / 7% 非空率,语义不明,保留是噪音
 - **Q4 孤儿字段一律删**:仅出现于 <2% 文档的字段视为 LLM 临场漂移,无消费方
-- **Q5 .strict() 分三阶段**:一刀切会让 vault 100% 红
+- **Q5 strictness 分层**：frontmatter 当前严格拒绝 extra fields；`BodySchema.strict` 仅控制未知 H2 是 advisory 还是 failure
 - **Q6 topic 入 type 体系但保持轻量**:`type: topic` 只校验 overview/resources 页面的最小 frontmatter;研究内容放正文
 - **Q7 primitives.py 保留**:不是继承基类,是值层验证器;现规模不必 inline
 - **Q8 journal 入 type 体系但保持轻量**:`type: journal` 只校验 overview/resources 页面的最小 frontmatter;扫描统计放正文
@@ -897,7 +838,7 @@ reader 看 frontmatter type 决定如何渲染同名 H2。
 
 LLM 生成新文档时**应当**:
 
-1. `type` 字段必须是 8 个 canonical 之一(`author` / `book` / `chapter` / `paper` / `topic` / `journal` / `note` / `image`)
+1. `type` 字段必须是 registry 中 11 个 canonical 之一：`author` / `book` / `chapter` / `image` / `journal` / `note` / `paper` / `talk` / `topic` / `transcript` / `webpage`
 2. 必填字段一定填(参考各 type 的 required 列表)
 3. 不引入新字段,除非已经在 SPEC 中
 4. **rating 用数字 1..5,不是 ★ 字符串**(reader 渲染层负责显示 ★)
@@ -907,36 +848,24 @@ LLM 生成新文档时**应当**:
 8. note / image 正文自由;frontmatter 只写 schema 明确列出的轻量字段
 
 **Body 约定**:
-1. 必填 H2 全部生成,**用 SPEC 列的 canonical 4 字标题**,不要发明同义变体
+1. 必填 H2 全部生成，使用 SPEC 列出的 canonical 标题（多数分析类型为四字中文，webpage 为 `Summary` / `Content`），不要发明同义变体
 2. H2 之下的 block 形状必须匹配(`kind: table` 就真生成 markdown table,不是描述性段落)
 3. 跨项目内容用 `## 项目关联` + `### <项目名>` 嵌套,**不要把项目名写进 H2**
 4. **H1 = 实体展示名**,不要装饰后缀(详见 §5.1)
 5. **YAML 数组用 block list**(每项 `  - value`),不用 inline flow form;空列表整行省略(详见 §5.2)
-6. 长尾自定义 H2 可以加,但 Phase 3 开 strict 之后会被拒;尽量约束在 SPEC 内
+6. 长尾自定义 H2 在当前 `BodySchema.strict: false` 下会产生 advisory；若某类型显式改为 `true` 则会被拒，仍应尽量约束在 SPEC 内
 
 **如果发现 SPEC 不覆盖你的需求,先 PR SPEC,不要私自扩展字段或 H2。**
 
-## 9. 后续工作清单
+## 9. 实现与验证入口
 
-**已完成**(✓):
-
-- ✓ `schemas/primitives.py` 实现(Pydantic V2)
-- ✓ `schemas/{author,book,chapter,paper,topic,journal,note,image,body,registry,__init__}.py` 实现
-- ✓ `scripts/typecheck/typecheck.py` —— 校验器
-- ✓ `scripts/typecheck/autofix_mechanical.py` —— Layer 1 机械修复
-- ✓ `bin/quasi-typecheck` + `bin/quasi-autofix-mechanical` —— shim 命令
-- ✓ `agents/typecheck-agent.md` —— 自包含 agent
-- ✓ 端到端测试:8 个 canonical type 的 schema 行为覆盖
-
-**待办**(按依赖排序):
-
-1. **Layer 1 全 vault 机械 sweep**(autofix --write,~分钟,零 LLM 成本)
-2. **Layer 2/3 LLM agent 批量 sweep**(分批,前几批小样本 review)
-3. **132 个 unknown_type / no_frontmatter 文件单独 review**
-4. **`quasi:*` 其他 agent 模板更新**(analyze / overview / profile),让新生成的输出已符合 SPEC
-5. **reader UI 适配新 type 名**(`TYPES` 常量) + **rating 数字渲染 ★**
-6. **plugin 0.10.0 发布流程**
+- `scripts/schemas/registry.py`：11 个 canonical types 的唯一 registry。
+- `scripts/schemas/body.py`：正文 section、alias、kind 与 `BodySchema.strict` 的 executable contract。
+- `scripts/typecheck/typecheck.py`：纯内存 evaluation、可选 artifact writer 与稳定结果 payload。
+- `scripts/typecheck/autofix_mechanical.py`：默认 audit 使用的机械修复层。
+- `bin/quasi-audit`：公开入口。`--report fields|toc|typecheck` 为 stdout-only；不带 `--report` 为 writer audit。
+- `tests/test_schema_registry.py`、`tests/test_audit_cli.py` 与 typecheck contract tests：schema、strictness、no-write 和 registry coverage 的回归保护。
 
 ---
 
-**冻结条件**:用户审阅本 SPEC,确认 8 个 type 形状、primitives 选择、删除字段清单。冻结后这份文档为后续所有工作的事实标准;之后修改需走"先改 SPEC、再改实现"的顺序。
+**同步规则**：artifact shape 先改 `scripts/schemas/` executable contract，再在同一变更中同步本 SPEC 与测试。任何 vault 数据迁移、插件发布或已安装 cache 更新都需要独立授权，不由 schema 文档变更自动触发。

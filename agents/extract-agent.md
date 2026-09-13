@@ -78,14 +78,18 @@ drift 检查和 manifest-last 发布全部由 CLI 拥有；Agent 不重现这些
 目标是得到一个 manifest 明列、顺序稳定、边界语义可靠的章节集合。
 
 - EPUB：使用 EPUB extractor 形成章节集合，然后读取 manifest 及各章代表性头尾与正文。
-- PDF：先抽取文本层并阅读开头、中段和结尾的代表性正文。只要正文连贯可读，就使用原
-  PDF 继续切分；缺少目录、TOC/pattern 切分失败、章节边界不理想或需要 manual ranges，
-  都只是结构问题，不是 OCR 依据。只有抽取文本本身没有正文、持续乱码或实际为无可用
-  文本层的扫描页时，才走 request 指定的 exact OCR recovery。
-- direct PDF 的抽取文本确实不可读时，返回 `terminal.complete.disposition="ocr_required"`，
-  不在 `book.prepare` 内启动新的 OCR。caller 随后以同一共享 generation 合同 dispatch
-  `book.ocr`。当 request 的 exact input 已是 committed generation PDF 时，直接从该 input
-  规划和切分章节，不再 OCR。
+- PDF：先抽取文本层到 request 的 exact `normalized_document` ref，并实际阅读开头、中段
+  和结尾的代表性正文。只要正文连贯可读，就使用原 PDF 继续切分；缺少目录、TOC/pattern
+  切分失败、章节边界不理想或需要 manual ranges，都只是结构问题，不是 OCR 依据。
+- direct PDF 的抽取文本没有正文、持续乱码或实际为无可用文本层的扫描页时，**判定成立的
+  那一刻立即停止**：不得运行任何 TOC/pattern/manual split，不得生成、复用或核对 manifest
+  与 chapter files；返回 `terminal.complete.disposition="ocr_required"`，`selected_source`、
+  `normalized_path`、`manifest_fingerprint`、`mode`、`disposition` 全为 null，`chapter_count:0`、
+  `chapters:[]`；`artifacts` 为 `[]`，或只含一条负面证据
+  `{role:"normalized_document", path:<request 的 normalized_document>, exists:true, usable:false}`。
+  不在 `book.prepare` 内启动 OCR；caller 随后以同一共享 generation 合同 dispatch `book.ocr`。
+  当 request 的 exact input 已是 committed generation PDF 时，不再返回 `ocr_required`，
+  直接从该 input 规划和切分章节，不再 OCR。
 - 只有 request 明确带有已发布版本遗留的 `legacy_ocr_progress` 和对应 capability 时，才可在
   `book.prepare` 内运行一次 fixed legacy recovery step。该 capability 只完成这一个已存在的
   progress，不创建新 legacy progress；返回 partial 后本 invocation 立即结束并等待 fresh

@@ -6,7 +6,6 @@ import argparse
 import json
 import re
 import sys
-import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -543,6 +542,21 @@ def _typecheck_diagnostics(results: list[dict[str, Any]], root: Path) -> tuple[d
                 violation=violation,
             ))
 
+        for warning in result.get("body_warnings") or []:
+            kind = warning.get("kind", "body_warning")
+            h2 = warning.get("h2")
+            diagnostics_by_path[rel_path].append(_base_diag(
+                rel_path=rel_path,
+                diag_id=f"body.{h2 or 'document'}.{kind}",
+                pass_name="body_schema",
+                severity="warning",
+                status="advisory",
+                message=json.dumps(warning, ensure_ascii=False, sort_keys=True),
+                action="none",
+                location={"h2": h2} if h2 else None,
+                violation=warning,
+            ))
+
     return diagnostics_by_path, detected_types
 
 
@@ -580,6 +594,7 @@ def _build_payload(
         })
 
     auto_fixed = sum(1 for diag in all_diagnostics if diag["status"] == "auto_fixed")
+    advisory = sum(1 for diag in all_diagnostics if diag["status"] == "advisory")
     agent_fixable = sum(1 for diag in all_diagnostics if diag["status"] == "agent_fixable")
     needs_external_evidence = sum(1 for diag in all_diagnostics if diag["status"] == "needs_external_evidence")
     human_required = sum(1 for diag in all_diagnostics if diag["status"] == "human_review")
@@ -600,6 +615,7 @@ def _build_payload(
             "files_with_diagnostics": len(files_payload),
             "diagnostics_total": len(all_diagnostics),
             "auto_fixed": auto_fixed,
+            "advisory": advisory,
             "agent_fixable": agent_fixable,
             "needs_external_evidence": needs_external_evidence,
             "human_required": human_required,
@@ -607,9 +623,7 @@ def _build_payload(
             "fix_counts": fix_counts,
         },
         "files": files_payload,
-        # Typecheck results are an audit-private intermediate.  Each audit uses
-        # an isolated temporary result file so concurrent audits cannot race;
-        # the file is removed before this durable diagnostics payload returns.
+        # Typecheck results stay in memory; audit owns no intermediate artifact.
         "artifacts": {},
     }
 
@@ -653,8 +667,11 @@ def _slot_key(chapter: dict[str, str]) -> tuple[int, str]:
 
 def _collect_chapter_tocs(target: Path, root: Path) -> list[dict[str, Any]]:
     by_book: dict[Path, list[dict[str, str]]] = defaultdict(list)
-    paths = sorted(target.rglob("*.md")) if target.is_dir() else [target]
-    for path in paths:
+    fields_mod = _load(
+        "quasi_audit_field_distribution_toc",
+        "scripts/audit/field_distribution.py",
+    )
+    for path in fields_mod.iter_markdown(target):
         text = path.read_text(encoding="utf-8", errors="replace")
         if _frontmatter_field(text, TYPE_RE) != "chapter":
             continue
@@ -705,7 +722,11 @@ def _run_audit(argv: list[str]) -> int:
         description="Run diagnostic-first vault audit for agents.",
     )
     ap.add_argument("--path", default="vault", help="File or directory to audit")
-    ap.add_argument("--report", choices=["fields", "toc"], help="Run an explicit read-only report instead of the default diagnostic audit")
+    ap.add_argument(
+        "--report",
+        choices=["fields", "toc", "typecheck"],
+        help="Run an explicit stdout-only report instead of the default diagnostic audit",
+    )
     ap.add_argument("--format", choices=["markdown", "json"], help="Output format for --report")
     args = ap.parse_args(argv)
 
@@ -715,15 +736,12 @@ def _run_audit(argv: list[str]) -> int:
     root = _project_root()
     target = _resolve_target(args.path, root)
 
-    # Refresh the vault's self-describing schema snapshot (.quasi/schema.json)
-    # on every run so external readers (Marple) can check conformance natively.
-    # Idempotent: only rewrites when the schema actually changed (QUA-97).
-    emit_mod = _load("quasi_audit_emit_schema", "scripts/audit/emit_schema.py")
-    emit_mod.write_snapshot(root)
-
     if args.report == "fields":
-        fd_mod = _load("quasi_audit_field_distribution_run", "scripts/audit/field_distribution.py")
-        return fd_mod.run_fields_report(
+        fields_mod = _load(
+            "quasi_audit_field_distribution_run",
+            "scripts/audit/field_distribution.py",
+        )
+        return fields_mod.run_fields_report(
             requested_path=args.path,
             target=target,
             root=root,
@@ -732,6 +750,35 @@ def _run_audit(argv: list[str]) -> int:
 
     if args.report == "toc":
         return _run_toc_report(args.path, target, root, args.format or "markdown")
+
+    if args.report == "typecheck":
+        typecheck_mod = _load(
+            "quasi_audit_typecheck_report",
+            "scripts/typecheck/typecheck.py",
+        )
+        if not target.exists():
+            if args.format == "json":
+                print_json(typecheck_mod.missing_path_payload(
+                    target,
+                    requested_path=args.path,
+                ))
+            else:
+                print("# quasi-vault typecheck report\n")
+                print(f"path does not exist: {target}")
+            return 2
+
+        evaluation = typecheck_mod.evaluate_typecheck(target)
+        if args.format == "json":
+            print_json(typecheck_mod.build_results_payload(
+                evaluation,
+                requested_path=args.path,
+            ))
+        else:
+            print(typecheck_mod.build_report(
+                evaluation["stats"],
+                len(evaluation["results"]),
+            ))
+        return 1 if evaluation["has_violations"] else 0
 
     if not target.exists():
         print_json({
@@ -746,6 +793,11 @@ def _run_audit(argv: list[str]) -> int:
         })
         return 2
 
+    # The default writer audit refreshes the vault's self-describing snapshot.
+    # Explicit report modes return above and are strictly stdout-only.
+    emit_mod = _load("quasi_audit_emit_schema", "scripts/audit/emit_schema.py")
+    emit_mod.write_snapshot(root)
+
     autofix_mod = _load("quasi_audit_autofix_run", "scripts/typecheck/autofix_mechanical.py")
     fix_result, mechanical_diags, mechanical_modified, files = _run_mechanical_autofix(
         autofix_mod,
@@ -756,23 +808,8 @@ def _run_audit(argv: list[str]) -> int:
     punct_diags, punct_modified = _run_punctuation_autofix(files, root)
 
     typecheck_mod = _load("quasi_audit_typecheck_run", "scripts/typecheck/typecheck.py")
-    temp_root = root / ".quasi" / "temp"
-    temp_root.mkdir(parents=True, exist_ok=True)
-    # Topic audits legitimately run several exact paths in parallel.  A
-    # caller-owned result path prevents those processes from reading another
-    # audit's partially-written global typecheck-results.json.
-    with tempfile.TemporaryDirectory(
-        prefix="audit-typecheck-",
-        dir=temp_root,
-    ) as temp_dir:
-        results_path = Path(temp_dir) / "typecheck-results.json"
-        typecheck_mod.run_typecheck(
-            target,
-            quiet=True,
-            write_report=False,
-            results_path=results_path,
-        )
-        results = json.loads(results_path.read_text(encoding="utf-8"))
+    evaluation = typecheck_mod.evaluate_typecheck(target)
+    results = evaluation["results"]
     typecheck_diags, detected_types = _typecheck_diagnostics(results, root)
 
     diagnostics_by_path = _merge_diagnostics(mechanical_diags, quote_diags, punct_diags, typecheck_diags)

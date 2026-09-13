@@ -587,6 +587,31 @@ def _paper_prepare_output(
     }
 
 
+def _book_prepare_output(**overrides: Any) -> dict[str, Any]:
+    output = {
+        "format": "pdf",
+        "output_dir": "processing/chapters/exact-material",
+        "selected_source": None,
+        "normalized_path": None,
+        "manifest_path": "processing/chapters/exact-material/manifest.json",
+        "manifest_fingerprint": None,
+        "mode": None,
+        "disposition": None,
+        "chapter_count": 0,
+        "chapters": [],
+        "artifacts": [],
+        "steps": [],
+        "diagnostics": [],
+        "terminal": {
+            "status": "complete",
+            "issue": None,
+            "disposition": "ocr_required",
+        },
+    }
+    output.update(overrides)
+    return output
+
+
 def _paper_ocr_artifacts(
     generation: dict[str, Any],
     *,
@@ -2693,6 +2718,172 @@ def test_book_prepare_split_capabilities_bind_exact_pdf_inputs() -> None:
     assert all(capability.startswith(source_prefix) for capability in split)
     assert all("source.txt" not in capability for capability in split)
     assert all("ocr.txt" not in capability for capability in split)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "empty",
+        "unusable_normalized",
+        "usable_normalized",
+        "unknown_usability",
+        "wrong_role",
+        "wrong_path",
+        "extra_manifest",
+        "written_chapters",
+        "committed_generation",
+        "epub",
+    ],
+)
+def test_book_prepare_ocr_required_accepts_only_exact_unusable_normalized_evidence(
+    case: str,
+) -> None:
+    chapter_root = "processing/chapters/exact-material"
+    context = _context(
+        format="pdf",
+        source="sources/exact-material.pdf",
+        input="sources/exact-material.pdf",
+    )
+    evidence = {
+        "role": "normalized_document",
+        "path": f"{chapter_root}/source.txt",
+        "exists": True,
+        "usable": False,
+    }
+    manifest = {
+        "role": "chapter_manifest",
+        "path": f"{chapter_root}/manifest.json",
+        "exists": True,
+        "usable": False,
+    }
+    output = _book_prepare_output(artifacts=[evidence])
+    if case == "empty":
+        output["artifacts"] = []
+    elif case == "usable_normalized":
+        evidence["usable"] = True
+    elif case == "unknown_usability":
+        evidence["usable"] = None
+    elif case == "wrong_role":
+        evidence["role"] = "recovery_source"
+    elif case == "wrong_path":
+        evidence["path"] = f"{chapter_root}/ocr.txt"
+    elif case == "extra_manifest":
+        output["artifacts"].append(manifest)
+    elif case == "written_chapters":
+        chapters = [
+            {
+                "slot": "01",
+                "title": "X",
+                "filename": "01-x.txt",
+                "slug": "x",
+                "word_count": 10,
+                "start_page": 1,
+                "end_page": 5,
+            },
+            {
+                "slot": "02",
+                "title": "Y",
+                "filename": "02-y.txt",
+                "slug": "y",
+                "word_count": 10,
+                "start_page": 6,
+                "end_page": 9,
+            },
+        ]
+        output.update(
+            selected_source="sources/exact-material.pdf",
+            normalized_path=f"{chapter_root}/source.txt",
+            manifest_fingerprint="a" * 64,
+            mode="manual",
+            disposition="replaced",
+            chapter_count=2,
+            chapters=chapters,
+            artifacts=[
+                evidence,
+                manifest,
+                *[
+                    {
+                        "role": "normalized_chapter",
+                        "path": f"{chapter_root}/{chapter['filename']}",
+                        "exists": True,
+                        "usable": False,
+                    }
+                    for chapter in chapters
+                ],
+            ],
+        )
+    elif case == "committed_generation":
+        context["input"] = f"{chapter_root}/ocr-generations/{'b' * 64}/ocr.pdf"
+    elif case == "epub":
+        context.update(
+            format="epub",
+            source="sources/exact-material.epub",
+            input="sources/exact-material.epub",
+        )
+        output["format"] = "epub"
+
+    report = _dispatch(
+        {
+            "invocation": _invocation("book.prepare", context=context),
+            "model_output": output,
+        }
+    )
+
+    expected = (
+        "receipt"
+        if case in {"empty", "unusable_normalized"}
+        else "incoherent_complete"
+    )
+    assert report["result"]["kind"] == expected
+
+
+def test_book_prepare_envelope_states_the_ocr_required_stop_rule() -> None:
+    pdf = _prepare(
+        "book.prepare",
+        context=_context(
+            format="pdf",
+            source="sources/exact-material.pdf",
+            input="sources/exact-material.pdf",
+        ),
+    )
+    contract = _prompt_request(pdf["prompt"])["disposition_contract"]
+
+    assert set(contract) == {"prepared", "ocr_required"}
+    assert "usable:false" in contract["ocr_required"]
+
+    epub = _prepare(
+        "book.prepare",
+        context=_context(
+            format="epub",
+            source="sources/exact-material.epub",
+            input="sources/exact-material.epub",
+        ),
+    )
+    assert set(_prompt_request(epub["prompt"])["disposition_contract"]) == {
+        "prepared"
+    }
+
+    legacy = {
+        "path": "processing/chapters/exact-material/ocr.progress.json",
+        "present": True,
+        "usable": True,
+        "source_sha256": "a" * 64,
+        "total_pages": 100,
+        "completed_pages": 16,
+        "next_page": 17,
+    }
+    legacy_pdf = _prepare(
+        "book.prepare",
+        context=_context(
+            format="pdf",
+            source="sources/exact-material.pdf",
+            input="sources/exact-material.pdf",
+            legacyOcr=legacy,
+        ),
+    )
+    assert set(_prompt_request(legacy_pdf["prompt"])["disposition_contract"]) == {
+        "prepared"
+    }
 
 
 def test_book_prepare_exposes_fixed_ocr_only_for_released_legacy_progress() -> None:

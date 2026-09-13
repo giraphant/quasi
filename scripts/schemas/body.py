@@ -1,7 +1,7 @@
 """Body schemas: 正文 H2 章节结构定义。
 
 每个 type 的正文由若干 H2 章节组成,每个 H2:
-- 有一个 canonical 标题(4 字中文,跨 type 复用同名)
+- 有一个 canonical 标题(多数分析类型使用四字中文;webpage 使用英文标题)
 - 有一个 BlockKind(下方内容期望的形状)
 - 有 required / optional 标记
 - 有 aliases(LLM 漂移产生的同义异名)
@@ -10,7 +10,7 @@
 Lint 行为:
 - 必填 H2 不存在 → fail
 - block kind 不匹配 → fail
-- 长尾非 schema H2 → 当前 Phase 1 当 warning,Phase 3 strict=True 后变 fail
+- 长尾非 schema H2 → strict=False 时 warning，strict=True 时 fail
 - aliases 列表里的旧标题 → 由 autofix 改名为 canonical
 
 SPEC: ../SPEC.md § 4
@@ -64,7 +64,7 @@ class BodySchema:
     h1: str = ""
     metadata_lines: list[str] = field(default_factory=list)
     evidence_rules: list[str] = field(default_factory=list)
-    # Phase 1 = False(只 warn);Phase 3 = True(未知 H2 直接 fail)
+    # False: unknown H2 is advisory; True: unknown H2 is a blocking violation.
     strict: bool = False
 
     def section_by_h2(self, h2: str) -> BodySection | None:

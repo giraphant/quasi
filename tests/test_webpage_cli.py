@@ -19,6 +19,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from workflow_test_support import run_workflow_export
+
 pytestmark = pytest.mark.filterwarnings(
     r"ignore:urllib3 v2 only supports OpenSSL 1\.1\.1\+.*"
 )
@@ -104,6 +106,31 @@ def test_normalize_web_url_rejects_credentials_and_control_characters() -> None:
         )
     with pytest.raises(ValueError, match="control"):
         load_webarchive_module().normalize_web_url("https://example.org/article\nnext")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "https://www.chronicle.com/article/the-intellectual-war-on-science/",
+        "HTTPS://Example.COM:443",
+        "http://Example.COM:80/a?q=2#frag",
+        "https://example.org",
+        "https://example.org:8443/x?q=1&r=2",
+        "https://example.org:/x",
+        "https://[2001:db8::1]:8080/x",
+        "https://example.org/a/../b",
+        "https://example.org/a b",
+        "https://example.org/文章",
+        "https://例え.jp/a",
+        "https://example.org/x?",
+    ],
+)
+def test_web_url_normalizers_agree_across_python_and_workflow(raw: str) -> None:
+    """One accepted URL must carry one comparison form on both sides."""
+
+    assert run_workflow_export(
+        "scripts/workflows/contracts/webpage.mts", "normalizeWebUrl", raw
+    ) == load_webarchive_module().normalize_web_url(raw)
 
 
 def test_collision_slug_uses_a_stable_eight_hex_url_suffix() -> None:

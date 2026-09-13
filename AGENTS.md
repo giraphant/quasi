@@ -132,6 +132,7 @@ When changing config, runtime state, or handoff contracts:
 - Dispatch E2E workers with cwd set to the intended project root. `CLAUDE_PROJECT_DIR` may be empty inside a Workflow specialist; when non-empty it overrides cwd, but an in-prompt `cd` is never a substitute for correct dispatch placement.
 - A dead Workflow subagent can leave no usable Stage receipt. The skill must stop, re-observe disk state, and resume or reconcile explicitly; it must never concurrently replay a writer whose outcome is unknown.
 - `claude -p --output-format json` stdout contains the final session envelope, not a full stage/tool transcript. For headless E2E evidence, inspect the session JSONL and per-Workflow JSON sidecars as well as captured stdout.
+- The Workflow sandbox provides core ECMAScript plus the host's own helpers only: there is no `URL`, `fetch`, or `TextEncoder`. A generated bundle that reaches for one throws where the host cannot report it, and the surviving symptom is a material parser calling valid input invalid. `tests/workflow_harness.mjs` deliberately injects no web-platform global into its `run-generated` context.
 
 ## Changelog
 

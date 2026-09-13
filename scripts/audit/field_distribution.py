@@ -189,16 +189,17 @@ def audit_path(
 
     # Build plain-dict types section
     types_plain: dict[str, Any] = {}
-    for type_name, type_data in types.items():
+    for type_name in sorted(types):
+        type_data = types[type_name]
         fields_plain: dict[str, Any] = {}
-        for field_name, field_data in type_data["fields"].items():
-            fields_plain[field_name] = dict(field_data)
+        for field_name in sorted(type_data["fields"]):
+            fields_plain[field_name] = dict(type_data["fields"][field_name])
         types_plain[type_name] = {"files": type_data["files"], "fields": fields_plain}
 
-    # Cap problem lists
+    # Cap problem lists in stable key order.
     problems_plain: dict[str, list[dict[str, Any]]] = {}
-    for prob_name, prob_list in problems.items():
-        problems_plain[prob_name] = prob_list[:example_limit]
+    for prob_name in sorted(problems):
+        problems_plain[prob_name] = problems[prob_name][:example_limit]
 
     return {
         "version": VERSION,

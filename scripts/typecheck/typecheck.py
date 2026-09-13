@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Type-check every typed file in $CLAUDE_PROJECT_DIR/vault against quasi SPEC schemas.
+"""Type-check Markdown files against quasi's executable schemas.
 
-Read-only. Outputs (written under $CLAUDE_PROJECT_DIR):
-  $CLAUDE_PROJECT_DIR/.quasi/audit/typecheck-report.md    — human-readable summary
-  $CLAUDE_PROJECT_DIR/.quasi/audit/typecheck-results.json — full per-file detail (for autofix)
+The standalone command writes its named report artifacts under
+``$CLAUDE_PROJECT_DIR/.quasi/audit``. Library callers can use
+``evaluate_typecheck()`` or ``run_typecheck(write_report=False)`` for a strict
+no-write path.
 
 Usage:
   # Standalone, from inside a vault project:
@@ -19,9 +20,10 @@ import argparse
 import json
 import re
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 # Locate roots (this script lives at quasi/scripts/typecheck/typecheck.py).
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -34,6 +36,7 @@ from pydantic import ValidationError  # noqa: E402
 
 from scripts.core import project_root  # noqa: E402
 from schemas import (  # noqa: E402
+    TYPE_REGISTRY,
     BodySchema,
     canonical_type,
     deprecated_canonical_type,
@@ -67,17 +70,35 @@ def is_fence_close(line: str, fence_char: str, fence_len: int) -> bool:
     return re.match(rf"^ {{0,3}}{re.escape(fence_char)}{{{fence_len},}}\s*$", line.rstrip("\r\n")) is not None
 
 
-def split_frontmatter(text: str) -> tuple[dict | None, str]:
-    m = FM_RE.match(text)
-    if not m:
-        return None, text
+def split_frontmatter(text: str) -> tuple[dict | None, str, dict[str, Any] | None]:
+    """Split a Markdown document without collapsing distinct YAML failures."""
+    match = FM_RE.match(text)
+    if not match:
+        return None, text, {
+            "type": "missing_frontmatter",
+            "loc": [],
+            "msg": "document has no YAML frontmatter",
+        }
+
+    body = match.group(2)
     try:
-        fm = yaml.safe_load(m.group(1))
-        if not isinstance(fm, dict):
-            return None, m.group(2)
-        return fm, m.group(2)
-    except yaml.YAMLError:
-        return None, m.group(2)
+        frontmatter = yaml.safe_load(match.group(1))
+    except yaml.YAMLError as exc:
+        message = str(exc).splitlines()[0] if str(exc) else "invalid YAML frontmatter"
+        return None, body, {
+            "type": "invalid_yaml",
+            "loc": [],
+            "msg": message,
+        }
+
+    if not isinstance(frontmatter, dict):
+        return None, body, {
+            "type": "frontmatter_not_mapping",
+            "loc": [],
+            "msg": "YAML frontmatter must be a mapping",
+        }
+
+    return frontmatter, body, None
 
 
 def extract_h2_sections(body: str) -> list[tuple[str, list[str]]]:
@@ -219,10 +240,12 @@ def detect_kind(lines: list[str]) -> str:
 # ─── body schema validation ───────────────────────────────────
 
 
-def check_body(body: str, body_schema: BodySchema) -> list[dict]:
+def check_body(body: str, body_schema: BodySchema) -> tuple[list[dict], list[dict]]:
+    """Return blocking violations and non-blocking body warnings separately."""
     violations: list[dict] = []
+    warnings: list[dict] = []
     if not body_schema.sections:
-        return violations
+        return violations, warnings
 
     # ─── Global heading-level drift: entire doc shifted down ─────
     global_offset = detect_global_level_drift(body)
@@ -234,7 +257,7 @@ def check_body(body: str, body_schema: BodySchema) -> list[dict]:
         })
         # Don't try further section-level checks if doc is wholesale-shifted;
         # autofix will fix the level first, then re-run typecheck.
-        return violations
+        return violations, warnings
 
     found_sections = extract_h2_sections(body)
     found_canonical: set[str] = set()
@@ -242,7 +265,11 @@ def check_body(body: str, body_schema: BodySchema) -> list[dict]:
     for h2, lines in found_sections:
         section = body_schema.section_by_h2(h2)
         if section is None:
-            violations.append({"kind": "unknown_h2", "h2": h2})
+            diagnostic = {"kind": "unknown_h2", "h2": h2}
+            if body_schema.strict:
+                violations.append(diagnostic)
+            else:
+                warnings.append(diagnostic)
             continue
         found_canonical.add(section.h2)
         if section.h2 != h2:
@@ -312,7 +339,7 @@ def check_body(body: str, body_schema: BodySchema) -> list[dict]:
         else:
             violations.append({"kind": "missing_required_h2", "h2": sec.h2})
 
-    return violations
+    return violations, warnings
 
 
 # ─── per-file check ────────────────────────────────────────────
@@ -320,7 +347,7 @@ def check_body(body: str, body_schema: BodySchema) -> list[dict]:
 
 def check_file(path: Path) -> dict:
     text = path.read_text(encoding="utf-8")
-    fm, body = split_frontmatter(text)
+    fm, body, parse_error = split_frontmatter(text)
     try:
         rel = str(path.relative_to(PROJECT_ROOT))
     except ValueError:
@@ -331,32 +358,56 @@ def check_file(path: Path) -> dict:
         "type": None,
         "frontmatter_errors": [],
         "body_violations": [],
+        "body_warnings": [],
     }
 
-    if fm is None:
-        result["frontmatter_errors"].append({"type": "no_frontmatter"})
+    if parse_error is not None:
+        result["frontmatter_errors"].append(parse_error)
         return result
 
+    assert fm is not None
     raw_type = fm.get("type")
+    if raw_type is None:
+        result["frontmatter_errors"].append({
+            "type": "missing_type",
+            "loc": ["type"],
+            "msg": "frontmatter is missing the type field",
+        })
+        return result
+    if not isinstance(raw_type, str):
+        result["frontmatter_errors"].append({
+            "type": "unknown_type",
+            "loc": ["type"],
+            "msg": "frontmatter type must be a canonical string",
+            "raw_type": str(raw_type),
+            "python_type": type(raw_type).__name__,
+        })
+        return result
+
     canon = canonical_type(raw_type)
     result["type"] = canon
 
     if canon is None:
         deprecated = deprecated_canonical_type(raw_type)
         if deprecated:
+            result["type"] = deprecated
             result["frontmatter_errors"].append({
                 "type": "deprecated_type",
+                "loc": ["type"],
+                "msg": f"frontmatter type {raw_type!r} is deprecated; use {deprecated!r}",
                 "raw_type": raw_type,
                 "canonical_type": deprecated,
             })
         else:
             result["frontmatter_errors"].append({
                 "type": "unknown_type",
+                "loc": ["type"],
+                "msg": f"unknown frontmatter type: {raw_type!r}",
                 "raw_type": raw_type,
             })
         return result
 
-    schemas = schema_for_type(raw_type)
+    schemas = schema_for_type(canon)
     if not schemas:
         return result
     fm_schema, body_schema = schemas
@@ -366,39 +417,44 @@ def check_file(path: Path) -> dict:
 
     try:
         fm_schema.model_validate(normalized_fm)
-    except ValidationError as e:
-        result["frontmatter_errors"] = e.errors()
+    except ValidationError as exc:
+        result["frontmatter_errors"] = json.loads(exc.json(include_url=False))
 
-    result["body_violations"] = check_body(body, body_schema)
+    violations, warnings = check_body(body, body_schema)
+    result["body_violations"] = violations
+    result["body_warnings"] = warnings
     return result
 
 
 # ─── report rendering ──────────────────────────────────────────
 
 
-TYPE_ORDER = ["author", "book", "chapter", "paper", "topic", "journal", "note", "image", "unknown"]
+TYPECHECK_VERSION = "quasi-typecheck.results.v1"
+TYPE_ORDER = [*TYPE_REGISTRY, "unknown"]
 
 
 def build_report(stats: dict, total_files: int) -> str:
     lines = [
         "# quasi-vault typecheck report",
         "",
-        f"Generated: {datetime.now(timezone.utc).isoformat()}Z",
+        f"Generated: {datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}",
         f"Total files scanned: {total_files}",
         "",
-        "Per-type summary(clean = 0 frontmatter errors + 0 body violations):",
+        "Per-type summary(clean = 0 frontmatter errors + 0 blocking body violations):",
         "",
-        "| Type | Total | Clean | FM errors | Body violations |",
-        "|---|---:|---:|---:|---:|",
+        "| Type | Total | Clean | FM errors | Body violations | Body warnings |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
     for t in TYPE_ORDER:
         s = stats.get(t)
         if not s:
             continue
+        clean_pct = (s["clean"] / s["total"] * 100) if s["total"] else 0
         lines.append(
             f"| `{t}` | {s['total']} | {s['clean']} "
-            f"({s['clean'] / s['total'] * 100:.0f}%) "
-            f"| {s['fm_errors_total']} | {s['body_errors_total']} |"
+            f"({clean_pct:.0f}%) "
+            f"| {s['fm_errors_total']} | {s['body_errors_total']} "
+            f"| {s['body_warnings_total']} |"
         )
     lines.append("")
 
@@ -423,6 +479,13 @@ def build_report(stats: dict, total_files: int) -> str:
                 lines.append(f"- `{k}`: {n}")
             lines.append("")
 
+        if s["body_warning_counts"]:
+            lines.append("### Top non-blocking body warnings")
+            lines.append("")
+            for k, n in s["body_warning_counts"].most_common(15):
+                lines.append(f"- `{k}`: {n}")
+            lines.append("")
+
         if s["missing_required_h2"]:
             lines.append("### TRULY missing required H2(占该 type 文件比例)")
             lines.append("")
@@ -440,7 +503,7 @@ def build_report(stats: dict, total_files: int) -> str:
             lines.append("")
 
         if s["unknown_h2"]:
-            lines.append("### Top unknown H2(数十种漂移别名)")
+            lines.append("### Top unknown H2 (warning unless BodySchema.strict=true)")
             lines.append("")
             for h2, n in s["unknown_h2"].most_common(20):
                 lines.append(f"- `## {h2}` × {n}")
@@ -456,12 +519,160 @@ def collect_files(target: Path) -> list[Path]:
     if target.is_file():
         return [target] if target.suffix == ".md" else []
     files: list[Path] = []
-    for p in target.rglob("*.md"):
+    for p in sorted(target.rglob("*.md")):
         rel_parts = p.relative_to(target).parts if p.is_relative_to(target) else p.parts
         if any(part.startswith(".") for part in rel_parts):
             continue
         files.append(p)
     return files
+
+
+def _empty_stats() -> dict[str, Any]:
+    return {
+        "total": 0,
+        "clean": 0,
+        "fm_errors_total": 0,
+        "body_errors_total": 0,
+        "body_warnings_total": 0,
+        "type_rename_needed": 0,
+        "error_counts": Counter(),
+        "body_violation_counts": Counter(),
+        "body_warning_counts": Counter(),
+        "missing_required_h2": Counter(),
+        "heading_drift": Counter(),
+        "unknown_h2": Counter(),
+    }
+
+
+def evaluate_typecheck(target: Path) -> dict[str, Any]:
+    """Evaluate *target* entirely in memory without creating report artifacts."""
+    target = Path(target).expanduser().resolve()
+    if not target.exists():
+        raise FileNotFoundError(target)
+
+    files = collect_files(target)
+    results: list[dict[str, Any]] = []
+    stats = {type_name: _empty_stats() for type_name in TYPE_ORDER}
+
+    for path in files:
+        result = check_file(path)
+        results.append(result)
+
+        type_name = result["type"] if result["type"] in TYPE_REGISTRY else "unknown"
+        type_stats = stats[type_name]
+        type_stats["total"] += 1
+
+        frontmatter_errors = result.get("frontmatter_errors") or []
+        type_stats["fm_errors_total"] += len(frontmatter_errors)
+        for error in frontmatter_errors:
+            type_stats["error_counts"][error.get("type", "?")] += 1
+
+        body_violations = result.get("body_violations") or []
+        type_stats["body_errors_total"] += len(body_violations)
+        for violation in body_violations:
+            kind = violation["kind"]
+            type_stats["body_violation_counts"][kind] += 1
+            if kind == "missing_required_h2":
+                type_stats["missing_required_h2"][violation["h2"]] += 1
+            elif kind == "heading_level_drift":
+                type_stats["heading_drift"][violation["h2"]] += 1
+            elif kind == "unknown_h2":
+                type_stats["unknown_h2"][violation["h2"]] += 1
+
+        body_warnings = result.get("body_warnings") or []
+        type_stats["body_warnings_total"] += len(body_warnings)
+        for warning in body_warnings:
+            kind = warning["kind"]
+            type_stats["body_warning_counts"][kind] += 1
+            if kind == "unknown_h2":
+                type_stats["unknown_h2"][warning["h2"]] += 1
+
+        if result.get("type_rename"):
+            type_stats["type_rename_needed"] += 1
+        if not frontmatter_errors and not body_violations and not result.get("type_rename"):
+            type_stats["clean"] += 1
+
+    has_violations = any(
+        type_stats["fm_errors_total"]
+        + type_stats["body_errors_total"]
+        + type_stats["type_rename_needed"]
+        > 0
+        for type_stats in stats.values()
+    )
+    return {
+        "target": target,
+        "files": files,
+        "results": results,
+        "stats": stats,
+        "has_violations": has_violations,
+    }
+
+
+def _counter_payload(counter: Counter) -> dict[str, int]:
+    return {key: counter[key] for key in sorted(counter)}
+
+
+def build_results_payload(
+    evaluation: dict[str, Any],
+    *,
+    requested_path: str,
+) -> dict[str, Any]:
+    """Build the stable stdout JSON contract for a no-write typecheck report."""
+    stats = evaluation["stats"]
+    type_payload: dict[str, Any] = {}
+    for type_name in TYPE_ORDER:
+        type_stats = stats[type_name]
+        type_payload[type_name] = {
+            "total": type_stats["total"],
+            "clean": type_stats["clean"],
+            "frontmatter_errors": type_stats["fm_errors_total"],
+            "body_violations": type_stats["body_errors_total"],
+            "body_warnings": type_stats["body_warnings_total"],
+            "error_counts": _counter_payload(type_stats["error_counts"]),
+            "body_violation_counts": _counter_payload(type_stats["body_violation_counts"]),
+            "body_warning_counts": _counter_payload(type_stats["body_warning_counts"]),
+        }
+
+    all_stats = list(stats.values())
+    files_with_errors = sum(
+        1
+        for result in evaluation["results"]
+        if result.get("frontmatter_errors")
+        or result.get("body_violations")
+        or result.get("type_rename")
+    )
+    return {
+        "version": TYPECHECK_VERSION,
+        "status": "dirty" if evaluation["has_violations"] else "clean",
+        "target": {
+            "requested": requested_path,
+            "resolved": str(evaluation["target"]),
+            "exists": True,
+        },
+        "summary": {
+            "files_checked": len(evaluation["results"]),
+            "files_clean": sum(item["clean"] for item in all_stats),
+            "files_with_errors": files_with_errors,
+            "frontmatter_errors": sum(item["fm_errors_total"] for item in all_stats),
+            "body_violations": sum(item["body_errors_total"] for item in all_stats),
+            "body_warnings": sum(item["body_warnings_total"] for item in all_stats),
+        },
+        "types": type_payload,
+        "files": evaluation["results"],
+    }
+
+
+def missing_path_payload(target: Path, *, requested_path: str) -> dict[str, Any]:
+    return {
+        "version": TYPECHECK_VERSION,
+        "status": "error",
+        "target": {
+            "requested": requested_path,
+            "resolved": str(target),
+            "exists": False,
+        },
+        "error": f"path does not exist: {target}",
+    }
 
 
 def run_typecheck(
@@ -471,106 +682,72 @@ def run_typecheck(
     write_report: bool = True,
     results_path: Path | None = None,
 ) -> int:
-    """Run local vault typecheck and write machine-readable results.
+    """Run local typecheck, writing only outputs explicitly enabled by the caller.
 
-    Returns 0 when clean and 1 when any local schema violation remains.
+    ``write_report=False`` with no ``results_path`` is a strict no-write path.
+    Returns 0 when no blocking violation remains, 1 when dirty, and 2 when the
+    target does not exist. Non-strict body warnings never affect the exit code.
     """
     target = Path(target).expanduser().resolve()
     if not target.exists():
         print(f"error: path does not exist: {target}", file=sys.stderr)
         return 2
 
-    files = collect_files(target)
+    evaluation = evaluate_typecheck(target)
+    files = evaluation["files"]
+    stats = evaluation["stats"]
     if not quiet:
-        rel = (target.relative_to(PROJECT_ROOT) if target.is_relative_to(PROJECT_ROOT) else target)
+        rel = target.relative_to(PROJECT_ROOT) if target.is_relative_to(PROJECT_ROOT) else target
         print(f"scanning {len(files)} md files under {rel}...")
 
-    results: list[dict] = []
-    stats: dict[str, dict] = defaultdict(lambda: {
-        "total": 0,
-        "clean": 0,
-        "fm_errors_total": 0,
-        "body_errors_total": 0,
-        "type_rename_needed": 0,
-        "error_counts": Counter(),
-        "body_violation_counts": Counter(),
-        "missing_required_h2": Counter(),
-        "heading_drift": Counter(),
-        "unknown_h2": Counter(),
-    })
+    result_output: Path | None = None
+    if results_path is not None:
+        result_output = Path(results_path).expanduser().resolve()
+    elif write_report:
+        result_output = OUT_DIR / "typecheck-results.json"
 
-    for path in files:
-        r = check_file(path)
-        results.append(r)
+    if result_output is not None:
+        result_output.parent.mkdir(parents=True, exist_ok=True)
+        result_output.write_text(
+            json.dumps(evaluation["results"], ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
-        t = r["type"] or "unknown"
-        s = stats[t]
-        s["total"] += 1
-
-        if r["frontmatter_errors"]:
-            s["fm_errors_total"] += len(r["frontmatter_errors"])
-            for err in r["frontmatter_errors"]:
-                s["error_counts"][err.get("type", "?")] += 1
-        if r["body_violations"]:
-            s["body_errors_total"] += len(r["body_violations"])
-            for v in r["body_violations"]:
-                s["body_violation_counts"][v["kind"]] += 1
-                if v["kind"] == "missing_required_h2":
-                    s["missing_required_h2"][v["h2"]] += 1
-                elif v["kind"] == "heading_level_drift":
-                    s["heading_drift"][v["h2"]] += 1
-                elif v["kind"] == "unknown_h2":
-                    s["unknown_h2"][v["h2"]] += 1
-        if r.get("type_rename"):
-            s["type_rename_needed"] += 1
-        if (
-            not r["frontmatter_errors"]
-            and not r["body_violations"]
-            and not r.get("type_rename")
-        ):
-            s["clean"] += 1
-
-    result_output = (
-        Path(results_path)
-        if results_path is not None
-        else OUT_DIR / "typecheck-results.json"
-    )
-    result_output.parent.mkdir(parents=True, exist_ok=True)
-    result_output.write_text(
-        json.dumps(results, ensure_ascii=False, indent=2, default=str)
-    )
     if write_report:
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
         report = build_report(stats, len(files))
-        (OUT_DIR / "typecheck-report.md").write_text(report)
+        (OUT_DIR / "typecheck-report.md").write_text(
+            report + "\n",
+            encoding="utf-8",
+        )
 
     if not quiet:
-        print(f"\nresults: {len(results)} files checked")
-        for t in TYPE_ORDER:
-            s = stats.get(t)
-            if not s:
-                continue
-            clean_pct = (s["clean"] / s["total"] * 100) if s["total"] else 0
+        print(f"\nresults: {len(evaluation['results'])} files checked")
+        for type_name in TYPE_ORDER:
+            type_stats = stats[type_name]
+            clean_pct = (
+                type_stats["clean"] / type_stats["total"] * 100
+                if type_stats["total"]
+                else 0
+            )
             print(
-                f"  {t:10} {s['total']:6}  "
-                f"clean: {s['clean']:6} ({clean_pct:4.0f}%)  "
-                f"fm_err: {s['fm_errors_total']:6}  "
-                f"body_err: {s['body_errors_total']:6}"
+                f"  {type_name:10} {type_stats['total']:6}  "
+                f"clean: {type_stats['clean']:6} ({clean_pct:4.0f}%)  "
+                f"fm_err: {type_stats['fm_errors_total']:6}  "
+                f"body_err: {type_stats['body_errors_total']:6}  "
+                f"body_warn: {type_stats['body_warnings_total']:6}"
             )
         rel_out = OUT_DIR.relative_to(PROJECT_ROOT) if OUT_DIR.is_relative_to(PROJECT_ROOT) else OUT_DIR
         if write_report:
             print(f"\nreport → {rel_out / 'typecheck-report.md'}")
-        try:
-            detail_output = result_output.relative_to(PROJECT_ROOT)
-        except ValueError:
-            detail_output = result_output
-        print(f"detail → {detail_output}")
+        if result_output is not None:
+            try:
+                detail_output = result_output.relative_to(PROJECT_ROOT)
+            except ValueError:
+                detail_output = result_output
+            print(f"detail → {detail_output}")
 
-    # Exit code: 0 if all clean, 1 if any violations (CI / agent decision).
-    has_violations = any(
-        s["fm_errors_total"] + s["body_errors_total"] + s["type_rename_needed"] > 0
-        for s in stats.values()
-    )
-    return 1 if has_violations else 0
+    return 1 if evaluation["has_violations"] else 0
 
 
 def main() -> None:

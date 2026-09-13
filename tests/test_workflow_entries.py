@@ -19,14 +19,20 @@ from test_material_plans import (
     chapter_complete,
     chapter_output_observation_mismatch,
     prepare_complete,
+    provisional_input,
+    search_webpage_redirect,
     translation_complete,
 )
 from test_topic_plan import recall_complete, topic_input
 from test_webpage_plan import (
+    SLUG as WEBPAGE_SLUG,
     audit_complete as webpage_audit_complete,
     canonical_webpage_input,
+    identify_complete as webpage_identify_complete,
+    provisional_webpage_input,
 )
 from workflow_test_support import (
+    ROOT,
     run_generated_workflow,
     run_workflow_entry,
     workflow_bundle_inputs,
@@ -202,6 +208,60 @@ def test_generated_named_workflow_rejects_invalid_string_transports(
     assert report["agentCalls"] == 0
     assert report["value"]["terminal"] == "blocked"
     assert report["value"]["issue"]["code"] == "material.invalid_input"
+
+
+# The Workflow sandbox has no web-platform globals. A generated entry that reaches
+# for one throws where the host cannot report it, so every material's web input
+# collapses into `material.invalid_input` before any agent is dispatched.
+ABSENT_SANDBOX_GLOBALS = (
+    "new URL(",
+    "globalThis.URL",
+    "URLSearchParams",
+    "TextEncoder",
+    "TextDecoder",
+    "structuredClone",
+    "queueMicrotask",
+    "fetch(",
+    "require(",
+    "process.env",
+)
+
+
+@pytest.mark.parametrize("entry", ENTRIES)
+def test_generated_named_workflow_reaches_for_no_absent_sandbox_global(
+    entry: str,
+) -> None:
+    source = (ROOT / "workflows" / f"{entry}.mjs").read_text()
+
+    assert [name for name in ABSENT_SANDBOX_GLOBALS if name in source] == []
+
+
+def test_generated_webpage_identifies_a_provisional_url_without_a_url_global() -> None:
+    report = run_generated_workflow(
+        "webpage",
+        provisional_webpage_input(),
+        [webpage_identify_complete()],
+    )
+
+    assert report["agentCalls"] == 1
+    assert report["value"]["terminal"] == "needs_observation"
+    assert report["value"]["routes"] == [
+        {"kind": "webpage", "slug": WEBPAGE_SLUG}
+    ]
+
+
+def test_generated_paper_routes_a_web_article_without_a_url_global() -> None:
+    report = run_generated_workflow(
+        "paper",
+        provisional_input(),
+        [search_webpage_redirect()],
+    )
+
+    assert report["value"]["terminal"] == "complete"
+    assert report["value"]["next"] == {
+        "kind": "webpage",
+        "url": "https://example.org/essay",
+    }
 
 
 def test_generated_book_recovers_the_qualified_chapter_observation_mismatch() -> None:

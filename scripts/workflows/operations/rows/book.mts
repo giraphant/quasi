@@ -51,6 +51,17 @@ const preparedArtifactSchema = {
   },
 };
 
+const unusableNormalizedEvidence = (
+  artifacts: any[],
+  normalized: string,
+): boolean =>
+  artifacts.length === 0 ||
+  (artifacts.length === 1 &&
+    artifacts[0].role === "normalized_document" &&
+    artifacts[0].path === normalized &&
+    artifacts[0].exists === true &&
+    artifacts[0].usable === false);
+
 const CHAPTER_SLOT_PATTERN = "^\\d{2,3}[a-z]{0,2}$";
 const CHAPTER_SLUG_PATTERN = "^[a-z0-9][a-z0-9-]{0,79}$";
 const CHAPTER_TITLE_PATTERN = "^[^\\u0000-\\u001f\\u007f-\\u009f]+$";
@@ -616,7 +627,7 @@ export const bookOperationRows: OperationRow[] = [
           receipt.disposition === null &&
           receipt.chapter_count === 0 &&
           receipt.chapters.length === 0 &&
-          receipt.artifacts.length === 0
+          unusableNormalizedEvidence(receipt.artifacts, context.normalized)
         );
       if (
         terminalDisposition === "legacy_partial" ||
@@ -717,6 +728,16 @@ export const bookOperationRows: OperationRow[] = [
           : []),
         "Read the exact source, manifest, normalized document, and manifest-listed chapter texts",
       ],
+      disposition_contract: {
+        prepared:
+          "Return only after the committed manifest and representative chapter texts were actually read and hold coherent readable prose.",
+        ...(refs.format === "pdf" && refs.legacyOcr === null
+          ? {
+              ocr_required:
+                "Allowed only when input is the direct accepted PDF and its extracted normalized_document exists but is semantically unusable (no body text, persistent garbling, or scanned pages without a usable text layer). Stop at that judgement: run no toc, pattern, or manual split; write, reuse, or verify no manifest or chapter files; return selected_source, normalized_path, manifest_fingerprint, mode, and disposition as null, chapter_count 0, chapters [], and artifacts either [] or exactly one normalized_document entry at refs.normalized_document with exists:true and usable:false. Do not start OCR inside book.prepare to reach this disposition; the caller dispatches book.ocr.",
+            }
+          : {}),
+      },
       artifact_roles: [
         "normalized_document",
         "recovery_source",

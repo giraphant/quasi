@@ -499,7 +499,9 @@ def book_prepare_complete(
     }
 
 
-def book_prepare_ocr_required(slug: str = "exact-book") -> dict[str, Any]:
+def book_prepare_ocr_required(
+    slug: str = "exact-book", *, evidence: bool = False
+) -> dict[str, Any]:
     receipt = book_prepare_complete(slug=slug, format_name="pdf")
     receipt.update(
         {
@@ -510,7 +512,14 @@ def book_prepare_ocr_required(slug: str = "exact-book") -> dict[str, Any]:
             "disposition": None,
             "chapter_count": 0,
             "chapters": [],
-            "artifacts": [],
+            "artifacts": [
+                {
+                    "role": "normalized_document",
+                    "path": f"processing/chapters/{slug}/source.txt",
+                    "exists": True,
+                    "usable": False,
+                }
+            ] if evidence else [],
         }
     )
     receipt["terminal"] = {
@@ -3117,6 +3126,46 @@ def test_book_missing_generation_runs_one_shared_ocr_range_then_observes() -> No
     assert report["calls"][1]["request"]["generation"]["profile"][
         "chunk_pages"
     ] == 16
+
+
+def test_book_ocr_required_with_unusable_normalized_evidence_runs_one_shared_ocr_range_then_observes() -> None:
+    value = canonical_book_input(source_format="pdf")
+    generation = value["observation"]["facts"]["ocr_generation"]
+
+    report = run_book(
+        value,
+        [book_prepare_ocr_required(evidence=True), paper_ocr_complete(generation)],
+    )
+
+    assert report["result"]["terminal"] == "needs_observation"
+    assert report["result"]["routes"] == [{"kind": "book", "slug": "exact-book"}]
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.prepare",
+        "book.ocr",
+    ]
+    assert report["calls"][1]["request"]["generation"]["profile"][
+        "chunk_pages"
+    ] == 16
+
+
+def test_book_ocr_required_with_written_chapters_is_incoherent_and_never_starts_ocr() -> None:
+    value = canonical_book_input(source_format="pdf")
+    generation = value["observation"]["facts"]["ocr_generation"]
+    receipt = book_prepare_complete(format_name="pdf")
+    receipt["terminal"] = {
+        "status": "complete",
+        "issue": None,
+        "disposition": "ocr_required",
+    }
+    for artifact in receipt["artifacts"]:
+        artifact["usable"] = False
+
+    report = run_book(value, [receipt, paper_ocr_complete(generation)])
+
+    assert report["result"]["issue"]["code"] == "workflow.incoherent_complete"
+    assert [call["request"]["operation"] for call in report["calls"]] == [
+        "book.prepare"
+    ]
 
 
 def test_book_in_progress_generation_dispatches_ocr_without_prepare(
