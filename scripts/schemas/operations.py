@@ -1,6 +1,24 @@
 """Canonical operation identity and artifact templates."""
 
 OPERATION_CATALOG = {
+    "archive.identify": {
+        "kinds": ["archive"], "phase": "Search", "effect": "readonly",
+        "agent": "quasi:archive-agent", "artifacts": {},
+    },
+    "archive.collect": {
+        "kinds": ["archive"], "phase": "Acquire", "effect": "writer",
+        "agent": "quasi:archive-agent",
+        "artifacts": {"output": "vault/archives/{slug}/archive.md"},
+    },
+    "archive.audit": {
+        "kinds": ["archive"], "phase": "Audit", "effect": "writer",
+        "agent": "quasi:audit-agent",
+        "artifacts": {"target": "vault/archives/{slug}/archive.md"},
+    },
+    "topic.discover-archives": {
+        "kinds": ["topic"], "phase": "Search", "effect": "readonly",
+        "agent": "quasi:webcard-agent", "artifacts": {},
+    },
     "webpage.identify": {
         "kinds": ["webpage"],
         "phase": "Search",

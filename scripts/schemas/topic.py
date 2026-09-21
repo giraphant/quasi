@@ -10,9 +10,9 @@ card 页(cards/{card-slug}.md)是 webcard-agent 写的圈外证据卡。
 from __future__ import annotations
 
 from datetime import date
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from .primitives import CardSlug, Title
 
@@ -81,6 +81,11 @@ class TopicSchema(BaseModel):
         default=None, description="主题标签数组(复用全库 themes 词表);仅 kind: card"
     )
 
+    archives: Optional[list[Annotated[str, StringConstraints(
+        pattern=r"^vault/archives/[a-z0-9]+(?:-[a-z0-9]+)*/archive\.md$",
+    )]]] = Field(default=None, min_length=1, max_length=8,
+                 description="本卡引用的 Archive canonical paths；仅 kind: card；旧卡可省略")
+
     @model_validator(mode="after")
     def _fields_stay_on_their_own_kind(self) -> "TopicSchema":
         if self.kind == "outline":
@@ -91,6 +96,10 @@ class TopicSchema(BaseModel):
                 raise ValueError("outline 子问题 id 必须唯一")
         elif self.subquestions is not None or self.history is not None:
             raise ValueError("subquestions/history 只允许出现在 kind: outline 页")
+        if self.kind != "card" and self.archives is not None:
+            raise ValueError("archives 只允许出现在 kind: card 页")
+        if self.archives is not None and len(self.archives) != len(set(self.archives)):
+            raise ValueError("archives 不得重复")
         if self.kind != "card" and (self.created is not None or self.themes is not None):
             raise ValueError("created/themes 只允许出现在 kind: card 页")
         return self

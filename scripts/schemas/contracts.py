@@ -73,7 +73,7 @@ def artifact_contract_for_type(type_name: str) -> dict[str, Any]:
             "metadata_lines": body_schema.metadata_lines,
             "evidence_rules": body_schema.evidence_rules,
             "section_order": [section.h2 for section in body_schema.sections],
-            "additional_h2": False,
+            "additional_h2": not bool(body_schema.sections),
             "sections": sections,
         },
     }

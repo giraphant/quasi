@@ -64,11 +64,15 @@ OCR 依赖;扫描书的恢复质量取决于上表的可选依赖是否可用。
 quasi 把当前工作目录当作项目根,产物落在四个目录:
 
 ```text
-vault/        # 阅读产物:books/ papers/ webpages/ authors/ talks/ topics/ drafts/
+vault/        # 阅读产物:books/ papers/ webpages/ archives/ authors/ talks/ topics/ drafts/
 sources/      # 已接受的源文件
 processing/   # 可检查的中间产物:chapters/ translations/ talks/ webpages/
 .quasi/       # 编排状态、缓存、审计输出
 ```
+
+独立网页阅读使用 Webpage；明确要求归档的 URL，以及 Topic 工作流发现的非学术网页材料，
+使用 Archive。Topic 先收录材料，再写引用 Archive 的证据卡；同一 URL 跨专题复用，
+并合并 `topics`。Archive 当前保存来源记录与已核读内容，不保证原件已离线保存。
 
 ## 维护
 

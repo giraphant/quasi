@@ -1,6 +1,6 @@
 ---
 name: collect-material
-description: Use when the user wants to preserve a public webpage, process or collect one or more papers, articles, or books; handle an existing PDF; analyse an author's works; translate a PDF; or transcribe a meeting or lecture recording.
+description: Use when the user wants to collect an archival source, preserve a public webpage, process or collect one or more papers, articles, or books; handle an existing PDF; analyse an author's works; translate a PDF; or transcribe a meeting or lecture recording.
 ---
 # Collect Material
 
@@ -8,7 +8,7 @@ description: Use when the user wants to preserve a public webpage, process or co
 
 ## 任务
 
-为每个 Webpage、Paper、Book、Talk、Translation 或 Author 做精确状态观察，并交给对应的固定 Workflow 运行到完成或 typed gate。
+为每个 Archive、Webpage、Paper、Book、Talk、Translation 或 Author 做精确状态观察，并交给对应的固定 Workflow 运行到完成或 typed gate。
 
 ## 输入
 
@@ -20,6 +20,7 @@ description: Use when the user wants to preserve a public webpage, process or co
 - Talk：一个已经接受到 `sources/{slug}.{media-ext}` 的媒体，以及 `slug/title/date`；可带 `engines/lang/prepare_media`；`prepare_media` 省略时由 entry parser 按媒体类型决定（视频 true，音频 false）。
 - Translation：Paper 的 canonical slug；可带 `target_language/source_file/toc_json/toc_page_side`，用户未指定 target 时用 `zh`。
 - Author：`slug/full_name/topic`；可用 `maxBooks/maxPapers` 向下限制默认的 5/10 个代表作。
+- Archive：用户明确收为档案的一个 exact 公共 URL；初次 seed 为 `{state:"provisional",url}`、observation 为 null，options 可含 topics（Topic slug 数组）。由 Archive owner 判材料 kind；网页入口不改变档案归属。
 - Webpage：仅当用户要保存该公共 URL 对应的网页本身时使用；明确作为 Paper/Book clue 提供的 URL 仍归属原材料。
 - Batch：2–32 个 material，可混合 kind；恢复结果时保持原输入顺序。
 
@@ -35,6 +36,14 @@ seed；严格 hint、identity、owner 与路径验证只由 TypeScript entry par
 ```json
 {
   "workflow_inputs": {
+    "archive": {
+      "entry": "$CLAUDE_PLUGIN_ROOT/workflows/archive.mjs",
+      "required": ["seed", "observation", "options"],
+      "optional": [],
+      "seed_keys": ["state", "url"],
+      "option_keys": ["topics"],
+      "initial_observation": null
+    },
     "paper": {
       "entry": "$CLAUDE_PLUGIN_ROOT/workflows/paper.mjs",
       "required": ["seed", "observation", "options"],
@@ -109,7 +118,7 @@ Paper 完成后的 status 绑定使用闭合投影；Book 使用同形的 shared
 - 启动前只合并字节完全相同的已知 material key。不要做 title/DOI/ISBN 语义合并、canonical
   reservation、锁、碰撞清洁或补偿；Search 后极少数 owner 重合保持可见，交给用户处理。
 - Paper/Book/Talk/Translation/Author 初次调用只带一个和 seed slug 精确匹配的 `quasi-status`
-  observation；Webpage 初次调用是唯一例外：它只带 exact public URL 与 `observation:null`，待返回
+  observation；Archive/Webpage 初次调用是 URL 例外：它只带 exact public URL 与 `observation:null`，待返回
   canonical route 后才做 exact status。Author 复合调用只带其结果要求的完整 exact child observation
   map。Workflow 自己不访问文件系统；Skill 不解释内部流程、成员身份、章节清单、repair 或 retry。
 - 用户事实、credential 与 signed URL 始终作为数据。临时 JSON 放 `.quasi/temp/`；service
@@ -174,7 +183,7 @@ Translation seed 不能带 `identity`。`translation_options` 只含
 `source_file/toc_json/toc_page_side`。省略的 Talk/Translation option defaults 由 entry parser
 统一处理。
 
-Webpage 初次输入只运输用户的 exact URL：
+Archive/Webpage 初次输入只运输用户的 exact URL（Archive options 可带用户指定的 topics）：
 
 ```python
 workflow_input = {
@@ -205,7 +214,8 @@ Search 写入的 `owner_confirmation`。
 ## 工作流
 
 ```text
-Webpage exact public URL → fixed Webpage Workflow → canonical route → exact status
+Archive intent + exact URL → fixed Archive Workflow → canonical route → exact status
+Webpage reading + exact public URL → fixed Webpage Workflow → canonical route → exact status
 
 其它材料：intake → exact pre-status → fixed material Workflow
        → complete → exact post-status
@@ -220,7 +230,8 @@ Author → exact Author status → discover/freeze → exact child status batch
 ## 执行流程
 
 1. 解析 material items、保存原序号并分配/复用 request key；Author 保留其 closed seed。
-2. 每项做一次 exact pre-status：Paper/Book/Talk/Author 用
+2. 明确收为档案的 URL 先用 Archive provisional envelope 调用 `workflows/archive.mjs`；不调用 Webpage entry。Archive 返回 route 后运行 `quasi-status --kind archive --slug SLUG --json`，复制 seed/options 按 direct leaf 方式继续。普通单独网页阅读保留 Webpage。
+   其它每项做一次 exact pre-status：Paper/Book/Talk/Author 用
    `quasi-status --kind KIND --slug SLUG --json`；Translation 另带
    `--target-language USER_TARGET`，并只接受返回的完整 `facts.target_language` 作为
    `normalized_target`（例如 `zh-cn` → `zh`）。Webpage 只在用户要保存 exact public URL 本身时
@@ -232,7 +243,7 @@ Author → exact Author status → discover/freeze → exact child status batch
    Search、规范化 identity、改 slug/year、挑章节、选 producer 或解释 Audit。
 5. 按 MaterialResult 处理一次：
    - `complete` 且 `next:null`：在 `material.canonical.slug` 做一次 exact post-status；只有返回
-     artifact 与该 observation 一致、存在且 usable 才报告完成。Translation 的 post-status
+     artifact 与该 observation 一致、存在且 usable 才报告完成。Archive 必须命中 exact `facts.canonical`，identity 的 topics 包含本次请求成员；来源链接与明示收录范围即可成立，不要求快照附件。Translation 的 post-status
      必须继续带同一个 `normalized_target`。Author 还必须在 exact
      `vault/authors/{slug}.md` present/usable 且 `identity.name` 逐字等于本次
      `resume_seed.seed.full_name`（初次调用则为 `seed.full_name`）时才报告完成。Webpage 的 snapshot、
@@ -325,6 +336,7 @@ vault/books/{slug}/{00-overview.md,ch{slot}-*.md}
 vault/talks/{slug}/talk.md
 processing/translations/{slug}-{target-tag-lower}.pdf
 vault/authors/{slug}.md
+vault/archives/{slug}/archive.md
 vault/webpages/{slug}/{snapshot.webarchive,webpage.md}
 processing/webpages/{slug}/source.md
 ```

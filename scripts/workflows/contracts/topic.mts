@@ -1,3 +1,5 @@
+import { parseArchiveSeed, parseArchiveStatusObservation, type ArchiveSeed, type ArchiveStatusObservation } from "./archive.mts";
+import { normalizeWebUrl } from "../shared/web-url.mts";
 import {
   parseBookSeed,
   parseBookStatusObservation,
@@ -175,7 +177,16 @@ export type TopicCheckpointAdmission =
       assignment: { subq: string };
     };
 
+export interface TopicArchiveContinuation {
+  kind: "archive_work";
+  topic: TopicQuery;
+  task: {card_slug: string; subq: string; query: string; note: string};
+  fingerprint: string;
+  sources: ArchiveSeed[];
+}
+
 export type TopicResumeSeed =
+  | TopicArchiveContinuation
   | TopicSeedChildContinuation
   | TopicWorkContinuation
   | TopicRecallContinuation
@@ -187,6 +198,7 @@ export interface TopicResumeInput {
 }
 
 export type TopicChildStatusObservation =
+  | ArchiveStatusObservation
   | PaperStatusObservation
   | BookStatusObservation
   | TalkStatusObservation;
@@ -482,6 +494,15 @@ const parseRecallItem = (value: unknown): TopicRecallContinuation["item"] | null
 const parseResumeSeed = (value: unknown, query: TopicQuery): TopicResumeSeed | null => {
   if (!isRecord(value) || !isRecord(value.topic) || !sameClosedValue(value.topic, query))
     return null;
+  if (value.kind === "archive_work" && exactKeys(value, ["kind", "topic", "task", "fingerprint", "sources"])) {
+    const task = value.task;
+    if (!isRecord(task) || !exactKeys(task, ["card_slug", "subq", "query", "note"]) || !validMaterialSlug(task.card_slug) || task.card_slug.length < 2 || !validMaterialSlug(task.subq) || !validString(task.query, 1, 500) || !validString(task.note, 0, 2000) || !Array.isArray(value.sources) || value.sources.length < 1 || value.sources.length > 8 || !value.sources.every(x => parseArchiveSeed(x) !== null)) return null;
+    const sources = value.sources as ArchiveSeed[];
+    const urls = sources.map(x => normalizeWebUrl(x.state === "provisional" ? x.url : x.identity.url));
+    const owners = sources.flatMap(x => x.state === "canonical" ? [x.material_slug] : []);
+    if (new Set(owners).size !== owners.length || new Set(urls).size !== urls.length || value.fingerprint !== canonicalFingerprint([task.card_slug, task.subq, task.query, task.note])) return null;
+    return value as unknown as TopicArchiveContinuation;
+  }
   if (value.kind === "seed_child" && exactKeys(value, ["kind", "topic", "fingerprint", "member_route", "leaf"])) {
     const memberRoute = parseChildRoute(value.member_route);
     const leaf = parseSeedLeaf(value.leaf);
@@ -555,6 +576,13 @@ const parseChildObservations = (
   const result = new Map<ObservationKey, TopicChildStatusObservation>();
   for (const entry of value) {
     if (!isRecord(entry) || !exactKeys(entry, ["route", "observation"])) return null;
+    if (isRecord(entry.route) && exactKeys(entry.route, ["kind", "slug"]) && entry.route.kind === "archive" && validMaterialSlug(entry.route.slug)) {
+      const observation = parseArchiveStatusObservation(entry.observation);
+      const key = observationKey({kind: "archive", slug: entry.route.slug});
+      if (observation === null || observation.slug !== entry.route.slug || result.has(key)) return null;
+      result.set(key, observation);
+      continue;
+    }
     const route = parseChildRoute(entry.route);
     if (route === null) return null;
     const observation = route.kind === "paper"

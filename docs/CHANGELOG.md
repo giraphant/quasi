@@ -2,6 +2,8 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.38** (2026-09-21): **Archive 采集与 Topic 证据来源分离。** 明确档案意图进入新 Archive named Workflow，独立网页阅读继续 Webpage；Topic 网页证据改为只读发现 URL、逐件 Archive 收录与 fresh status、再写具名 Archive 引用卡。相同 URL 的唯一 Archive owner 跨专题复用，topics 合并；冲突或未知 writer 结果停止。Schema 0.9.1 新卡使用 archives 路径字段，旧卡保持兼容；缺失 Archive 或缺少专题归属的引用卡不可用。Archive 仅要求来源记录与明确收录范围，不预设附件布局或声称离线保存。
+
 - **0.65.37** (2026-09-21): Add lightweight `archive` compatibility (schema 0.9.0): seven material kinds, optional descriptive metadata, freeform/empty body, canonical `vault/archives/{slug}/archive.md`, audit/schema snapshot registration, exact-path vault resolution and status/scan. Preserve themes/topics and note annotations without requiring attachments, inventing dates, migrating existing types, or defining acquisition/storage layouts. Archive is not added to the research Workflow corpus.
 
 - **0.65.35** (2026-09-13): **Book Prepare 的 `ocr_required` 回执接受 exact `usable:false` normalized 负面证据；Webpage 输入不再依赖 Workflow 沙箱里并不存在的 `URL` 全局；`quasi-audit` 报告模式严格只读，typecheck 区分 violation 与 advisory，SPEC 同步到 0.8.0。**

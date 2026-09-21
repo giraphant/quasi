@@ -1,3 +1,4 @@
+import type { ArchiveSeed, ArchiveOptions } from "../contracts/archive.mts";
 import type {
   OperationName,
 } from "../artifact-contracts/generated.mjs";
@@ -36,6 +37,7 @@ export type MaterialKind =
   | "paper"
   | "book"
   | "talk"
+  | "archive"
   | "webpage"
   | "translation"
   | "author"
@@ -95,6 +97,7 @@ export type LeafGate =
   | TranslationConfigurationGate;
 
 export type LeafResumeSeed =
+  | { route: { kind: "archive"; slug: string }; seed: Extract<ArchiveSeed, {state: "canonical"}>; options: ArchiveOptions }
   | {
       route: { kind: "paper"; slug: string };
       seed: PaperSeed;

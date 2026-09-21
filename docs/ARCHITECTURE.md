@@ -86,20 +86,20 @@ canonical artifact contracts and emits matching declarations. It contains no sta
 order, carry, alias, or next-operation graph.
 
 `scripts/workflows/operations/rows/*.mts` owns operation-specific context derivation and
-request/receipt behavior. Seven material-local catalogs expose only the rows needed by
-Paper, Book, Talk, Translation, Author, Topic, or Webpage. Their named plans own progression,
+request/receipt behavior. Eight material-local catalogs expose only the rows needed by
+Paper, Book, Talk, Translation, Author, Topic, Archive, or Webpage. Their named plans own progression,
 joins, checkpoints, and bounded repair; Author and Topic compose leaf plans through
 explicit host-observation handshakes. `scripts/build-workflows.mjs` verifies each fixed
 entry's metadata and `materialKind`, generated-artifact currency, and bundle ABI,
 imports, and size. Focused pytest checks prove operation-catalog/local-row alignment.
 The pinned esbuild dependency compiles the editable `.mts` entries into the
-committed `workflows/{paper,book,talk,translation,author,topic,webpage}.mjs` bundles;
+committed `workflows/{paper,book,talk,translation,author,topic,webpage,archive}.mjs` bundles;
 `npm run check:workflows` also runs strict `tsc --noEmit`.
 
 `collect-material` drives each leaf with one exact pre-status and a fixed kind→entry
-mapping, except that an initial Webpage URL has no canonical route: it starts with the
+mapping, except that an initial Archive or Webpage URL has no canonical route: it starts with the
 closed provisional URL seed and `observation:null`, then Collect observes the exact
-returned Webpage route before resuming. A leaf entry validates its closed seed/observation/options envelope, runs from
+returned material route before resuming. A leaf entry validates its closed seed/observation/options envelope, runs from
 that testimony to one material-level terminal, and returns
 `quasi.material.result/0.1`; the Skill never selects a Stage or consumes a Stage receipt.
 Paper, Talk, and Translation dispatch sequential owned operations. Book alone uses the
@@ -146,7 +146,8 @@ so unrelated subagents retain Claude Code's default row.
 | `metadata-agent` | `quasi-search` + vault resolve → one canonical identity and local owner |
 | `discovery-agent` | `quasi-search book|paper` → bounded Author/Topic/citation candidates |
 | `steer-agent` | topic outline page + `quasi-search` |
-| `webcard-agent` | `quasi-search kagi` + WebFetch → topic `cards/` page |
+| `webcard-agent` | readonly source discovery via `quasi-search kagi` + WebFetch; exact Archive reads → topic `cards/` page |
+| `archive-agent` | exact URL + Archive URL/slug resolve → one canonical Archive with provenance and Topic tags |
 | `download-agent` | `quasi-download`, direct AA search import |
 | `extract-agent` | `quasi-extract` capabilities → Paper/Book Prepare Stage |
 | `analyse-agent` | vault/source files |
@@ -165,9 +166,10 @@ so unrelated subagents retain Claude Code's default row.
 - `extract-agent` owns Paper/Book Prepare judgement and local recovery over caller-named refs. It invokes deterministic `quasi-extract` transactions; those CLI transactions own chapter files and `processing/chapters/{slug}/manifest.json`.
 - `analyse-agent`, `synthesis-agent`, `proofread-agent`, and `citecheck-agent` write only the exact product path assigned by the caller.
 - `steer-agent` owns `vault/topics/{slug}/02-outline.md` (the topic research outline; users may hand-edit it between runs) and returns sub-question-targeted candidates; it writes nothing else.
-- `webcard-agent` turns one topic `web_task` into one evidence card at the caller-named `vault/topics/{slug}/cards/{card-slug}.md`; it writes nothing else, and returns `status: empty` rather than writing a card it could not verify. Cards travel on their own `cards` channel (outline `subquestions[].cards`, synth `card_paths`) and never enter the `book|paper|talk` corpus table.
+- `webcard-agent` discovers source URLs readonly for one topic `web_task`; after Archive collection it turns the exact Archive records into one evidence card at the caller-named `vault/topics/{slug}/cards/{card-slug}.md`; it writes nothing else, and returns `status: empty` rather than writing a card it could not verify. Cards travel on their own `cards` channel (outline `subquestions[].cards`, synth `card_paths`) and never enter the `book|paper|talk` corpus table.
 - `audit-agent` runs `quasi-audit --path`; it may apply local mechanical fixes but does not own workflow state.
 - `transcribe-agent` and `translate-agent` own Talk and Translation Prepare with the same terminal shape, preserving media reconciliation and fenced-generation publication contracts. Video Talks prepare `vault/talks/{slug}/recording.mp4` by default; when `prepare_media:true`, this file and its sidecar are part of Prepare and material completion, exposed by `quasi-status` as `facts.prepared`.
+- `archive-agent` writes only the assigned canonical Archive record, preserving existing Topic membership and user prose.
 - `webpage-agent` owns exact-URL inspection, `vault/webpages/{slug}/snapshot.webarchive`, and `processing/webpages/{slug}/source.md`; `analyse-agent` owns `vault/webpages/{slug}/webpage.md` and `audit-agent` owns its mechanical repair.
 
 Deprecated agents live under `deprecated/agents/` and must not be dispatched by
@@ -179,7 +181,7 @@ active skills.
 - `research-topic`
 - `finalise-draft`
 
-`collect-material` owns the current Paper/Book/Author/Talk/Translation/Webpage entry. Its five
+`collect-material` owns the current Paper/Book/Author/Talk/Translation/Webpage/Archive entry. Its six
 leaf kinds route to named material Workflows; the named Author Workflow composes the
 Paper and Book entries after the Skill supplies fresh exact statuses for its returned routes.
 `research-topic` supplies exact observations and typed user decisions to the named Topic
@@ -187,11 +189,25 @@ Workflow. That entry owns the iterative Topic state machine and composes the sam
 without duplicating material logic in the Skill. `finalise-draft`
 owns interactive proofreading, citation review, and bibliography closure.
 
-Archive is a lightweight registered vault type with no acquisition Workflow. Its sole
-required artifact is `vault/archives/{slug}/archive.md`; schema snapshot, audit,
-exact-path vault resolve, and status/scan recognize it without attachments or
-fixed body sections. Its `topics` tags and note `annotates` links are preserved;
-it is not admitted into the Book/Paper/Talk composition corpus.
+Archive has a named URL collection Workflow. Its only required artifact is
+`vault/archives/{slug}/archive.md`; no attachment or fixed body sections are required.
+Explicit archival intent uses Archive; standalone webpage reading preserves Webpage.
+`archive.identify` resolves a unique existing Archive by normalized source URL;
+ambiguous owners or occupied slugs stop. `archive.collect` creates the record or merges
+Topic tags while preserving existing metadata and prose. Each write returns an exact
+observation request; completion requires fresh usable status and a clean, mutation-free
+audit. Acquisition of offline attachments remains outside this lightweight contract.
+
+Topic web evidence follows `topic.discover-archives` → Archive identification/collection
+→ fresh Archive status → `topic.webcard` → outline checkpoint. Discovery is readonly and
+returns at most eight distinct source URLs for one card; the bound is on composed
+materials, not searches. Its one-shot `archive_work` continuation transports the exact
+sources and task without rediscovery or a durable cursor. Every Archive must include
+the current Topic in its merged `topics` before card creation. New cards store exact
+canonical paths in `archives` and cite them in the body. Card writing has no network
+capability in its request. Missing or invalid linked Archives, or removed Topic membership,
+make a linked card unusable in Topic status. Existing cards without Archive links remain
+legacy-readable. Book/Paper/Talk stay on the academic corpus channel.
 
 Journal has a schema but no active or archived workflow; its future entry will
 be a thin collection loop over Paper receipts.

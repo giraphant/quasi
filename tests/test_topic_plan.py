@@ -1250,7 +1250,7 @@ def test_topic_resumed_material_work_reuses_resolved_owner_for_refined_demand() 
     assert resumed["result"]["terminal"] == "complete"
 
 
-def test_topic_empty_webcard_marks_only_fingerprint_and_skips_checkpoint() -> None:
+def test_topic_empty_archive_discovery_marks_only_fingerprint_and_skips_checkpoint() -> None:
     gap = {**SUBQUESTION, "coverage": "gap"}
     observation = topic_observation(
         subquestions=[gap], members=[paper_member()], cards=[]
@@ -1265,7 +1265,7 @@ def test_topic_empty_webcard_marks_only_fingerprint_and_skips_checkpoint() -> No
                 items=[{"kind": "paper", "slug": "exact-paper", "role": "evidence"}],
                 tasks=[web_task()],
             ),
-            webcard_complete(empty=True),
+            {"urls": [], "note": "No verifiable material", "terminal": {"status": "complete", "issue": None}},
             audit_complete(),
             synthesis_complete(),
             synthesis_complete(),
@@ -1276,48 +1276,12 @@ def test_topic_empty_webcard_marks_only_fingerprint_and_skips_checkpoint() -> No
 
     operations = [call["request"]["operation"] for call in report["calls"]]
     assert operations.count("topic.steer") == 1
-    assert operations.count("topic.webcard") == 1
+    assert operations.count("topic.discover-archives") == 1
+    assert "topic.webcard" not in operations
     assert report["result"]["terminal"] == "complete"
 
-    admitted = run_topic(
-        topic_input(observation=observation),
-        [
-            recall_complete(),
-            steer_complete(
-                signal="continue",
-                subquestions=[gap],
-                items=[{"kind": "paper", "slug": "exact-paper", "role": "evidence"}],
-                tasks=[web_task()],
-            ),
-            webcard_complete(),
-            steer_complete(
-                signal="saturated",
-                subquestions=[SUBQUESTION],
-                items=[{"kind": "paper", "slug": "exact-paper", "role": "evidence"}],
-                cards=["exact-card"],
-            ),
-            audit_complete(),
-            synthesis_complete(),
-            synthesis_complete(),
-            audit_complete(),
-            audit_complete(),
-        ],
-    )
-    admitted_ops = [call["request"]["operation"] for call in admitted["calls"]]
-    assert admitted_ops[2:4] == ["topic.webcard", "topic.steer"]
-    checkpoint = admitted["calls"][3]["request"]
-    assert checkpoint["cards"] == [
-        {
-            "slug": "exact-card",
-            "path": f"vault/topics/{QUERY['slug']}/cards/exact-card.md",
-            "subq": "sq-one",
-            "title": "Exact Card",
-        }
-    ]
-    assert admitted["result"]["terminal"] == "complete"
 
-
-def test_topic_exact_duplicate_empty_web_task_runs_writer_once() -> None:
+def test_topic_exact_duplicate_empty_web_task_discovers_once() -> None:
     gap = {**SUBQUESTION, "coverage": "gap"}
     observation = topic_observation(
         subquestions=[gap], members=[paper_member()], cards=[]
@@ -1333,7 +1297,7 @@ def test_topic_exact_duplicate_empty_web_task_runs_writer_once() -> None:
                 items=[{"kind": "paper", "slug": "exact-paper", "role": "evidence"}],
                 tasks=[task, deepcopy(task)],
             ),
-            webcard_complete(empty=True),
+            {"urls": [], "note": "No verifiable material", "terminal": {"status": "complete", "issue": None}},
             audit_complete(),
             synthesis_complete(),
             synthesis_complete(),
@@ -1343,7 +1307,8 @@ def test_topic_exact_duplicate_empty_web_task_runs_writer_once() -> None:
     )
 
     operations = [call["request"]["operation"] for call in report["calls"]]
-    assert operations.count("topic.webcard") == 1
+    assert operations.count("topic.discover-archives") == 1
+    assert "topic.webcard" not in operations
     assert report["result"]["terminal"] == "complete"
 
 

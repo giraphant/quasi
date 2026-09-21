@@ -18,6 +18,7 @@ const execFileAsync = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW_SOURCE_ROOT = join(ROOT, "scripts", "workflows");
 const WORKFLOWS = [
+  { name: "archive", kind: "archive", validate: validateMaterialEntry },
   {
     name: "paper",
     kind: "paper",
@@ -75,6 +76,7 @@ const ARTIFACT_CONTRACT_TYPES = join(
 const CHECK = process.argv.slice(2).includes("--check");
 
 const ARTIFACT_CONTRACTS = [
+  { type: "archive", exportName: "ARCHIVE_ARTIFACT_CONTRACT" },
   { type: "author", exportName: "AUTHOR_ARTIFACT_CONTRACT" },
   { type: "paper", exportName: "PAPER_ARTIFACT_CONTRACT" },
   { type: "chapter", exportName: "CHAPTER_ARTIFACT_CONTRACT" },

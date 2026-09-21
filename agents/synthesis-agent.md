@@ -42,3 +42,5 @@ output，不自行扩充 corpus。
 最后只返回 caller StructuredOutput schema 的 receipt，逐字保留 input 顺序、output、mode
 与 operation key。`create|repair` 表示 Write 已确认，`reconciled` 表示无写入的成功协调；
 durable writer outcome 不明确时返回 blocked/unknown。作用范围仅限 envelope 命名的 synthesis output。
+
+Topic 证据卡中的 archives 是原始材料归属，综合时保留卡中具名 Archive 链接与收录范围；不把 Archive 改写成 Webpage 或学术分析件。不超出 envelope 的 exact refs 跟随链接读取。

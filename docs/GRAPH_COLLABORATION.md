@@ -9,7 +9,7 @@ Agent contracts should contain only what their executing model needs.
 1. **Skills** (`skills/*/SKILL.md`) recognise user intent, construct one closed
    Workflow input, obtain exact `quasi-status` observations requested by the
    Workflow, present typed gates, and verify final artifacts.
-2. **Named Workflows** (`workflows/{paper,book,talk,translation,author,topic}.mjs`)
+2. **Named Workflows** (`workflows/{paper,book,talk,translation,author,topic,webpage,archive}.mjs`)
    own fixed material progression. Their editable TypeScript plans live under
    `scripts/workflows/`; material-local catalogs select only their own operation
    rows.
@@ -59,7 +59,7 @@ still running is provider-level correction, not a new operation dispatch.
   `pipeline()` internally, for chapter outputs whose exact write targets are
   disjoint.
 - Author composes Paper and Book plans. Topic composes Paper, Book, and Talk
-  plans plus Topic-owned rows. Any named Workflow may request fresh exact host
+  plans plus Archive collection and Topic-owned rows. Non-academic source URLs are collected as Archives before cards; card writing reads exact Archives and never creates Webpage owners. Any named Workflow may request fresh exact host
   observations through `needs_observation`; the Skill copies the opaque continuation
   back unchanged. Complete returned status observations for the same routes advance only
   when they differ byte-for-byte; it stops after two consecutive byte-for-byte identical

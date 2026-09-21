@@ -42,6 +42,7 @@ canonical slug。
 
 - Workflow 自己决定 recall、材料组合、checkpoint、收敛、综合与 audit；Skill 不解释内部操作，
   不直接调用 Agent-owned capability，也不建立另一份研究状态。
+- 非学术原材料由 Topic 内部经 Archive 收录，再产生引用 Archive 的证据卡；论文、书籍与 Talk 保留原类型。Skill 不选择 Archive kind、不先创建 Webpage，也不把 Archive 塞入学术 corpus。
 - 每次调用都带一份 exact Topic observation。只有 Workflow 返回 route 时才补对应的 exact
   child observation；不做目录扫描、路径猜测或内容相关性判断。
 - 不保存 lock、cursor、round log、receipt chain 或 replay list。unknown writer 不由 Skill 重放。
@@ -101,7 +102,7 @@ intake → exact Topic status → fixed Topic Workflow
    `quasi-status --kind topic --slug SLUG --json`，构造 closed query、options、seeds，初次
    `child_observations` 为空，然后调用 `workflows/topic.mjs`。
 2. `needs_observation`：逐条运行返回 route 的 fresh exact status。Topic route 替换顶层
-   `observation`；Paper/Book/Talk route 形成按 route 绑定的 `child_observations`。逐字复制
+   `observation`；Paper/Book/Talk/Archive route 形成按 route 绑定的 `child_observations`。逐字复制
    `resume_seed`，再次调用同一入口；不问用户、不附 decision。对相同返回 routes 的完整 status
    observations 逐字节比较：只有字节不同才算推进并继续；连续两次 recovery observations 字节完全
    相同则停止，并报告最后的 typed result 与 exact status。Skill 不检查材料或内部进度，也不引入

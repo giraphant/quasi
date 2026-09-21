@@ -48,6 +48,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
 from scripts.core import print_json, project_root, read_frontmatter  # noqa: E402
+from scripts.schemas.archive import ArchiveSchema  # noqa: E402
 from scripts.schemas.body import ARCHIVE_BODY  # noqa: E402
 from scripts.localise.localise import normalise_isbn  # noqa: E402
 from scripts.webpage.webarchive import collision_slug, normalize_web_url, read_webarchive  # noqa: E402
@@ -367,6 +368,42 @@ def _title_hit(titles: dict[str, list[tuple[str, set[str], bool]]], item: dict) 
     return None
 
 
+def _resolve_archive(root: Path, item: dict, slug: str) -> dict:
+    row = {"kind": "archive", "slug": slug, "vault_slug": None, "path": None, "match": None}
+    try:
+        url = normalize_web_url(item["url"])
+    except (ValueError, TypeError):
+        return {**row, "error": "archive URL must be an HTTP(S) URL"}
+    owners = []
+    directory = root / "vault/archives"
+    if _directory_state(root, directory) == "unsafe":
+        return {**row, "error": "archive directory is unsafe"}
+    for path in sorted(directory.glob("*/archive.md")):
+        if _product_state(root, path) != "safe":
+            return {**row, "error": "archive owner index contains an unsafe path"}
+        try:
+            fm = read_frontmatter(path).frontmatter or {}
+            owner_url = normalize_web_url(fm.get("url"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if fm.get("type") == "archive" and owner_url == url:
+            owners.append(path)
+    if len(owners) > 1:
+        return {**row, "error": "multiple Archive owners have the same URL"}
+    if owners:
+        path = owners[0]
+        try:
+            record = ArchiveSchema.model_validate(read_frontmatter(path).frontmatter)
+        except (OSError, ValueError, TypeError):
+            return {**row, "error": "existing Archive owner metadata is invalid"}
+        return {**row, "vault_slug": path.parent.name, "path": path.relative_to(root).as_posix(), "match": "url",
+                "identity": {"slug": path.parent.name, "title": record.title, "kind": record.kind, "url": item["url"]}}
+    state = _product_state(root, _product_path(root, "archive", slug))
+    if state != "missing":
+        return {**row, "error": "archive slug is occupied or unsafe; reconcile explicitly"}
+    return row
+
+
 def resolve(root: Path, items: list[dict]) -> dict:
     indexes: dict[str, tuple[dict[str, str], dict[str, list[tuple[str, set[str], bool]]]]] = {}
     resolved = []
@@ -383,6 +420,10 @@ def resolve(root: Path, items: list[dict]) -> dict:
         if kind == "archive" and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) is None:
             resolved.append({"kind": kind, "slug": slug, "vault_slug": None,
                              "path": None, "match": None, "error": "archive slug must be kebab-case"})
+            continue
+
+        if kind == "archive" and "url" in item:
+            resolved.append(_resolve_archive(root, item, slug))
             continue
 
         if kind == "webpage":

@@ -1,7 +1,7 @@
 # quasi-vault Schema Specification
 
 ```
-Version : 0.9.0
+Version : 0.9.1
 Status  : active — synchronized with scripts/schemas/ executable contracts
 Last    : 2026-09-21
 ```
@@ -647,7 +647,9 @@ export const WebpageSchema = z.object({
 只有元数据和来源链接也有效，不要求附件、OCR、快照或分析。
 原件布局和多次保存方案尚未确定，不引入原件路径字段、不假设只有一个原件；
 已保存文件可在正文链接。note 的 `annotates` 可指向上述固定入口。
-`topics` 支持成员标签，但不把 Archive 自动纳入仅支持 Book/Paper/Talk 的研究 Workflow corpus。
+`topics` 支持多个专题的成员标签。Topic 的非学术来源先通过 Archive Workflow 收录，再写证据卡；Book/Paper/Talk 学术 corpus 不变。相同规范化 URL 的唯一 Archive owner 可跨专题复用，已有 topics 合并保留。独立网页阅读仍走 Webpage。
+
+Topic `kind: card` 新增可选 `archives`：1–8 个不重复的 `vault/archives/<slug>/archive.md` 路径，仅 card 可用。新卡必须绑定本次已收录材料并在正文链接；旧卡可省略以保留兼容。材料缺失、schema 无效或 topics 不含当前专题时，Topic status 将引用卡标为 unusable。
 
 ## 4. Body Schemas(正文结构 schema)
 

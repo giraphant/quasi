@@ -486,6 +486,14 @@ TRANSCRIPT_BODY = BodySchema(type_name="transcript", sections=[])
 # Archive body headings and attachments are optional.
 ARCHIVE_BODY = BodySchema(
     type_name="archive",
+    artifact_schema_version="quasi.artifact.archive/0.1",
+    identity_fields=["title", "kind", "url"],
+    evidence_rules=[
+        "一件 Archive 对应一件材料，kind 描述对象而非保存格式",
+        "来源链接与简短说明即可成立；不要求附件或固定栏目",
+        "明确本次已读取、仅链接与未取得的范围，区分摘录和摘要",
+        "未知可选字段省略，日期不补造；topics 合并保留已有成员",
+    ],
     sections=[],
     path_pattern="vault/archives/{slug}/archive.md",
 )

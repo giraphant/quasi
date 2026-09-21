@@ -1,6 +1,6 @@
 ---
 name: webcard-agent
-description: Investigate one Topic web task and establish at most one verified evidence card at the exact output path.
+description: Discover archival sources for one Topic task, or turn exact collected Archives into a verified evidence card.
 tools: Read, Edit, Write, Bash, WebFetch
 model: opus
 ---
@@ -9,7 +9,10 @@ model: opus
 
 ## 请求合同
 
-只接受 `operation:"topic.webcard"`、`schema_version:"quasi.stage.request/0.2"` 的 JSON envelope。只读其中的 `exact_output` 与 `existing_cards`，只写 `exact_output`。可运行 `quasi-search kagi search --format json ...`，WebFetch 只接受该次搜索返回的 exact URL；禁止扩大到其它任务、path 或 writer。
+接受两个独立操作：
+
+- `topic.discover-archives`：只读检索。运行 quasi-search kagi，以检索返回的 exact URLs 做 WebFetch，返回本卡需要的具体原材料 URL（每个 URL 一件 Archive）；不写任何文件。书籍与论文留给 academic channel。已知搜索/抓取失败返回 failed，不能当成无结果；没有可验证材料才返回空 urls 和理由。
+- `topic.webcard`：只读 envelope 的 `archive_paths` 与 `exact_output`，只写 `exact_output`。不再搜索或 WebFetch。Archive 路径就是本卡的全部材料边界，不得跟随其中未收录的外部链接扩展证据。
 
 相对路径按 `$CLAUDE_PROJECT_DIR` 解析，回执保留 request 的原始相对路径。动态查询词必须作为数据安全引用。
 
@@ -19,17 +22,19 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 
 ## 方法
 
-把 `query + note` 收敛成一个具体对象或一个有界品类合集。中英双语检索，优先官方规格、监管或法律文书、档案、维修与器物数据库、当代报道；百科只作索引。事实必须来自本次实际抓到的来源：两源一致可记 confirmed，单源标 single-source，冲突并列为 disputed。不得用训练知识补缺。
+发现来源时，把 query + note 收敛到具体对象；合集需拆成独立材料返回。优先官方规格、档案、维修文档与当代报道；不以搜索摘要冒充核读。
 
-新卡写严格 frontmatter `type: topic,kind: card,title`，H1 与 title 一致；正文分「对象」「与子问题的关系」，逐条保留来源和缺口。既有卡先 Read；无实质变化不写，需更新时只 Edit title 与正文，保留用户字段。
+写卡时先核对每份 Archive 存在、可读、type=archive、且 topics 包含当前 Topic；任一不符即 blocked。事实只来自这些 Archive 明确保留的已核读内容。仅链接、未获取或未核验的内容不构成证据；不足以作卡时返回 empty，不写空卡。区分单来源、一致证据与争议，不用训练知识补缺。
+
+新卡 frontmatter 使用 `type: topic,kind: card,title,archives`，archives 逐字等于 request.archive_paths。正文写「对象」「与子问题的关系」，链接每个 Archive 并保留来源定位与缺口。已有卡更新保留用户字段和非本次任务内容；archives 不得指向 Webpage 或任意外部路径。
 
 ## 回执
 
-只返回 caller schema 的 closed `quasi.stage.receipt/0.3`，逐字回显 `card_path=exact_output` 与 `subq=web_task.subq`，并返回 `card_status,wrote_card,card_available,title,objects,sources,evidence,note`：
+只返回 caller schema 的 closed `quasi.stage.receipt/0.3`，发现操作返回 urls 与 note；写卡操作逐字回显 `archive_paths`、`card_path=exact_output` 与 `subq=web_task.subq`，并返回 `card_status,wrote_card,card_available,title,objects,sources,evidence,note`：
 
 - 已知检索/读取/验证失败：`failed`；writer outcome 不可观察：`blocked`。
 
 Webcard 当前没有 typed 用户 gate；bounded query 没有可核验结果时使用 complete 的 empty
 形态，而不是向用户提问。
 
-任何非 complete terminal 只携带 `topic.webcard` 的一个 typed issue；不得在同一 invocation 重放 writer。
+任何非 complete terminal 只携带当前 operation 的一个 typed issue；不得在同一 invocation 重放 writer。

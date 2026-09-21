@@ -311,6 +311,14 @@ def _context(**overrides: Any) -> dict[str, Any]:
 
 
 OPERATION_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
+    "archive.identify": ("archive", _context(url="https://example.org/manual")),
+    "archive.collect": ("archive", _context(
+        identity={"slug":"exact-material","title":"Repair manual","kind":"document","url":"https://example.org/manual"},
+        topics=["exact-topic"], createdDate="2026-09-21",
+        outputObservation={"path":"vault/archives/exact-material/archive.md","present":False,"usable":False},
+    )),
+    "archive.audit": ("archive", _context(target="vault/archives/exact-material/archive.md")),
+    "topic.discover-archives": ("topic", _context()),
     "webpage.identify": (
         "webpage",
         _context(
@@ -414,7 +422,7 @@ OPERATION_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
     "translation.prepare": ("translation", _context()),
     "topic.recall": ("topic", _context()),
     "topic.steer": ("topic", _context()),
-    "topic.webcard": ("topic", _context()),
+    "topic.webcard": ("topic", _context(archivePaths=["vault/archives/exact-material/archive.md"])),
     "topic.synthesise.overview": ("topic", _context()),
     "topic.synthesise.resources": ("topic", _context()),
     "topic.audit": ("topic", _context()),

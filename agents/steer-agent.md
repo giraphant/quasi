@@ -33,7 +33,7 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 
 其中 `items` 只含 `{kind:"book|paper|talk",slug,role}`，`cards` 只含 card slug；两通道绝不混装。`member_assignments` 的 subq/role 是 request context 已固定的定向决定，必须原样并入；其它 supplied corpus 才根据内容对账。保留仍有效的用户组织，结构或证据变化的 id 写入 `dirty`。
 
-按证据缺口更新 `coverage:gap|thin|covered|saturated` 和 `channel:academic|web|mixed`。学术缺口生成有界 `candidate_demands:[{kind:"book|paper",requested_slug,query,subq,role,reason}]`；`requested_slug` 是该需求明确选择的稳定 kebab-case 处理 key，不是已发现 identity。圈外证据缺口生成不超过 `max_cards` 的 `web_tasks:[{subq,query,note,card_slug}]`。需求只是具体可执行的检索意图，不得在本调用搜索或发明已发现 identity。重复 card 复用同一 slug；`suggested_queries` 给人工 seed gate 使用。
+按证据缺口更新 `coverage:gap|thin|covered|saturated` 和 `channel:academic|web|mixed`。学术缺口生成有界 `candidate_demands:[{kind:"book|paper",requested_slug,query,subq,role,reason}]`；`requested_slug` 是该需求明确选择的稳定 kebab-case 处理 key，不是已发现 identity。圈外材料由后续流程收为 Archive 后再写证据卡；items 仍不放 Archive，web_tasks 的 note 可说明所需原始材料与范围。圈外证据缺口生成不超过 `max_cards` 的 `web_tasks:[{subq,query,note,card_slug}]`。需求只是具体可执行的检索意图，不得在本调用搜索或发明已发现 identity。重复 card 复用同一 slug；`suggested_queries` 给人工 seed gate 使用。
 
 证据不足且没有可靠的新需求时 `signal=needs_seeds`；仍有明确需求时 `continue`；各子问题已覆盖且没有新需求时 `saturated`。只在内容确需改变时 Write 一次；既有大纲已与 exact request 一致时返回 reconciled。
 

@@ -1,4 +1,7 @@
+import { runArchivePlan } from "./archive.mts";
+import { parseArchiveRunInput, type ArchiveSeed, type ArchiveStatusObservation } from "../contracts/archive.mts";
 import type {
+  TopicArchiveContinuation,
   TopicCandidateDemand,
   TopicCheckpointAdmission,
   TopicChildRoute,
@@ -369,7 +372,7 @@ const hasEvidence = (state: TopicState): boolean =>
 const childObservation = (
   input: TopicRunInput,
   route: TopicChildRoute,
-) => input.childObservations.get(observationKey(route)) ?? null;
+) => (input.childObservations.get(observationKey(route)) as PaperStatusObservation | BookStatusObservation | TalkStatusObservation | undefined) ?? null;
 
 const canonicalChildArtifact = (
   route: TopicChildRoute,
@@ -484,6 +487,55 @@ const checkpointCard = (
     ref: { slug: ref.slug, path: ref.path, title: ref.title },
     assignment: { subq: ref.subq },
   });
+
+const processArchiveWork = async (
+  runtime: MaterialRuntime,
+  input: TopicRunInput,
+  state: TopicState,
+  continuation: TopicArchiveContinuation,
+): Promise<CheckpointOutcome> => {
+  const task = continuation.task;
+  if (hasCard(state, {slug: task.card_slug, subq: task.subq})) return {result: null, receipt: null};
+  if (!state.subquestions.some(q => q.id === task.subq)) return {result: blockedMaterialResult(resultSeed(input), planIssue("topic.archive_subquestion_missing", null, "Archive work no longer belongs to an observed subquestion.")), receipt: null};
+  const refresh = (sources: ArchiveSeed[]): CheckpointOutcome => {
+    const routes = sources.flatMap(seed => seed.state === "canonical"
+      ? [{kind: "archive" as const, slug: seed.material_slug}] : []);
+    if (new Set(routes.map(route => route.slug)).size !== routes.length)
+      return {result: blockedMaterialResult(resultSeed(input), planIssue(
+        "archive.owner_conflict", null, "Distinct sources resolved to the same Archive owner.",
+      )), receipt: null};
+    return {result: needsObservationMaterialResult(resultSeed(input), routes, {...continuation, sources}), receipt: null};
+  };
+  const archivePaths: string[] = [];
+  for (let index = 0; index < continuation.sources.length; index += 1) {
+    const seed = continuation.sources[index];
+    const observation = seed.state === "canonical" ? input.childObservations.get(observationKey({kind: "archive", slug: seed.material_slug})) ?? null : null;
+    if (seed.state === "canonical" && observation === null) return refresh(continuation.sources);
+    const parsed = parseArchiveRunInput({seed, observation, options: {topics: [input.query.slug]}});
+    if (!parsed.ok) return {result: blockedMaterialResult(resultSeed(input), parsed.result.issue!), receipt: null};
+    const result = await runArchivePlan(runtime, parsed.value);
+    if (result.terminal === "needs_observation") {
+      const resume = result.resume_seed;
+      if (!("route" in resume) || !("seed" in resume) || resume.route.kind !== "archive") return {result: blockedMaterialResult(resultSeed(input), planIssue("workflow.incoherent_complete", null, "Archive returned a different material route.")), receipt: null};
+      const sources = [...continuation.sources];
+      sources[index] = resume.seed as ArchiveSeed;
+      return refresh(sources);
+    }
+    if (result.terminal !== "complete") return {result: stoppedMaterialResult(resultSeed(input), result.terminal === "failed" ? "failed" : "blocked", result.issue ?? planIssue("topic.archive_incomplete", null, "Archive did not complete.")), receipt: null};
+    const fact = (observation as ArchiveStatusObservation).facts.canonical;
+    if (!fact.usable || !result.artifacts.some(ref => ref.role === "canonical" && ref.path === fact.path)) return {result: blockedMaterialResult(resultSeed(input), planIssue("topic.archive_unobserved", null, "Card input lacks exact usable Archive testimony.")), receipt: null};
+    archivePaths.push(fact.path);
+  }
+  const web = await dispatch(runtime, "topic.webcard", input.query.slug, {
+    materialKey: `topic:${input.query.slug}`, topic: input.query.description,
+    task, cardRefs: state.cards, subquestions: state.subquestions, archivePaths,
+  });
+  const stopped = stopForOutcome(input, web);
+  if (stopped !== null) return {result: stopped, receipt: null};
+  const receipt = web.receipt!;
+  if (receipt.card_status === "empty") return {result: null, receipt: null};
+  return checkpointCard(runtime, input, state, {slug: task.card_slug, path: receipt.card_path as string, subq: task.subq, title: receipt.title as string | null});
+};
 
 const updatedLeafContinuation = (
   continuation: TopicSeedChildContinuation | TopicWorkContinuation,
@@ -1088,7 +1140,12 @@ export async function runTopicPlan(
 
   const resumeSeed = input.resume?.resume_seed ?? null;
   if (resumeSeed !== null) {
-    if (resumeSeed.kind === "checkpoint_admission") {
+    if (resumeSeed.kind === "archive_work") {
+      const resumed = await processArchiveWork(runtime, input, state, resumeSeed);
+      if (resumed.result !== null) return resumed.result;
+      closing = resumed.receipt;
+      resumedWorkFingerprints.add(resumeSeed.fingerprint);
+    } else if (resumeSeed.kind === "checkpoint_admission") {
       const proved = checkpointProved(input, resumeSeed);
       if (resumeSeed.item === "member") {
         handledIntakeRoutes.add(observationKey(resumeSeed.source_route));
@@ -1294,29 +1351,19 @@ export async function runTopicPlan(
             { ...existing, subq: item.task.subq as string },
           );
         } else {
-          const web = await dispatch(runtime, "topic.webcard", input.query.slug, {
-            materialKey: `topic:${input.query.slug}`,
-            topic: input.query.description,
-            task: item.task,
-            cardRefs: state.cards,
-            subquestions: state.subquestions,
+          const discovered = await dispatch(runtime, "topic.discover-archives", input.query.slug, {
+            materialKey: `topic:${input.query.slug}`, topic: input.query.description,
+            task: item.task, cardRefs: state.cards, subquestions: state.subquestions,
           });
-          const webStop = stopForOutcome(input, web);
-          if (webStop !== null) return webStop;
-          const receipt = (web as { kind: "receipt"; receipt: StageReceipt }).receipt;
-          if (receipt.card_status === "empty") continue;
-          const ref: CardRef = {
-            slug: item.task.card_slug as string,
-            path: receipt.card_path as string,
-            subq: item.task.subq as string,
-            title: receipt.title as string | null,
-          };
-          checkpoint = await checkpointCard(
-            runtime,
-            input,
-            state,
-            ref,
-          );
+          const discoveryStop = stopForOutcome(input, discovered);
+          if (discoveryStop !== null) return discoveryStop;
+          const urls = discovered.receipt!.urls as string[];
+          if (urls.length === 0) continue;
+          checkpoint = await processArchiveWork(runtime, input, state, {
+            kind: "archive_work", topic: input.query,
+            task: item.task as TopicArchiveContinuation["task"], fingerprint: item.fingerprint,
+            sources: urls.map(url => ({state: "provisional", url})),
+          });
         }
       }
       if (checkpoint.result !== null) return checkpoint.result;

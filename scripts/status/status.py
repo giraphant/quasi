@@ -904,6 +904,22 @@ def topic_projection(
                 return None
             path = root / "vault" / "topics" / topic_slug / "cards" / f"{card_slug}.md"
             artifact, card_frontmatter = canonical_observation(root, path)
+            # Existing cards without Archive links remain valid legacy evidence.
+            # New linked cards become unavailable if a named Archive disappears,
+            # becomes invalid, or loses this Topic membership.
+            if artifact["usable"] and isinstance(card_frontmatter, dict) and "archives" in card_frontmatter:
+                try:
+                    card = TopicSchema.model_validate(card_frontmatter)
+                except (TypeError, ValueError):
+                    artifact["usable"] = False
+                else:
+                    if card.kind != "card" or not card.archives:
+                        artifact["usable"] = False
+                    for archive_path in card.archives or []:
+                        archive_slug = Path(archive_path).parent.name
+                        archive = archive_status(root, archive_slug)
+                        if not archive["facts"]["canonical"]["usable"] or topic_slug not in (archive["identity"] or {}).get("topics", []):
+                            artifact["usable"] = False
             title = (
                 card_frontmatter.get("title")
                 if artifact["usable"]

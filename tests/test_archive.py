@@ -118,3 +118,38 @@ def test_archive_discovery_rejects_symlinked_ancestor(tmp_path):
     assert not archive_status(tmp_path, "discussion")["facts"]["canonical"]["usable"]
     assert scan_status(tmp_path)["items"] == []
     assert resolve(tmp_path, [{"kind": "archive", "slug": "discussion"}])["resolved"][0]["error"]
+
+
+def test_archive_url_resolution_reuses_owner_and_rejects_duplicates(tmp_path):
+    path = write_archive(tmp_path)
+    path.write_text(path.read_text().replace("created:", "url: https://example.org/manual\ncreated:"))
+    row = resolve(tmp_path, [{"kind": "archive", "slug": "new-topic-title", "url": "https://example.org/manual#section"}])["resolved"][0]
+    assert row["vault_slug"] == "discussion"
+    assert row["match"] == "url"
+    assert resolve(tmp_path, [{"kind": "archive", "slug": "discussion", "url": "https://other.org/manual"}])["resolved"][0]["error"]
+    other = tmp_path / "vault/archives/duplicate/archive.md"
+    other.parent.mkdir()
+    other.write_bytes(path.read_bytes())
+    row = resolve(tmp_path, [{"kind": "archive", "slug": "new", "url": "https://example.org/manual"}])["resolved"][0]
+    assert "multiple" in row["error"]
+
+
+def test_topic_archive_links_validate_and_track_membership(tmp_path):
+    from scripts.schemas.topic import TopicSchema
+    from scripts.status.status import topic_status
+    archive = write_archive(tmp_path)
+    archive.write_text(archive.read_text().replace("created:", "topics:\n  - repair\ncreated:"))
+    topic = tmp_path / "vault/topics/repair"
+    (topic / "cards").mkdir(parents=True)
+    (topic / "02-outline.md").write_text("---\ntype: topic\nkind: outline\ntitle: Repair research\nsubquestions:\n  - id: scope\n    question: What does the manual cover?\n    coverage: covered\n    cards:\n      - manual\n---\n")
+    card = topic / "cards/manual.md"
+    card.write_text("---\ntype: topic\nkind: card\ntitle: Repair evidence\narchives:\n  - vault/archives/discussion/archive.md\n---\nEvidence from [manual](../../../archives/discussion/archive.md).\n")
+    status = topic_status(tmp_path, "repair")
+    assert status["facts"]["outline"]["projection"]["cards"][0]["artifact"]["usable"]
+    archive.write_text(archive.read_text().replace("  - repair", "  - different-topic"))
+    status = topic_status(tmp_path, "repair")
+    assert not status["facts"]["outline"]["projection"]["cards"][0]["artifact"]["usable"]
+    with pytest.raises(ValidationError):
+        TopicSchema.model_validate({"type": "topic", "kind": "card", "title": "Invalid link", "archives": ["vault/webpages/x/webpage.md"]})
+    with pytest.raises(ValidationError):
+        TopicSchema.model_validate({"type": "topic", "kind": "overview", "title": "Invalid kind", "archives": ["vault/archives/x/archive.md"]})

@@ -66,10 +66,11 @@ workflows/translation.mjs
 workflows/author.mjs
 workflows/topic.mjs
 workflows/webpage.mjs
+workflows/archive.mjs
 ```
 
 Paper, Book, Talk, and Translation receive a closed seed/options envelope plus
-one exact status observation. Webpage is the sole initial exception: Collect transports
+one exact status observation. Archive and Webpage URL intake are initial exceptions: Collect transports
 its exact public URL in a provisional seed with `observation:null`; the entry returns a
 canonical route that Collect observes before the existing direct-leaf resume. Any named
 entry may return exact routes for host observation and an opaque one-item continuation.
@@ -77,7 +78,7 @@ entry may return exact routes for host observation and an opaque one-item contin
 The public result is `quasi.material.result/0.1`:
 
 - `complete` — verify every returned artifact with fresh status; Paper returns its source,
-  Prepare-selected normalized text, and canonical page, while Webpage returns snapshot,
+  Prepare-selected normalized text, and canonical page, Archive returns only its canonical record, while Webpage returns snapshot,
   prepared projection, and canonical page;
 - `needs_observation` — fetch only the returned routes and reinvoke the same
   entry with the unchanged continuation; complete returned status observations
@@ -120,7 +121,7 @@ boundaries, not as proxies for professional judgement.
 ## Concurrency and recovery
 
 `collect-material` may run up to its documented number of distinct top-level
-material keys concurrently. One named Workflow owns each key. Webpage's provisional
+material keys concurrently. One named Workflow owns each key. Archive and Webpage provisional
 URL intake is followed by the same direct-leaf exact-status resume: copy its opaque
 `resume_seed.{seed,options}` byte-for-byte, use the returned canonical route observation,
 and retain the two unchanged-observation stop rule. Only Book fans out

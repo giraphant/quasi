@@ -1,3 +1,4 @@
+import { normalizeWebUrl } from "../../shared/web-url.mts";
 import { InputContractError } from "../../context-base.mts";
 import { validCardSlug } from "../steer.mts";
 import { makeAuditRow } from "../shared.mts";
@@ -477,6 +478,7 @@ const webcardRefs: AnyFunction = ({
   cardPath,
   cardRefs = [],
   subquestions = [],
+  archivePaths = [],
 }) => {
   const subquestion =
     subquestions.find((item: any) => item && item.id === task.subq) || {};
@@ -498,12 +500,14 @@ const webcardRefs: AnyFunction = ({
     cardSlug: task.card_slug,
     cardPath,
     existingCards,
+    archivePaths,
   };
 };
 
-const webcardPayload: AnyFunction = ({ cardPath: output, subq }) => ({
+const webcardPayload: AnyFunction = ({ cardPath: output, subq, archivePaths }) => ({
   required: [
     "card_path",
+    "archive_paths",
     "subq",
     "card_status",
     "wrote_card",
@@ -516,6 +520,7 @@ const webcardPayload: AnyFunction = ({ cardPath: output, subq }) => ({
   ],
   properties: {
     card_path: { const: output },
+    archive_paths: { const: archivePaths },
     subq: { const: subq },
     card_status: {
       type: "string",
@@ -535,6 +540,7 @@ const webcardPayload: AnyFunction = ({ cardPath: output, subq }) => ({
 });
 
 const completeWebcard: AnyFunction = (receipt) => {
+  if (!Array.isArray(receipt.archive_paths) || receipt.archive_paths.length === 0) return false;
   if (receipt.card_status === "ok")
     return receipt.wrote_card && receipt.card_available;
   if (receipt.card_status === "unchanged")
@@ -734,8 +740,29 @@ export const topicOperationRows: OperationRow[] = [
     }),
   },
   {
-    operation: "topic.webcard",
+    operation: "topic.discover-archives",
     context: topicContext,
+    refs: webcardRefs,
+    payloadProperties: () => ({required: ["urls", "note"], properties: {
+      urls: {type: "array", maxItems: 8, uniqueItems: true, items: {type: "string", minLength: 8, maxLength: 2048}},
+      note: {type: "string", minLength: 1, maxLength: 2000},
+    }}),
+    complete: r => Array.isArray(r.urls) && r.urls.every(u => normalizeWebUrl(u) !== null) && new Set(r.urls.map(u => normalizeWebUrl(u))).size === r.urls.length,
+    envelope: (_c, r) => ({
+      schema_version: "quasi.stage.request/0.2", operation: "topic.discover-archives", stage: "Search", effect: "readonly", material_key: r.materialKey,
+      goal: "Find exact source objects for one Topic evidence task; each selected URL becomes one reusable Archive before any card is written.",
+      topic: r.topic, subquestion: r.subquestion, web_task: {query: r.query, note: r.note},
+      capabilities: ["quasi-search kagi search --format json ...", "WebFetch only exact URLs returned by that search"],
+      scope: "Return up to eight distinct material URLs for this one card; no writes. Books/Papers belong to the academic channel, not these Archive sources. An empty verified search may return urls=[] with a reason. Provider errors are failed, never empty success.",
+    }),
+  },
+  {
+    operation: "topic.webcard",
+    context: (raw, base) => {
+      const context = topicContext(raw, base);
+      if (!Array.isArray(raw.archivePaths) || raw.archivePaths.length < 1 || raw.archivePaths.length > 8 || new Set(raw.archivePaths).size !== raw.archivePaths.length || !raw.archivePaths.every((p: unknown) => typeof p === "string" && /^vault\/archives\/[a-z0-9]+(?:-[a-z0-9]+)*\/archive\.md$/.test(p))) throw new InputContractError("webcard requires exact Archive inputs");
+      return context;
+    },
     refs: webcardRefs,
     writeTargets: ({ cardPath }) => [
       { scope: "exact", path: cardPath },
@@ -749,7 +776,7 @@ export const topicOperationRows: OperationRow[] = [
       material_key: refs.materialKey,
       effect: "writer",
       objective:
-        "Investigate one bounded web evidence task and establish at most one verified evidence card at the exact output path.",
+        "Read the collected Archive records and explain their evidence for this one Topic subquestion in the exact card.",
       topic: { slug: refs.topicSlug, description: refs.topic },
       subquestion: { id: refs.subq, question: refs.subquestion },
       web_task: {
@@ -759,10 +786,11 @@ export const topicOperationRows: OperationRow[] = [
         card_slug: refs.cardSlug,
       },
       exact_output: refs.cardPath,
+      output_observation: {path: refs.cardPath, present: false, usable: false},
+      archive_paths: refs.archivePaths,
       existing_cards: refs.existingCards,
       capabilities: [
-        "quasi-search kagi search --format json ...",
-        "WebFetch only the exact URLs returned by that search",
+        "Read only archive_paths as source evidence",
         "Read, Write, or Edit only exact_output",
       ],
       completion: {
@@ -774,7 +802,7 @@ export const topicOperationRows: OperationRow[] = [
           "When no verifiable evidence is available, do not write a card; return complete with card_status=empty, wrote_card=false, card_available=false, null evidence fields, zero counts, and a non-empty note.",
       },
       scope:
-        "Never write an unverified or empty card and never write any path other than exact_output.",
+        "Write frontmatter archives exactly equal to archive_paths and link each Archive in the body. Do not search or fetch new sources, and never write any path other than exact_output. Link-only or inaccessible Archives do not prove source content; return empty when they supply no verified evidence.",
     }),
   },
   ...(["overview", "resources"] as Array<"overview" | "resources">).map(

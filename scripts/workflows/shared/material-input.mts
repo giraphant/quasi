@@ -20,6 +20,7 @@ export type StatusKind =
   | "paper"
   | "book"
   | "talk"
+  | "archive"
   | "webpage"
   | "translation"
   | "author"
@@ -37,13 +38,14 @@ export interface QuasiStatusObservation<
 }
 
 export type ObservationRoute =
-  | { kind: "paper" | "book" | "talk" | "webpage" | "topic"; slug: string }
+  | { kind: "paper" | "book" | "talk" | "archive" | "webpage" | "topic"; slug: string }
   | { kind: "translation"; slug: string; target_language: string };
 
 export type ObservationKey =
   | `paper:${string}`
   | `book:${string}`
   | `talk:${string}`
+  | `archive:${string}`
   | `webpage:${string}`
   | `topic:${string}`
   | `translation:paper:${string}:${string}`;
@@ -172,7 +174,7 @@ export const parseObservationRoute = (
 ): ObservationRoute | null => {
   if (!isRecord(value) || !validMaterialSlug(value.slug)) return null;
   if (
-    ["paper", "book", "talk", "webpage", "topic"].includes(
+    ["paper", "book", "talk", "webpage", "archive", "topic"].includes(
       value.kind as string,
     ) &&
     exactKeys(value, ["kind", "slug"])

@@ -221,6 +221,12 @@ def test_webpage_public_documentation_limits_capture_to_macos_11_or_newer() -> N
 def test_collect_material_routes_leaf_kinds_to_generated_named_entries() -> None:
     manifest = collect_material_leaf_workflow_manifest()
     assert manifest == {
+        "archive": {
+            "entry": "$CLAUDE_PLUGIN_ROOT/workflows/archive.mjs",
+            "required": ["seed", "observation", "options"],
+            "optional": [], "seed_keys": ["state", "url"],
+            "option_keys": ["topics"], "initial_observation": None,
+        },
         "paper": {
             "entry": "$CLAUDE_PLUGIN_ROOT/workflows/paper.mjs",
             "required": ["seed", "observation", "options"],

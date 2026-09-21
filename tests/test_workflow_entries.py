@@ -40,6 +40,7 @@ from workflow_test_support import (
 
 
 ENTRIES = (
+    "archive",
     "paper",
     "book",
     "talk",
@@ -51,6 +52,9 @@ ENTRIES = (
 
 
 def _entry_input(entry: str) -> dict[str, Any]:
+    if entry == "archive":
+        from test_archive_plan import archive_input
+        return archive_input(usable=True, topics=["exact-topic"])
     if entry == "paper":
         return canonical_input(
             source=True,
@@ -83,7 +87,7 @@ def _abi_case(entry: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     value = _entry_input(entry)
     if entry == "paper":
         return value, [prepare_complete(), audit_complete()]
-    if entry in {"book", "talk"}:
+    if entry in {"book", "talk", "archive"}:
         return value, [audit_complete()]
     if entry == "translation":
         return value, [translation_complete()]
@@ -137,10 +141,11 @@ def test_named_entries_reject_unknown_input_before_agent_dispatch(entry: str) ->
         ),
         (
             "topic",
-            {"topic", "paper", "book", "talk"},
-            {"topic", "paper", "book", "talk", "search", "ocr-generation"},
-            {"topic", "paper", "book", "talk", "search", "ocr-generation"},
+            {"topic", "paper", "book", "talk", "archive"},
+            {"topic", "paper", "book", "talk", "search", "ocr-generation", "archive"},
+            {"topic", "paper", "book", "talk", "search", "ocr-generation", "archive"},
         ),
+        ("archive", {"archive"}, {"archive"}, {"archive"}),
         ("webpage", {"webpage"}, {"webpage"}, {"webpage"}),
     ],
 )
