@@ -40,6 +40,7 @@ separate:
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
 | `quasi-status` | read-only disk oracle: `--kind paper|book|talk|author|topic|webpage|archive --slug SLUG --json`; Translation additionally requires `--target-language TAG`; `--scan --json` |
 | `quasi-transcribe` | `run|classify|silent` talk transcript engines |
+| `quasi-archive` | `inspect` source candidates; `collect` originals + manifest + page; `read` saved Webarchive text without a derivative file |
 | `quasi-webpage` | `inspect|capture|extract` one exact public webpage; capture requires macOS 11+ |
 | `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write`; `talk compress-media`; `vault resolve` |
 | `quasi-doctor` | runtime healthcheck: venv sync, core Python deps, optional external tools by profile |
@@ -169,7 +170,7 @@ so unrelated subagents retain Claude Code's default row.
 - `webcard-agent` discovers source URLs readonly for one topic `web_task`; after Archive collection it turns the exact Archive records into one evidence card at the caller-named `vault/topics/{slug}/cards/{card-slug}.md`; it writes nothing else, and returns `status: empty` rather than writing a card it could not verify. Cards travel on their own `cards` channel (outline `subquestions[].cards`, synth `card_paths`) and never enter the `book|paper|talk` corpus table.
 - `audit-agent` runs `quasi-audit --path`; it may apply local mechanical fixes but does not own workflow state.
 - `transcribe-agent` and `translate-agent` own Talk and Translation Prepare with the same terminal shape, preserving media reconciliation and fenced-generation publication contracts. Video Talks prepare `vault/talks/{slug}/recording.mp4` by default; when `prepare_media:true`, this file and its sidecar are part of Prepare and material completion, exposed by `quasi-status` as `facts.prepared`.
-- `archive-agent` writes only the assigned canonical Archive record, preserving existing Topic membership and user prose.
+- `archive-agent` selects same-object originals; `quasi-archive collect` publishes the exact Archive page, provenance manifest and originals, preserving existing Topic membership and user prose. It checks observed revision under per-slug and per-URL process locks.
 - `webpage-agent` owns exact-URL inspection, `vault/webpages/{slug}/snapshot.webarchive`, and `processing/webpages/{slug}/source.md`; `analyse-agent` owns `vault/webpages/{slug}/webpage.md` and `audit-agent` owns its mechanical repair.
 
 Deprecated agents live under `deprecated/agents/` and must not be dispatched by
@@ -189,14 +190,18 @@ Workflow. That entry owns the iterative Topic state machine and composes the sam
 without duplicating material logic in the Skill. `finalise-draft`
 owns interactive proofreading, citation review, and bibliography closure.
 
-Archive has a named URL collection Workflow. Its only required artifact is
-`vault/archives/{slug}/archive.md`; no attachment or fixed body sections are required.
+Archive has a named URL collection Workflow. It owns `vault/archives/{slug}/archive.md`,
+`manifest.yaml` and descriptively named files under `originals/`. The page is a freeform
+display surface; the inventory owns shared provenance and exceptional per-file source
+metadata. Existing frontmatter source/url remain legacy-readable. Missing originals
+are coverage notes, not a completeness quota; link-only empty inventories are valid.
 Explicit archival intent uses Archive; standalone webpage reading preserves Webpage.
 `archive.identify` resolves a unique existing Archive by normalized source URL;
-ambiguous owners or occupied slugs stop. `archive.collect` creates the record or merges
-Topic tags while preserving existing metadata and prose. Each write returns an exact
-observation request; completion requires fresh usable status and a clean, mutation-free
-audit. Acquisition of offline attachments remains outside this lightweight contract.
+ambiguous owners or occupied slugs stop. `archive.collect` selects originals and invokes
+`quasi-archive collect` for publication or Topic membership merge. Each write returns
+an exact observation request; completion requires fresh usable metadata/inventory and
+a clean audit. Legacy link records are enriched on next collection. Video/audio are
+saved for playback only. Storage and Marple resolution: `docs/ARCHIVE_STORAGE.md`.
 
 Topic web evidence follows `topic.discover-archives` → Archive identification/collection
 → fresh Archive status → `topic.webcard` → outline checkpoint. Discovery is readonly and
@@ -205,7 +210,9 @@ materials, not searches. Its one-shot `archive_work` continuation transports the
 sources and task without rediscovery or a durable cursor. Every Archive must include
 the current Topic in its merged `topics` before card creation. New cards store exact
 canonical paths in `archives` and cite them in the body. Card writing has no network
-capability in its request. Missing or invalid linked Archives, or removed Topic membership,
+capability in its request; it receives exact manifest and original refs from fresh status.
+Images/PDF can be read directly and `quasi-archive read` projects a saved Webarchive
+without writing extraction artifacts. Audio/video are not transcribed. Missing or invalid linked Archives, or removed Topic membership,
 make a linked card unusable in Topic status. Existing cards without Archive links remain
 legacy-readable. Book/Paper/Talk stay on the academic corpus channel.
 

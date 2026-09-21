@@ -479,6 +479,7 @@ const webcardRefs: AnyFunction = ({
   cardRefs = [],
   subquestions = [],
   archivePaths = [],
+  archiveInputs = [],
 }) => {
   const subquestion =
     subquestions.find((item: any) => item && item.id === task.subq) || {};
@@ -501,6 +502,7 @@ const webcardRefs: AnyFunction = ({
     cardPath,
     existingCards,
     archivePaths,
+    archiveInputs,
   };
 };
 
@@ -761,6 +763,12 @@ export const topicOperationRows: OperationRow[] = [
     context: (raw, base) => {
       const context = topicContext(raw, base);
       if (!Array.isArray(raw.archivePaths) || raw.archivePaths.length < 1 || raw.archivePaths.length > 8 || new Set(raw.archivePaths).size !== raw.archivePaths.length || !raw.archivePaths.every((p: unknown) => typeof p === "string" && /^vault\/archives\/[a-z0-9]+(?:-[a-z0-9]+)*\/archive\.md$/.test(p))) throw new InputContractError("webcard requires exact Archive inputs");
+      if (!Array.isArray(raw.archiveInputs) || !raw.archiveInputs.every((path: unknown) =>
+        typeof path === "string" && raw.archivePaths.some((page: string) => {
+          const base = page.slice(0, -"archive.md".length);
+          return path === `${base}manifest.yaml` ||
+            (path.startsWith(`${base}originals/`) && /^[a-z0-9]+(?:-[a-z0-9]+)*\.[a-z0-9]+$/.test(path.slice(`${base}originals/`.length)));
+        }))) throw new InputContractError("webcard original inputs must belong to its named Archives");
       return context;
     },
     refs: webcardRefs,
@@ -788,9 +796,11 @@ export const topicOperationRows: OperationRow[] = [
       exact_output: refs.cardPath,
       output_observation: {path: refs.cardPath, present: false, usable: false},
       archive_paths: refs.archivePaths,
+      archive_inputs: refs.archiveInputs,
       existing_cards: refs.existingCards,
       capabilities: [
-        "Read only archive_paths as source evidence",
+        "Read only archive_paths and archive_inputs as source evidence; images/PDF may be read directly",
+        "quasi-archive read --path EXACT_WEBARCHIVE_INPUT (read-only text projection)",
         "Read, Write, or Edit only exact_output",
       ],
       completion: {
@@ -802,7 +812,7 @@ export const topicOperationRows: OperationRow[] = [
           "When no verifiable evidence is available, do not write a card; return complete with card_status=empty, wrote_card=false, card_available=false, null evidence fields, zero counts, and a non-empty note.",
       },
       scope:
-        "Write frontmatter archives exactly equal to archive_paths and link each Archive in the body. Do not search or fetch new sources, and never write any path other than exact_output. Link-only or inaccessible Archives do not prove source content; return empty when they supply no verified evidence.",
+        "Write frontmatter archives exactly equal to archive_paths and link each Archive in the body. Do not search or fetch new sources, and never write any path other than exact_output. Media without readable evidence remains saved but must not be invented or transcribed; return empty when they supply no verified evidence.",
     }),
   },
   ...(["overview", "resources"] as Array<"overview" | "resources">).map(

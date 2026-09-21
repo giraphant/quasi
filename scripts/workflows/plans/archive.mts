@@ -74,22 +74,27 @@ export async function runArchivePlan(
   const observation = input.observation!;
   const canonical = observation.facts.canonical;
   const observed = observation.identity;
+  const collection = observation.facts.collection;
+  if (collection.revision === null || (collection.present && !collection.usable))
+    return blocked("archive.collection_unusable", "Existing inventory or original requires explicit reconciliation.");
   if (canonical.present && !canonical.usable)
     return blocked("archive.existing_unusable", "Existing Archive requires explicit reconciliation; it will not be overwritten.");
   if (observed && (
-    normalizeWebUrl(observed.url) !== normalizeWebUrl(identity.url) ||
+    normalizeWebUrl(collection.source_url ?? observed.url) !== normalizeWebUrl(identity.url) ||
+    (observed.url !== undefined && normalizeWebUrl(observed.url) !== normalizeWebUrl(identity.url)) ||
     observed.kind !== identity.kind
   )) return blocked("archive.identity_conflict", "Existing Archive belongs to a different source or material kind.");
 
   const topics: string[] = [...new Set([...(observed?.topics ?? []), ...input.options.topics])];
-  if (!canonical.usable || input.options.topics.some(topic => !(observed?.topics ?? []).includes(topic))) {
+  if (!canonical.usable || !collection.usable || input.options.topics.some(topic => !(observed?.topics ?? []).includes(topic))) {
     const collected = await dispatch("archive.collect", {
       identity,
       topics,
       createdDate: new Date().toISOString().slice(0, 10),
       outputObservation: canonical,
       expectedFrontmatter: observed,
-      mode: canonical.usable ? "membership" : "create",
+      collectionObservation: collection,
+      mode: canonical.usable ? (collection.usable ? "membership" : "enrich") : "create",
     });
     const stopped = stop(collected);
     if (stopped) return stopped;
@@ -102,5 +107,9 @@ export async function runArchivePlan(
   if (audit.receipt!.remaining_violations !== 0)
     return blocked("archive.audit_failed", "Archive audit reported unresolved violations.", "archive.audit");
   if ((audit.receipt!.mutated_paths as string[]).length > 0) return refresh(identity);
-  return completeMaterialResult(resultSeed(), [{ role: "canonical", path: canonical.path }], null);
+  return completeMaterialResult(resultSeed(), [
+    { role: "canonical", path: canonical.path },
+    { role: "manifest", path: collection.path },
+    ...collection.files.map(file => ({role: "source" as const, path: file.path})),
+  ], null);
 }

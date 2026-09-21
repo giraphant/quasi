@@ -1,4 +1,4 @@
-"""One archival material; acquisition and attachment layout are unspecified."""
+"""One archival material; originals and provenance are described by archive_manifest.py."""
 
 from __future__ import annotations
 

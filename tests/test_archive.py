@@ -59,8 +59,9 @@ def test_archive_audit_and_discovery_without_attachments(tmp_path, body):
     assert result["body_violations"] == []
     assert result["body_warnings"] == []
     status = archive_status(tmp_path, "discussion")
-    assert status["facts"] == {"kind": "archive", "canonical": {
-        "path": "vault/archives/discussion/archive.md", "present": True, "usable": True}}
+    assert status["facts"]["canonical"] == {
+        "path": "vault/archives/discussion/archive.md", "present": True, "usable": True}
+    assert not status["facts"]["collection"]["present"]
     assert status["identity"]["created"] == "2026-09-20"
     assert {"kind": "archive", "slug": "discussion"} in scan_status(tmp_path)["items"]
     resolved = resolve(tmp_path, [{"kind": "archive", "slug": "discussion"}])["resolved"][0]

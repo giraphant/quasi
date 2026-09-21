@@ -21,6 +21,7 @@ from pydantic import ValidationError
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
+from scripts.archive.inventory import observe_collection
 from scripts.schemas.archive import ArchiveSchema  # noqa: E402
 from scripts.schemas.body import ARCHIVE_BODY  # noqa: E402
 from scripts.schemas.operations import OPERATION_CATALOG  # noqa: E402
@@ -825,7 +826,7 @@ def translation_status(
 
 
 def archive_status(root: Path, slug: str) -> dict[str, Any]:
-    """Archive completeness requires only its canonical metadata page."""
+    """Observe metadata and any declared original inventory; no completeness quota."""
     path = root / ARCHIVE_BODY.path_pattern.format(slug=slug)
     canonical = _regular_nonempty_artifact(root, path)
     identity = None
@@ -837,7 +838,8 @@ def archive_status(root: Path, slug: str) -> dict[str, Any]:
         else:
             identity = record.model_dump(mode="json", exclude_unset=True)
     return status_payload(
-        "archive", slug, identity, {"kind": "archive", "canonical": canonical},
+        "archive", slug, identity, {"kind": "archive", "canonical": canonical,
+                                  "collection": observe_collection(root, path.parent)},
     )
 
 
@@ -918,7 +920,7 @@ def topic_projection(
                     for archive_path in card.archives or []:
                         archive_slug = Path(archive_path).parent.name
                         archive = archive_status(root, archive_slug)
-                        if not archive["facts"]["canonical"]["usable"] or topic_slug not in (archive["identity"] or {}).get("topics", []):
+                        if (archive["facts"]["collection"]["present"] and not archive["facts"]["collection"]["usable"]) or not archive["facts"]["canonical"]["usable"] or topic_slug not in (archive["identity"] or {}).get("topics", []):
                             artifact["usable"] = False
             title = (
                 card_frontmatter.get("title")

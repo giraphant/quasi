@@ -490,7 +490,9 @@ ARCHIVE_BODY = BodySchema(
     identity_fields=["title", "kind", "url"],
     evidence_rules=[
         "一件 Archive 对应一件材料，kind 描述对象而非保存格式",
-        "来源链接与简短说明即可成立；不要求附件或固定栏目",
+        "archive.md 是自由陈列页；用相对 originals/ 路径嵌图或链接原件，无需逐文件标注",
+        "manifest.yaml 记录共同出处与有序文件清单，单文件 source 仅覆盖例外；元数据不重复出处",
+        "原件缺失只在 coverage 说明；允许链接型空清单，不要求完整率或固定栏目",
         "明确本次已读取、仅链接与未取得的范围，区分摘录和摘要",
         "未知可选字段省略，日期不补造；topics 合并保留已有成员",
     ],

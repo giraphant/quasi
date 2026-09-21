@@ -53,7 +53,7 @@ def artifact_contract_for_type(type_name: str) -> dict[str, Any]:
             item["condition"] = section.condition
         sections.append(item)
 
-    return {
+    result = {
         "schema_version": body_schema.artifact_schema_version,
         "artifact_type": type_name,
         "path_pattern": body_schema.path_pattern,
@@ -77,3 +77,11 @@ def artifact_contract_for_type(type_name: str) -> dict[str, Any]:
             "sections": sections,
         },
     }
+    if type_name == "archive":
+        from .archive_manifest import ArchiveManifest
+        result["collection"] = {
+            "manifest": "manifest.yaml", "originals": "originals/",
+            "json_schema": ArchiveManifest.model_json_schema(mode="validation"),
+            "source_inheritance": "files[].source overrides source; files[].url is the saved asset URL",
+        }
+    return result

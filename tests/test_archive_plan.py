@@ -19,7 +19,10 @@ def archive_observation(*, usable=False, topics=None):
         "schema_version": "quasi.status/0.2", "kind": "archive", "slug": SLUG,
         "identity": {"type": "archive", "title": IDENTITY["title"], "kind": "document", "url": URL,
                      "created": "2026-09-21", "topics": topics or []} if usable else None,
-        "facts": {"kind": "archive", "canonical": {"path": PATH, "present": usable, "usable": usable}},
+        "facts": {"kind": "archive", "canonical": {"path": PATH, "present": usable, "usable": usable},
+                  "collection": {"path": PATH.replace("archive.md", "manifest.yaml"),
+                                 "present": usable, "usable": usable, "revision": "1" * 64,
+                                 "source_url": URL if usable else None, "files": [], "coverage": "" if usable else None}},
     }
 
 
@@ -40,7 +43,7 @@ def test_generated_archive_identify_collect_observe_audit():
     assert written["agentCalls"] == 1
     completed = run_generated_workflow("archive", archive_input(usable=True, topics=["exact-topic"]), [audit_complete()])
     assert completed["value"]["terminal"] == "complete"
-    assert completed["value"]["artifacts"] == [{"role": "canonical", "path": PATH}]
+    assert completed["value"]["artifacts"] == [{"role": "canonical", "path": PATH}, {"role": "manifest", "path": PATH.replace("archive.md", "manifest.yaml")}]
 
 
 def test_archive_membership_merge_and_conflicting_owner_stop():
@@ -69,3 +72,27 @@ def test_archive_rejects_invalid_envelope_before_dispatch(change):
     result = run_workflow_entry("archive", value)
     assert result["agentCalls"] == 0
     assert result["value"]["issue"]["code"] == "material.invalid_input"
+
+
+def test_legacy_archive_collects_original_inventory_before_audit():
+    value = archive_input(usable=True, topics=['exact-topic'])
+    collection = value['observation']['facts']['collection']
+    collection.update(present=False, usable=False, source_url=None, coverage=None)
+    result = run_generated_workflow('archive', value, [COMPLETE])
+    assert result['value']['terminal'] == 'needs_observation'
+    assert result['agentCalls'] == 1
+
+
+def test_manifest_source_is_identity_for_new_archive_pages():
+    value = archive_input(usable=True, topics=['exact-topic'])
+    del value['observation']['identity']['url']
+    result = run_generated_workflow('archive', value, [audit_complete()])
+    assert result['value']['terminal'] == 'complete'
+
+
+def test_declared_original_damage_blocks_card_admission():
+    value = archive_input(usable=True, topics=['exact-topic'])
+    value['observation']['facts']['collection']['usable'] = False
+    result = run_generated_workflow('archive', value, [])
+    assert result['agentCalls'] == 0
+    assert result['value']['issue']['code'] == 'archive.collection_unusable'

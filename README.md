@@ -72,7 +72,9 @@ processing/   # 可检查的中间产物:chapters/ translations/ talks/ webpages
 
 独立网页阅读使用 Webpage；明确要求归档的 URL，以及 Topic 工作流发现的非学术网页材料，
 使用 Archive。Topic 先收录材料，再写引用 Archive 的证据卡；同一 URL 跨专题复用，
-并合并 `topics`。Archive 当前保存来源记录与已核读内容，不保证原件已离线保存。
+并合并 `topics`。Archive 用 `archive.md` 陈列 `originals/` 中的原件，`manifest.yaml`
+保存共同出处与逐文件来源；支持网页快照、PDF、图片、直接下载的音视频。取得不全只注明
+缺失，音视频暂不转录。存储与 Marple 解析合同见 [ARCHIVE_STORAGE](docs/ARCHIVE_STORAGE.md)。
 
 ## 维护
 

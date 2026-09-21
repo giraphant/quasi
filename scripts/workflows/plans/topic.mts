@@ -507,6 +507,7 @@ const processArchiveWork = async (
     return {result: needsObservationMaterialResult(resultSeed(input), routes, {...continuation, sources}), receipt: null};
   };
   const archivePaths: string[] = [];
+  const archiveInputs: string[] = [];
   for (let index = 0; index < continuation.sources.length; index += 1) {
     const seed = continuation.sources[index];
     const observation = seed.state === "canonical" ? input.childObservations.get(observationKey({kind: "archive", slug: seed.material_slug})) ?? null : null;
@@ -525,10 +526,12 @@ const processArchiveWork = async (
     const fact = (observation as ArchiveStatusObservation).facts.canonical;
     if (!fact.usable || !result.artifacts.some(ref => ref.role === "canonical" && ref.path === fact.path)) return {result: blockedMaterialResult(resultSeed(input), planIssue("topic.archive_unobserved", null, "Card input lacks exact usable Archive testimony.")), receipt: null};
     archivePaths.push(fact.path);
+    const inventory = (observation as ArchiveStatusObservation).facts.collection;
+    archiveInputs.push(inventory.path, ...inventory.files.map(file => file.path));
   }
   const web = await dispatch(runtime, "topic.webcard", input.query.slug, {
     materialKey: `topic:${input.query.slug}`, topic: input.query.description,
-    task, cardRefs: state.cards, subquestions: state.subquestions, archivePaths,
+    task, cardRefs: state.cards, subquestions: state.subquestions, archivePaths, archiveInputs,
   });
   const stopped = stopForOutcome(input, web);
   if (stopped !== null) return {result: stopped, receipt: null};

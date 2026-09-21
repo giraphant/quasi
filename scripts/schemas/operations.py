@@ -8,7 +8,9 @@ OPERATION_CATALOG = {
     "archive.collect": {
         "kinds": ["archive"], "phase": "Acquire", "effect": "writer",
         "agent": "quasi:archive-agent",
-        "artifacts": {"output": "vault/archives/{slug}/archive.md"},
+        "artifacts": {"output": "vault/archives/{slug}/archive.md",
+                      "manifest": "vault/archives/{slug}/manifest.yaml",
+                      "originals": "vault/archives/{slug}/originals"},
     },
     "archive.audit": {
         "kinds": ["archive"], "phase": "Audit", "effect": "writer",

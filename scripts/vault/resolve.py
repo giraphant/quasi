@@ -48,6 +48,8 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
 from scripts.core import print_json, project_root, read_frontmatter  # noqa: E402
+from scripts.archive.inventory import load_manifest
+from yaml import YAMLError
 from scripts.schemas.archive import ArchiveSchema  # noqa: E402
 from scripts.schemas.body import ARCHIVE_BODY  # noqa: E402
 from scripts.localise.localise import normalise_isbn  # noqa: E402
@@ -383,9 +385,16 @@ def _resolve_archive(root: Path, item: dict, slug: str) -> dict:
             return {**row, "error": "archive owner index contains an unsafe path"}
         try:
             fm = read_frontmatter(path).frontmatter or {}
-            owner_url = normalize_web_url(fm.get("url"))
-        except (OSError, ValueError, TypeError):
-            continue
+            manifest_path = path.parent / "manifest.yaml"
+            manifest_state = _product_state(root, manifest_path)
+            if manifest_state not in {"safe", "missing"}:
+                return {**row, "error": "unsafe Archive manifest"}
+            source_url = load_manifest(manifest_path).source.url if manifest_state == "safe" else fm.get("url")
+            if source_url is None:
+                continue
+            owner_url = normalize_web_url(source_url)
+        except (OSError, ValueError, TypeError, YAMLError):
+            return {**row, "error": "Archive owner index contains invalid source metadata"}
         if fm.get("type") == "archive" and owner_url == url:
             owners.append(path)
     if len(owners) > 1:

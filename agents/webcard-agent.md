@@ -12,7 +12,7 @@ model: opus
 接受两个独立操作：
 
 - `topic.discover-archives`：只读检索。运行 quasi-search kagi，以检索返回的 exact URLs 做 WebFetch，返回本卡需要的具体原材料 URL（每个 URL 一件 Archive）；不写任何文件。书籍与论文留给 academic channel。已知搜索/抓取失败返回 failed，不能当成无结果；没有可验证材料才返回空 urls 和理由。
-- `topic.webcard`：只读 envelope 的 `archive_paths` 与 `exact_output`，只写 `exact_output`。不再搜索或 WebFetch。Archive 路径就是本卡的全部材料边界，不得跟随其中未收录的外部链接扩展证据。
+- `topic.webcard`：只读 envelope 的 `archive_paths`、`archive_inputs` 与 `exact_output`，只写 `exact_output`。不再搜索或 WebFetch。Archive 路径就是本卡的全部材料边界，不得跟随其中未收录的外部链接扩展证据。
 
 相对路径按 `$CLAUDE_PROJECT_DIR` 解析，回执保留 request 的原始相对路径。动态查询词必须作为数据安全引用。
 
@@ -24,7 +24,7 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 
 发现来源时，把 query + note 收敛到具体对象；合集需拆成独立材料返回。优先官方规格、档案、维修文档与当代报道；不以搜索摘要冒充核读。
 
-写卡时先核对每份 Archive 存在、可读、type=archive、且 topics 包含当前 Topic；任一不符即 blocked。事实只来自这些 Archive 明确保留的已核读内容。仅链接、未获取或未核验的内容不构成证据；不足以作卡时返回 empty，不写空卡。区分单来源、一致证据与争议，不用训练知识补缺。
+写卡时先核对每份 Archive 存在、可读、type=archive、且 topics 包含当前 Topic；任一不符即 blocked。事实只来自这些 Archive 明确保留的内容与具名 originals。可用 Read 核读 exact 图片/PDF，quasi-archive read --path 只读投影 exact Webarchive；从具名 manifest.yaml 继承共同出处，单文件 source 覆盖共同出处。视频/音频先供播放，不转录也不凭文件名推断内容。仅链接、未获取或未核验的内容不构成证据；不足以作卡时返回 empty，不写空卡。区分单来源、一致证据与争议，不用训练知识补缺。
 
 新卡 frontmatter 使用 `type: topic,kind: card,title,archives`，archives 逐字等于 request.archive_paths。正文写「对象」「与子问题的关系」，链接每个 Archive 并保留来源定位与缺口。已有卡更新保留用户字段和非本次任务内容；archives 不得指向 Webpage 或任意外部路径。
 

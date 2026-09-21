@@ -422,7 +422,7 @@ OPERATION_FIXTURES: dict[str, tuple[str, dict[str, Any]]] = {
     "translation.prepare": ("translation", _context()),
     "topic.recall": ("topic", _context()),
     "topic.steer": ("topic", _context()),
-    "topic.webcard": ("topic", _context(archivePaths=["vault/archives/exact-material/archive.md"])),
+    "topic.webcard": ("topic", _context(archivePaths=["vault/archives/exact-material/archive.md"], archiveInputs=["vault/archives/exact-material/manifest.yaml"])),
     "topic.synthesise.overview": ("topic", _context()),
     "topic.synthesise.resources": ("topic", _context()),
     "topic.audit": ("topic", _context()),

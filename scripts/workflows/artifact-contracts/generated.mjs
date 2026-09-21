@@ -3,11 +3,138 @@
 
 export const ARCHIVE_ARTIFACT_CONTRACT = {
   "artifact_type": "archive",
+  "collection": {
+    "json_schema": {
+      "$defs": {
+        "ArchiveFile": {
+          "additionalProperties": false,
+          "properties": {
+            "captured_at": {
+              "format": "date-time",
+              "title": "Captured At",
+              "type": "string"
+            },
+            "media_type": {
+              "minLength": 3,
+              "title": "Media Type",
+              "type": "string"
+            },
+            "path": {
+              "pattern": "^originals/[a-z0-9]+(?:-[a-z0-9]+)*\\.[a-z0-9]+$",
+              "title": "Path",
+              "type": "string"
+            },
+            "sha256": {
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Sha256",
+              "type": "string"
+            },
+            "size": {
+              "exclusiveMinimum": 0,
+              "title": "Size",
+              "type": "integer"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ArchiveSource"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "url": {
+              "maxLength": 4096,
+              "minLength": 8,
+              "pattern": "^https?://",
+              "title": "Url",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "media_type",
+            "captured_at",
+            "size",
+            "sha256",
+            "url"
+          ],
+          "title": "ArchiveFile",
+          "type": "object"
+        },
+        "ArchiveSource": {
+          "additionalProperties": false,
+          "properties": {
+            "title": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Title"
+            },
+            "url": {
+              "maxLength": 4096,
+              "minLength": 8,
+              "pattern": "^https?://",
+              "title": "Url",
+              "type": "string"
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "title": "ArchiveSource",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "default": "",
+          "title": "Coverage",
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/ArchiveFile"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "quasi.archive.manifest/0.1",
+          "default": "quasi.archive.manifest/0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ArchiveSource"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "ArchiveManifest",
+      "type": "object"
+    },
+    "manifest": "manifest.yaml",
+    "originals": "originals/",
+    "source_inheritance": "files[].source overrides source; files[].url is the saved asset URL"
+  },
   "document": {
     "additional_h2": true,
     "evidence_rules": [
       "一件 Archive 对应一件材料，kind 描述对象而非保存格式",
-      "来源链接与简短说明即可成立；不要求附件或固定栏目",
+      "archive.md 是自由陈列页；用相对 originals/ 路径嵌图或链接原件，无需逐文件标注",
+      "manifest.yaml 记录共同出处与有序文件清单，单文件 source 仅覆盖例外；元数据不重复出处",
+      "原件缺失只在 coverage 说明；允许链接型空清单，不要求完整率或固定栏目",
       "明确本次已读取、仅链接与未取得的范围，区分摘录和摘要",
       "未知可选字段省略，日期不补造；topics 合并保留已有成员"
     ],
@@ -1648,7 +1775,9 @@ export const OPERATION_CATALOG = {
     "effect": "writer",
     "agent": "quasi:archive-agent",
     "artifacts": {
-      "output": "vault/archives/{slug}/archive.md"
+      "output": "vault/archives/{slug}/archive.md",
+      "manifest": "vault/archives/{slug}/manifest.yaml",
+      "originals": "vault/archives/{slug}/originals"
     }
   },
   "archive.audit": {

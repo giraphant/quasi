@@ -102,6 +102,7 @@ def test_topic_multiple_sources_observes_each_before_writing_card():
 
     second_observation = archive_observation()
     second_observation["slug"] = "second-manual"
+    second_observation["facts"]["collection"]["path"] = "vault/archives/second-manual/manifest.yaml"
     second_observation["facts"]["canonical"]["path"] = "vault/archives/second-manual/archive.md"
     value["resume"]["resume_seed"] = next_resume
     value["child_observations"].append({"route": {"kind": "archive", "slug": "second-manual"}, "observation": second_observation})
@@ -118,3 +119,18 @@ def test_topic_duplicate_archive_owner_is_rejected_before_dispatch():
     result = run_topic(topic_input(resume={"resume_seed": resume}), [])
     assert result["calls"] == []
     assert result["result"]["issue"]["code"] == "material.invalid_input"
+
+
+def test_topic_passes_only_observed_originals_to_card_writer():
+    gap = {**SUBQUESTION, "coverage": "gap"}
+    observed = archive_observation(usable=True, topics=[QUERY["slug"]])
+    original = f"vault/archives/{SLUG}/originals/screen-detail.jpg"
+    observed["facts"]["collection"]["files"] = [{"path": original, "present": True, "usable": True, "media_type": "image/jpeg"}]
+    value = topic_input(observation=topic_observation(subquestions=[gap]),
+        children=[({"kind": "archive", "slug": SLUG}, observed)], resume={"resume_seed": continuation()})
+    # Stop after the writer to inspect its exact input envelope.
+    report = run_topic(value, [recall_complete(), audit_complete(), "__throw__"])
+    assert ops(report) == ["topic.recall", "archive.audit", "topic.webcard"]
+    card = report["calls"][2]["request"]
+    assert card["archive_inputs"] == [f"vault/archives/{SLUG}/manifest.yaml", original]
+    assert card["archive_paths"] == [PATH]

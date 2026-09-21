@@ -1,7 +1,7 @@
 # quasi-vault Schema Specification
 
 ```
-Version : 0.9.1
+Version : 0.9.2
 Status  : active — synchronized with scripts/schemas/ executable contracts
 Last    : 2026-09-21
 ```
@@ -645,11 +645,12 @@ export const WebpageSchema = z.object({
 
 正文自由，可为空；材料概况、来源与保存、内容与摘录、关联只是建议栏目。
 只有元数据和来源链接也有效，不要求附件、OCR、快照或分析。
-原件布局和多次保存方案尚未确定，不引入原件路径字段、不假设只有一个原件；
-已保存文件可在正文链接。note 的 `annotates` 可指向上述固定入口。
+新采集使用 manifest.yaml 管理共同出处及逐文件来源例外，originals/ 保存有描述性文件名的多个原件。
+archive.md 用相对路径陈列图片或链接其它原件，不要求逐图标注。清单可为空，缺失材料仅在 coverage 说明。
+manifest 结构源为 archive_manifest.py，阅读器解析合同见 docs/ARCHIVE_STORAGE.md。note 的 `annotates` 可指向上述固定入口。
 `topics` 支持多个专题的成员标签。Topic 的非学术来源先通过 Archive Workflow 收录，再写证据卡；Book/Paper/Talk 学术 corpus 不变。相同规范化 URL 的唯一 Archive owner 可跨专题复用，已有 topics 合并保留。独立网页阅读仍走 Webpage。
 
-Topic `kind: card` 新增可选 `archives`：1–8 个不重复的 `vault/archives/<slug>/archive.md` 路径，仅 card 可用。新卡必须绑定本次已收录材料并在正文链接；旧卡可省略以保留兼容。材料缺失、schema 无效或 topics 不含当前专题时，Topic status 将引用卡标为 unusable。
+Topic `kind: card` 新增可选 `archives`：1–8 个不重复的 `vault/archives/<slug>/archive.md` 路径，仅 card 可用。新卡必须绑定本次已收录材料并在正文链接；旧卡可省略以保留兼容。材料缺失、已声明原件损坏、schema 无效或 topics 不含当前专题时，Topic status 将引用卡标为 unusable。
 
 ## 4. Body Schemas(正文结构 schema)
 
