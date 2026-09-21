@@ -84,6 +84,7 @@ export const OPERATION_CATALOG: Readonly<
   Record<OperationName, OperationDefinition>
 >;
 export const TOPIC_OUTLINE_SUBQUESTIONS_SCHEMA: JsonSchema;
+export const TOPIC_ARTIFACT_CONTRACT: ArtifactContract;
 export const ARCHIVE_ARTIFACT_CONTRACT: ArtifactContract;
 export const AUTHOR_ARTIFACT_CONTRACT: ArtifactContract;
 export const PAPER_ARTIFACT_CONTRACT: ArtifactContract;

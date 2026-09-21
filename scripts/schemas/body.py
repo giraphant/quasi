@@ -477,7 +477,22 @@ WEBPAGE_BODY = BodySchema(
 )
 
 
-TOPIC_BODY = BodySchema(type_name="topic", sections=[])
+TOPIC_BODY = BodySchema(
+    type_name="topic",
+    artifact_schema_version="quasi.artifact.topic/0.1",
+    path_pattern="vault/topics/{slug}/{00-overview.md|01-resources.md|02-outline.md|cards/{card-slug}.md}",
+    identity_fields=["title", "kind"],
+    h1="使用 frontmatter.title",
+    evidence_rules=[
+        "所有 Topic 页使用 type: topic；kind 必须匹配请求的 output role：overview/resources/outline/card",
+        "frontmatter 只允许 JSON Schema 声明的字段；请求的 research_key、topic_slug、query 等编排字段不写入产物",
+        "outline 必须有非空 subquestions，id 唯一；subquestions/history 仅用于 outline",
+        "outline.items 只登记请求已接纳的 Book/Paper/Talk；cards 只登记已提供的证据卡，不以待办需求充当证据",
+        "created/themes/archives 仅用于 card；archives 不重复，新的 Archive 证据卡按请求记录 exact Archive paths",
+        "保留已有用户组织与正文内容；按合法 schema 修正元数据，不把旧的非法字段当作新格式依据",
+    ],
+    sections=[],
+)
 JOURNAL_BODY = BodySchema(type_name="journal", sections=[])
 NOTE_BODY = BodySchema(type_name="note", sections=[])
 IMAGE_BODY = BodySchema(type_name="image", sections=[])

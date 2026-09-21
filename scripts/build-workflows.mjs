@@ -76,6 +76,7 @@ const ARTIFACT_CONTRACT_TYPES = join(
 const CHECK = process.argv.slice(2).includes("--check");
 
 const ARTIFACT_CONTRACTS = [
+  { type: "topic", exportName: "TOPIC_ARTIFACT_CONTRACT" },
   { type: "archive", exportName: "ARCHIVE_ARTIFACT_CONTRACT" },
   { type: "author", exportName: "AUTHOR_ARTIFACT_CONTRACT" },
   { type: "paper", exportName: "PAPER_ARTIFACT_CONTRACT" },

@@ -7,7 +7,7 @@ import type {
   OperationRow,
   WorkflowContext,
 } from "../../artifact-contracts/generated.mjs";
-import { TOPIC_OUTLINE_SUBQUESTIONS_SCHEMA } from "../../artifact-contracts/generated.mjs";
+import { TOPIC_ARTIFACT_CONTRACT, TOPIC_OUTLINE_SUBQUESTIONS_SCHEMA } from "../../artifact-contracts/generated.mjs";
 
 type AnyFunction = (...args: any[]) => any;
 
@@ -675,6 +675,7 @@ const synthesisEnvelope = (
   card_paths: refs.cardPaths,
   outline: { role: "outline", path: refs.outlinePath },
   output: { role: refs.outputRole, path: refs.outputPath },
+  artifact_contract: TOPIC_ARTIFACT_CONTRACT,
   mode: refs.mode,
   overwrite: refs.mode !== "create",
   repair_diagnostics: refs.diagnostics,
@@ -748,6 +749,7 @@ export const topicOperationRows: OperationRow[] = [
       cards: refs.cardRefs,
       card_paths: refs.cardPaths,
       output: { role: "outline", path: refs.outputPath },
+      artifact_contract: TOPIC_ARTIFACT_CONTRACT,
       mode: refs.mode,
       overwrite: refs.mode !== "create",
       repair_diagnostics: refs.diagnostics,
@@ -809,6 +811,8 @@ export const topicOperationRows: OperationRow[] = [
         card_slug: refs.cardSlug,
       },
       exact_output: refs.cardPath,
+      output: { role: "card", path: refs.cardPath },
+      artifact_contract: TOPIC_ARTIFACT_CONTRACT,
       output_observation: {path: refs.cardPath, present: false, usable: false},
       archive_paths: refs.archivePaths,
       archive_inputs: refs.archiveInputs,

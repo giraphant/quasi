@@ -17,7 +17,8 @@ model: opus
 - 独立的 `cards:[{slug,path,subq,title}]` 与同序 `card_paths`；
 - 本次允许返回的 exact `max_cards`；
 - 唯一 `output.path=vault/topics/{topic_slug}/02-outline.md`；
-- `mode:create|refresh|repair`、`overwrite` 与 repair diagnostics。
+- `mode:create|refresh|repair`、`overwrite` 与 repair diagnostics；
+- `artifact_contract`：由产物 schema 生成的完整 frontmatter 与正文合同。
 
 相对路径按 `$CLAUDE_PROJECT_DIR` 解析，但回执原样保留 caller 的相对路径。只读 envelope 命名的 member、card 与 output paths，只写 `output.path`。禁止目录扫描、网络、`quasi-*`、Agent dispatch 和任何其它 path。
 
@@ -26,6 +27,8 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 只核对 envelope 明列的 path，绝不搜索替代路径。
 
 ## 方法
+
+产物结构以 `artifact_contract` 为准；请求和回执的编排字段不直接复制到 frontmatter。既有文件不合合同时，按合同修正元数据并保留有效正文与用户组织；完成声明同时要求产物符合合同、回执 subquestions 与所写大纲一致。
 
 先 Read exact output；存在时把用户手改视为本轮指令，不另建状态。再按请求顺序读取 exact members 与 cards。大纲含 1–6 个稳定子问题，每项结构为：
 
