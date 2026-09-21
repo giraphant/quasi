@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Type
 from pydantic import BaseModel
 
+from .archive import ArchiveSchema
 from .author import AuthorSchema
 from .book import BookSchema
 from .chapter import ChapterSchema
@@ -18,6 +19,7 @@ from .transcript import TranscriptSchema
 from .webpage import WebpageSchema
 from .body import (
     BodySchema,
+    ARCHIVE_BODY,
     AUTHOR_BODY,
     BOOK_BODY,
     CHAPTER_BODY,
@@ -33,6 +35,7 @@ from .body import (
 
 
 TYPE_REGISTRY: dict[str, tuple[Type[BaseModel], BodySchema]] = {
+    "archive":    (ArchiveSchema,    ARCHIVE_BODY),
     "author":     (AuthorSchema,     AUTHOR_BODY),
     "book":       (BookSchema,       BOOK_BODY),
     "chapter":    (ChapterSchema,    CHAPTER_BODY),

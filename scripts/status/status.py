@@ -16,10 +16,13 @@ from typing import Any, cast
 from urllib.parse import urlsplit
 
 import yaml
+from pydantic import ValidationError
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
+from scripts.schemas.archive import ArchiveSchema  # noqa: E402
+from scripts.schemas.body import ARCHIVE_BODY  # noqa: E402
 from scripts.schemas.operations import OPERATION_CATALOG  # noqa: E402
 from scripts.schemas.chapter_manifest import valid_chapter_page_pair  # noqa: E402
 from scripts.schemas.topic import TopicSchema  # noqa: E402
@@ -821,6 +824,23 @@ def translation_status(
     )
 
 
+def archive_status(root: Path, slug: str) -> dict[str, Any]:
+    """Archive completeness requires only its canonical metadata page."""
+    path = root / ARCHIVE_BODY.path_pattern.format(slug=slug)
+    canonical = _regular_nonempty_artifact(root, path)
+    identity = None
+    if canonical["usable"]:
+        try:
+            record = ArchiveSchema.model_validate(parse_frontmatter(path))
+        except ValidationError:
+            canonical["usable"] = False
+        else:
+            identity = record.model_dump(mode="json", exclude_unset=True)
+    return status_payload(
+        "archive", slug, identity, {"kind": "archive", "canonical": canonical},
+    )
+
+
 def author_status(root: Path, slug: str) -> dict[str, Any]:
     canonical = artifact_path(root, "author.synthesise", "output", slug=slug)
     canonical_fact, frontmatter = canonical_observation(root, canonical)
@@ -970,6 +990,7 @@ def scan_status(root: Path) -> dict[str, Any]:
     """Discover material layouts without turning observations into control hints."""
 
     discovered: dict[str, set[str]] = {
+        "archive": set(),
         "author": set(),
         "paper": set(),
         "book": set(),
@@ -1047,6 +1068,15 @@ def scan_status(root: Path) -> dict[str, Any]:
                 continue
             discovered["webpage"].add(entry.name)
 
+    archive_directory = (root / ARCHIVE_BODY.path_pattern.format(slug=scan_slug)).parent.parent
+    if safe_contained_directory(root, archive_directory):
+        for entry in children(archive_directory):
+            if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", entry.name) is None:
+                continue
+            path = root / ARCHIVE_BODY.path_pattern.format(slug=entry.name)
+            if path_state(root, path) == "regular":
+                discovered["archive"].add(entry.name)
+
     source_directory = artifact_path(
         root, "paper.acquire", "outputPdf", slug=scan_slug
     ).parent
@@ -1083,6 +1113,8 @@ def material_status(
     *,
     target_language: str | None = None,
 ) -> dict[str, Any]:
+    if kind == "archive":
+        return archive_status(root, slug)
     if kind == "paper":
         return paper_status(root, slug)
     if kind == "webpage":
@@ -1105,7 +1137,7 @@ def material_status(
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = StatusArgumentParser(add_help=True, prog="quasi-status")
     parser.add_argument(
-        "--kind", choices=("paper", "book", "talk", "translation", "author", "topic", "webpage")
+        "--kind", choices=("paper", "book", "talk", "translation", "author", "topic", "webpage", "archive")
     )
     parser.add_argument("--slug")
     parser.add_argument("--target-language")
@@ -1122,7 +1154,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         return args
     if args.kind is None or args.slug is None:
         raise InvocationError("--kind and --slug are required unless --scan is used")
-    if not valid_slug(args.slug):
+    if args.kind == "archive":
+        if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", args.slug) is None:
+            raise InvocationError("--slug must be kebab-case")
+    elif not valid_slug(args.slug):
         raise InvocationError("--slug must be canonical ASCII kebab (1..80 characters)")
     if args.kind == "translation":
         if args.target_language is None:

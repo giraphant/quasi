@@ -38,7 +38,7 @@ separate:
 | `quasi-download` | `book candidates|fetch`; `paper fetch|diagnose`; `accept` |
 | `quasi-extract` | `epub|text|ocr|ocr-generation|split` text extraction and normalisation (`ocr` default engine DS OCR2, `--engine dsocr2\|tesseract`, `--layout` replacement text layer; `ocr-generation` is the shared source/profile-bound immutable Paper/Book OCR transaction) |
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
-| `quasi-status` | read-only disk oracle: `--kind paper|book|talk|author|topic|webpage --slug SLUG --json`; Translation additionally requires `--target-language TAG`; `--scan --json` |
+| `quasi-status` | read-only disk oracle: `--kind paper|book|talk|author|topic|webpage|archive --slug SLUG --json`; Translation additionally requires `--target-language TAG`; `--scan --json` |
 | `quasi-transcribe` | `run|classify|silent` talk transcript engines |
 | `quasi-webpage` | `inspect|capture|extract` one exact public webpage; capture requires macOS 11+ |
 | `quasi-helpers` | `proofread prepare|cleanup`; `citation parse|biblio|resolve|review-cards|emit-bib`; `localise scan|write`; `talk compress-media`; `vault resolve` |
@@ -186,6 +186,13 @@ Paper and Book entries after the Skill supplies fresh exact statuses for its ret
 Workflow. That entry owns the iterative Topic state machine and composes the same leaf entries
 without duplicating material logic in the Skill. `finalise-draft`
 owns interactive proofreading, citation review, and bibliography closure.
+
+Archive is a lightweight registered vault type with no acquisition Workflow. Its sole
+required artifact is `vault/archives/{slug}/archive.md`; schema snapshot, audit,
+exact-path vault resolve, and status/scan recognize it without attachments or
+fixed body sections. Its `topics` tags and note `annotates` links are preserved;
+it is not admitted into the Book/Paper/Talk composition corpus.
+
 Journal has a schema but no active or archived workflow; its future entry will
 be a thin collection loop over Paper receipts.
 

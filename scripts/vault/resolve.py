@@ -28,10 +28,10 @@ vault resolve —— 判断候选 work 是否已在 vault,slug 漂移也能认�
     quasi-helpers vault resolve --items-file -   # stdin(书名带撇号时比 --items-json 安全)
     quasi-helpers vault resolve --items-json '[{"kind":"book","slug":"x","isbn":"9780226185903"}]'
 
-每项 ``{kind: "book"|"paper"|"talk"|"author", slug, isbn?, doi?, title?, authors?}``;输出
+每项 ``{kind: "book"|"paper"|"talk"|"author"|"webpage"|"archive", slug, isbn?, doi?, title?, authors?}``;输出
 ``{"resolved":[{kind, slug, vault_slug, path, match}], "scanned": {...}}``,
 未命中的 ``vault_slug``/``path``/``match`` 均为 ``null``。只读,不写任何文件。
-``talk`` 与 ``author`` 只做 exact slug/path 观察,不参与书/论文的 identifier/title 索引。
+``talk``、``author`` 与 ``archive`` 只做 exact slug/path 观察,不参与书/论文的 identifier/title 索引。
 """
 
 from __future__ import annotations
@@ -48,6 +48,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
 from scripts.core import print_json, project_root, read_frontmatter  # noqa: E402
+from scripts.schemas.body import ARCHIVE_BODY  # noqa: E402
 from scripts.localise.localise import normalise_isbn  # noqa: E402
 from scripts.webpage.webarchive import collision_slug, normalize_web_url, read_webarchive  # noqa: E402
 from scripts.webpage.paths import webpage_route_state  # noqa: E402
@@ -107,6 +108,8 @@ def surnames(raw: Any) -> set[str]:
 
 
 def _product_path(root: Path, kind: str, slug: str) -> Path:
+    if kind == "archive":
+        return root / ARCHIVE_BODY.path_pattern.format(slug=slug)
     if kind == "book":
         return root / "vault" / "books" / slug / "00-overview.md"
     if kind == "paper":
@@ -371,10 +374,15 @@ def resolve(root: Path, items: list[dict]) -> dict:
     for item in items:
         kind = (item.get("kind") or "book").strip()
         slug = (item.get("slug") or "").strip()
-        if kind not in ("book", "paper", "talk", "author", "webpage") or not slug:
+        if kind not in ("book", "paper", "talk", "author", "webpage", "archive") or not slug:
             resolved.append({"kind": kind, "slug": slug, "vault_slug": None,
                              "path": None, "match": None,
-                             "error": "kind must be book|paper|talk|author|webpage and slug non-empty"})
+                             "error": "kind must be book|paper|talk|author|webpage|archive and slug non-empty"})
+            continue
+
+        if kind == "archive" and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) is None:
+            resolved.append({"kind": kind, "slug": slug, "vault_slug": None,
+                             "path": None, "match": None, "error": "archive slug must be kebab-case"})
             continue
 
         if kind == "webpage":
@@ -395,9 +403,9 @@ def resolve(root: Path, items: list[dict]) -> dict:
                              "error": "product path or ancestor is symlink/non-regular"})
             continue
 
-        # Talk and Author are not identifier-addressable works here. Their
+        # Talk, Author, and Archive are not identifier-addressable works here. Their
         # canonical exact paths are the only safe resolver signal.
-        if kind in ("talk", "author"):
+        if kind in ("talk", "author", "archive"):
             resolved.append({"kind": kind, "slug": slug, "vault_slug": None,
                              "path": None, "match": None})
             continue

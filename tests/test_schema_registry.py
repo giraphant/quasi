@@ -19,6 +19,7 @@ from scripts.typecheck.typecheck import check_file  # noqa: E402
 
 def test_registry_uses_only_short_canonical_types() -> None:
     assert set(registry.TYPE_REGISTRY) == {
+        "archive",
         "author",
         "book",
         "chapter",

@@ -2,6 +2,8 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.65.37** (2026-09-21): Add lightweight `archive` compatibility (schema 0.9.0): seven material kinds, optional descriptive metadata, freeform/empty body, canonical `vault/archives/{slug}/archive.md`, audit/schema snapshot registration, exact-path vault resolution and status/scan. Preserve themes/topics and note annotations without requiring attachments, inventing dates, migrating existing types, or defining acquisition/storage layouts. Archive is not added to the research Workflow corpus.
+
 - **0.65.35** (2026-09-13): **Book Prepare 的 `ocr_required` 回执接受 exact `usable:false` normalized 负面证据；Webpage 输入不再依赖 Workflow 沙箱里并不存在的 `URL` 全局；`quasi-audit` 报告模式严格只读，typecheck 区分 violation 与 advisory，SPEC 同步到 0.8.0。**
   - **Book Prepare `ocr_required`。**
   - 事故：direct Book PDF 文本层持续乱码时，`extract-agent` 先抽出乱码 `source.txt`、识别目录并切章、写 manifest，再把这些 artifacts 标 `usable:false` 并返回 `terminal.disposition:"ocr_required"`。`scripts/workflows/operations/rows/book.mts` 的 completion predicate 只接受字段全空的 `ocr_required` 回执（含 `artifacts:[]`），于是 schema 合法的回执被判 `workflow.incoherent_complete`，Book plan 在此停止，从未 dispatch `book.ocr`。

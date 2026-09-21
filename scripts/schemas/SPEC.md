@@ -1,9 +1,9 @@
 # quasi-vault Schema Specification
 
 ```
-Version : 0.8.0
+Version : 0.9.0
 Status  : active — synchronized with scripts/schemas/ executable contracts
-Last    : 2026-09-03
+Last    : 2026-09-21
 ```
 
 ## 0. 文档定位
@@ -22,7 +22,7 @@ SPEC 与 executable schema 不一致时必须先停止数据迁移、核对并�
 
 ## 1. 类型系统总览
 
-vault 中的被打 `type` 文档使用 11 个 canonical type。短名是唯一合法 schema；旧的长名（`paper-analysis` / `book-overview` / `chapter-summary` / `author-profile` 等）只作为 deprecated diagnostics 或 migration input，不再是合法 type。类型集合与顺序由 `TYPE_REGISTRY` 派生，不另维护隐藏列表。
+vault 中的被打 `type` 文档使用 12 个 canonical type。短名是唯一合法 schema；旧的长名（`paper-analysis` / `book-overview` / `chapter-summary` / `author-profile` 等）只作为 deprecated diagnostics 或 migration input，不再是合法 type。类型集合与顺序由 `TYPE_REGISTRY` 派生，不另维护隐藏列表。
 
 | `type`    | 文档                  | 主要路径                                 | 历史快照数量（非契约） |
 | --------- | --------------------- | ---------------------------------------- | -------- |
@@ -33,6 +33,7 @@ vault 中的被打 `type` 文档使用 11 个 canonical type。短名是唯一�
 | `journal` | 期刊 overview/resources 页面 | `vault/journals/<slug>/{00-overview,01-resources}.md` | 11 |
 | `topic`   | 主题 overview/resources 页面 | `vault/topics/<slug>/{00-overview,01-resources}.md` | 12 |
 | `note`    | 自由笔记或批注        | `vault/notes/*.md`                       | 18 |
+| `archive` | 单件档案材料 metadata | `vault/archives/<slug>/archive.md` | — |
 | `image`   | 本地图片对象 metadata | `vault/images/<slug>/image.md`           | 8 |
 | `talk`    | 会议/讲座录制的摘要   | `vault/talks/<slug>/talk.md`             | 0 |
 | `transcript` | 讲座的带时间戳转写 | `vault/talks/<slug>/transcript.md`       | 0 |
@@ -627,6 +628,27 @@ export const WebpageSchema = z.object({
 - 正文先写一个 H1，再按顺序包含必填 `## Summary` 与 `## Content`；`Content` 可保留原始页面的内部 Markdown 结构，内部标题从 H3 开始
 - `snapshot`、`format`、`sha256`、`bytes` 等技术采集字段不属于网页的语义 frontmatter
 
+### 3.12 `archive`
+
+单件档案材料：一条帖子及其回复、一段视频及其评论可作为一件，收录范围在正文说明。
+已有 `image`、`talk`、`webpage` 类型继续保留，不自动迁移。多次保存同一材料不自动建立新对象。
+
+固定入口为 `vault/archives/<slug>/archive.md`，slug 使用 kebab-case。
+必填字段为 `type: archive`、`title`、`kind`、`created`（完整 `YYYY-MM-DD` 建档日期）。
+`kind` 描述对象而非保存格式，只接受 `patent|thread|post|video|image|webpage|document`。
+截图中的帖子仍为 `post` 或 `thread`，PDF 专利仍为 `patent`。
+
+可选字段：`creator`（姓名字符串数组，沿用 image）、`date`（原材料完整发布日期，
+专利为公开日期）、`source`（来源自由文本）、`url`（原始对象直接链接）、
+`themes`（主题字符串数组）、`topics`（专题 slug 数组）、`rating`（现有整数 1..5）。
+未知字段省略；年份或约略年代写在正文，不补造完整日期。类别专属信息暂放正文。
+
+正文自由，可为空；材料概况、来源与保存、内容与摘录、关联只是建议栏目。
+只有元数据和来源链接也有效，不要求附件、OCR、快照或分析。
+原件布局和多次保存方案尚未确定，不引入原件路径字段、不假设只有一个原件；
+已保存文件可在正文链接。note 的 `annotates` 可指向上述固定入口。
+`topics` 支持成员标签，但不把 Archive 自动纳入仅支持 Book/Paper/Talk 的研究 Workflow corpus。
+
 ## 4. Body Schemas(正文结构 schema)
 
 ### 4.1 概念
@@ -692,7 +714,7 @@ reader 端:每个 H3 渲染为一个 tab,用户点 tab 切换项目视角。
 | `paper` | `核心论点`（paragraph）；`理论框架`（paragraph）；`分节摘要`（h3-sections）；`关键概念`（table）；`核心引用`（numbered-list） | `金句要点`（blockquote-list）；`项目关联`（h3-project-tabs） |
 | `talk` | `核心论点`（paragraph）；`分节摘要`（h3-sections）；`关键概念`（table）；`项目关联`（bullet-list）；`文献人物`（bullet-list）；`时间脉络`（bullet-list） | — |
 | `webpage` | `Summary`（paragraph）；`Content`（freeform） | — |
-| `topic` / `journal` / `note` / `image` / `transcript` | 正文自由，不设固定 H2 | — |
+| `topic` / `journal` / `note` / `image` / `archive` / `transcript` | 正文自由，不设固定 H2 | — |
 
 所有当前 registry 对象的 `BodySchema.strict` 默认为 `false`。required H2 缺失、heading drift 与 block-kind mismatch 始终是 blocking violation；alias 先解析到 canonical section，再报告可机械规范化的 `h2_alias`；未知 H2 在 `strict: false` 时仅为 advisory warning，在 `strict: true` 时才是 blocking violation。
 
@@ -804,7 +826,7 @@ reader 看 frontmatter type 决定如何渲染同名 H2。
 
 frontmatter 与正文的 strictness 是两套独立契约，不得混用：
 
-1. **Frontmatter schema**：当前 11 个 Pydantic model 均使用 `ConfigDict(extra="forbid", strict=True)`。未知字段、错误值类型和缺失必填字段属于 blocking validation error，不是 warning。
+1. **Frontmatter schema**：当前 12 个 Pydantic model 均使用 `ConfigDict(extra="forbid", strict=True)`。未知字段、错误值类型和缺失必填字段属于 blocking validation error，不是 warning。
 2. **`BodySchema.strict`**：只控制「未知 H2」的严重性。`false` 时未知 H2 是 non-blocking advisory；`true` 时未知 H2 是 blocking violation。它不改变 required H2、alias 或 block-kind 校验。
 
 只读检查使用 `quasi-audit --report typecheck --format json`。`fields`、`toc` 与 `typecheck` 三种 report 都只写 stdout：不得创建 `.quasi/schema.json`、`.quasi/audit/` 或 project-local temp files。默认不带 `--report` 的 audit 仍是 writer，会执行机械修复并刷新 schema snapshot。
@@ -838,14 +860,14 @@ frontmatter 与正文的 strictness 是两套独立契约，不得混用：
 
 LLM 生成新文档时**应当**:
 
-1. `type` 字段必须是 registry 中 11 个 canonical 之一：`author` / `book` / `chapter` / `image` / `journal` / `note` / `paper` / `talk` / `topic` / `transcript` / `webpage`
+1. `type` 字段必须是 registry 中 12 个 canonical 之一：`archive` / `author` / `book` / `chapter` / `image` / `journal` / `note` / `paper` / `talk` / `topic` / `transcript` / `webpage`
 2. 必填字段一定填(参考各 type 的 required 列表)
 3. 不引入新字段,除非已经在 SPEC 中
 4. **rating 用数字 1..5,不是 ★ 字符串**(reader 渲染层负责显示 ★)
 5. themes 用 hyphen-joined 形式(`affect-theory` 不是 `affect theory`)
 6. **authors 永远是数组**(单作者也用 block list 单元素,不是 scalar);见 §5.2
 7. topic / journal 只写 `kind: overview` 或 `kind: resources`,不要发明 workflow-stage kind
-8. note / image 正文自由;frontmatter 只写 schema 明确列出的轻量字段
+8. note / image / archive 正文自由;frontmatter 只写 schema 明确列出的轻量字段
 
 **Body 约定**:
 1. 必填 H2 全部生成，使用 SPEC 列出的 canonical 标题（多数分析类型为四字中文，webpage 为 `Summary` / `Content`），不要发明同义变体
@@ -859,7 +881,7 @@ LLM 生成新文档时**应当**:
 
 ## 9. 实现与验证入口
 
-- `scripts/schemas/registry.py`：11 个 canonical types 的唯一 registry。
+- `scripts/schemas/registry.py`：12 个 canonical types 的唯一 registry。
 - `scripts/schemas/body.py`：正文 section、alias、kind 与 `BodySchema.strict` 的 executable contract。
 - `scripts/typecheck/typecheck.py`：纯内存 evaluation、可选 artifact writer 与稳定结果 payload。
 - `scripts/typecheck/autofix_mechanical.py`：默认 audit 使用的机械修复层。

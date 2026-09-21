@@ -4,6 +4,7 @@ See SPEC.md for the spec; this module is its executable form.
 """
 
 from .primitives import Name, Title, ShortString, Year, Rating, DOI
+from .archive import ArchiveSchema
 from .author import AuthorSchema
 from .book import BookSchema
 from .chapter import ChapterSchema
@@ -19,6 +20,7 @@ from .body import (
     BlockKind,
     BodySection,
     BodySchema,
+    ARCHIVE_BODY,
     AUTHOR_BODY,
     BOOK_BODY,
     CHAPTER_BODY,
@@ -45,12 +47,12 @@ __all__ = [
     # primitives
     "Name", "Title", "ShortString", "Year", "Rating", "DOI",
     # frontmatter schemas
-    "AuthorSchema", "BookSchema", "ChapterSchema",
+    "ArchiveSchema", "AuthorSchema", "BookSchema", "ChapterSchema",
     "ImageSchema", "JournalSchema", "NoteSchema", "PaperSchema",
     "TalkSchema", "TopicSchema", "TranscriptSchema", "WebpageSchema",
     # body
     "BlockKind", "BodySection", "BodySchema",
-    "AUTHOR_BODY", "BOOK_BODY", "CHAPTER_BODY",
+    "ARCHIVE_BODY", "AUTHOR_BODY", "BOOK_BODY", "CHAPTER_BODY",
     "IMAGE_BODY", "JOURNAL_BODY", "NOTE_BODY", "PAPER_BODY",
     "TALK_BODY", "TOPIC_BODY", "TRANSCRIPT_BODY", "WEBPAGE_BODY",
     # registry
@@ -59,4 +61,4 @@ __all__ = [
     "artifact_contract_for_type",
 ]
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"

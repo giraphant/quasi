@@ -482,3 +482,10 @@ JOURNAL_BODY = BodySchema(type_name="journal", sections=[])
 NOTE_BODY = BodySchema(type_name="note", sections=[])
 IMAGE_BODY = BodySchema(type_name="image", sections=[])
 TRANSCRIPT_BODY = BodySchema(type_name="transcript", sections=[])
+
+# Archive body headings and attachments are optional.
+ARCHIVE_BODY = BodySchema(
+    type_name="archive",
+    sections=[],
+    path_pattern="vault/archives/{slug}/archive.md",
+)
