@@ -33,7 +33,11 @@ const TOPIC_RECALLED_ITEM_SCHEMA = {
       maxLength: 80,
       pattern: "^[a-z0-9][a-z0-9-]*$",
     },
-    path: { type: ["string", "null"], maxLength: 2048 },
+    path: {
+      type: ["string", "null"], maxLength: 2048,
+      pattern: "^vault/(?:books/[a-z0-9][a-z0-9-]{0,79}/00-overview\\.md|papers/[a-z0-9][a-z0-9-]{0,79}\\.md|talks/[a-z0-9][a-z0-9-]{0,79}/talk\\.md)$",
+      description: "Exact project-relative canonical path starting vault/, never an absolute filesystem path; null when not proved read.",
+    },
   },
 };
 
@@ -67,6 +71,11 @@ const recallEnvelope: AnyFunction = ({
   query,
   max_items: maxItems,
   roots: ["vault/books", "vault/papers", "vault/talks"],
+  path_contract: {
+    representation: "project_relative",
+    canonical: {book: "vault/books/{slug}/00-overview.md", paper: "vault/papers/{slug}.md", talk: "vault/talks/{slug}/talk.md"},
+    unproved: null,
+  },
   ...(outlineSubquestions.length > 0
     ? { outline_subquestions: outlineSubquestions }
     : {}),
@@ -81,7 +90,13 @@ only each candidate's canonical product: book
 vault/books/{slug}/00-overview.md, paper vault/papers/{slug}.md, or talk
 vault/talks/{slug}/talk.md. Do not write, edit, dispatch a material stage, search the web, or invent
 an item. Deduplicate by exact kind+slug, order by observed relevance, and return at most
-max_items. A recalled item's path is an exact proved canonical path or explicit null: use a
+max_items. Resolve reads against non-empty CLAUDE_PROJECT_DIR, otherwise specialist cwd.
+Receipt items[].path MUST use the project-relative vault/... spelling in path_contract,
+even if a search or Read tool used or returned an absolute path. Never emit a project-root
+prefix, leading slash, ./, file://, or backslashes in the receipt. This is recall of the
+canonical reading product; source media, prepared recording and transcript availability do
+not determine recall eligibility. The caller observes and admits each candidate separately.
+A recalled item's path is an exact proved canonical path or explicit null: use a
 non-null path only when that product was proved present and read; otherwise return null rather
 than derive or guess it.
 
