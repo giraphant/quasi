@@ -246,10 +246,13 @@ def _validate_request(request):
         raise ValueError('files must be a bounded list of selected originals')
     names = set()
     for item in request['files']:
-        if not isinstance(item, dict) or not {'name', 'url', 'method'} <= set(item) or set(item) - {'name', 'url', 'method', 'source'}:
-            raise ValueError('file requires name/url/method, with optional source override')
+        if not isinstance(item, dict) or not {'name', 'url', 'method', 'title', 'description'} <= set(item) or set(item) - {'name', 'url', 'method', 'title', 'description', 'source'}:
+            raise ValueError('file requires name/url/method/title/description, with optional source override')
         if not isinstance(item['name'], str) or not NAME.fullmatch(item['name']) or len(item['name']) > 160 or item['name'] in names:
             raise ValueError('original filenames must be unique descriptive kebab-case filenames')
+        for field in ('title', 'description'):
+            if not isinstance(item[field], str) or not item[field].strip():
+                raise ValueError(f'original {field} must be a nonblank string')
         names.add(item['name'])
         normalize_web_url(item['url'])
         if item['method'] not in ('download', 'webarchive') or (item['method'] == 'webarchive' and not item['name'].endswith('.webarchive')):
@@ -325,7 +328,8 @@ def collect(root: Path, request: dict) -> dict:
                     output = staged / item['name']
                     try:
                         media, final_url = (_capture if item['method'] == 'webarchive' else _download)(item['url'], output)
-                        asset = ArchiveFile(path='originals/' + item['name'], media_type=media,
+                        asset = ArchiveFile(path='originals/' + item['name'], title=item['title'],
+                            description=item['description'], media_type=media,
                             captured_at=datetime.now(timezone.utc), size=output.stat().st_size,
                             sha256=digest(output), url=final_url, source=item.get('source'))
                         additions.append(asset)
@@ -338,7 +342,7 @@ def collect(root: Path, request: dict) -> dict:
                 if additions:
                     body += '\n## 本地原件\n'
                 for asset in additions:
-                    name = Path(asset.path).stem
+                    name = asset.title.replace('\\', '\\\\').replace('[', '\\[').replace(']', '\\]').replace('\n', ' ')
                     if asset.media_type.startswith('image/'):
                         body += f'\n![{name}]({asset.path})\n'
                     else:

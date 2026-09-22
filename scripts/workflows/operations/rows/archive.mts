@@ -48,7 +48,7 @@ export const archiveOperationRows: OperationRow[] = [
       request_contract: {
         identity: r.identity, topics: r.topics,
         expected_revision: r.collectionObservation?.revision,
-        files: "Ordered selected originals: [{name: descriptive-kebab-case.ext, url, method: download|webarchive, source?: {url,title?}}]. For method=webarchive, name must end in .webarchive (not .html); download keeps the actual file format extension. Membership mode uses [].",
+        files: "Ordered selected originals: [{name: descriptive-kebab-case.ext, url, method: download|webarchive, title: nonblank readable title, description: nonblank content/scope description, source?: {url,title?}}]. For method=webarchive, name must end in .webarchive (not .html); download keeps the actual file format extension. Membership mode uses [].",
         metadata: "Verified creator (string array), date (full publication YYYY-MM-DD only), source (platform/publisher). Omit unknown fields. Inspect publication vs modification evidence; explain absent or partial dates in body. Membership mode uses {}. Existing nonempty values are preserved; conflicting changes stop before publication.",
         body: "New archive.md with H1 and substantive sections per artifact_contract (overview, provenance/coverage, content summary with locators). Explain date evidence or absence. No per-file annotations required. Existing body is preserved by the helper. Membership mode uses an empty string.",
         coverage: "Optional plain-language scope and missing material; empty string is valid. No completeness quota.",

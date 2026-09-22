@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.66.7** (2026-09-22): Require a nonblank title and description for every Archive original in manifest 0.2. Validate acquisition inputs before downloads, retain display metadata in manifests and exact status, and use readable titles for generated Markdown links. Document explicit evidence-based migration of old inventories without renaming or recapturing originals.
+
+- **0.66.7** (2026-09-22): Require a nonblank title and description for every Archive original in manifest 0.2. Validate acquisition inputs before downloads, retain display metadata in manifests and exact status, and use readable titles for generated Markdown links. Document explicit evidence-based migration of old inventories without renaming or recapturing originals.
+
 - **0.66.6** (2026-09-22): Restore readable Archive entries rather than attachment-only displays. New collection requests carry verified source/creator/publication metadata; the helper preserves it and the direct source URL, with creation and capture dates kept separate. Inspect exposes labelled page metadata evidence without guessing publication dates. Canonical producer guidance specifies overview, provenance/coverage and substantive content summaries with locators; unknown publication dates and update-only evidence are explicitly described. Existing lightweight pages remain valid, membership preserves prose, and conflicting metadata stops before publication.
 
 - **0.66.5** (2026-09-22): Preserve Archive source dates during mechanical audit. The legacy paper orphan-field blacklist had removed a schema-valid date from an enriched existing Archive; keep it for Archive as already done for Talk. A real CLI regression verifies date and source prose survive repeated audits.

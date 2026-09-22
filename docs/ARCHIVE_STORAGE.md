@@ -18,7 +18,7 @@ vault/archives/<slug>/
 
 一件 Archive 是一个有边界的材料对象，可包含组图与混合格式。文件名使用有指向的
 kebab-case，顺序编号可选；引用建立后不为调整展示顺序而重命名。没有章节子目录，
-不要求逐图标题或标注。没有原件时可只有 Markdown 与空清单，不创建空 originals 目录。
+每份原件必须有可读标题和简短说明，不要求逐件深入分析。没有原件时可只有 Markdown 与空清单，不创建空 originals 目录。
 
 `archive.md` 是可独立阅读的材料入口。frontmatter 保留 type/title/kind/created，
 来源平台或发布机构 source、材料直接链接 url，以及核实后的 creator/date；themes/topics 按需。
@@ -33,7 +33,7 @@ created 是本库建档日期，date 仅为原材料发布日期。网页采集�
 - **来源与保存**：原标题、日期依据或未知说明、核读与保存范围、语言/版本和缺失限制。
 - **内容与摘录**：足够具体的内容概述、关键事实/方法/条件及来源定位；区分摘要、引文和判断。
 - **关联**：有实质关联时提供 Topic、材料和笔记链接，可省略。
-- **本地原件**：helper 按清单追加陈列，图片嵌入、其他原件用相对链接，无需逐图分析。
+- **本地原件**：helper 按清单追加陈列，图片嵌入、其他原件用相对链接，每份原件有标题和简短说明，无需逐图深入分析。
 
 页面 url 来自同一 identity，与 manifest 共同出处保持一致；source 是面向读者的来源名称，
 manifest 继续管理逐文件原始 URL、异源覆盖及保存记录。初次采集后保留已有正文和元数据；
@@ -45,18 +45,26 @@ manifest 继续管理逐文件原始 URL、异源覆盖及保存记录。初次�
 artifact contract 提供给采集 agent。Markdown、YAML 是纯文本，原件保留各自的二进制格式。
 
 ```yaml
-schema_version: quasi.archive.manifest/0.1
+schema_version: quasi.archive.manifest/0.2
 source:
   url: https://example.org/posts/123
   title: 屏幕维修讨论
 files:
   - path: originals/001-screen-discoloration.jpg
+    title: 屏幕色偏细节
+    description: 讨论中用于展示屏幕色偏现象的局部照片。
+    title: 屏幕色偏细节
+    description: 讨论中用于展示屏幕色偏现象的局部照片。
     media_type: image/jpeg
     captured_at: '2026-09-21T12:00:00+00:00'
     size: 123456
     sha256: <64 位十六进制 SHA-256，实际写入不能使用这个占位符>
     url: https://example.org/uploads/screen.jpg
   - path: originals/screen-removal.mp4
+    title: 屏幕拆卸演示
+    description: 来源页面所附的屏幕拆卸演示视频；未逐帧核读。
+    title: 屏幕拆卸演示
+    description: 来源页面所附的屏幕拆卸演示视频；未逐帧核读。
     media_type: video/mp4
     captured_at: '2026-09-21T12:02:00+00:00'
     size: 456789
@@ -72,7 +80,12 @@ coverage: 收录正文配图与演示；未收录评论。
   Markdown 可以有自己的陈列顺序。
 - `source` 是共同出处；`files[].source` 仅在不同出处时覆盖。`files[].url` 是实际保存的
   原件最终下载地址，不能用 CDN 文件地址替代材料上下文出处。
-- 标题与 source override 可省略；captured_at/size/sha256/media_type/url 由 helper 自动填写。
+- files[].title 与 files[].description 必填且非空，由采集代理据已核读来源或画面填写；
+  title 优先采用原网页/章节标题，description 简述对象、内容或作用，不能仅填文件名或“附件”。
+  source.title 与 source override 仍可省略；captured_at/size/sha256/media_type/url 由 helper 自动填写。
+- 阅读器优先显示 files[].title，并显示 description 作为原件说明；path 继续作为稳定引用键。
+- 0.1 旧清单需核读原件后补齐这两个字段并升级为 0.2，不用文件名自动伪造说明。
+  缺字段或空白说明会使 collection status 不可用；此时应先补齐清单，不重新下载原件。
 - `coverage` 是自由文本；缺失内容是说明而非失败比例。files 可以为空，表示仅保留出处。
 - 不包含流程 cursor、stage、完成率或重试日志。
 
@@ -92,7 +105,7 @@ CLI:
 - `quasi-archive collect --request-file .quasi/temp/UNIQUE.json`：发布原件、清单、陈列页。
   请求为 identity/topics/expected_revision/files/body/coverage，可加 metadata（creator/date/source）；
   metadata 的未知字段省略，membership 使用 {}，旧六键请求仍兼容。files 项为
-  name/url/method（download 或 webarchive）及可选 source。expected_revision 必须来自
+  name/url/method（download 或 webarchive）/title/description 及可选 source。expected_revision 必须来自
   fresh `quasi-status --kind archive` 的 facts.collection.revision。
 - `quasi-archive read --path EXACT.webarchive`：只读输出已保存快照的文本，供 Topic 核读；
   不落地派生产物。图片/PDF 由 specialist Read exact originals；音视频不推断内容。
@@ -118,6 +131,6 @@ URL owner 在锁内再次核对，避免两个 provisional slug 收录同一个 
 最终 topics 含两个专题，两个证据卡引用同一个 archive.md。不要同时维护同一个 Topic
 大纲：本期互斥只保护 Archive 采集，不改变 Topic 自身的单写者合同。
 
-另测一个含组图的帖子：原件有描述性文件名，正文无需逐图说明；manifest 共同出处只写
+另测一个含组图的帖子：原件有描述性文件名，正文无需逐图分析；每个 files 项有可读 title/description，manifest 共同出处只写
 一次，缺失图片仅留下 coverage；在 Marple 按相对路径核对展示和出处。Claude Host 验收
 由使用者执行，本仓库测试覆盖确定性 helper、生成 Workflow 和进程并发边界。

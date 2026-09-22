@@ -311,6 +311,12 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
               "title": "Captured At",
               "type": "string"
             },
+            "description": {
+              "description": "简述原件对象、内容或在材料中的作用；不推断未读媒体内容",
+              "minLength": 1,
+              "title": "Description",
+              "type": "string"
+            },
             "media_type": {
               "minLength": 3,
               "title": "Media Type",
@@ -342,6 +348,12 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
               ],
               "default": null
             },
+            "title": {
+              "description": "可读原件标题，优先使用原网页或章节标题",
+              "minLength": 1,
+              "title": "Title",
+              "type": "string"
+            },
             "url": {
               "maxLength": 4096,
               "minLength": 8,
@@ -352,6 +364,8 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
           },
           "required": [
             "path",
+            "title",
+            "description",
             "media_type",
             "captured_at",
             "size",
@@ -406,8 +420,8 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
           "type": "array"
         },
         "schema_version": {
-          "const": "quasi.archive.manifest/0.1",
-          "default": "quasi.archive.manifest/0.1",
+          "const": "quasi.archive.manifest/0.2",
+          "default": "quasi.archive.manifest/0.2",
           "title": "Schema Version",
           "type": "string"
         },
@@ -436,7 +450,7 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
       "原件缺失只在 coverage 和来源与保存说明；允许链接型空清单，不设完整率门槛",
       "明确已核读、仅保存/链接与未取得的范围；原文摘录、翻译、摘要和研究者判断分别标明，保留章节、步骤、图号或时间戳等可回查定位",
       "概述应让读者不打开每个原件也能理解对象、主要内容与适用范围；列出具体要点和重要限制，不用空泛评价代替内容",
-      "原件由 helper 在本地原件栏目按相对 originals/ 路径陈列，无需逐文件分析或逐图标注；topics 合并保留已有成员"
+      "每份原件的 manifest title/description 必填非空，提供可读标题与简短对象/内容说明；helper 用 title 展示相对 originals/ 链接，无需逐文件深入分析；topics 合并保留已有成员"
     ],
     "h1": "使用 frontmatter.title；新建页面必须有 H1",
     "metadata_lines": [],

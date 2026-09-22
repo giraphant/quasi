@@ -26,7 +26,7 @@ def request(root, *, slug=SLUG, topics=None, files=None):
 
 
 def asset(name='001-screen-discoloration.jpg', url='https://example.org/image.jpg', **kwargs):
-    return {'name': name, 'url': url, 'method': 'download', **kwargs}
+    return {'name': name, 'url': url, 'method': 'download', 'title': 'Screen detail', 'description': 'Detail image from the repair discussion.', **kwargs}
 
 
 @pytest.fixture
@@ -96,7 +96,7 @@ def test_legacy_record_enriches_without_rewriting_body(tmp_path, downloaded):
     result = cli.collect(tmp_path, request(tmp_path, files=[asset()]))
     assert result['status'] == 'complete', result
     assert 'Old prose.' in page.read_text() and '2020-01-01' in page.read_text()
-    assert '![001-screen-discoloration]' in page.read_text()
+    assert '![Screen detail]' in page.read_text()
 
 
 def test_stale_writer_and_same_url_other_slug_do_not_overwrite(tmp_path):
@@ -226,7 +226,7 @@ def test_webarchive_collection_reuses_capture_without_webpage_object(tmp_path, m
             'WebResourceData': b'<html><title>Repair</title><body>Saved source evidence</body></html>'}}))
         return {'status': 'complete'}
     monkeypatch.setattr(webpage, 'capture', capture)
-    item = {'name': 'repair-discussion.webarchive', 'url': URL, 'method': 'webarchive'}
+    item = {'name': 'repair-discussion.webarchive', 'url': URL, 'method': 'webarchive', 'title': 'Repair discussion', 'description': 'Saved discussion page.'}
     result = cli.collect(tmp_path, request(tmp_path, files=[item]))
     assert result['status'] == 'complete', result
     assert len(calls) == 1 and '.quasi/temp/' in str(calls[0])
@@ -346,3 +346,33 @@ def test_inspect_preserves_distinct_date_evidence_without_inventing_date(monkeyp
     assert any('dateModified' in x['value'] for x in evidence if x['field'] == 'json-ld')
     assert any(x.get('context') == 'Comment posted' for x in evidence)
     assert 'date' not in result
+
+
+@pytest.mark.parametrize('field,value', [('title', None), ('description', None), ('title', ''), ('description', '   ')])
+def test_original_display_metadata_required_before_any_download(tmp_path, monkeypatch, field, value):
+    item = asset()
+    if value is None:
+        del item[field]
+    else:
+        item[field] = value
+    monkeypatch.setattr(cli, '_download', lambda *args: pytest.fail('invalid metadata must fail before download'))
+    assert cli.collect(tmp_path, request(tmp_path, files=[item]))['status'] == 'failed'
+    assert not (tmp_path / 'vault').exists()
+
+
+def test_original_display_metadata_roundtrip_and_strict_manifest(tmp_path, downloaded):
+    item = asset(title='背面玻璃', description='后盖拆卸位置的来源配图。')
+    assert cli.collect(tmp_path, request(tmp_path, files=[item]))['status'] == 'complete'
+    directory = tmp_path / 'vault/archives' / SLUG
+    path = directory / 'manifest.yaml'
+    manifest = load_manifest(path)
+    assert manifest.schema_version == 'quasi.archive.manifest/0.2'
+    assert manifest.files[0].title == item['title']
+    assert manifest.files[0].description == item['description']
+    assert '![背面玻璃]' in (directory / 'archive.md').read_text()
+    status = observe_collection(tmp_path, directory)
+    assert status['files'][0]['description'] == item['description']
+    raw = yaml.safe_load(path.read_text())
+    raw['files'][0]['description'] = '  '
+    path.write_text(yaml.safe_dump(raw))
+    assert not observe_collection(tmp_path, directory)['usable']

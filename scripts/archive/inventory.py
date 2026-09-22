@@ -76,7 +76,7 @@ def observe_collection(root: Path, directory: Path) -> dict:
                      and digest(original) == item.sha256)
             result['files'].append({'path': original.relative_to(root).as_posix(),
                                     'present': file_state != 'missing', 'usable': valid,
-                                    'media_type': item.media_type})
+                                    'media_type': item.media_type, 'title': item.title, 'description': item.description})
             usable = usable and valid
         originals = directory / 'originals'
         original_state = path_state(root, originals)

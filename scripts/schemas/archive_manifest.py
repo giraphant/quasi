@@ -16,6 +16,8 @@ class ArchiveSource(BaseModel):
 class ArchiveFile(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     path: str = Field(pattern=r"^originals/[a-z0-9]+(?:-[a-z0-9]+)*\.[a-z0-9]+$")
+    title: str = Field(min_length=1, description="可读原件标题，优先使用原网页或章节标题")
+    description: str = Field(min_length=1, description="简述原件对象、内容或在材料中的作用；不推断未读媒体内容")
     media_type: str = Field(min_length=3)
     captured_at: datetime = Field(strict=False)
     size: int = Field(gt=0)
@@ -23,6 +25,13 @@ class ArchiveFile(BaseModel):
     source: Optional[ArchiveSource] = None
     # Original asset URL is technical provenance, distinct from its page/source.
     url: str = Field(min_length=8, max_length=4096, pattern=r"^https?://")
+
+    @field_validator("title", "description")
+    @classmethod
+    def nonblank_display_text(cls, value):
+        if not value.strip():
+            raise ValueError("original title and description must be nonblank")
+        return value.strip()
 
     @field_validator("captured_at")
     @classmethod
@@ -34,7 +43,7 @@ class ArchiveFile(BaseModel):
 
 class ArchiveManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    schema_version: Literal["quasi.archive.manifest/0.1"] = "quasi.archive.manifest/0.1"
+    schema_version: Literal["quasi.archive.manifest/0.2"] = "quasi.archive.manifest/0.2"
     source: ArchiveSource
     files: list[ArchiveFile] = Field(default_factory=list)
     coverage: str = ""
