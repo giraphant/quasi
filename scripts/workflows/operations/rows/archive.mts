@@ -48,7 +48,7 @@ export const archiveOperationRows: OperationRow[] = [
       request_contract: {
         identity: r.identity, topics: r.topics,
         expected_revision: r.collectionObservation?.revision,
-        files: "Ordered selected originals: [{name: descriptive-kebab-case.ext, url, method: download|webarchive, source?: {url,title?}}]. Membership mode uses [].",
+        files: "Ordered selected originals: [{name: descriptive-kebab-case.ext, url, method: download|webarchive, source?: {url,title?}}]. For method=webarchive, name must end in .webarchive (not .html); download keeps the actual file format extension. Membership mode uses [].",
         body: "Verified context for a new archive.md; no per-file annotations required. Existing body is preserved by the helper. Membership mode uses an empty string.",
         coverage: "Optional plain-language scope and missing material; empty string is valid. No completeness quota.",
       },

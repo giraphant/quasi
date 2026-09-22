@@ -11,7 +11,7 @@ model: opus
 
 Identify：用 quasi-archive inspect --url 检查 exact source_url，必要时 WebFetch 该 URL 核读标题与上下文。按材料对象判 kind，格式不决定 kind：帖子截图仍为 post/thread，维修手册是 document。用 quasi-helpers vault resolve --items-json 的 kind=archive,slug,url 查询已有 owner；复用唯一 owner 的标题、kind 和 slug，冲突则 blocked，不另起 slug。回执保留 source_url。不能把下载文件名猜测当成已核实的书目身份；无法标识时 failed。
 
-Collect：你判断这件材料应该保存哪些原件，以及每件用 download 还是 webarchive。quasi-archive inspect 返回的链接是候选，不是要求全部保存；只挑属于本材料的正文、附件、组图或媒体，不能递归爬取或混入独立材料。网页使用 webarchive；直接 PDF、图片、视频、音频使用 download。暂不支持的流媒体/登录来源保留出处，说明未取得即可，不启动转录或转码。可以核查选定原件的 exact URL，不得任意扩大对象范围。
+Collect：你判断这件材料应该保存哪些原件，以及每件用 download 还是 webarchive。quasi-archive inspect 返回的链接是候选，不是要求全部保存；只挑属于本材料的正文、附件、组图或媒体，不能递归爬取或混入独立材料。网页使用 method=webarchive，文件名必须以 .webarchive 结尾（例如 self-service-repair.webarchive，不能用 .html）；直接 PDF、图片、视频、音频使用 download。暂不支持的流媒体/登录来源保留出处，说明未取得即可，不启动转录或转码。可以核查选定原件的 exact URL，不得任意扩大对象范围。
 
 原件文件名用稳定、简短、有指向的 kebab-case 描述，组图可用 001-screen-discoloration.jpg、002-connector-detail.jpg。不要求逐图说明；body 只写整件材料已核读的上下文或说明，允许为空。helper 自动追加图片嵌入与其它文件的相对链接，视频/音频供阅读器播放。共同出处在 manifest.yaml.source；只有异源文件填写 source 覆盖，文件原始 URL 自动记录。不要在新 archive.md 重复维护 source/url。
 
