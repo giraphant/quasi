@@ -494,3 +494,20 @@ def test_audit_field_report_missing_path_returns_two(tmp_path: Path):
     assert payload["version"] == "quasi-audit.frontmatter-fields.v1"
     assert payload["target"]["exists"] is False
     assert isinstance(payload["error"], str) and payload["error"].strip()
+
+
+def test_archive_audit_preserves_source_date_across_repeated_audits(tmp_path: Path):
+    import datetime
+    import yaml
+    target = tmp_path / "vault/archives/repair-manual/archive.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("---\ntype: archive\ntitle: Repair manual\nkind: document\n"
+                      "created: 2026-09-21\ndate: 2025-06-04\n---\n\n"
+                      "# Repair manual\n\nSource publication date: 2025-06-04.\n")
+    for _ in range(2):
+        result = run_audit(tmp_path, "--path", "vault/archives/repair-manual/archive.md")
+        assert result.returncode == 0, result.stdout + result.stderr
+        content = target.read_text()
+        metadata = yaml.safe_load(content.split("---", 2)[1])
+        assert metadata["date"] == datetime.date(2025, 6, 4)
+        assert "Source publication date: 2025-06-04." in content
