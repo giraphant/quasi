@@ -48,7 +48,7 @@ def test_generated_archive_identify_collect_observe_audit():
 
 def test_archive_membership_merge_and_conflicting_owner_stop():
     value = archive_input(usable=True, topics=["older-topic"])
-    result = run_workflow_entry("archive", value, [COMPLETE])
+    result = run_generated_workflow("archive", value, [COMPLETE])
     assert result["value"]["terminal"] == "needs_observation"
     assert result["agentCalls"] == 1
     value["observation"]["identity"]["url"] = "https://other.example.org/"

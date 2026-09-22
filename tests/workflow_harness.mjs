@@ -40,7 +40,16 @@ if (request.action === "run-generated") {
   // entry that depends on one passes in test and fails in the sandbox.
   const execute = runInNewContext(
     `(async (agent, pipeline, args) => {\n${body}\n})`,
-    Object.create(null),
+    {
+      // Host replay forbids reading wall-clock time; explicit date validation is OK.
+      Date: class WorkflowDate extends Date {
+        constructor(...args) {
+          if (!args.length) throw new Error("new Date() is unavailable in workflow scripts");
+          super(...args);
+        }
+        static now() { throw new Error("Date.now() is unavailable in workflow scripts"); }
+      },
+    },
   );
   const { host, report } = runtime();
   const value = await execute(host.agent, host.pipeline, request.input);

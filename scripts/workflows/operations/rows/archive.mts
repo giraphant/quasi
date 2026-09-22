@@ -35,7 +35,7 @@ export const archiveOperationRows: OperationRow[] = [
     envelope: (_c, r) => ({
       schema_version: "quasi.stage.request/0.2", operation: "archive.collect", stage: "Acquire", effect: "writer",
       material_key: r.materialKey, goal: "Establish the exact Archive record with honest source coverage and merge the requested Topic membership.",
-      identity: r.identity, topics: r.topics, created_date: r.createdDate,
+      identity: r.identity, topics: r.topics,
       exact_output: r.output, exact_manifest: r.manifest, originals_directory: r.originals,
       output_observation: r.outputObservation, collection_observation: r.collectionObservation,
       mode: r.mode, diagnostics: r.diagnostics, expected_frontmatter: r.expectedFrontmatter ?? null,

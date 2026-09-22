@@ -90,7 +90,6 @@ export async function runArchivePlan(
     const collected = await dispatch("archive.collect", {
       identity,
       topics,
-      createdDate: new Date().toISOString().slice(0, 10),
       outputObservation: canonical,
       expectedFrontmatter: observed,
       collectionObservation: collection,
