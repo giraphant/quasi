@@ -53,16 +53,12 @@ files:
   - path: originals/001-screen-discoloration.jpg
     title: 屏幕色偏细节
     description: 讨论中用于展示屏幕色偏现象的局部照片。
-    title: 屏幕色偏细节
-    description: 讨论中用于展示屏幕色偏现象的局部照片。
     media_type: image/jpeg
     captured_at: '2026-09-21T12:00:00+00:00'
     size: 123456
     sha256: <64 位十六进制 SHA-256，实际写入不能使用这个占位符>
     url: https://example.org/uploads/screen.jpg
   - path: originals/screen-removal.mp4
-    title: 屏幕拆卸演示
-    description: 来源页面所附的屏幕拆卸演示视频；未逐帧核读。
     title: 屏幕拆卸演示
     description: 来源页面所附的屏幕拆卸演示视频；未逐帧核读。
     media_type: video/mp4
