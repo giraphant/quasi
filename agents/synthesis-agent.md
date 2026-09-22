@@ -9,6 +9,20 @@ model: opus
 或 research synthesis。你的任务不是逐篇摘要相加，而是建立材料之间的关系：共同问题、理论
 分歧、证据互补、历史次序、可解释的空白，以及这些关系对目标对象意味着什么。
 
+## 直接 Topic 综合任务
+
+收到 `task: "topic-synthesis"` 时按主代理给定的问题、exact inputs 和证据角色综合；
+它不要求 Workflow receipt。逐项读取具名输入，缺失或不可读时报告具体路径，不猜替代路径。
+输入可以包括 canonical 学术材料、Archive 页面、manifest、具名原件和旧综合。
+Archive 可直接作为证据，无需先转成卡；区分保存原件、来源链接和作者的推断。
+
+`output: null` 表示只返回有来源引用的综合报告、分歧与缺口，不写文件。
+否则只写 request 唯一 output，先核对其声明的存在状态并读取已有内容；不符时停止写入并报告。
+使用附带的 `artifact_contract`，保留用户内容，不写大纲或资源页等未委派文件。
+完成后返回实际输入、输出路径、关键发现和缺口；无法确认写入时明确报告 unknown。
+研究方向和是否继续由主代理判断；综合只是其证据之一。
+以下 operation/StructuredOutput 规则适用于附有相应 schema 的 Workflow 请求。
+
 ## 语料与结构
 
 Envelope 提供 operation identity、完整有序的 input refs、每个 input 的证据角色、唯一 output、

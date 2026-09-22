@@ -57,7 +57,7 @@ const WORKFLOWS = [
 ].map(({ name, ...config }) => ({
   name,
   entry: join(WORKFLOW_SOURCE_ROOT, `${name}.entry.mts`),
-  output: join(ROOT, "workflows", `${name}.mjs`),
+  output: join(ROOT, name === "topic" ? "deprecated/workflows" : "workflows", `${name}.mjs`),
   ...config,
 }));
 const CLAUDE_WORKFLOW_MAX_BYTES = 512 * 1024;
@@ -177,7 +177,7 @@ return await __quasiWorkflow.run({ agent, pipeline }, __quasiArgs)
     process.stdout.write(`${name} workflow bundle is current\n`);
   } else {
     await writeFile(output, generated, "utf8");
-    process.stdout.write(`generated workflows/${name}.mjs\n`);
+    process.stdout.write(`generated ${name === "topic" ? "deprecated/workflows" : "workflows"}/${name}.mjs\n`);
   }
 }
 
@@ -227,6 +227,13 @@ async function renderArtifactContractModule() {
     },
   );
   const contracts = JSON.parse(stdout);
+  const topicSkillContract = join(ROOT, "skills/research-topic/artifact-contract.json");
+  const topicSkillJson = JSON.stringify(contracts.topic, null, 2) + "\n";
+  if (CHECK) {
+    await assertCurrent(topicSkillContract, topicSkillJson, "Topic Skill contract is stale; run npm run build:workflows");
+  } else {
+    await writeFile(topicSkillContract, topicSkillJson, "utf8");
+  }
   const { stdout: topicOutlineStdout } = await execFileAsync(
     python,
     [exporter, "--topic-outline"],

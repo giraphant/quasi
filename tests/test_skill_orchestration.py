@@ -120,8 +120,8 @@ def research_topic_workflow_manifest() -> dict[str, object]:
             value = json.loads(source)
         except json.JSONDecodeError:
             continue
-        if isinstance(value, dict) and set(value) == {"workflow_input"}:
-            contract = value["workflow_input"]
+        if isinstance(value, dict) and set(value) == {"research_driver"}:
+            contract = value["research_driver"]
             if isinstance(contract, dict):
                 return contract
     raise AssertionError("research-topic has no closed invocation manifest")
@@ -365,29 +365,20 @@ def test_collect_material_verifies_current_paper_ocr_generation_not_legacy() -> 
     }
 
 
-def test_research_topic_routes_to_its_generated_named_entry() -> None:
+def test_research_topic_delegation_targets_and_material_driver() -> None:
     manifest = research_topic_workflow_manifest()
-    assert manifest == {
-        "entry": "$CLAUDE_PLUGIN_ROOT/workflows/topic.mjs",
-        "required": [
-            "query", "observation", "options", "seed_materials",
-            "child_observations",
-        ],
-        "optional": ["resume"],
-        "query_keys": ["slug", "description"],
-        "option_keys": ["maxRounds", "maxCardsPerRound"],
-        "seed_kinds": ["paper", "book", "talk"],
-        "resume_required": ["resume_seed"],
-        "resume_optional": ["userDecision"],
-    }
-    entry = str(manifest["entry"]).removeprefix("$CLAUDE_PLUGIN_ROOT/")
-    assert (ROOT / entry).is_file()
-    text = (ROOT / "skills" / "research-topic" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    assert "quasi-status --kind topic" in text
-    assert "--scan" not in text
-    assert 'stage:"' not in text
+    assert manifest["owner"] == "main"
+    assert manifest["max_inflight_materials"] == 5
+    for role in ("search_agent", "synthesis_agent"):
+        agent = str(manifest[role]).removeprefix("quasi:")
+        assert (ROOT / "agents" / f"{agent}.md").is_file()
+    for key in ("material_driver", "artifact_contract"):
+        path = str(manifest[key]).removeprefix("$CLAUDE_PLUGIN_ROOT/")
+        assert (ROOT / path).is_file()
+    assert not (ROOT / "workflows/topic.mjs").exists()
+    from scripts.schemas.contracts import artifact_contract_for_type
+    contract = ROOT / str(manifest["artifact_contract"]).removeprefix("$CLAUDE_PLUGIN_ROOT/")
+    assert json.loads(contract.read_text()) == artifact_contract_for_type("topic")
 
 
 def test_skills_never_invoke_agent_owned_capabilities() -> None:

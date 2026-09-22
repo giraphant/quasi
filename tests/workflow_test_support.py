@@ -64,7 +64,7 @@ def run_generated_workflow(
     return _run_harness(
         {
             "action": "run-generated",
-            "source": f"workflows/{entry}.mjs",
+            "source": f"{'deprecated/workflows' if entry == 'topic' else 'workflows'}/{entry}.mjs",
             "input": value,
             "outputs": outputs or [],
         }

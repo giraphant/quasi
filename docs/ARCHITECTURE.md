@@ -88,14 +88,13 @@ order, carry, alias, or next-operation graph.
 
 `scripts/workflows/operations/rows/*.mts` owns operation-specific context derivation and
 request/receipt behavior. Eight material-local catalogs expose only the rows needed by
-Paper, Book, Talk, Translation, Author, Topic, Archive, or Webpage. Their named plans own progression,
-joins, checkpoints, and bounded repair; Author and Topic compose leaf plans through
-explicit host-observation handshakes. `scripts/build-workflows.mjs` verifies each fixed
+Paper, Book, Talk, Translation, Author, Archive, or Webpage, plus the quarantined legacy Topic regression catalog. Their named plans own progression,
+joins, checkpoints, and bounded repair; Author composes leaf plans through explicit host-observation handshakes. Topic research is controlled by the main agent using its Skill. `scripts/build-workflows.mjs` verifies each fixed
 entry's metadata and `materialKind`, generated-artifact currency, and bundle ABI,
 imports, and size. Focused pytest checks prove operation-catalog/local-row alignment.
 The pinned esbuild dependency compiles the editable `.mts` entries into the
-committed `workflows/{paper,book,talk,translation,author,topic,webpage,archive}.mjs` bundles;
-`npm run check:workflows` also runs strict `tsc --noEmit`.
+committed `workflows/{paper,book,talk,translation,author,webpage,archive}.mjs` bundles;
+`npm run check:workflows` also runs strict `tsc --noEmit`. The former Topic bundle is generated only under `deprecated/workflows/` for regression reference, not loaded as an active plugin entry. The same build exports `skills/research-topic/artifact-contract.json` from the canonical schema for direct Topic writers.
 
 `collect-material` drives each leaf with one exact pre-status and a fixed kind→entry
 mapping, except that an initial Archive or Webpage URL has no canonical route: it starts with the
@@ -145,8 +144,8 @@ so unrelated subagents retain Claude Code's default row.
 | agent | depends on |
 |---|---|
 | `metadata-agent` | `quasi-search` + vault resolve → one canonical identity and local owner |
-| `discovery-agent` | `quasi-search book|paper` → bounded Author/Topic/citation candidates |
-| `steer-agent` | topic outline page + `quasi-search` |
+| `discovery-agent` | `quasi-search book|paper|kagi`, scoped local recall and WebFetch → bounded candidates |
+| `steer-agent` | legacy Topic regression specialist; no active Skill dispatch |
 | `webcard-agent` | readonly source discovery via `quasi-search kagi` + WebFetch; exact Archive reads → topic `cards/` page |
 | `archive-agent` | exact URL + Archive URL/slug resolve → one canonical Archive with provenance and Topic tags |
 | `download-agent` | `quasi-download`, direct AA search import |
@@ -166,7 +165,7 @@ so unrelated subagents retain Claude Code's default row.
 - `download-agent` reconciles or accepts one exact Book/Paper source through `quasi-download`; it returns that material's direct Acquire receipt, including a standard `needs_input` terminal for a Book year gate, and does not own caller manifests. A failed download preserves `failure_reason` and per-source `attempts` in its receipt.
 - `extract-agent` owns Paper/Book Prepare judgement and local recovery over caller-named refs. It invokes deterministic `quasi-extract` transactions; those CLI transactions own chapter files and `processing/chapters/{slug}/manifest.json`.
 - `analyse-agent`, `synthesis-agent`, `proofread-agent`, and `citecheck-agent` write only the exact product path assigned by the caller.
-- `steer-agent` owns `vault/topics/{slug}/02-outline.md` (the topic research outline; users may hand-edit it between runs) and returns sub-question-targeted candidates; it writes nothing else.
+- The research main agent owns Topic outline/resources updates by batch, preserving user edits. It may delegate one exact output to synthesis; one writer owns each shared file. Independent synthesis reports may run in parallel without writes.
 - `webcard-agent` discovers source URLs readonly for one topic `web_task`; after Archive collection it turns the exact Archive records into one evidence card at the caller-named `vault/topics/{slug}/cards/{card-slug}.md`; it writes nothing else, and returns `status: empty` rather than writing a card it could not verify. Cards travel on their own `cards` channel (outline `subquestions[].cards`, synth `card_paths`) and never enter the `book|paper|talk` corpus table.
 - `audit-agent` runs `quasi-audit --path`; it may apply local mechanical fixes but does not own workflow state.
 - `transcribe-agent` and `translate-agent` own Talk and Translation Prepare with the same terminal shape, preserving media reconciliation and fenced-generation publication contracts. Video Talks prepare `vault/talks/{slug}/recording.mp4` by default; when `prepare_media:true`, this file and its sidecar are part of Prepare and material completion, exposed by `quasi-status` as `facts.prepared`.
@@ -185,9 +184,10 @@ active skills.
 `collect-material` owns the current Paper/Book/Author/Talk/Translation/Webpage/Archive entry. Its six
 leaf kinds route to named material Workflows; the named Author Workflow composes the
 Paper and Book entries after the Skill supplies fresh exact statuses for its returned routes.
-`research-topic` supplies exact observations and typed user decisions to the named Topic
-Workflow. That entry owns the iterative Topic state machine and composes the same leaf entries
-without duplicating material logic in the Skill. `finalise-draft`
+`research-topic` guides the main agent's research loop. It delegates bounded local/web/academic
+searches to discovery and exact-input synthesis to synthesis-agent, selects material candidates,
+drives the same leaf entries using collect-material, reads returned materials as needed, and decides
+the next round. Synthesis is evidence, not a mandatory decision gate. `finalise-draft`
 owns interactive proofreading, citation review, and bibliography closure.
 
 Archive has a named URL collection Workflow. It owns `vault/archives/{slug}/archive.md`,
@@ -203,18 +203,14 @@ an exact observation request; completion requires fresh usable metadata/inventor
 a clean audit. Legacy link records are enriched on next collection. Video/audio are
 saved for playback only. Storage and Marple resolution: `docs/ARCHIVE_STORAGE.md`.
 
-Topic web evidence follows `topic.discover-archives` → Archive identification/collection
-→ fresh Archive status → `topic.webcard` → outline checkpoint. Discovery is readonly and
-returns at most eight distinct source URLs for one card; the bound is on composed
-materials, not searches. Its one-shot `archive_work` continuation transports the exact
-sources and task without rediscovery or a durable cursor. Every Archive must include
-the current Topic in its merged `topics` before card creation. New cards store exact
-canonical paths in `archives` and cite them in the body. Card writing has no network
-capability in its request; it receives exact manifest and original refs from fresh status.
-Images/PDF can be read directly and `quasi-archive read` projects a saved Webarchive
-without writing extraction artifacts. Audio/video are not transcribed. Missing or invalid linked Archives, or removed Topic membership,
-make a linked card unusable in Topic status. Existing cards without Archive links remain
-legacy-readable. Book/Paper/Talk stay on the academic corpus channel.
+Topic non-academic sources enter Archive through the existing leaf Workflow with Topic membership.
+Fresh material status proves collection; a card is optional. Archive pages, manifests and selected
+originals can be direct synthesis inputs. Main updates resources and outline once a useful batch
+is available; there is no per-material Topic checkpoint, recall restart, or mandatory Steer.
+Searches on independent lines can run concurrently, as can synthesis and unrelated discovery.
+At most five distinct materials are in flight. Cross-process research partitions sources and shared
+output ownership before launch. Other participants return reports to the single shared-page writer.
+Existing outline/items/cards and all saved Topic pages remain readable without migration.
 
 Journal has a schema but no active or archived workflow; its future entry will
 be a thin collection loop over Paper receipts.
@@ -236,15 +232,14 @@ Webpage route for the existing direct-leaf exact-status pump. A complete result 
 reported only after fresh Webpage status proves its snapshot, prepared, and canonical
 refs equal, present, and usable.
 When Paper Search instead proves that the requested item itself is a normal public web
-article, its typed Webpage next route enters that same provisional flow. Author and Topic
-surface the redirect as an unsupported child type rather than silently changing membership.
+article, its typed Webpage next route enters that same provisional flow. Author surfaces the redirect as an unsupported child type. The Topic main agent decides whether the redirected source belongs in its Archive collection.
 
 For 2–32 top-level leaf materials, the skill preserves input order, coalesces only
 byte-identical known material keys before launch, and drives at most five independent
 named Workflows concurrently. Canonical owner collisions discovered after Search stay
 visible for manual resolution; there is no reservation, lock, or cleanup subsystem.
 
-Topic synthesis produces only `00-overview.md` and `01-resources.md` beside the
+Topic synthesis normally produces `00-overview.md` and `01-resources.md` beside the
 user-editable `02-outline.md`; per-subquestion dossier pages are retired as a
 product decision.
 

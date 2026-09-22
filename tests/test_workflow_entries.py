@@ -236,7 +236,7 @@ ABSENT_SANDBOX_GLOBALS = (
 def test_generated_named_workflow_reaches_for_no_absent_sandbox_global(
     entry: str,
 ) -> None:
-    source = (ROOT / "workflows" / f"{entry}.mjs").read_text()
+    source = (ROOT / ("deprecated/workflows" if entry == "topic" else "workflows") / f"{entry}.mjs").read_text()
 
     assert [name for name in ABSENT_SANDBOX_GLOBALS if name in source] == []
 

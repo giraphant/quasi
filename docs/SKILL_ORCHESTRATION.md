@@ -64,7 +64,6 @@ workflows/book.mjs
 workflows/talk.mjs
 workflows/translation.mjs
 workflows/author.mjs
-workflows/topic.mjs
 workflows/webpage.mjs
 workflows/archive.mjs
 ```
@@ -87,8 +86,6 @@ The public result is `quasi.material.result/0.1`:
   the last typed result and exact status;
 - `needs_input` — present the typed gate, refresh its routes, and attach only the
   gate-owned decision;
-- `incomplete` — report Topic's ordered bounded pending work without calling it
-  saturated; and
 - `blocked|failed` — present the typed issue and stop.
 
 One result is consumed once. A fresh ordinary invocation reconstructs from disk;
@@ -125,9 +122,7 @@ material keys concurrently. One named Workflow owns each key. Archive and Webpag
 URL intake is followed by the same direct-leaf exact-status resume: copy its opaque
 `resume_seed.{seed,options}` byte-for-byte, use the returned canonical route observation,
 and retain the two unchanged-observation stop rule. Only Book fans out
-inside a Workflow, using one host pipeline over disjoint chapter outputs. Topic
-uses stable sequential work with immediate outline checkpoints; Author composes
-its frozen child list sequentially.
+inside a Workflow, using one host pipeline over disjoint chapter outputs. Author composes its frozen child list sequentially. Topic uses main-agent batch decisions and independent material concurrency.
 
 Unknown writer outcomes stop the invocation. A `needs_observation` result is not an
 unknown writer outcome: the Skill resumes it with fresh exact status and the current
@@ -148,3 +143,13 @@ When changing a Skill or Workflow:
 6. Update routing, dead-name, bundle-parity, and exact-status tests.
 7. Run `npm run build:workflows`, `npm run check:workflows`, focused tests, and
    the full suite.
+
+## Topic research driver
+
+research-topic is an agent-led research loop. Main reads existing pages, delegates independent
+search questions to discovery-agent, selects and drives materials through collect-material,
+reads returned sources, and delegates bounded synthesis. Direct search/synthesis requests have
+explicit scope and outputs but no Stage receipt. Main decides continuation from the source material
+and reports together. It updates shared pages by batch with one writer per file, reading the
+generated Topic artifact contract before writing. Existing Topic status is informative, not a
+progress token. The old Topic controller is generated under deprecated/ only for regression reference.

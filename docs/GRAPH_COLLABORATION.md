@@ -9,7 +9,7 @@ Agent contracts should contain only what their executing model needs.
 1. **Skills** (`skills/*/SKILL.md`) recognise user intent, construct one closed
    Workflow input, obtain exact `quasi-status` observations requested by the
    Workflow, present typed gates, and verify final artifacts.
-2. **Named Workflows** (`workflows/{paper,book,talk,translation,author,topic,webpage,archive}.mjs`)
+2. **Named Workflows** (`workflows/{paper,book,talk,translation,author,webpage,archive}.mjs`)
    own fixed material progression. Their editable TypeScript plans live under
    `scripts/workflows/`; material-local catalogs select only their own operation
    rows.
@@ -34,7 +34,7 @@ builds and `quasi-status`; it does not define a stage graph.
   `complete|needs_input|blocked|failed` Stage terminal is not reinterpreted by a
   plan because another method looks preferable.
 - **The named plan owns progression.** Paper, Book, Talk, Translation, Author,
-  and Topic each have one explicit plan. There is no universal mode engine,
+  each have one explicit plan. Topic research progression belongs to the main agent. There is no universal mode engine,
   runtime stage router, or durable Workflow cursor.
 
 ## Public and internal results
@@ -46,7 +46,6 @@ material-level terminal:
 - `needs_observation`, with exact routes and one opaque continuation;
 - `needs_input`, with a typed gate and, for composed leaf gates, the effective
   continuation;
-- `incomplete`, only for a bounded Topic result with ordered pending work; or
 - `blocked|failed`, with one typed issue.
 
 Inside a plan, each prepared operation returns `quasi.stage.receipt/0.3` with
@@ -58,12 +57,10 @@ still running is provider-level correction, not a new operation dispatch.
 - One named invocation owns one logical material. Only Book uses host
   `pipeline()` internally, for chapter outputs whose exact write targets are
   disjoint.
-- Author composes Paper and Book plans. Topic composes Paper, Book, and Talk
-  plans plus Archive collection and Topic-owned rows. Non-academic source URLs are collected as Archives before cards; card writing reads exact Archives and never creates Webpage owners. Any named Workflow may request fresh exact host
-  observations through `needs_observation`; the Skill copies the opaque continuation
-  back unchanged. Complete returned status observations for the same routes advance only
-  when they differ byte-for-byte; it stops after two consecutive byte-for-byte identical
-  recovery observations.
+- Author composes Paper and Book plans. Topic's Skill instead guides the main agent to
+  delegate search and synthesis, select candidates, compose existing material Workflows,
+  and judge the next batch. Archive collection does not require evidence cards.
+  Leaf continuations retain their exact observation and typed-gate protocol.
 - Unknown writer outcomes stop. A `needs_observation` recovery refreshes status for the
   same Workflow; it never blindly replays the writer.
 - A Skill may run different top-level material Workflows concurrently after

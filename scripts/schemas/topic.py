@@ -3,7 +3,7 @@
 frontmatter 需 type + kind + title(title 为人读主题标题,与 H1 一致);
 文件夹 slug 仍是稳定身份键。
 成员关系反向挂在实体的 `topics: [slug]` 上(见 paper/book/chapter/author)。
-outline 页(02-outline.md)是 steer-agent 维护的研究大纲状态,用户可手改;
+outline 页(02-outline.md)由研究主代理按批次维护,用户可手改;
 card 页(cards/{card-slug}.md)是 webcard-agent 写的圈外证据卡。
 """
 
