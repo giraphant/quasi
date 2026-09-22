@@ -52,7 +52,8 @@ def test_originals_manifest_inheritance_and_display(tmp_path, downloaded):
     assert all(x.sha256 and x.captured_at.tzinfo for x in manifest.files)
     text = (directory / 'archive.md').read_text()
     assert '![' in text and '](originals/003-screen-removal.mp4)' in text
-    assert 'url:' not in text and 'source:' not in text
+    assert read_frontmatter(directory / 'archive.md').frontmatter['url'] == URL
+    assert '# iPhone screen repair' in text and '## 本地原件' in text
     assert not (directory / 'derived').exists()
     status = archive_status(tmp_path, SLUG)
     assert status['facts']['collection']['usable']
@@ -297,3 +298,51 @@ def test_collect_cli_request_uses_project_root_and_reports_json(tmp_path, monkey
     report = json.loads(capsys.readouterr().out)
     assert report['path'] == f'vault/archives/{SLUG}/archive.md'
     assert report['revision'] == archive_status(tmp_path, SLUG)['facts']['collection']['revision']
+
+
+def test_verified_metadata_is_saved_and_membership_preserves_it(tmp_path):
+    value = request(tmp_path)
+    value['metadata'] = {'source': 'Repair Forum', 'creator': ['Original author'], 'date': '2024-06-02'}
+    assert cli.collect(tmp_path, value)['status'] == 'complete'
+    page = tmp_path / 'vault/archives' / SLUG / 'archive.md'
+    before = read_frontmatter(page)
+    assert str(before.frontmatter['date']) == '2024-06-02'
+    assert before.frontmatter['source'] == 'Repair Forum'
+    assert before.frontmatter['creator'] == ['Original author']
+    followup = request(tmp_path, topics=['another'])
+    followup.update(metadata={}, body='', coverage='')
+    assert cli.collect(tmp_path, followup)['status'] == 'complete'
+    after = read_frontmatter(page)
+    assert after.body == before.body
+    assert after.frontmatter['date'] == before.frontmatter['date']
+    conflict = request(tmp_path)
+    conflict['metadata'] = {'date': '2025-01-01'}
+    saved = page.read_bytes()
+    assert cli.collect(tmp_path, conflict)['code'] == 'archive.conflict'
+    assert page.read_bytes() == saved
+
+
+@pytest.mark.parametrize('metadata', [{'date': '2024'}, {'created': '2024-01-01'}, {'source': None}, {'creator': 'Author'}])
+def test_invalid_source_metadata_fails_before_publication(tmp_path, metadata):
+    value = request(tmp_path)
+    value['metadata'] = metadata
+    assert cli.collect(tmp_path, value)['status'] == 'failed'
+    assert not (tmp_path / 'vault').exists()
+
+
+def test_inspect_preserves_distinct_date_evidence_without_inventing_date(monkeypatch):
+    class Response:
+        headers = {'Content-Type': 'text/html'}
+        url = URL
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def iter_content(self, size):
+            yield b'<html><title>Repair</title><meta property="article:published_time" content="2024-03-04T12:00:00Z"><meta property="article:modified_time" content="2025-02-01"><script type="application/ld+json">{"@type":"Article","datePublished":"2024-03-04","dateModified":"2025-02-01","author":{"name":"Alice"}}</script><time datetime="2026-01-02">Comment posted</time></html>'
+    monkeypatch.setattr(cli, 'response', lambda url: Response())
+    result = cli.inspect(URL)
+    evidence = result['metadata_evidence']
+    assert evidence[0]['field'] == 'article:published_time'
+    assert evidence[1]['field'] == 'article:modified_time'
+    assert any('dateModified' in x['value'] for x in evidence if x['field'] == 'json-ld')
+    assert any(x.get('context') == 'Comment posted' for x in evidence)
+    assert 'date' not in result

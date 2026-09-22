@@ -20,10 +20,24 @@ vault/archives/<slug>/
 kebab-case，顺序编号可选；引用建立后不为调整展示顺序而重命名。没有章节子目录，
 不要求逐图标题或标注。没有原件时可只有 Markdown 与空清单，不创建空 originals 目录。
 
-`archive.md` 保留 type/title/kind/created/themes/topics 等材料元数据；新采集的出处以
-manifest 为权威，不再重复写 source/url。旧记录里的 source/url 继续有效且不强制迁移。
-正文自由编排，图片用 `![可读名称](originals/文件.jpg)`，其它原件用相对 Markdown 链接。
-初次采集 helper 按清单顺序追加陈列；后续由用户自由排列。共同说明可有可无。
+`archive.md` 是可独立阅读的材料入口。frontmatter 保留 type/title/kind/created，
+来源平台或发布机构 source、材料直接链接 url，以及核实后的 creator/date；themes/topics 按需。
+created 是本库建档日期，date 仅为原材料发布日期。网页采集必须查找可见日期和页面元数据：
+有明确完整发布日期才填 date；只有更新日期、部分日期或没有日期时，正文据实说明，不补造日期。
+更新日期不冒充发布日期，实际保存时间来自 manifest 的 captured_at。
+
+新建正文使用以下栏目（旧轻量记录继续兼容，不新增格式验收关卡）：
+
+- H1：材料标题。
+- **材料概况**：材料对象、产生语境、用途、适用型号/版本，原作或转载/节选关系。
+- **来源与保存**：原标题、日期依据或未知说明、核读与保存范围、语言/版本和缺失限制。
+- **内容与摘录**：足够具体的内容概述、关键事实/方法/条件及来源定位；区分摘要、引文和判断。
+- **关联**：有实质关联时提供 Topic、材料和笔记链接，可省略。
+- **本地原件**：helper 按清单追加陈列，图片嵌入、其他原件用相对链接，无需逐图分析。
+
+页面 url 来自同一 identity，与 manifest 共同出处保持一致；source 是面向读者的来源名称，
+manifest 继续管理逐文件原始 URL、异源覆盖及保存记录。初次采集后保留已有正文和元数据；
+补充已知元数据只填空缺，遇到已有不同值先明确协调，不静默覆盖。
 
 ## manifest.yaml
 
@@ -70,13 +84,14 @@ Marple 可将 Markdown 相对链接解析到 files[].path，以 MIME 决定图�
 ## 采集与并发
 
 Topic 只读发现材料 → Archive agent 检查 exact URL 与对象内附件 → 选择原件 →
-`quasi-archive collect` → fresh Archive status → Topic 证据卡。
+`quasi-archive collect` → fresh Archive status → Topic 核读/综合（证据卡按需）。
 
 CLI:
 
-- `quasi-archive inspect --url URL`：只读检查内容类型、标题和对象内候选链接；不自动递归。
+- `quasi-archive inspect --url URL`：只读检查内容类型、标题、带字段标签的日期/作者元数据证据和对象内候选链接；不自动递归。
 - `quasi-archive collect --request-file .quasi/temp/UNIQUE.json`：发布原件、清单、陈列页。
-  请求闭合为 identity/topics/expected_revision/files/body/coverage；files 项为
+  请求为 identity/topics/expected_revision/files/body/coverage，可加 metadata（creator/date/source）；
+  metadata 的未知字段省略，membership 使用 {}，旧六键请求仍兼容。files 项为
   name/url/method（download 或 webarchive）及可选 source。expected_revision 必须来自
   fresh `quasi-status --kind archive` 的 facts.collection.revision。
 - `quasi-archive read --path EXACT.webarchive`：只读输出已保存快照的文本，供 Topic 核读；

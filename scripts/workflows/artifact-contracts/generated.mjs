@@ -426,19 +426,59 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
     "source_inheritance": "files[].source overrides source; files[].url is the saved asset URL"
   },
   "document": {
-    "additional_h2": true,
+    "additional_h2": false,
     "evidence_rules": [
       "一件 Archive 对应一件材料，kind 描述对象而非保存格式",
-      "archive.md 是自由陈列页；用相对 originals/ 路径嵌图或链接原件，无需逐文件标注",
-      "manifest.yaml 记录共同出处与有序文件清单，单文件 source 仅覆盖例外；元数据不重复出处",
-      "原件缺失只在 coverage 说明；允许链接型空清单，不要求完整率或固定栏目",
-      "明确本次已读取、仅链接与未取得的范围，区分摘录和摘要",
-      "未知可选字段省略，日期不补造；topics 合并保留已有成员"
+      "新建正文包含材料概况、来源与保存、内容与摘录；按下列栏目语义编撰，不能只给一句简介和附件列表。旧轻量记录仍可读取，不强制迁移或阻断收录",
+      "frontmatter.source 是来源平台/机构，url 是材料直接链接，creator 是已核实作者或发布者；created 是建档日期，date 仅为已核实的原材料完整发布日期",
+      "网页必须检查可见日期及页面元数据的发布日期证据；更新日期单独在来源与保存说明，不冒充发布日期。查无发布日期则省略 date 并说明未找到；部分日期只写正文，禁止用抓取时间、版权年份或评论日期补造",
+      "manifest.yaml 记录共同出处与有序文件清单，单文件 source 仅覆盖例外；页面 url 与共同出处保持同一材料，不把 CDN 资源 URL 当材料来源",
+      "原件缺失只在 coverage 和来源与保存说明；允许链接型空清单，不设完整率门槛",
+      "明确已核读、仅保存/链接与未取得的范围；原文摘录、翻译、摘要和研究者判断分别标明，保留章节、步骤、图号或时间戳等可回查定位",
+      "概述应让读者不打开每个原件也能理解对象、主要内容与适用范围；列出具体要点和重要限制，不用空泛评价代替内容",
+      "原件由 helper 在本地原件栏目按相对 originals/ 路径陈列，无需逐文件分析或逐图标注；topics 合并保留已有成员"
     ],
-    "h1": "",
+    "h1": "使用 frontmatter.title；新建页面必须有 H1",
     "metadata_lines": [],
-    "section_order": [],
-    "sections": []
+    "section_order": [
+      "材料概况",
+      "来源与保存",
+      "内容与摘录",
+      "关联",
+      "本地原件"
+    ],
+    "sections": [
+      {
+        "description": "说明材料对象、作者/发布背景、用途、适用型号/版本或讨论语境；是原作、转载、截图还是节选。",
+        "h2": "材料概况",
+        "kind": "freeform",
+        "required": false
+      },
+      {
+        "description": "原标题和出处定位；发布日期的依据、单独的更新日期或未找到日期的说明；本次已核读/保存范围、缺失与语言/版本限制。保存时间见 manifest，不能与 created/date 混同。",
+        "h2": "来源与保存",
+        "kind": "freeform",
+        "required": false
+      },
+      {
+        "description": "用具体段落或要点归纳材料主旨、结构和关键信息（例如维修对象、方法、工具、接口/软件条件和限制），附来源定位；直接摘录按需，不编造逐字引文或未读音视频内容。",
+        "h2": "内容与摘录",
+        "kind": "freeform",
+        "required": false
+      },
+      {
+        "description": "有实质关联时链接 Topic、其他材料或笔记，并简述关系；无关联可省略。",
+        "h2": "关联",
+        "kind": "freeform",
+        "required": false
+      },
+      {
+        "description": "helper 追加的图片展示与其他原件链接，不要求逐一分析。",
+        "h2": "本地原件",
+        "kind": "freeform",
+        "required": false
+      }
+    ]
   },
   "frontmatter": {
     "field_order": [
@@ -458,6 +498,7 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
       "additionalProperties": false,
       "properties": {
         "created": {
+          "description": "本库建档日期，不是原文发布日期或快照时间",
           "format": "date",
           "title": "Created",
           "type": "string"
@@ -482,6 +523,7 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
             }
           ],
           "default": null,
+          "description": "已核实的原材料完整发布日期；更新日期或部分日期写正文，未知省略",
           "title": "Date"
         },
         "kind": {
@@ -521,6 +563,7 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
             }
           ],
           "default": null,
+          "description": "来源平台、发布机构或转存出处",
           "title": "Source"
         },
         "themes": {
@@ -558,6 +601,7 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
             }
           ],
           "default": null,
+          "description": "材料原始直接链接，与 manifest 共同出处对应",
           "title": "Url"
         }
       },
@@ -607,6 +651,7 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
           }
         ],
         "default": null,
+        "description": "材料原始直接链接，与 manifest 共同出处对应",
         "title": "Url"
       }
     },
@@ -616,7 +661,7 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
     ]
   },
   "path_pattern": "vault/archives/{slug}/archive.md",
-  "schema_version": "quasi.artifact.archive/0.1"
+  "schema_version": "quasi.artifact.archive/0.2"
 };
 
 export const AUTHOR_ARTIFACT_CONTRACT = {

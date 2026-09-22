@@ -58,10 +58,31 @@ def inspect(url: str) -> dict:
             if len(data) >= 2 * 1024 * 1024:
                 break
         html = media in ('text/html', 'application/xhtml+xml') or bytes(data).lstrip().lower().startswith((b'<!doctype html', b'<html'))
-        title, candidates = filename, []
+        title, candidates, metadata_evidence = filename, [], []
         if html:
             soup = BeautifulSoup(bytes(data), 'html.parser')
             title = soup.title.get_text(' ', strip=True) if soup.title else filename
+            # Return source-labelled evidence; the specialist distinguishes publication
+            # from modification and rejects unrelated comments/site copyright dates.
+            for tag in soup.select('meta[content], time[datetime]'):
+                key = tag.get('property') or tag.get('name') or tag.get('itemprop') or 'time'
+                if tag.name == 'time' or any(x in key.lower() for x in ('date', 'published', 'modified', 'author', 'site_name')):
+                    metadata_evidence.append({'field': key, 'value': (tag.get('content') or tag.get('datetime') or '')[:1000],
+                                              'context': tag.get_text(' ', strip=True)[:300]})
+            for tag in soup.select('script[type="application/ld+json"]'):
+                try:
+                    data_ld = json.loads(tag.get_text())
+                except (ValueError, TypeError):
+                    continue
+                nodes = data_ld if isinstance(data_ld, list) else [data_ld]
+                for node in nodes:
+                    if isinstance(node, dict):
+                        graph = node.get('@graph', [])
+                        for item in [node, *(graph if isinstance(graph, list) else [])]:
+                            if isinstance(item, dict):
+                                fields = {k: item[k] for k in ('@type', 'headline', 'name', 'url', 'datePublished', 'dateModified', 'author', 'publisher') if k in item}
+                                if fields:
+                                    metadata_evidence.append({'field': 'json-ld', 'value': json.dumps(fields, ensure_ascii=False)[:6000]})
             seen = set()
             for tag in soup.select('a[href], img[src], video[src], audio[src], source[src]'):
                 raw = tag.get('href') or tag.get('src')
@@ -76,8 +97,8 @@ def inspect(url: str) -> dict:
                                    'label': tag.get('alt') or tag.get_text(' ', strip=True)[:280]})
         return {'schema_version': 'quasi.archive.inspect/0.1', 'status': 'complete',
                 'url': url, 'final_url': result.url, 'media_type': 'text/html' if html else media,
-                'title': title, 'candidates': candidates[:200],
-                'truncated': len(data) >= 2 * 1024 * 1024 or len(candidates) > 200}
+                'title': title, 'metadata_evidence': metadata_evidence[:60], 'candidates': candidates[:200],
+                'truncated': len(data) >= 2 * 1024 * 1024 or len(candidates) > 200 or len(metadata_evidence) > 60}
 
 
 def _download(url: str, output: Path) -> tuple[str, str]:
@@ -199,8 +220,8 @@ def _replace_text(fd, name, text):
 
 def _validate_request(request):
     required = {'identity', 'topics', 'expected_revision', 'files', 'body', 'coverage'}
-    if not isinstance(request, dict) or set(request) != required:
-        raise ValueError('collect request requires identity/topics/expected_revision/files/body/coverage only')
+    if not isinstance(request, dict) or not required <= set(request) or set(request) - required - {'metadata'}:
+        raise ValueError('collect request requires identity/topics/expected_revision/files/body/coverage, with optional metadata')
     identity = request['identity']
     if not isinstance(identity, dict) or set(identity) != {'slug', 'title', 'kind', 'url'}:
         raise ValueError('invalid Archive identity')
@@ -208,6 +229,13 @@ def _validate_request(request):
         raise ValueError('invalid Archive slug')
     normalize_web_url(identity['url'])
     ArchiveSchema.model_validate({'type': 'archive', 'title': identity['title'], 'kind': identity['kind'], 'created': '2000-01-01'})
+    metadata = request.get('metadata', {})
+    if not isinstance(metadata, dict) or set(metadata) - {'creator', 'date', 'source'}:
+        raise ValueError('metadata permits only creator/date/source; omit unknown fields')
+    if any(value is None or value == '' or value == [] for value in metadata.values()):
+        raise ValueError('omit unknown metadata instead of supplying empty values')
+    ArchiveSchema.model_validate({'type': 'archive', 'title': identity['title'], 'kind': identity['kind'],
+                                  'created': '2000-01-01', **metadata})
     if not isinstance(request['expected_revision'], str) or not re.fullmatch('[0-9a-f]{64}', request['expected_revision']):
         raise ValueError('expected_revision must come from fresh Archive status')
     if not isinstance(request['topics'], list) or not all(isinstance(x, str) and SLUG.fullmatch(x) and len(x) <= 80 for x in request['topics']):
@@ -262,6 +290,15 @@ def collect(root: Path, request: dict) -> dict:
                 metadata = {'type': 'archive', 'title': identity['title'], 'kind': identity['kind'],
                             'created': datetime.now(timezone.utc).date().isoformat()}
                 body = request['body'].strip() + '\n'
+                if not re.match(r'^# ', body):
+                    body = f'# {identity["title"]}\n\n' + body
+            for key, value in request.get('metadata', {}).items():
+                if key in metadata and metadata[key] not in (None, '', []) and str(metadata[key]) != str(value):
+                    raise Conflict(f'existing Archive {key} differs; reconcile explicitly')
+                metadata[key] = value
+            if not existing or request.get('metadata'):
+                metadata.setdefault('url', identity['url'])
+            ArchiveSchema.model_validate(metadata)
             metadata['topics'] = list(dict.fromkeys([*metadata.get('topics', []), *request['topics']]))
             manifest = load_manifest(directory / 'manifest.yaml') if collection['present'] else ArchiveManifest(
                 source=ArchiveSource(url=identity['url'], title=identity['title']))
@@ -298,6 +335,8 @@ def collect(root: Path, request: dict) -> dict:
                 manifest.files.extend(additions)
                 manifest.coverage = '\n'.join(x for x in [manifest.coverage, request['coverage'], *notes] if x)
                 manifest = ArchiveManifest.model_validate(manifest.model_dump())
+                if additions:
+                    body += '\n## 本地原件\n'
                 for asset in additions:
                     name = Path(asset.path).stem
                     if asset.media_type.startswith('image/'):

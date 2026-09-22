@@ -191,9 +191,10 @@ the next round. Synthesis is evidence, not a mandatory decision gate. `finalise-
 owns interactive proofreading, citation review, and bibliography closure.
 
 Archive has a named URL collection Workflow. It owns `vault/archives/{slug}/archive.md`,
-`manifest.yaml` and descriptively named files under `originals/`. The page is a freeform
-display surface; the inventory owns shared provenance and exceptional per-file source
-metadata. Existing frontmatter source/url remain legacy-readable. Missing originals
+`manifest.yaml` and descriptively named files under `originals/`. New pages provide a structured reading entry (overview, source/coverage and concrete content summary),
+with source/url, verified creator and publication date in frontmatter. Publication date is distinct
+from creation, capture and modification dates; unknown dates remain omitted and explained.
+The inventory owns per-file provenance and capture records. Existing lightweight pages remain readable. Missing originals
 are coverage notes, not a completeness quota; link-only empty inventories are valid.
 Explicit archival intent uses Archive; standalone webpage reading preserves Webpage.
 `archive.identify` resolves a unique existing Archive by normalized source URL;

@@ -57,7 +57,7 @@ def test_archive_audit_and_discovery_without_attachments(tmp_path, body):
     result = check_file(path)
     assert result["frontmatter_errors"] == []
     assert result["body_violations"] == []
-    assert result["body_warnings"] == []
+    assert all(w["kind"] == "unknown_h2" for w in result["body_warnings"])
     status = archive_status(tmp_path, "discussion")
     assert status["facts"]["canonical"] == {
         "path": "vault/archives/discussion/archive.md", "present": True, "usable": True}
