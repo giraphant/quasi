@@ -2,6 +2,8 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.66.4** (2026-09-22): Keep delegated search noise outside the research main context. Actual BTS transcripts showed timed-out TaskOutput calls importing about 32K characters of a still-running search agent's raw scraping log, and an unnecessary 40K-character generated-bundle read. Guide Topic main agents to consume specialist completion summaries and invoke generated entries by path, reserving raw traces for concrete diagnosis. Material Workflow result retrieval remains unchanged.
+
 - **0.66.3** (2026-09-22): Supply exact audit argv in every Audit request. A real BTS specialist appended --format json to the writer command, but that flag belongs to the separate readonly --report interface; the CLI rejected it before mutation. Explicitly state that writer audit already emits JSON and allow local correction of proven pre-write argument errors. Preserve unknown-writer stopping and artifact checks.
 
 - **0.66.2** (2026-09-22): BTS collection exposed a missing filename constraint in the Archive request: a specialist selected method=webarchive but named the output .html, so the helper correctly rejected it before publication. State the required .webarchive suffix at the producer boundary. Clarify that direct Topic discovery returns credible candidates and gaps once selection is possible, leaving complete extraction and protocol comparison to material processing and synthesis.

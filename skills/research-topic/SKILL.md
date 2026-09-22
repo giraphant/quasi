@@ -18,7 +18,8 @@ description: Use when the user wants to investigate a topic, expand its collecte
 
 - 主代理拥有研究判断：选线索、取舍候选、阅读材料、决定下一轮与何时收口。搜索和综合委派给专业子代理；主代理也可以亲自阅读任何已确认材料，综合报告不是继续研究的前置关卡。
 - 每个搜索任务负责一个有边界的问题；独立线索可以同时派出。综合任务可以与不依赖其结果的搜索并行。
-- 采集复用材料 Workflow。按需读取 `$CLAUDE_PLUGIN_ROOT/skills/collect-material/SKILL.md`，由当前主代理执行其中对应材料的输入、续跑、typed gate 和完成核验流程。不要另建 Topic 的 receipt、checkpoint、Steer 或 continuation。
+- 搜索／综合子代理回传最终摘要与具名来源。等待完成通知，不用 TaskOutput 轮询仍在运行的子代理：它可能把整段网页抓取和工具日志带回主上下文。只有诊断具体问题时才读取这些日志；材料 Workflow 的结果仍按 collect-material 获取。
+- 采集复用材料 Workflow。按需读取 `$CLAUDE_PLUGIN_ROOT/skills/collect-material/SKILL.md`，由当前主代理执行其中对应材料的输入、续跑、typed gate 和完成核验流程。不要另建 Topic 的 receipt、checkpoint、Steer 或 continuation。调用生成入口只需 scriptPath 与输入，不读取生成 bundle 代码作为执行指南。
 - 同时最多运行五个独立材料 Workflow，同一 URL 或已知 canonical owner 只派一次。未知写入结果先停该材料并观察，不能启动重复 writer；独立材料可以继续。
 - 非学术网页、PDF、图片、音视频等专题原材料进入 Archive；论文、书籍、Talk 保持已有类型。Archive 的 topics 包含本 Topic。单独的网页阅读请求仍使用 Webpage。
 - 每个共享文件只设一个 writer。默认主代理维护大纲与资源清单，综合子代理只写明确委派的输出；委派期间主代理不改该文件。跨进程研究同一 Topic 时，先约定互斥材料范围和写入者；其它进程返回批次报告，不能同时覆盖三份共享页。
