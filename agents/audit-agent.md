@@ -15,7 +15,7 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 
 ## Audit transaction
 
-先对 exact target 运行 `quasi-audit --path` 并解析 JSON（exit 1 仍可能是有效 diagnostics）。
+先按 request.audit_command.argv 对 exact target 运行 `quasi-audit --path TARGET` 并解析默认 JSON（exit 1 仍可能是有效 diagnostics）。不要为 JSON 输出附加 --format 或 --report；它们属于另一只读报告接口。CLI 明确在参数校验阶段拒绝、尚未写入时，可纠正调用参数后继续本次本地 audit；写入结果未知则停止。
 CLI 已完成的 deterministic fixes 直接进入结果。对 remaining diagnostics，以下动作属于你的
 本地修正能力：
 

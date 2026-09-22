@@ -2,6 +2,8 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.66.3** (2026-09-22): Supply exact audit argv in every Audit request. A real BTS specialist appended --format json to the writer command, but that flag belongs to the separate readonly --report interface; the CLI rejected it before mutation. Explicitly state that writer audit already emits JSON and allow local correction of proven pre-write argument errors. Preserve unknown-writer stopping and artifact checks.
+
 - **0.66.2** (2026-09-22): BTS collection exposed a missing filename constraint in the Archive request: a specialist selected method=webarchive but named the output .html, so the helper correctly rejected it before publication. State the required .webarchive suffix at the producer boundary. Clarify that direct Topic discovery returns credible candidates and gaps once selection is possible, leaving complete extraction and protocol comparison to material processing and synthesis.
 
 - **0.66.1** (2026-09-22): Real BTS two-lane testing exposed an unused wall-clock call before Archive Collect: the Workflow host forbids new Date()/Date.now() for resumability. Remove the redundant created_date envelope field; the collection helper already owns the actual creation timestamp. Model the same clock restriction in the generated-bundle harness and exercise new collection, enrichment and membership through it.

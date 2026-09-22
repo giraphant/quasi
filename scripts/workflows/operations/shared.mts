@@ -225,6 +225,10 @@ export const makeAuditRow = ({
       pass: resolvedRefs.pass,
       mode: resolvedRefs.pass === 1 ? "audit" : "re-audit",
       target: { role: targetRole, path: resolvedRefs.target },
+      audit_command: {
+        argv: ["quasi-audit", "--path", resolvedRefs.target],
+        output: "JSON is the default output of this writer command. Do not add --format or --report; those select a separate readonly report interface.",
+      },
       ...(extras.afterTarget || {}),
     };
   },
