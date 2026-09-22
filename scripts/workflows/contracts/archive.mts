@@ -37,7 +37,7 @@ export type ArchiveStatusObservation = QuasiStatusObservation<
   { kind: "archive"; canonical: ArtifactObservation; collection: {
     path: string; present: boolean; usable: boolean; revision: string | null;
     source_url: string | null; coverage: string | null;
-    files: (ArtifactObservation & {media_type: string})[];
+    files: (ArtifactObservation & {media_type: string; title: string; description: string})[];
   } }
 >;
 
@@ -99,9 +99,11 @@ export const parseArchiveStatusObservation = (
       !(collection.source_url === null || normalizeWebUrl(collection.source_url) !== null) ||
       !(collection.coverage === null || typeof collection.coverage === "string") ||
       !Array.isArray(collection.files) || !collection.files.every(file =>
-        isRecord(file) && exactKeys(file, ["path", "present", "usable", "media_type"]) &&
+        isRecord(file) && exactKeys(file, ["path", "present", "usable", "media_type", "title", "description"]) &&
         isArtifactObservation({path: file.path, present: file.present, usable: file.usable}) &&
         typeof file.media_type === "string" && typeof file.path === "string" &&
+        typeof file.title === "string" && file.title.trim().length > 0 &&
+        typeof file.description === "string" && file.description.trim().length > 0 &&
         file.path.startsWith(`vault/archives/${value.slug}/originals/`) &&
         /^[a-z0-9]+(?:-[a-z0-9]+)*\.[a-z0-9]+$/.test(file.path.slice(`vault/archives/${value.slug}/originals/`.length))) ||
       new Set(collection.files.map(file => file.path)).size !== collection.files.length ||

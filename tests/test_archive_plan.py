@@ -96,3 +96,40 @@ def test_declared_original_damage_blocks_card_admission():
     result = run_generated_workflow('archive', value, [])
     assert result['agentCalls'] == 0
     assert result['value']['issue']['code'] == 'archive.collection_unusable'
+
+
+def test_real_collection_status_resumes_generated_archive_at_audit(tmp_path, monkeypatch):
+    from scripts.archive.archive import collect
+    from scripts.archive import archive as archive_cli
+    from scripts.archive.inventory import revision
+    from scripts.status.status import archive_status
+
+    def download(url, output):
+        output.write_bytes(b'collected original fixture')
+        return 'image/jpeg', url
+
+    monkeypatch.setattr(archive_cli, '_download', download)
+    collected = collect(tmp_path, {
+        'identity': deepcopy(IDENTITY), 'topics': ['exact-topic'],
+        'expected_revision': revision(tmp_path, tmp_path / 'vault/archives' / SLUG),
+        'files': [{'name': 'product.jpg', 'url': URL + '/product.jpg', 'method': 'download',
+                   'title': 'Emergency charger product', 'description': 'Product photograph from the review.'}],
+        'body': '# iPhone repair manual\n\nVerified fixture context.', 'coverage': 'One product image.',
+    })
+    assert collected['status'] == 'complete', collected
+    value = archive_input(usable=True, topics=['exact-topic'])
+    value['observation'] = archive_status(tmp_path, SLUG)
+    original = value['observation']['facts']['collection']['files'][0]
+    assert original['title'] == 'Emergency charger product'
+    assert original['description'] == 'Product photograph from the review.'
+    result = run_generated_workflow('archive', value, [audit_complete()])
+    assert result['agentCalls'] == 1
+    assert result['value']['terminal'] == 'complete'
+    assert {'role': 'source', 'path': original['path']} in result['value']['artifacts']
+
+    for field, bad in [('title', ''), ('description', '  '), ('description', None)]:
+        invalid = deepcopy(value)
+        invalid['observation']['facts']['collection']['files'][0][field] = bad
+        rejected = run_generated_workflow('archive', invalid, [])
+        assert rejected['agentCalls'] == 0
+        assert rejected['value']['issue']['code'] == 'material.invalid_input'

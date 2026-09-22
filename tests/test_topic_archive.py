@@ -125,7 +125,7 @@ def test_topic_passes_only_observed_originals_to_card_writer():
     gap = {**SUBQUESTION, "coverage": "gap"}
     observed = archive_observation(usable=True, topics=[QUERY["slug"]])
     original = f"vault/archives/{SLUG}/originals/screen-detail.jpg"
-    observed["facts"]["collection"]["files"] = [{"path": original, "present": True, "usable": True, "media_type": "image/jpeg"}]
+    observed["facts"]["collection"]["files"] = [{"path": original, "present": True, "usable": True, "media_type": "image/jpeg", "title": "Original image", "description": "Image from the assigned archive."}]
     value = topic_input(observation=topic_observation(subquestions=[gap]),
         children=[({"kind": "archive", "slug": SLUG}, observed)], resume={"resume_seed": continuation()})
     # Stop after the writer to inspect its exact input envelope.
