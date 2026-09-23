@@ -79,6 +79,8 @@ processing/   # 可检查的中间产物:chapters/ translations/ talks/ webpages
 
 ## 维护
 
+Codex 使用独立的 [Quasi 统一入口](codex/skills/quasi/SKILL.md)，通过 Orca orchestration 将材料任务交给 Claude Code。Codex 侧无需安装 Quasi 插件；安装与旧入口清理见 [Codex 说明](docs/CODEX_ENTRY.md)。
+
 维护者合同见 `CLAUDE.md`;分层架构、agent 与 CLI 细节见
 `docs/ARCHITECTURE.md`;OCR / 翻译管线的实测经验见 `docs/PDF_PIPELINE.md`;
 版本历史见 `docs/CHANGELOG.md`。

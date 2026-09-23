@@ -13,10 +13,10 @@ This file holds only the contracts a maintainer needs before editing. The detail
 
 - Installed plugins load components from root-level `skills/`, `workflows/`, `agents/`, `output-styles/`, `bin/`, `hooks/`, `monitors/`, `.mcp.json`, and `.lsp.json`.
 - `.claude-plugin/plugin.json` is metadata only. Do not place components inside `.claude-plugin/`.
-- `.codex-plugin/plugin.json` is the Codex-native package manifest; leave it alone when changing Claude Code runtime components.
+- Codex installs only the standalone `codex/skills/quasi` Skill and depends on Orca orchestration. Do not package Quasi as a Codex plugin or expose Claude's root `skills/`, hooks, or Workflow bundles to Codex.
 - `CLAUDE.md` and `AGENTS.md` are mirrored instruction files for different agent frameworks and must stay byte-for-byte identical.
 - Claude Code does not load a plugin-root `CLAUDE.md` as context when quasi is installed as a plugin. Runtime guidance must live in skills, agents, hooks, or scripts.
-- quasi targets Claude Code only; the retired Pi and Codex host adapters are recoverable from git history.
+- Claude Code owns material Workflow execution. Codex exposes one coordinator Skill and delegates whole material tasks through Orca; it does not run a second Workflow interpreter. Retired Pi/Codex host adapters remain recoverable from history.
 
 ## Layers
 
@@ -63,7 +63,7 @@ quasi-archive inspect|collect|read ...
 quasi-status --kind paper|book|talk|author|topic|webpage|archive --slug SLUG --json
 quasi-status --kind translation --slug SLUG --target-language TAG --json
 quasi-status --scan --json
-workflows/paper.mjs | book.mjs | talk.mjs | translation.mjs | author.mjs | webpage.mjs | archive.mjs | archive.mjs
+workflows/paper.mjs | book.mjs | talk.mjs | translation.mjs | author.mjs | webpage.mjs | archive.mjs
 quasi-helpers proofread prepare|cleanup ...
 quasi-helpers citation parse|biblio|resolve|review-cards|emit-bib ...
 quasi-helpers localise scan|write ...

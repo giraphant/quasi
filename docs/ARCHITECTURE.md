@@ -190,6 +190,14 @@ drives the same leaf entries using collect-material, reads returned materials as
 the next round. Synthesis is evidence, not a mandatory decision gate. `finalise-draft`
 owns interactive proofreading, citation review, and bibliography closure.
 
+Codex uses only the standalone `codex/skills/quasi` entry, with Orca orchestration
+as its coordination dependency. It owns research and Topic products, while a real
+Claude Code worker owns each whole collect-material or finalise-draft task.
+CC runs the existing Workflows and observations; Codex consumes final results and
+exact artifact paths. Dispatched CC user gates travel through Orca ask/reply.
+No Codex plugin package, hooks, duplicated material state machine or interpreter
+is installed. See `docs/CODEX_ENTRY.md` for installation and acceptance.
+
 Archive has a named URL collection Workflow. It owns `vault/archives/{slug}/archive.md`,
 `manifest.yaml` and descriptively named files under `originals/`. New pages provide a structured reading entry (overview, source/coverage and concrete content summary),
 with source/url, verified creator and publication date in frontmatter. Publication date is distinct

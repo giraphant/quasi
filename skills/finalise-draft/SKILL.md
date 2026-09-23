@@ -9,6 +9,10 @@ description: Use when the user wants to finalise a draft by proofreading text an
 
 校对用户提供的 draft,审定引用并输出 bibliography。
 
+## Orca 委派模式
+
+如果本进程带活跃 Orca Task/Dispatch preamble，材料内部流程仍由本 CC 主进程完成。需要用户决定时，用 preamble 的 ask 通道向协调者发送原样 gate 或 review cards，替代本地 AskUserQuestion；由协调者收集用户答复，不能自行裁决。等待期间不报告成功。完成后附最终结果与 exact 产物报告，并按 preamble 结算任务。普通直接交互保持原来的提问方式。
+
 ## 输入
 
 从用户请求中归一化出:
