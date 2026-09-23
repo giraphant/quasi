@@ -16,7 +16,7 @@ This file holds only the contracts a maintainer needs before editing. The detail
 - Codex installs only the standalone `codex/skills/quasi` Skill and depends on Orca orchestration. Do not package Quasi as a Codex plugin or expose Claude's root `skills/`, hooks, or Workflow bundles to Codex.
 - `CLAUDE.md` and `AGENTS.md` are mirrored instruction files for different agent frameworks and must stay byte-for-byte identical.
 - Claude Code does not load a plugin-root `CLAUDE.md` as context when quasi is installed as a plugin. Runtime guidance must live in skills, agents, hooks, or scripts.
-- Claude Code owns material Workflow execution. Codex exposes one coordinator Skill and delegates whole material tasks through Orca; it does not run a second Workflow interpreter. Retired Pi/Codex host adapters remain recoverable from history.
+- Claude Code owns material Workflow execution. Codex exposes one research Skill whose main agent owns reading, research notes, reflection and synthesis, and delegates whole material tasks through Orca; it does not run a second Workflow interpreter. Retired Pi/Codex host adapters remain recoverable from history.
 
 ## Layers
 

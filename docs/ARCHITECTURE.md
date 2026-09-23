@@ -191,10 +191,15 @@ the next round. Synthesis is evidence, not a mandatory decision gate. `finalise-
 owns interactive proofreading, citation review, and bibliography closure.
 
 Codex uses only the standalone `codex/skills/quasi` entry, with Orca orchestration
-as its coordination dependency. It owns research and Topic products, while a real
-Claude Code worker owns each whole collect-material or finalise-draft task.
-CC runs the existing Workflows and observations; Codex consumes final results and
-exact artifact paths. Dispatched CC user gates travel through Orca ask/reply.
+as its coordination dependency. Its main agent reads sources, keeps research notes,
+revisits observations across materials, and develops interpretations that guide further
+discovery. Notes reuse the existing outline body or user note location; synthesis and
+resources remain the existing Topic pages. Research rounds count exploration and
+judgement updates, not individual archives. Collection and independent research overlap.
+A real Claude Code worker owns each whole collect-material or finalise-draft task.
+CC startup, routes and result handling live in an on-demand reference; normal reception
+does not repeat material audit or inspect specialist logs. CC runs the existing Workflows
+and observations. Dispatched CC user gates travel through Orca ask/reply.
 No Codex plugin package, hooks, duplicated material state machine or interpreter
 is installed. See `docs/CODEX_ENTRY.md` for installation and acceptance.
 
