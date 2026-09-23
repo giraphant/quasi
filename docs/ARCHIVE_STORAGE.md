@@ -39,6 +39,39 @@ created 是本库建档日期，date 仅为原材料发布日期。网页采集�
 manifest 继续管理逐文件原始 URL、异源覆盖及保存记录。初次采集后保留已有正文和元数据；
 补充已知元数据只填空缺，遇到已有不同值先明确协调，不静默覆盖。
 
+## 目录合集（Collection）
+
+```text
+vault/archives/
+├── standalone-slug/archive.md
+└── 维修资料/
+    ├── collection.md
+    ├── first-slug/{archive.md,manifest.yaml,originals/}
+    └── second-slug/{archive.md,manifest.yaml,originals/}
+```
+
+仅支持一级合集。`collection.md` 是唯一标记，可以为空；首个 H1 是显示标题，
+否则使用目录名。正文是自由说明，不设 manifest、成员列表或 Archive collection_id。
+成员关系就是目录父子关系；完整移动 Archive 目录即可入组、换组、移出。
+Book 和混合类型合集不在本次范围。Archive 自身的 manifest/0.2 与 originals 相对路径不变。
+同一目录不能同时有 archive.md 和 collection.md；不跟随符号链接，不接受嵌套合集。
+合集名可用中文、空格；Archive slug 仍须在整个 archives 下唯一。
+
+现存 Archive 必须用 status/resolve 返回的 exact path，不能根据 slug 拼根目录。
+采集在锁内重新查找对象；已有对象继续写原位置，新对象才放 archives 根目录。
+revision 包含对象所在目录，移动后旧 observation 会失效，需要 fresh status。
+Topic card 的 archives 字段记录实际路径（允许合集这一层）；URL owner 查找同时覆盖根目录和合集。
+
+Marple GUI 与 `marple-cli collections` 提供创建、改名和移动，按已支持的 Markdown/wiki/
+结构化路径引用同步修改，并保留操作回执。Finder 移动可被发现，但不会自动修复 Topic 等外部链接。
+请在写入停止时手动整理，或使用 Marple 的受控移动。
+
+采集除原有 slug/URL 锁外，还持有 `.marple/archive-collections.lock` 的共享 flock；
+Marple 整理持有同一路径的排他锁，忙时立即拒绝。锁是跨进程本机协调，不能保证 iCloud
+跨设备事务，也不约束手工编辑器或 audit 写入。`.marple/collection-operations/*.json`
+中存在未完成记录（result 为 null）时，采集停止；应检查 Marple 的恢复记录、原件和引用，
+确认操作结果后再继续，不盲删记录或重放。记录不属于合集数据格式。
+
 ## manifest.yaml
 
 机器结构的唯一源为 `scripts/schemas/archive_manifest.py`，producer projection 随 Archive

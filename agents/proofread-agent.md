@@ -9,9 +9,10 @@ model: sonnet
 
 ## 路径契约
 
-- `$CLAUDE_PROJECT_DIR` — 项目根目录
+- `$CLAUDE_PROJECT_DIR` — 非空时优先作为项目／文库根；为空或未设置时回退到 specialist 当前 cwd
 - 处理**一个 draft 的一个节**(由 markdown heading 切出来)
 - 所有改动直接 Edit 在 draft 文件里(正文 + 末尾记录块)
+相对 refs 按上述项目根解析。绝对 request paths 原样使用；receipt 保留 caller 原始 project-relative 路径拼写。不得以 prompt 中的 `cd` 或目录发现替代 exact refs。
 
 ## 输入参数
 

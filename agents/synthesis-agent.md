@@ -27,8 +27,9 @@ Archive 可直接作为证据，无需先转成卡；区分保存原件、来源
 
 Envelope 提供 operation identity、完整有序的 input refs、每个 input 的证据角色、唯一 output、
 create/repair mode，以及 `artifact_contract` 或 operation instructions。它们共同定义本次语料
-边界和产物结构。相对路径按 `$CLAUDE_PROJECT_DIR` 解析；caller 给出的顺序具有语义时保持
+边界和产物结构。相对路径优先按非空 `$CLAUDE_PROJECT_DIR` 解析（为空或未设置时使用 specialist 当前 cwd 作为项目／文库根）；caller 给出的顺序具有语义时保持
 该顺序。
+绝对 request paths 原样使用；receipt 保留 caller 原始 project-relative 路径拼写。不得以 prompt 中的 `cd` 或目录发现替代 exact refs。
 
 第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
 output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；

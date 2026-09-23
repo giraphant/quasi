@@ -178,6 +178,29 @@ def _lock(root, identity):
         'slug:' + identity['slug'], 'url:' + normalize_web_url(identity['url']))})
     descriptors = []
     try:
+        # Readers/writers of different Archives may coexist; a Marple directory
+        # move requires the exclusive side of this same lock.
+        with _directory(root, Path('.marple'), True) as shared:
+            fd = os.open('archive-collections.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=shared)
+            descriptors.append(fd)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise Conflict('Archive collection move in progress; obtain fresh status') from exc
+        pending = root / '.marple/collection-operations'
+        pending_state = path_state(root, pending)
+        if pending_state not in ('missing', 'directory'):
+            raise Conflict('unsafe Marple collection operation journal')
+        if pending_state == 'directory':
+            for record in pending.glob('*.json'):
+                if path_state(root, record) != 'regular':
+                    raise Conflict('unsafe Marple collection operation journal')
+                try:
+                    operation = json.loads(record.read_text())
+                except (OSError, ValueError) as exc:
+                    raise Conflict('unreadable Marple collection operation requires recovery') from exc
+                if not isinstance(operation, dict) or operation.get('result') is None:
+                    raise Conflict('incomplete Marple collection operation requires recovery')
         with _directory(root, Path('.quasi/locks'), True) as directory:
             for key in keys:
                 fd = os.open(f'archive-{key}.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=directory)
@@ -268,8 +291,9 @@ def collect(root: Path, request: dict) -> dict:
     try:
         _validate_request(request)
         identity = request['identity']
-        directory = root / 'vault/archives' / identity['slug']
+        from scripts.archive.paths import archive_path
         with _lock(root, identity):
+            directory = archive_path(root, identity['slug']).parent
             if revision(root, directory) != request['expected_revision']:
                 raise Conflict('Archive changed since observation; obtain fresh status')
             collection = observe_collection(root, directory)

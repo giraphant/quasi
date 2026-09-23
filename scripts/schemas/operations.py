@@ -8,14 +8,14 @@ OPERATION_CATALOG = {
     "archive.collect": {
         "kinds": ["archive"], "phase": "Acquire", "effect": "writer",
         "agent": "quasi:archive-agent",
-        "artifacts": {"output": "vault/archives/{slug}/archive.md",
-                      "manifest": "vault/archives/{slug}/manifest.yaml",
-                      "originals": "vault/archives/{slug}/originals"},
+        "artifacts": {"output": "{archiveDirectory}/archive.md",
+                      "manifest": "{archiveDirectory}/manifest.yaml",
+                      "originals": "{archiveDirectory}/originals"},
     },
     "archive.audit": {
         "kinds": ["archive"], "phase": "Audit", "effect": "writer",
         "agent": "quasi:audit-agent",
-        "artifacts": {"target": "vault/archives/{slug}/archive.md"},
+        "artifacts": {"target": "{archiveDirectory}/archive.md"},
     },
     "topic.discover-archives": {
         "kinds": ["topic"], "phase": "Search", "effect": "readonly",

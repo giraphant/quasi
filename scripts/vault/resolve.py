@@ -112,7 +112,8 @@ def surnames(raw: Any) -> set[str]:
 
 def _product_path(root: Path, kind: str, slug: str) -> Path:
     if kind == "archive":
-        return root / ARCHIVE_BODY.path_pattern.format(slug=slug)
+        from scripts.archive.paths import archive_path
+        return archive_path(root, slug)
     if kind == "book":
         return root / "vault" / "books" / slug / "00-overview.md"
     if kind == "paper":
@@ -380,7 +381,12 @@ def _resolve_archive(root: Path, item: dict, slug: str) -> dict:
     directory = root / "vault/archives"
     if _directory_state(root, directory) == "unsafe":
         return {**row, "error": "archive directory is unsafe"}
-    for path in sorted(directory.glob("*/archive.md")):
+    from scripts.archive.paths import archive_pages
+    try:
+        pages = archive_pages(root)
+    except ValueError as exc:
+        return {**row, "error": str(exc)}
+    for path in pages:
         if _product_state(root, path) != "safe":
             return {**row, "error": "archive owner index contains an unsafe path"}
         try:
@@ -407,7 +413,10 @@ def _resolve_archive(root: Path, item: dict, slug: str) -> dict:
             return {**row, "error": "existing Archive owner metadata is invalid"}
         return {**row, "vault_slug": path.parent.name, "path": path.relative_to(root).as_posix(), "match": "url",
                 "identity": {"slug": path.parent.name, "title": record.title, "kind": record.kind, "url": item["url"]}}
-    state = _product_state(root, _product_path(root, "archive", slug))
+    try:
+        state = _product_state(root, _product_path(root, "archive", slug))
+    except ValueError as exc:
+        return {**row, "error": str(exc)}
     if state != "missing":
         return {**row, "error": "archive slug is occupied or unsafe; reconcile explicitly"}
     return row
@@ -441,7 +450,12 @@ def resolve(root: Path, items: list[dict]) -> dict:
 
         # 1. 精确路径。Agent 后续会写这些 lexical paths，所以 symlink/non-regular
         # targets and symlinked ancestors must fail closed rather than count as existence.
-        product = _product_path(root, kind, slug)
+        try:
+            product = _product_path(root, kind, slug)
+        except ValueError as exc:
+            resolved.append({"kind": kind, "slug": slug, "vault_slug": None,
+                             "path": None, "match": None, "error": str(exc)})
+            continue
         product_state = _product_state(root, product)
         if product_state == "safe":
             resolved.append({"kind": kind, "slug": slug, "vault_slug": slug,

@@ -14,7 +14,8 @@ model: opus
 - `topic.discover-archives`：只读检索。运行 quasi-search kagi，以检索返回的 exact URLs 做 WebFetch，返回本卡需要的具体原材料 URL（每个 URL 一件 Archive）；不写任何文件。书籍与论文留给 academic channel。已知搜索/抓取失败返回 failed，不能当成无结果；没有可验证材料才返回空 urls 和理由。
 - `topic.webcard`：只读 envelope 的 `archive_paths`、`archive_inputs` 与 `exact_output`，只写 `exact_output`。不再搜索或 WebFetch。Archive 路径就是本卡的全部材料边界，不得跟随其中未收录的外部链接扩展证据。
 
-相对路径按 `$CLAUDE_PROJECT_DIR` 解析，回执保留 request 的原始相对路径。动态查询词必须作为数据安全引用。
+相对路径优先按非空 `$CLAUDE_PROJECT_DIR` 解析（为空或未设置时使用 specialist 当前 cwd 作为项目／文库根），回执保留 request 的原始相对路径。动态查询词必须作为数据安全引用。
+绝对 request paths 原样使用；receipt 保留 caller 原始 project-relative 路径拼写。不得以 prompt 中的 `cd` 或目录发现替代 exact refs。
 
 第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
 output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；

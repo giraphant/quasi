@@ -827,7 +827,17 @@ def translation_status(
 
 def archive_status(root: Path, slug: str) -> dict[str, Any]:
     """Observe metadata and any declared original inventory; no completeness quota."""
-    path = root / ARCHIVE_BODY.path_pattern.format(slug=slug)
+    from scripts.archive.paths import archive_path
+    try:
+        path = archive_path(root, slug)
+    except ValueError:
+        path = root / ARCHIVE_BODY.path_pattern.format(slug=slug)
+        canonical = {"path": path.relative_to(root).as_posix(), "present": True, "usable": False}
+        collection = {"path": (path.parent / 'manifest.yaml').relative_to(root).as_posix(),
+                      "present": True, "usable": False, "revision": None,
+                      "source_url": None, "files": [], "coverage": None}
+        return status_payload("archive", slug, None,
+                              {"kind": "archive", "canonical": canonical, "collection": collection})
     canonical = _regular_nonempty_artifact(root, path)
     identity = None
     if canonical["usable"]:
@@ -920,7 +930,7 @@ def topic_projection(
                     for archive_path in card.archives or []:
                         archive_slug = Path(archive_path).parent.name
                         archive = archive_status(root, archive_slug)
-                        if (archive["facts"]["collection"]["present"] and not archive["facts"]["collection"]["usable"]) or not archive["facts"]["canonical"]["usable"] or topic_slug not in (archive["identity"] or {}).get("topics", []):
+                        if archive["facts"]["canonical"]["path"] != archive_path or (archive["facts"]["collection"]["present"] and not archive["facts"]["collection"]["usable"]) or not archive["facts"]["canonical"]["usable"] or topic_slug not in (archive["identity"] or {}).get("topics", []):
                             artifact["usable"] = False
             title = (
                 card_frontmatter.get("title")
@@ -1086,14 +1096,9 @@ def scan_status(root: Path) -> dict[str, Any]:
                 continue
             discovered["webpage"].add(entry.name)
 
-    archive_directory = (root / ARCHIVE_BODY.path_pattern.format(slug=scan_slug)).parent.parent
-    if safe_contained_directory(root, archive_directory):
-        for entry in children(archive_directory):
-            if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", entry.name) is None:
-                continue
-            path = root / ARCHIVE_BODY.path_pattern.format(slug=entry.name)
-            if path_state(root, path) == "regular":
-                discovered["archive"].add(entry.name)
+    from scripts.archive.paths import archive_pages
+    for path in archive_pages(root, strict=False):
+        discovered["archive"].add(path.parent.name)
 
     source_directory = artifact_path(
         root, "paper.acquire", "outputPdf", slug=scan_slug

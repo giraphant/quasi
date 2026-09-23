@@ -16,6 +16,7 @@ from workflow_test_support import (
     ROOT,
     read_workflow_export,
     run_workflow_export,
+    run_generated_workflow,
 )
 
 
@@ -2969,3 +2970,39 @@ def test_talk_prepare_requires_requested_prepared_media_artifact(prepared):
         artifacts.append({"role": "prepared_media", "path": "vault/talks/exact-talk/recording.mp4", "sha256": "9" * 64, "size": 500})
     report = _dispatch_talk_prepare_artifacts(artifacts, meta={"media": "sources/exact-talk.mp4", "prepareMedia": True})
     assert report["result"]["kind"] == ("receipt" if prepared else "incoherent_complete")
+
+
+def test_webpage_identify_request_has_one_direct_inspect_bound_resolver() -> None:
+    from test_webpage_plan import identify_complete, provisional_webpage_input
+    report = run_generated_workflow("webpage", provisional_webpage_input(), [identify_complete()], capture_agent_requests=True)
+    assert report["agentCalls"] == 1
+    assert report["value"]["terminal"] == "needs_observation"
+    request = _prompt_request(report["agentRequests"][0]["prompt"])
+    source_request = _prompt_request(_prepare("webpage.identify")["prompt"])
+    assert request["capabilities"] == source_request["capabilities"]
+    assert request["identify_contract"] == source_request["identify_contract"]
+    assert request["capabilities"] == [
+        "quasi-webpage inspect --url URL --json",
+        "quasi-helpers vault resolve --items-json JSON",
+    ]
+    contract = request["identify_contract"]
+    assert contract["command_form"] == "bare_direct_literal"
+    assert contract["inspect"] == {"calls": 1, "require_status": "complete"}
+    resolver = contract["resolver"]
+    assert resolver["calls"] == resolver["array_length"] == 1
+    assert resolver["after"] == "inspect.complete"
+    assert resolver["argument"] == "--items-json"
+    assert resolver["encoding"] == "literal_json_array"
+    assert resolver["additional_item_fields"] is False
+    assert resolver["repeat_or_repair"] is False
+    assert set(resolver["item"]) == {"kind", "slug", "url", "title", "site"}
+    assert resolver["item"]["kind"] == {"const": "webpage"}
+    for key, field in (("url", "final_url"), ("title", "title"), ("site", "site")):
+        assert resolver["item"][key] == {"source": f"inspect.{field}"}
+    slug = resolver["item"]["slug"]
+    assert slug["source"] == "candidate_slug"
+    assert slug["derived_from"] == ["inspect.final_url", "inspect.title", "inspect.site"]
+    assert slug["pattern"] == _prepare("webpage.identify")["options"]["schema"]["properties"]["identity"]["properties"]["slug"]["pattern"]
+    assert set(contract["forbidden_command_forms"]) == {
+        "printf", "pipe", "stdin", "shell_variable", "command_substitution",
+    }

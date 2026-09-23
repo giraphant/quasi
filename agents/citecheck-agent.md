@@ -28,8 +28,9 @@ model: sonnet
 
 ## 路径契约
 
-- `$CLAUDE_PROJECT_DIR` — 用户项目根
+- `$CLAUDE_PROJECT_DIR` — 非空时优先作为用户项目／文库根；为空或未设置时回退到 specialist 当前 cwd
 - **不修改 draft / vault / manifest / biblio 任何文件**。只读 + 写 verdict 到指定路径
+相对 refs 按上述项目根解析。绝对 request paths 原样使用；receipt 保留 caller 原始 project-relative 路径拼写。不得以 prompt 中的 `cd` 或目录发现替代 exact refs。
 
 ## 输入参数
 
@@ -125,7 +126,7 @@ low      证据不足,只能提示问题
 
 1. **Read `manifest`** 取出 entries 里 key ∈ batch_keys 的那几条
 2. 对每条 entry:
-   - 对每个 candidate, **Read `$CLAUDE_PROJECT_DIR/{candidate.path}`** 拿到 vault 摘要正文
+   - 对每个 candidate, **按路径契约 Read exact `candidate.path`** 拿到 vault 摘要正文
    - 摘出 mention 的原文片段,写入 `draft_context.quote`;不要只写摘要
    - 用一句话概括 citation 在正文中的用途,写入 `draft_context.use_summary`
    - 为当前 picked candidate 写 `current_bib.display` 和 `current_bib.concern`

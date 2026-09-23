@@ -52,8 +52,13 @@ if (request.action === "run-generated") {
     },
   );
   const { host, report } = runtime();
-  const value = await execute(host.agent, host.pipeline, request.input);
-  process.stdout.write(JSON.stringify(report(value)));
+  const agentRequests = [];
+  const observedAgent = async (prompt, options) => {
+    agentRequests.push({ prompt, options });
+    return host.agent(prompt, options);
+  };
+  const value = await execute(observedAgent, host.pipeline, request.input);
+  process.stdout.write(JSON.stringify({ ...report(value), ...(request.captureAgentRequests ? { agentRequests } : {}) }));
   process.exit(0);
 }
 

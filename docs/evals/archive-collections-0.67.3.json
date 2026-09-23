@@ -1,0 +1,58 @@
+{
+  "version": "0.67.3",
+  "status": "passed",
+  "steps": [
+    {
+      "command": "create",
+      "request_id": "d65e3010-a611-42d1-bae5-b7cd17d7ce0d",
+      "moves": [],
+      "updated_references": [
+        "vault/archives/Quasi 发布验证 718d86d26e2b/collection.md"
+      ]
+    },
+    {
+      "command": "move",
+      "request_id": "20f4aecc-fd1c-4582-a95e-3b0ac2b95114",
+      "moves": [
+        {
+          "from": "vault/archives/quasi-release-smoke-718d86d26e2b",
+          "to": "vault/archives/Quasi 发布验证 718d86d26e2b/quasi-release-smoke-718d86d26e2b"
+        }
+      ],
+      "updated_references": [
+        "vault/topics/quasi-release-smoke-718d86d26e2b/cards/fixture.md"
+      ]
+    },
+    {
+      "verified_path": "vault/archives/Quasi 发布验证 718d86d26e2b/quasi-release-smoke-718d86d26e2b/archive.md",
+      "original_sha256": "6b1048f8a6d40bac0b2954c18fefa40c4ea7a96120fc2e54b7317c0e43c2bbec",
+      "topic_card_usable": true
+    },
+    {
+      "command": "move",
+      "request_id": "68779b79-b3f0-437d-958b-6dbedba351f9",
+      "moves": [
+        {
+          "from": "vault/archives/Quasi 发布验证 718d86d26e2b/quasi-release-smoke-718d86d26e2b",
+          "to": "vault/archives/quasi-release-smoke-718d86d26e2b"
+        }
+      ],
+      "updated_references": [
+        "vault/topics/quasi-release-smoke-718d86d26e2b/cards/fixture.md"
+      ]
+    },
+    {
+      "verified_path": "vault/archives/quasi-release-smoke-718d86d26e2b/archive.md",
+      "original_sha256": "6b1048f8a6d40bac0b2954c18fefa40c4ea7a96120fc2e54b7317c0e43c2bbec",
+      "topic_card_usable": true
+    }
+  ],
+  "existing_files_checked": 37181,
+  "existing_files_changed": [],
+  "date": "2026-09-24",
+  "scope": "live Marple CLI and source Quasi CLI; no model Host execution",
+  "stale_revisions_blocked": true,
+  "fresh_status_and_url_resolution": true,
+  "membership_updated_in_place": true,
+  "temporary_fixture_cleanup": "complete"
+}

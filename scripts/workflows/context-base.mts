@@ -31,6 +31,7 @@ export function operationContextBase(
   const meta = context.meta || {};
   return {
     ...passthrough,
+    ...(kind === "archive" ? {archiveDirectory: context.archiveDirectory ?? `vault/archives/${slug}`} : {}),
     kind,
     slug,
     meta,

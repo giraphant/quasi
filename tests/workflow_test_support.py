@@ -60,10 +60,13 @@ def run_generated_workflow(
     entry: str,
     value: dict[str, Any],
     outputs: list[dict[str, Any]] | None = None,
+    *,
+    capture_agent_requests: bool = False,
 ) -> dict[str, Any]:
     return _run_harness(
         {
             "action": "run-generated",
+            "captureAgentRequests": capture_agent_requests,
             "source": f"{'deprecated/workflows' if entry == 'topic' else 'workflows'}/{entry}.mjs",
             "input": value,
             "outputs": outputs or [],

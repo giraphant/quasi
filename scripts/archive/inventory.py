@@ -41,7 +41,7 @@ def digest(path: Path) -> str:
 
 
 def revision(root: Path, directory: Path) -> str:
-    value = hashlib.sha256()
+    value = hashlib.sha256(directory.relative_to(root).as_posix().encode())
     for name in ('archive.md', 'manifest.yaml'):
         path = directory / name
         state = path_state(root, path)

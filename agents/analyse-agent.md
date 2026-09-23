@@ -13,8 +13,9 @@ model: opus
 
 Envelope 的 `artifact_contract` 是 frontmatter、H1、section 顺序、块形状和各节语义的唯一
 结构标准；`frontmatter_seed` 是已经核验的固定 metadata。Operation instructions 说明这一类
-材料的引用、页码和证据处理方式。相对 refs 按 `$CLAUDE_PROJECT_DIR` 解析，receipt 保留原始
+材料的引用、页码和证据处理方式。相对 refs 优先按非空 `$CLAUDE_PROJECT_DIR` 解析（为空或未设置时使用 specialist 当前 cwd 作为项目／文库根），receipt 保留原始
 相对路径。
+绝对 request paths 原样使用；receipt 保留 caller 原始 project-relative 路径拼写。不得以 prompt 中的 `cd` 或目录发现替代 exact refs。
 
 第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
 output_observation 为权威。只有 output_observation 与磁盘不一致时，不写入并以

@@ -76,6 +76,14 @@ export const parseArchiveSeed = (value: unknown): ArchiveSeed | null => {
   return value as unknown as ArchiveSeed;
 };
 
+const validArchivePath = (path: string, slug: string): boolean => {
+  const parts = path.split("/");
+  return (parts.length === 4 || parts.length === 5) &&
+    parts[0] === "vault" && parts[1] === "archives" &&
+    parts[parts.length - 2] === slug && parts[parts.length - 1] === "archive.md" &&
+    parts.every(part => part.length > 0 && !part.startsWith(".") && !/[\\\x00-\x1f]/.test(part));
+};
+
 export const parseArchiveStatusObservation = (
   value: unknown,
 ): ArchiveStatusObservation | null => {
@@ -89,12 +97,13 @@ export const parseArchiveStatusObservation = (
     !exactKeys(value.facts, ["kind", "canonical", "collection"]) ||
     value.facts.kind !== "archive" ||
     !isArtifactObservation(value.facts.canonical) ||
-    value.facts.canonical.path !== `vault/archives/${value.slug}/archive.md`
+    !validArchivePath(value.facts.canonical.path, value.slug)
   ) return null;
+  const directory = value.facts.canonical.path.slice(0, -"/archive.md".length);
   const collection = value.facts.collection;
   if (!isRecord(collection) || !exactKeys(collection, ["path", "present", "usable", "revision", "source_url", "files", "coverage"]) ||
       !isArtifactObservation({path: collection.path, present: collection.present, usable: collection.usable}) ||
-      collection.path !== `vault/archives/${value.slug}/manifest.yaml` ||
+      collection.path !== `${directory}/manifest.yaml` ||
       !(collection.revision === null || (typeof collection.revision === "string" && /^[0-9a-f]{64}$/.test(collection.revision))) ||
       !(collection.source_url === null || normalizeWebUrl(collection.source_url) !== null) ||
       !(collection.coverage === null || typeof collection.coverage === "string") ||
@@ -104,8 +113,8 @@ export const parseArchiveStatusObservation = (
         typeof file.media_type === "string" && typeof file.path === "string" &&
         typeof file.title === "string" && file.title.trim().length > 0 &&
         typeof file.description === "string" && file.description.trim().length > 0 &&
-        file.path.startsWith(`vault/archives/${value.slug}/originals/`) &&
-        /^[a-z0-9]+(?:-[a-z0-9]+)*\.[a-z0-9]+$/.test(file.path.slice(`vault/archives/${value.slug}/originals/`.length))) ||
+        file.path.startsWith(`${directory}/originals/`) &&
+        /^[a-z0-9]+(?:-[a-z0-9]+)*\.[a-z0-9]+$/.test(file.path.slice(`${directory}/originals/`.length))) ||
       new Set(collection.files.map(file => file.path)).size !== collection.files.length ||
       (collection.usable && (!collection.source_url || !collection.revision || collection.files.some(file => !file.usable)))) return null;
   if (value.facts.canonical.usable) {

@@ -20,7 +20,8 @@ model: opus
 - `mode:create|refresh|repair`、`overwrite` 与 repair diagnostics；
 - `artifact_contract`：由产物 schema 生成的完整 frontmatter 与正文合同。
 
-相对路径按 `$CLAUDE_PROJECT_DIR` 解析，但回执原样保留 caller 的相对路径。只读 envelope 命名的 member、card 与 output paths，只写 `output.path`。禁止目录扫描、网络、`quasi-*`、Agent dispatch 和任何其它 path。
+相对路径优先按非空 `$CLAUDE_PROJECT_DIR` 解析（为空或未设置时使用 specialist 当前 cwd 作为项目／文库根），但回执原样保留 caller 的相对路径。只读 envelope 命名的 member、card 与 output paths，只写 `output.path`。禁止目录扫描、网络、`quasi-*`、Agent dispatch 和任何其它 path。
+绝对 request paths 原样使用；receipt 保留 caller 原始 project-relative 路径拼写。不得以 prompt 中的 `cd` 或目录发现替代 exact refs。
 
 第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
 output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；

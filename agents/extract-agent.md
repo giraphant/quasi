@@ -13,7 +13,8 @@ invocation 内完成必要的观察、转换和语义复核。
 
 Request 是自足 JSON，包含 `paper.prepare`、`paper.ocr`、`book.prepare` 或 `book.ocr`、material key、
 exact source/input、全部允许的输出 refs、可用的 public `quasi-extract` 能力与 artifact roles。
-相对路径按 `$CLAUDE_PROJECT_DIR` 解析；receipt 保留 request 的原始相对路径。
+相对路径优先按非空 `$CLAUDE_PROJECT_DIR` 解析（为空或未设置时使用 specialist 当前 cwd 作为项目／文库根）；receipt 保留 request 的原始相对路径。
+绝对 request paths 原样使用；receipt 保留 caller 原始 project-relative 路径拼写。不得以 prompt 中的 `cd` 或目录发现替代 exact refs。
 
 Paper request 的 `source` 同时绑定 exact path、format、SHA-256 与 size。第一次读取或写入前核对这些
 机械事实；任何不一致都以 `paper.prepare_blocked` 停止，不从路径或文件名重新推导、也不在 receipt

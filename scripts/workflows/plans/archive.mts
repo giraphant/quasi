@@ -38,7 +38,9 @@ export async function runArchivePlan(
     dispatchPreparedOperation(runtime, prepareOperation({
       operation,
       slug: slug ?? "archive-intake",
-      context,
+      context: {...context, ...(input.observation ? {
+        archiveDirectory: input.observation.facts.canonical.path.slice(0, -"/archive.md".length),
+      } : {})},
       label: `${slug ?? "archive-intake"}:${operation}`,
     }));
   const stop = (outcome: DispatchOutcome): MaterialResult | null => {

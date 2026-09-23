@@ -141,3 +141,89 @@ def create_output_parents(root: Path, output: Path) -> None:
     state = path_state(anchor, lexical)
     if state not in {"missing", "regular"}:
         raise WebpagePathError("webpage output leaf is unsafe")
+
+
+class PinnedOutput:
+    """Resolve, validate and pin in one no-follow descriptor walk.
+
+    Absolute roots start at /; relative roots start at an already-open cwd.
+    Every later operation uses the resulting directory fd, never a reopened root.
+    """
+
+    def __init__(self, output: Path):
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        self.fds = []
+        self.edges = []
+        try:
+            configured = Path(os.environ.get("CLAUDE_PROJECT_DIR") or ".").expanduser()
+            anchor = os.open("/" if configured.is_absolute() else ".", flags)
+            self.fds.append(anchor)
+            base = Path("/") if configured.is_absolute() else Path(os.getcwd())
+            self.anchor_path = base
+            self.root = Path(os.path.abspath(base / configured))
+            root_parts = configured.parts[1:] if configured.is_absolute() else configured.parts
+            for part in root_parts:
+                self._open_component(part, create=False)
+            self.path = lexical_project_path(self.root, output)
+            relative = self.path.relative_to(self.root)
+            if not relative.parts:
+                raise WebpagePathError("webpage output must name a file")
+            for part in relative.parts[:-1]:
+                self._open_component(part, create=True)
+            try:
+                info = os.stat(relative.name, dir_fd=self.directory, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                if stat.S_ISREG(info.st_mode):
+                    raise FileExistsError("snapshot output already exists")
+                raise WebpagePathError("webpage output leaf is unsafe")
+            self.verify()
+        except BaseException:
+            self.close()
+            raise
+
+    def _open_component(self, part, *, create):
+        if part == ".":
+            return
+        parent = self.directory
+        if create:
+            try:
+                os.mkdir(part, dir_fd=parent)
+            except FileExistsError:
+                pass
+        descriptor = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        self.fds.append(descriptor)
+        self.edges.append((parent, part, descriptor))
+
+    @property
+    def directory(self):
+        return self.fds[-1]
+
+    @staticmethod
+    def identity(info):
+        return info.st_dev, info.st_ino
+
+    def verify(self):
+        # These checks supplement the pinned authority. They never replace it or
+        # supply a new fd for writing, even when caller ancestors have changed.
+        for parent, name, child in self.edges:
+            current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            if not stat.S_ISDIR(current.st_mode) or self.identity(current) != self.identity(os.fstat(child)):
+                raise WebpagePathError("capture output ancestry changed")
+        if self.anchor_path != Path("/"):
+            current = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                for part in self.anchor_path.parts[1:]:
+                    following = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current)
+                    os.close(current)
+                    current = following
+                if self.identity(os.fstat(current)) != self.identity(os.fstat(self.fds[0])):
+                    raise WebpagePathError("capture cwd ancestry changed")
+            finally:
+                os.close(current)
+
+    def close(self):
+        for descriptor in reversed(self.fds):
+            os.close(descriptor)
+        self.fds = []

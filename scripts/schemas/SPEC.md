@@ -33,7 +33,7 @@ vault 中的被打 `type` 文档使用 12 个 canonical type。短名是唯一�
 | `journal` | 期刊 overview/resources 页面 | `vault/journals/<slug>/{00-overview,01-resources}.md` | 11 |
 | `topic`   | 主题 overview/resources 页面 | `vault/topics/<slug>/{00-overview,01-resources}.md` | 12 |
 | `note`    | 自由笔记或批注        | `vault/notes/*.md`                       | 18 |
-| `archive` | 单件档案材料 metadata | `vault/archives/<slug>/archive.md` | — |
+| `archive` | 单件档案材料 metadata | `vault/archives/<slug>/archive.md` 或 `vault/archives/<collection>/<slug>/archive.md` | — |
 | `image`   | 本地图片对象 metadata | `vault/images/<slug>/image.md`           | 8 |
 | `talk`    | 会议/讲座录制的摘要   | `vault/talks/<slug>/talk.md`             | 0 |
 | `transcript` | 讲座的带时间戳转写 | `vault/talks/<slug>/transcript.md`       | 0 |
@@ -633,7 +633,7 @@ export const WebpageSchema = z.object({
 单件档案材料：一条帖子及其回复、一段视频及其评论可作为一件，收录范围在正文说明。
 已有 `image`、`talk`、`webpage` 类型继续保留，不自动迁移。多次保存同一材料不自动建立新对象。
 
-固定入口为 `vault/archives/<slug>/archive.md`，slug 使用 kebab-case。
+新建入口为 `vault/archives/<slug>/archive.md`，也可移动到一层带 `collection.md` 的 `vault/archives/<collection>/<slug>/archive.md`。合集成员关系由目录表示，无单独 manifest。slug 使用 kebab-case，跨合集唯一；已有对象使用观察到的实际路径。
 必填字段为 `type: archive`、`title`、`kind`、`created`（完整 `YYYY-MM-DD` 建档日期）。
 `kind` 描述对象而非保存格式，只接受 `patent|thread|post|video|image|webpage|document`。
 截图中的帖子仍为 `post` 或 `thread`，PDF 专利仍为 `patent`。
@@ -650,7 +650,7 @@ archive.md 用相对路径陈列图片或链接其它原件，不要求逐图标
 manifest 结构源为 archive_manifest.py，阅读器解析合同见 docs/ARCHIVE_STORAGE.md。note 的 `annotates` 可指向上述固定入口。
 `topics` 支持多个专题的成员标签。Topic 的非学术来源先通过 Archive Workflow 收录，再写证据卡；Book/Paper/Talk 学术 corpus 不变。相同规范化 URL 的唯一 Archive owner 可跨专题复用，已有 topics 合并保留。独立网页阅读仍走 Webpage。
 
-Topic `kind: card` 新增可选 `archives`：1–8 个不重复的 `vault/archives/<slug>/archive.md` 路径，仅 card 可用。新卡必须绑定本次已收录材料并在正文链接；旧卡可省略以保留兼容。材料缺失、已声明原件损坏、schema 无效或 topics 不含当前专题时，Topic status 将引用卡标为 unusable。
+Topic `kind: card` 新增可选 `archives`：1–8 个不重复的 `vault/archives/<slug>/archive.md` 或 `vault/archives/<collection>/<slug>/archive.md` 实际路径，仅 card 可用。新卡必须绑定本次已收录材料并在正文链接；旧卡可省略以保留兼容。材料缺失、已声明原件损坏、schema 无效或 topics 不含当前专题时，Topic status 将引用卡标为 unusable。
 
 ## 4. Body Schemas(正文结构 schema)
 

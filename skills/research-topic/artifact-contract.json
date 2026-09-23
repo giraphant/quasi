@@ -154,7 +154,7 @@
           "anyOf": [
             {
               "items": {
-                "pattern": "^vault/archives/[a-z0-9]+(?:-[a-z0-9]+)*/archive\\.md$",
+                "pattern": "^vault/archives/(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*/)?[a-z0-9]+(?:-[a-z0-9]+)*/archive\\.md$",
                 "type": "string"
               },
               "maxItems": 8,

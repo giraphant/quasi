@@ -505,6 +505,7 @@ ARCHIVE_BODY = BodySchema(
     identity_fields=["title", "kind", "url"],
     h1="使用 frontmatter.title；新建页面必须有 H1",
     evidence_rules=[
+        "Existing Archive may live at vault/archives/{collection}/{slug}/archive.md; collection.md marks the parent. Use the exact observed path; never reconstruct existing paths from slug.",
         "一件 Archive 对应一件材料，kind 描述对象而非保存格式",
         "新建正文包含材料概况、来源与保存、内容与摘录；按下列栏目语义编撰，不能只给一句简介和附件列表。旧轻量记录仍可读取，不强制迁移或阻断收录",
         "frontmatter.source 是来源平台/机构，url 是材料直接链接，creator 是已核实作者或发布者；created 是建档日期，date 仅为已核实的原材料完整发布日期",

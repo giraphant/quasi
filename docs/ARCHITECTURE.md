@@ -204,8 +204,13 @@ and observations. Dispatched CC user gates travel through Orca ask/reply.
 No Codex plugin package, hooks, duplicated material state machine or interpreter
 is installed. See `docs/CODEX_ENTRY.md` for installation and acceptance.
 
-Archive has a named URL collection Workflow. It owns `vault/archives/{slug}/archive.md`,
-`manifest.yaml` and descriptively named files under `originals/`. New pages provide a structured reading entry (overview, source/coverage and concrete content summary),
+Archive has a named URL collection Workflow. New objects start at `vault/archives/{slug}/`;
+existing objects may also live at `vault/archives/{collection}/{slug}/` under one
+`collection.md`-marked parent. Status and resolution provide the exact directory for
+`archive.md`, `manifest.yaml` and descriptively named files under `originals/`.
+Directory moves invalidate old revisions; collection writes share Marple's move lock
+and stop on unfinished operation journals. Slugs remain unique across both layouts.
+New pages provide a structured reading entry (overview, source/coverage and concrete content summary),
 with source/url, verified creator and publication date in frontmatter. Publication date is distinct
 from creation, capture and modification dates; unknown dates remain omitted and explained.
 The inventory owns per-file provenance and capture records. Existing lightweight pages remain readable. Missing originals

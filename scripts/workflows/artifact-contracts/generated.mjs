@@ -157,7 +157,7 @@ export const TOPIC_ARTIFACT_CONTRACT = {
           "anyOf": [
             {
               "items": {
-                "pattern": "^vault/archives/[a-z0-9]+(?:-[a-z0-9]+)*/archive\\.md$",
+                "pattern": "^vault/archives/(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*/)?[a-z0-9]+(?:-[a-z0-9]+)*/archive\\.md$",
                 "type": "string"
               },
               "maxItems": 8,
@@ -442,6 +442,7 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
   "document": {
     "additional_h2": false,
     "evidence_rules": [
+      "Existing Archive may live at vault/archives/{collection}/{slug}/archive.md; collection.md marks the parent. Use the exact observed path; never reconstruct existing paths from slug.",
       "一件 Archive 对应一件材料，kind 描述对象而非保存格式",
       "新建正文包含材料概况、来源与保存、内容与摘录；按下列栏目语义编撰，不能只给一句简介和附件列表。旧轻量记录仍可读取，不强制迁移或阻断收录",
       "frontmatter.source 是来源平台/机构，url 是材料直接链接，creator 是已核实作者或发布者；created 是建档日期，date 仅为已核实的原材料完整发布日期",
@@ -2131,9 +2132,9 @@ export const OPERATION_CATALOG = {
     "effect": "writer",
     "agent": "quasi:archive-agent",
     "artifacts": {
-      "output": "vault/archives/{slug}/archive.md",
-      "manifest": "vault/archives/{slug}/manifest.yaml",
-      "originals": "vault/archives/{slug}/originals"
+      "output": "{archiveDirectory}/archive.md",
+      "manifest": "{archiveDirectory}/manifest.yaml",
+      "originals": "{archiveDirectory}/originals"
     }
   },
   "archive.audit": {
@@ -2144,7 +2145,7 @@ export const OPERATION_CATALOG = {
     "effect": "writer",
     "agent": "quasi:audit-agent",
     "artifacts": {
-      "target": "vault/archives/{slug}/archive.md"
+      "target": "{archiveDirectory}/archive.md"
     }
   },
   "topic.discover-archives": {

@@ -82,7 +82,7 @@ class TopicSchema(BaseModel):
     )
 
     archives: Optional[list[Annotated[str, StringConstraints(
-        pattern=r"^vault/archives/[a-z0-9]+(?:-[a-z0-9]+)*/archive\.md$",
+        pattern=r"^vault/archives/(?:[^./\\\x00-\x1f][^/\\\x00-\x1f]*/)?[a-z0-9]+(?:-[a-z0-9]+)*/archive\.md$",
     )]]] = Field(default=None, min_length=1, max_length=8,
                  description="本卡引用的 Archive canonical paths；仅 kind: card；旧卡可省略")
 

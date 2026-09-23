@@ -205,9 +205,35 @@ export const webpageOperationRows: OperationRow[] = [
       intake_url: refs.requestedUrl,
       capabilities: [
         "quasi-webpage inspect --url URL --json",
-        "quasi-helpers vault resolve --items-file -",
+        "quasi-helpers vault resolve --items-json JSON",
       ],
-      resolver_item: { kind: "webpage" },
+      identify_contract: {
+        command_form: "bare_direct_literal",
+        inspect: { calls: 1, require_status: "complete" },
+        resolver: {
+          calls: 1,
+          after: "inspect.complete",
+          argument: "--items-json",
+          encoding: "literal_json_array",
+          array_length: 1,
+          additional_item_fields: false,
+          item: {
+            kind: { const: "webpage" },
+            slug: {
+              source: "candidate_slug",
+              derived_from: ["inspect.final_url", "inspect.title", "inspect.site"],
+              pattern: MATERIAL_SLUG_PATTERN,
+            },
+            url: { source: "inspect.final_url" },
+            title: { source: "inspect.title" },
+            site: { source: "inspect.site" },
+          },
+          repeat_or_repair: false,
+        },
+        forbidden_command_forms: [
+          "printf", "pipe", "stdin", "shell_variable", "command_substitution",
+        ],
+      },
     }),
   },
   {
