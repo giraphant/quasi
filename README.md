@@ -79,7 +79,7 @@ processing/   # 可检查的中间产物:chapters/ translations/ talks/ webpages
 
 ## 维护
 
-Codex 使用独立的 [Quasi 统一入口](codex/skills/quasi/SKILL.md)，通过阅读、研究札记、回顾与综合持续推进研究，材料处理经 Orca orchestration 交给 Claude Code。Codex 侧无需安装 Quasi 插件；安装与旧入口清理见 [Codex 说明](docs/CODEX_ENTRY.md)。
+Codex 使用独立的 [Quasi 统一入口](codex/skills/quasi/SKILL.md)，以滚雪球法从材料和研究札记中发现线索，持续追索、回顾与综合，材料处理经 Orca orchestration 交给 Claude Code。Codex 侧无需安装 Quasi 插件；安装与旧入口清理见 [Codex 说明](docs/CODEX_ENTRY.md)。
 
 维护者合同见 `CLAUDE.md`;分层架构、agent 与 CLI 细节见
 `docs/ARCHITECTURE.md`;OCR / 翻译管线的实测经验见 `docs/PDF_PIPELINE.md`;

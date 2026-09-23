@@ -191,9 +191,10 @@ the next round. Synthesis is evidence, not a mandatory decision gate. `finalise-
 owns interactive proofreading, citation review, and bibliography closure.
 
 Codex uses only the standalone `codex/skills/quasi` entry, with Orca orchestration
-as its coordination dependency. Its main agent reads sources, keeps research notes,
-revisits observations across materials, and develops interpretations that guide further
-discovery. Notes reuse the existing outline body or user note location; synthesis and
+as its coordination dependency. Its main agent uses snowball research: seed sources and
+notes yield leads, new sources change the meaning of older observations, and interpretations
+generate further questions. It prioritizes promising branches and seeks independent sources
+beyond the initial source network. Notes reuse the existing outline body or user note location; synthesis and
 resources remain the existing Topic pages. Research rounds count exploration and
 judgement updates, not individual archives. Collection and independent research overlap.
 A real Claude Code worker owns each whole collect-material or finalise-draft task.
