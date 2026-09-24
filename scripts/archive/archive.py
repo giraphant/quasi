@@ -7,11 +7,14 @@ from datetime import datetime, timezone
 import fcntl
 import json
 import hashlib
+from itertools import chain
+import math
 import time
 import mimetypes
 import os
 from pathlib import Path
 import re
+import stat
 import tempfile
 from urllib.parse import unquote, urljoin, urlsplit
 
@@ -22,11 +25,13 @@ from bs4 import BeautifulSoup
 from scripts.core import dump_frontmatter, print_json, project_root, read_frontmatter
 from scripts.schemas.archive import ArchiveSchema
 from scripts.schemas.archive_manifest import ArchiveManifest, ArchiveFile, ArchiveSource
-from scripts.webpage.paths import path_state
+from scripts.webpage.paths import lexical_project_path, path_state
 from scripts.webpage.webarchive import normalize_web_url
 from .inventory import digest, load_manifest, observe_collection, revision
 
 MAX_BYTES = 1024 * 1024 * 1024
+PDF_PAGE_LIMIT = 16
+PDF_TEXT_LIMIT = 6000
 NAME = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*\.[a-z0-9]+$')
 SLUG = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
 
@@ -47,17 +52,160 @@ def response(url):
     return result
 
 
-def inspect(url: str) -> dict:
+def _pdf_pages(selection: str | None, count: int) -> list[int]:
+    """Physical, one-based pages; the caller chooses what to inspect next."""
+    if selection is None:
+        return list(range(1, min(8, count) + 1))
+    selected = set()
+    for part in selection.split(','):
+        if not re.fullmatch(r'[1-9][0-9]*(?:-[1-9][0-9]*)?', part):
+            raise ValueError('PDF pages must be numbers or ranges, e.g. 1-8 or 5,19')
+        ends = [int(value) for value in part.split('-')]
+        first, last = ends[0], ends[-1]
+        if first > last or last > count or last - first >= PDF_PAGE_LIMIT:
+            raise ValueError('PDF page range is outside the document or exceeds 16 pages')
+        selected.update(range(first, last + 1))
+        if len(selected) > PDF_PAGE_LIMIT:
+            raise ValueError('inspect accepts at most 16 PDF pages per invocation')
+    return sorted(selected)
+
+
+@contextmanager
+def _inspection_output(root: Path, output_dir: Path | None):
+    """Only an explicit, new scratch directory may retain PDF evidence."""
+    if output_dir is None:
+        yield None, None
+        return
+    path = lexical_project_path(root, output_dir)
+    relative = path.relative_to(root)
+    if relative.parts[:2] != ('.quasi', 'temp') or len(relative.parts) < 3:
+        raise ValueError('inspection output must be a new directory under .quasi/temp/')
+    with _directory(root, relative.parent, True) as parent:
+        os.mkdir(relative.name, mode=0o700, dir_fd=parent)  # Never reuse or overwrite.
+        try:
+            with _directory(root, relative) as directory:
+                try:
+                    yield relative.as_posix(), directory
+                    _same_directory(root, path, directory)
+                    os.fsync(directory)
+                except BaseException:
+                    for name in os.listdir(directory):
+                        os.unlink(name, dir_fd=directory)
+                    raise
+        except BaseException:
+            os.rmdir(relative.name, dir_fd=parent)
+            raise
+
+
+def _pdf_evidence(chunks, *, pages=None, output_dir=None, root=None, source_path=None,
+                  expected_size=None, started=None) -> dict:
+    """Spool complete bytes to disk, then expose bounded text and optional images.
+
+    PDF xref tables can be at EOF: a response prefix is not a PDF inspection.
+    Scratch source.pdf is evidence only; collect still owns canonical originals.
+    """
+    import fitz
+    started = time.monotonic() if started is None else started
+    if expected_size is not None and expected_size > MAX_BYTES:
+        raise ValueError('PDF exceeds the 1 GiB inspection limit')
+    with tempfile.TemporaryDirectory(prefix='quasi-archive-pdf-') as temporary:
+        source = Path(temporary) / 'source.pdf'
+        size, sha = 0, hashlib.sha256()
+        with source.open('xb') as stream:
+            for chunk in chunks:
+                size += len(chunk)
+                if size > MAX_BYTES:
+                    raise ValueError('PDF exceeds the 1 GiB inspection limit')
+                if time.monotonic() - started > 300:
+                    raise ValueError('PDF inspection download exceeded five minutes')
+                sha.update(chunk)
+                stream.write(chunk)
+        if expected_size is not None and size != expected_size:
+            raise ValueError('incomplete PDF response; Content-Length does not match received bytes')
+        try:
+            document = fitz.open(source)
+        except RuntimeError as exc:
+            raise ValueError('cannot open PDF for inspection') from exc
+        with document:
+            if not document.is_pdf or document.needs_pass or document.page_count == 0:
+                raise ValueError('inspection requires a readable, unencrypted, non-empty PDF')
+            selected = _pdf_pages(pages, document.page_count)
+            evidence = {'source_path': source_path, 'cached_pdf': None,
+                        'size': size, 'sha256': sha.hexdigest(), 'page_count': document.page_count,
+                        'metadata': {key: value[:2000] for key, value in document.metadata.items()
+                                     if isinstance(value, str) and value},
+                        'pages': [], 'partial': len(selected) < document.page_count}
+            with _inspection_output(root or project_root(), output_dir) as (directory, fd):
+                def save(name, chunks):
+                    out = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+                    with os.fdopen(out, 'wb') as stream:
+                        for chunk in chunks:
+                            stream.write(chunk)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                if fd is not None:
+                    with source.open('rb') as stream:
+                        save('source.pdf', iter(lambda: stream.read(1024 * 1024), b''))
+                    evidence['cached_pdf'] = directory + '/source.pdf'
+                for number in selected:
+                    try:
+                        page = document[number - 1]
+                        text = page.get_text(sort=True)
+                        item = {'page': number, 'text': text[:PDF_TEXT_LIMIT],
+                                'text_truncated': len(text) > PDF_TEXT_LIMIT, 'preview_path': None}
+                        if fd is not None:
+                            extent = max(page.rect.width, page.rect.height)
+                            if not math.isfinite(extent) or extent <= 0:
+                                raise ValueError(f'invalid dimensions for PDF page {number}')
+                            scale = min(2, 1600 / extent)
+                            pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csRGB, alpha=False)
+                            name = f'page-{number:04d}.png'
+                            save(name, [pixmap.tobytes('png')])
+                            item['preview_path'] = directory + '/' + name
+                    except RuntimeError as exc:
+                        raise ValueError(f'cannot inspect PDF page {number}') from exc
+                    evidence['pages'].append(item)
+                    evidence['partial'] |= item['text_truncated']
+            return evidence
+
+
+def inspect_pdf(path: Path, *, pages=None, output_dir=None, root=None) -> dict:
+    """Read a caller-named local PDF; do not invent a remote URL association."""
+    root = root or project_root()
+    source = path if path.is_absolute() else root / path
+    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError('PDF inspection input must be a regular file')
+        evidence = _pdf_evidence(iter(lambda: stream.read(1024 * 1024), b''), pages=pages,
+                                 output_dir=output_dir, root=root, source_path=str(path), expected_size=info.st_size)
+    return {'schema_version': 'quasi.archive.inspect/0.1', 'status': 'complete',
+            'url': None, 'final_url': None, 'media_type': 'application/pdf', 'title': path.name,
+            'metadata_evidence': [], 'candidates': [], 'pdf': evidence, 'truncated': evidence['partial']}
+
+
+def inspect(url: str, *, pages=None, output_dir=None, root=None) -> dict:
     """Inspect one source; links are candidates, never automatic collection scope."""
+    started = time.monotonic()
     with response(url) as result:
         media = result.headers.get('Content-Type', '').split(';')[0].lower()
         filename = unquote(Path(urlsplit(result.url).path).name)
         data = bytearray()
-        for chunk in result.iter_content(65536):
+        chunks = iter(result.iter_content(65536))
+        for chunk in chunks:
             data.extend(chunk)
             if len(data) >= 2 * 1024 * 1024:
                 break
         html = media in ('text/html', 'application/xhtml+xml') or bytes(data).lstrip().lower().startswith((b'<!doctype html', b'<html'))
+        if bytes(data).lstrip().startswith(b'%PDF-') or (media == 'application/pdf' and not html):
+            length = result.headers.get('Content-Length', '')
+            expected_size = int(length) if length.isdigit() and result.headers.get('Content-Encoding', 'identity') == 'identity' else None
+            evidence = _pdf_evidence(chain([data], chunks), pages=pages, output_dir=output_dir,
+                                     root=root, expected_size=expected_size, started=started)
+            return {'schema_version': 'quasi.archive.inspect/0.1', 'status': 'complete',
+                    'url': url, 'final_url': result.url, 'media_type': 'application/pdf', 'title': filename,
+                    'metadata_evidence': [], 'candidates': [], 'pdf': evidence, 'truncated': evidence['partial']}
         title, candidates, metadata_evidence = filename, [], []
         if html:
             soup = BeautifulSoup(bytes(data), 'html.parser')
@@ -402,7 +550,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     inspect_parser = commands.add_parser('inspect')
-    inspect_parser.add_argument('--url', required=True)
+    source = inspect_parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--url')
+    source.add_argument('--path', type=Path, help='exact caller-named local PDF (no remote URL claim)')
+    inspect_parser.add_argument('--pages', help='physical PDF pages, e.g. 1-8 or 5,19; default first 8, maximum 16')
+    inspect_parser.add_argument('--output-dir', type=Path, help='new .quasi/temp/ directory for source.pdf and selected page PNGs')
     read_parser = commands.add_parser('read')
     read_parser.add_argument('--path', required=True)
     collect_parser = commands.add_parser('collect')
@@ -411,7 +563,8 @@ def main():
     try:
         root = project_root().resolve()
         if args.command == 'inspect':
-            result = inspect(args.url)
+            options = {'pages': args.pages, 'output_dir': args.output_dir, 'root': root}
+            result = inspect(args.url, **options) if args.url else inspect_pdf(args.path, **options)
         elif args.command == 'read':
             from scripts.webpage.webarchive import read_webarchive
             path = Path(args.path)

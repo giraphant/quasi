@@ -217,7 +217,12 @@ The inventory owns per-file provenance and capture records. Existing lightweight
 are coverage notes, not a completeness quota; link-only empty inventories are valid.
 Explicit archival intent uses Archive; standalone webpage reading preserves Webpage.
 `archive.identify` resolves a unique existing Archive by normalized source URL;
-ambiguous owners or occupied slugs stop. `archive.collect` selects originals and invokes
+ambiguous owners or occupied slugs stop. Its inspector reads complete PDFs locally
+and returns bounded, numbered page text.
+An explicitly named new `.quasi/temp/` directory may retain the source and page PNGs;
+the agent can read those exact evidence paths and inspect more pages of the same cache.
+These are disposable inspection evidence, not material outputs or continuation state.
+`archive.collect` selects originals and invokes
 `quasi-archive collect` for publication or Topic membership merge. Each write returns
 an exact observation request; completion requires fresh usable metadata/inventory and
 a clean audit. Legacy link records are enriched on next collection. Video/audio are

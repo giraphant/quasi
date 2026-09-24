@@ -130,7 +130,17 @@ Topic 只读发现材料 → Archive agent 检查 exact URL 与对象内附件 �
 
 CLI:
 
-- `quasi-archive inspect --url URL`：只读检查内容类型、标题、带字段标签的日期/作者元数据证据和对象内候选链接；不自动递归。
+- `quasi-archive inspect --url URL`：检查内容类型、标题、带字段标签的日期/作者元数据证据和对象内候选链接；不自动递归，不写正式材料。
+  PDF 流式取得完整文件后在本地解析，最多 1 GiB、下载五分钟；默认返回前八个物理页的已有文字层，
+  `--pages 5,19` 或 `--pages 1-8` 可选择任意最多 16 页，每页文本最多 6,000 字符，截断明确标记。
+  `pdf` 返回 SHA-256、字节数、总页数、未核实的 PDF metadata 和具名页证据；顶层 title 保留文件名标签，
+  由 Identify 据题页判断正式题名，PDF 创建／修改时间不得代替出版日期。
+  `--output-dir .quasi/temp/UNIQUE` 显式保留 `source.pdf` 与所选页的 `page-NNNN.png`，返回 exact paths；
+  目录必须不存在，预览最长边不超过 1600 像素。无文字层的扫描件可直接核读这些预览，无需全书 OCR。
+  未指定 output-dir 时只使用本次调用结束即清理的系统临时目录，不留下缓存或预览。
+- `quasi-archive inspect --path EXACT.pdf [--pages ...] [--output-dir ...]`：只读核验 caller 具名的本地 PDF，
+  或继续检查同次 URL 检查返回的 cached_pdf。此结果的 url/final_url 为 null，不伪造本地文件与远程来源的绑定。
+  缓存和页面预览仅为临时阅读证据，不是归档结果、Workflow 状态，也不绕过后续 collect/status/audit。
 - `quasi-archive collect --request-file .quasi/temp/UNIQUE.json`：发布原件、清单、陈列页。
   请求为 identity/topics/expected_revision/files/body/coverage，可加 metadata（creator/date/source）；
   metadata 的未知字段省略，membership 使用 {}，旧六键请求仍兼容。files 项为

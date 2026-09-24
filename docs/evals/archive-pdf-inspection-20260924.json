@@ -1,0 +1,55 @@
+{
+  "date": "2026-09-24",
+  "status": "passed",
+  "scope": "source CLI and generated Workflow contract; no model Host run or canonical Archive publication",
+  "base_commit": "8ccb7a70b6406d2d97eb62bc15adb258f216b3e0",
+  "archive_cli_sha256": "b6d44b1a70a2e48f2177e7aba07bc24f0159c0436a2df0a061b299ee7ba7a9d3",
+  "source_url": "https://www.worldradiohistory.com/Archive-Catalogs/Equipment-Retailers/Video-Equipment-Buyers-Guide-1985-86-Daniels.pdf",
+  "final_url": "https://www.worldradiohistory.com/Archive-Catalogs/Equipment-Retailers/Video-Equipment-Buyers-Guide-1985-86-Daniels.pdf",
+  "source_pdf": {
+    "size": 77097980,
+    "sha256": "8d05cbf699069c2f6890ebc05f85cc08d08b41e8670c6a037ef8499523ed22d8",
+    "page_count": 1334,
+    "metadata": {
+      "format": "PDF 1.7",
+      "creator": "PDF Compressor 8.2.14.09",
+      "producer": "Foxit FXPDFA 1.2",
+      "creationDate": "D:20211022032724-07'00'",
+      "modDate": "D:20211023020545-07'00'"
+    }
+  },
+  "remote_inspected_pages": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "visually_reviewed_title_page": 5,
+  "observed_title": "Bill Daniels' Illustrated Trade References: 85/86 Video Equipment Buyers Guide",
+  "local_reinspection_pages": [
+    5,
+    19
+  ],
+  "local_source_hash_matches": true,
+  "local_urls_are_null": true,
+  "page_5_preview_matches": true,
+  "regression_tests": {
+    "passed": 372,
+    "seconds": 44.79
+  },
+  "build_workflows": "passed",
+  "check_workflows": "passed",
+  "release_version": "0.67.4",
+  "release_checks": {
+    "passed_tests": 41,
+    "seconds": 1.92,
+    "manifest_versions_match": true,
+    "marketplace_validation": "passed",
+    "plugin_validation": "passed with known root CLAUDE.md context warning",
+    "maintainer_mirrors_match": true
+  }
+}
