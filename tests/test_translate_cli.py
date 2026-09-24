@@ -609,15 +609,21 @@ def test_source_fingerprint_mismatch_is_known_and_starts_no_backend(tmp_path):
     assert calls == []
 
 
-def test_undertranslated_candidate_is_preserved_but_never_canonical(tmp_path):
-    source, source_sha = source_fixture(tmp_path)
+@pytest.mark.parametrize('backend_name', ['pdf2zh', 'immersive'])
+@pytest.mark.parametrize('translated', [
+    [FULL, '', '', ''],
+    ['中' * 78] * 4,
+    [FULL] * 8 + [''] * 2,
+])
+def test_undertranslated_candidate_is_preserved_but_never_canonical(tmp_path, backend_name, translated):
+    source, source_sha = source_fixture(tmp_path, pages=len(translated))
 
     def backend(source, candidate, language, work_dir, on_state):
-        coverage.build_dual(candidate, [FULL, "", "", ""])
+        coverage.build_dual(candidate, translated)
         return {"task_id": None}
 
     receipt = commit.run_transaction(
-        **run_kwargs(tmp_path, source, source_sha, backend)
+        **run_kwargs(tmp_path, source, source_sha, backend, backend=backend_name)
     )
     assert receipt["status"] == "failed"
     assert receipt["coverage"]["signal"] == "under_translated"
@@ -631,6 +637,7 @@ def test_undertranslated_candidate_is_preserved_but_never_canonical(tmp_path):
         )
     )
     assert len(candidates) == 1
+    assert coverage.check(candidates[0])['detail'].replace(str(candidates[0]), 'the preserved staged candidate') == receipt['coverage']['detail']
 
 
 def test_fenced_unknown_immersive_generation_never_starts_second_backend(tmp_path):

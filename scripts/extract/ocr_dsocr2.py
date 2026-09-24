@@ -74,8 +74,12 @@ RENDER_DPI = 220
 # mlx-vlm 0.3.12 runs DeepSeek-OCR-2; 0.4+ broke it (see module docstring). The
 # --with deps are the model's remote-code imports (torch etc.) needed for the
 # processor/tokenizer load even though inference itself uses MLX.
+# MLX 0.32 is incompatible with this mlx-vlm pin, including MinerU layout
+# detection. Bound both uvx environments so callers need no UV_CONSTRAINT fix.
+_MLX_REQUIREMENT = "mlx<0.32"
 _MLXVLM_CMD = [
     "uvx", "--from", "mlx-vlm==0.3.12",
+    "--with", _MLX_REQUIREMENT,
     "--with", "torch", "--with", "torchvision", "--with", "addict",
     "--with", "einops", "--with", "matplotlib", "--with", "tqdm",
     "python", "-c",
@@ -117,6 +121,7 @@ json.dump(out, open(os.environ["DSOCR2_RESULTS"], "w"), ensure_ascii=False)
 _MINERU_MODEL_DEFAULT = "opendatalab/MinerU2.5-Pro-2605-1.2B"
 _MINERU_CMD = [
     "uvx", "--from", "mlx-vlm==0.3.12",
+    "--with", _MLX_REQUIREMENT,
     "--with", "mineru-vl-utils", "--with", "pillow",
     "--with", "torch", "--with", "torchvision",
     "python", "-c",
@@ -472,10 +477,20 @@ def _detect_layout(pngs: list[str], td: Path) -> list[list[dict]]:
                           stdout=subprocess.PIPE)
     if proc.returncode != 0 or not resfile.exists():
         sys.stderr.write(
-            f"[dsocr2] layout detection unavailable (exit {proc.returncode}); "
+            f"[dsocr2] WARNING: layout detection unavailable (exit {proc.returncode}); "
             "falling back to a per-line text layer.\n")
         return []
-    return json.loads(resfile.read_text())
+    layouts = json.loads(resfile.read_text())
+    grouped = sum(bool(blocks) for blocks in layouts)
+    if not grouped and pngs:
+        sys.stderr.write(
+            f"[dsocr2] WARNING: MinerU returned no paragraph blocks on all {len(pngs)} pages; "
+            "using a per-line text layer throughout. Check the MinerU log for per-page errors.\n")
+    else:
+        sys.stderr.write(
+            f"[dsocr2] paragraph blocks detected on {grouped}/{len(pngs)} pages; "
+            "pages without blocks use a per-line text layer.\n")
+    return layouts
 
 
 def main() -> int:

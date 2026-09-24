@@ -1196,6 +1196,29 @@ def test_text_extract_atomic_overwrite_is_idempotent(tmp_path: Path):
     assert list(tmp_path.glob(".paper.txt.*.tmp")) == []
 
 
+@pytest.mark.parametrize('command', [ocr_dsocr2._MLXVLM_CMD, ocr_dsocr2._MINERU_CMD])
+def test_ocr_uvx_environments_bound_mlx_for_pinned_vlm(command):
+    assert command[command.index('--from') + 1] == 'mlx-vlm==0.3.12'
+    requirements = [command[index + 1] for index, arg in enumerate(command) if arg == '--with']
+    assert 'mlx<0.32' in requirements
+
+
+@pytest.mark.parametrize('has_blocks', [False, True])
+def test_mineru_success_exit_reports_actual_paragraph_grouping(tmp_path, monkeypatch, capsys, has_blocks):
+    blocks = [{'c': 'text', 'b': [0, 0, 1, 1]}] if has_blocks else []
+    def run(command, *, env, **kwargs):
+        assert command[:len(ocr_dsocr2._MINERU_CMD)] == ocr_dsocr2._MINERU_CMD
+        Path(env['MINERU_RESULTS']).write_text(json.dumps([blocks, []]))
+        return subprocess.CompletedProcess(command, 0, stdout='')
+    monkeypatch.setattr(ocr_dsocr2.subprocess, 'run', run)
+    assert ocr_dsocr2._detect_layout(['one.png', 'two.png'], tmp_path) == [blocks, []]
+    message = capsys.readouterr().err
+    assert 'per-line text layer' in message
+    assert ('WARNING' in message) is (not has_blocks)
+    if has_blocks:
+        assert '1/2 pages' in message
+
+
 def test_dsocr2_runner_does_not_trust_remote_code():
     """The repo's remote code imports LlamaFlashAttention2, gone from transformers.
 

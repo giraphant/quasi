@@ -12,6 +12,8 @@ import ast
 import sys
 from pathlib import Path
 
+import pytest
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
@@ -21,14 +23,55 @@ FULL = "行动的形状是什么样的 " * 12
 
 
 def test_a_single_dead_page_does_not_reject_the_book(tmp_path):
-    # Real books carry plates and part-title pages; a mean would let one drag the
-    # whole run under the threshold.
-    pdf = coverage.build_dual(tmp_path / "one-dead.pdf", [FULL] * 3 + [""])
+    # Exactly 10% near-zero body pages remains within the chosen allowance.
+    pdf = coverage.build_dual(tmp_path / "one-dead.pdf", [FULL] * 9 + [""])
 
-    assert coverage.page_ratios(pdf)[3][1] == 0.0
+    assert coverage.page_ratios(pdf)[9][1] == 0.0
     report = coverage.check(pdf)
     assert report["ok"]
     assert report["signal"] == "pass"
+
+
+def test_healthy_median_cannot_hide_many_untranslated_body_pages(tmp_path):
+    pdf = coverage.build_dual(tmp_path / 'hidden-gaps.pdf', [FULL] * 8 + [''] * 2)
+    report = coverage.check(pdf)
+    assert report['median'] >= coverage.MIN_MEDIAN
+    assert report['signal'] == 'under_translated'
+    assert not report['ok']
+    assert '2/10' in report['detail'] and '20.0%' in report['detail']
+
+
+def test_old_point_23_translation_is_rejected(tmp_path):
+    pdf = coverage.build_dual(tmp_path / 'old-pass.pdf', ['中' * 78] * 4)
+    report = coverage.check(pdf)
+    assert report['median'] == pytest.approx(.23, abs=.005)
+    assert not report['ok'] and report['signal'] == 'under_translated'
+    assert report['minimum_median'] == .30
+
+
+@pytest.mark.parametrize(('ratios', 'passes'), [
+    ([.30] * 10, True),
+    ([.299] * 10, False),
+    ([.35] * 9 + [0.0], True),
+    ([.35] * 89 + [.049] * 11, False),
+    ([.35] * 8 + [.05] * 2, True),
+])
+def test_coverage_threshold_boundaries(monkeypatch, ratios, passes):
+    monkeypatch.setattr(coverage, 'page_ratios', lambda _: list(enumerate(ratios, 1)))
+    report = coverage.check(Path('assigned.pdf'))
+    assert report['ok'] is passes
+
+
+def test_low_text_plates_are_excluded_from_near_zero_denominator(tmp_path):
+    pdf = coverage.build_dual(tmp_path / 'with-plates.pdf', [FULL] * 3)
+    with coverage.pymupdf.open(pdf) as document:
+        for _ in range(7):
+            document.new_page().insert_text((20, 20), 'Plate', fontsize=9)
+            document.new_page()
+        document.saveIncr()
+    report = coverage.check(pdf)
+    assert report['measured_pages'] == 3 and report['ok']
+    assert '0/3' in report['detail']
 
 
 def test_mostly_skipped_book_is_rejected(tmp_path):

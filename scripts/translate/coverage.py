@@ -26,10 +26,13 @@ from pathlib import Path
 
 import pymupdf
 
-# Healthy pages sat at 0.30-0.36 across three books; the half-translated one had
-# a 0.15 median. 0.22 leaves room on both sides. Retune here if a font stack or
-# a language pair moves it.
-MIN_MEDIAN = 0.22
+# Healthy pages sat at 0.30-0.36. The old 0.22 threshold admitted a visibly
+# incomplete 0.23 translation; require the measured healthy lower bound.
+MIN_MEDIAN = 0.30
+# A healthy median can hide many effectively untranslated body pages. These
+# thresholds apply only to the measurable source pages, never plates/titles.
+NEAR_ZERO_RATIO = 0.05
+MAX_NEAR_ZERO_FRACTION = 0.10
 # Under this a page is a figure, a plate or a title and its ratio is noise.
 MIN_SOURCE_CHARS = 200
 # One or two measurable pages establish nothing.
@@ -100,7 +103,13 @@ def check(pdf_path: Path, *, target_language: str = "zh-CN") -> dict[str, object
         for page, ratio in sorted(ratios, key=lambda item: item[1])[:5]
     ]
     worst = ", ".join(f"p{item['page']}={item['ratio']:.2f}" for item in weakest)
-    if median >= MIN_MEDIAN:
+    near_zero = sum(ratio < NEAR_ZERO_RATIO for _, ratio in ratios)
+    near_zero_fraction = near_zero / len(ratios)
+    distribution = (
+        f"near-zero (<{NEAR_ZERO_RATIO:.2f}) pages {near_zero}/{len(ratios)} "
+        f"({near_zero_fraction:.1%}; maximum {MAX_NEAR_ZERO_FRACTION:.1%})"
+    )
+    if median >= MIN_MEDIAN and near_zero_fraction <= MAX_NEAR_ZERO_FRACTION:
         return {
             "ok": True,
             "signal": "pass",
@@ -108,8 +117,13 @@ def check(pdf_path: Path, *, target_language: str = "zh-CN") -> dict[str, object
             "measured_pages": len(ratios),
             "minimum_median": MIN_MEDIAN,
             "weakest": weakest,
-            "detail": f"coverage {median:.2f} over {len(ratios)} pages (weakest {worst})",
+            "detail": f"coverage {median:.3f} over {len(ratios)} pages; {distribution} (weakest {worst})",
         }
+    reasons = []
+    if median < MIN_MEDIAN:
+        reasons.append(f"median {median:.3f} is below {MIN_MEDIAN:.2f}")
+    if near_zero_fraction > MAX_NEAR_ZERO_FRACTION:
+        reasons.append(f"near-zero page fraction {near_zero_fraction:.1%} exceeds {MAX_NEAR_ZERO_FRACTION:.1%}")
     return {
         "ok": False,
         "signal": "under_translated",
@@ -118,10 +132,11 @@ def check(pdf_path: Path, *, target_language: str = "zh-CN") -> dict[str, object
         "minimum_median": MIN_MEDIAN,
         "weakest": weakest,
         "detail": (
-            f"Under-translated: {median:.2f} Chinese characters per source letter over "
-            f"{len(ratios)} pages, expected at least {MIN_MEDIAN:.2f}. BabelDOC skipped body "
-            f"text it did not recognise as paragraphs, which usually means the source's own "
-            f"text layer is fragmented. Weakest pages: {worst}. Re-OCR the source with "
+            f"Under-translated: {'; '.join(reasons)}. "
+            f"Median {median:.3f} Chinese characters per source Latin letter over "
+            f"{len(ratios)} measurable pages; {distribution}. This can indicate skipped body "
+            f"text or fragmented source paragraphs. Weakest pages: {worst}. "
+            f"Inspect these pages; if the source text layer is fragmented, re-OCR with "
             f"`quasi-extract ocr SRC OUT --layout` and translate that instead. "
             f"Output kept at {pdf_path}."
         ),
@@ -145,11 +160,11 @@ def demo() -> None:
     full = "行动的形状是什么样的 " * 12
     with tempfile.TemporaryDirectory() as tmp:
         good = build_dual(Path(tmp) / "good.pdf", [full] * 4)
-        # One dead page out of four must NOT fail the book — the gate is a median,
-        # so a stray figure page cannot reject an otherwise complete translation.
         assert check(good)["ok"]
-        assert page_ratios(build_dual(Path(tmp) / "one.pdf", [full] * 3 + [""]))[3][1] == 0.0
+        # An isolated body-page omission may pass, but not more than 10%.
+        assert page_ratios(build_dual(Path(tmp) / "one.pdf", [full] * 9 + [""]))[9][1] == 0.0
         assert check(Path(tmp) / "one.pdf")["ok"]
+        assert not check(build_dual(Path(tmp) / "many.pdf", [full] * 8 + [""] * 2))["ok"]
 
         bad = build_dual(Path(tmp) / "bad.pdf", [full] + [""] * 3)
         assert not check(bad)["ok"]
