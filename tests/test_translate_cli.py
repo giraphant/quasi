@@ -797,6 +797,101 @@ def test_immersive_non_idempotent_post_is_not_retried(monkeypatch):
     assert client.session.calls == 1
 
 
+def test_hour_long_immersive_task_finishes_in_one_generation(tmp_path, monkeypatch, capsys):
+    source, source_sha = source_fixture(tmp_path)
+    clock = {"elapsed": 0}
+    calls = []
+
+    def sleep(seconds):
+        clock["elapsed"] += seconds
+
+    class Client:
+        def __init__(self, settings):
+            self.auth_key = settings["auth_key"]
+
+        def check_auth_key(self):
+            return True
+
+        def get_pdf_upload_url(self):
+            return {"result": {"preSignedURL": "https://example.test/upload", "objectKey": "object"}}
+
+        def upload_pdf(self, url, path):
+            calls.append("upload")
+
+        def create_translate_task(self, key, path):
+            calls.append("create")
+            return "same-task"
+
+        def get_translate_status(self, task_id):
+            assert task_id == "same-task"
+            return {"status": "ok", "overall_progress": 100 if clock["elapsed"] >= 3900 else 25}
+
+        def get_translate_result(self, task_id):
+            assert task_id == "same-task"
+            calls.append("result")
+            return {"translationDualPdfOssUrl": "https://example.test/dual"}
+
+        def download_binary(self, url):
+            calls.append("download")
+            return b"fake-provider-dual"
+
+    monkeypatch.setenv("QUASI_IMMERSIVE_AUTH_KEY", "test-key")
+    monkeypatch.setattr(immersive, "ImmersiveTranslateClient", Client)
+    monkeypatch.setattr(immersive.time, "sleep", sleep)
+    monkeypatch.setattr(immersive.time, "monotonic", lambda: clock["elapsed"])
+    monkeypatch.setattr(immersive, "split_dual_pdf", lambda raw, out: coverage.build_dual(out, [FULL] * 4))
+    kwargs = run_kwargs(
+        tmp_path, source, source_sha, translate_cli.backend_runner("immersive"), backend="immersive"
+    )
+    receipt = commit.run_transaction(**kwargs)
+    assert receipt["status"] == "succeeded"
+    assert receipt["canonical_committed"]
+    assert clock["elapsed"] == 3900
+    assert calls == ["upload", "create", "result", "download"]
+    # A long period with unchanged progress is still observable, not a timeout.
+    log = capsys.readouterr().err
+    assert "waiting 1800s" in log and "waiting 3600s" in log
+    reconciled = commit.run_transaction(**kwargs)
+    assert reconciled["status"] == "succeeded"
+    assert reconciled["disposition"] == "reconciled"
+    assert calls == ["upload", "create", "result", "download"]
+
+
+@pytest.mark.parametrize("failure", ["provider", "transport", "cancel"])
+def test_immersive_unbounded_wait_still_stops_on_real_failures(monkeypatch, failure):
+    calls = []
+
+    class Client:
+        def get_translate_status(self, task_id):
+            calls.append(task_id)
+            if failure == "transport":
+                raise immersive.TranslationError("network unavailable")
+            if failure == "cancel":
+                raise KeyboardInterrupt()
+            return {"status": "failed", "message": "provider failure"}
+
+    monkeypatch.setattr(immersive.time, "sleep", lambda _: pytest.fail("terminal status must not sleep"))
+    expected = KeyboardInterrupt if failure == "cancel" else immersive.TranslationError
+    with pytest.raises(expected):
+        immersive.poll_until_complete(Client(), "same-task")
+    assert calls == ["same-task"]
+
+
+def test_immersive_explicit_poll_budget_is_still_honoured(monkeypatch):
+    calls, sleeps = [], []
+
+    class Client:
+        def get_translate_status(self, task_id):
+            calls.append(task_id)
+            return {"status": "ok", "overall_progress": 25}
+
+    monkeypatch.setattr(immersive.time, "sleep", sleeps.append)
+    with pytest.raises(immersive.TranslationError, match="Timed out"):
+        immersive.poll_until_complete(Client(), "same-task", max_polls=2)
+    assert calls == ["same-task", "same-task"]
+    assert sleeps == [10]
+
+
 def test_request_errors_redact_query_userinfo_and_known_secret():
     raw = (
         "401 for https://user:pass@example.test/check?"

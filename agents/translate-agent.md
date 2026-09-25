@@ -37,13 +37,24 @@ manifest 与 hash 应匹配，ToUnicode 应可复制搜索，中文目标还要�
 Workflow 内的 Bash 可能在约两分钟截断前台或 tool-background 长命令。对
 `quasi-translate run` 和 layout OCR，只启动一个以 `nohup` 脱离宿主的 writer，把 stdout、
 stderr 写入 `.quasi/temp/` 下本次请求的临时文件并记录 PID；用每次不超过 60 秒的独立 Bash
-调用轮询，进程退出后读取 JSON receipt。宿主截断不是 backend receipt，也不是源文本层损坏的
-证据；不能据此启动 OCR 或第二个 writer。
+调用轮询，进程退出后读取 JSON receipt。60 秒是单次观察的上限，不是整项任务的总预算；
+整本书翻译或 layout OCR 超过一小时也可能正常。不要自行设置 30 分钟、固定轮询次数或其他
+总监控上限，然后把仍在运行的任务收尾为 blocked。
+
+持续跟踪同一个 writer：核对已记录 PID 对应的命令身份，读取本次请求的 exact 日志与 receipt，
+每次只保留新增进度或简短状态。writer 身份仍可确认、尚无终态且没有实际故障证据时，在当前
+invocation 内继续等待；短时间日志不更新或暂未生成 PDF 不代表失败。若进度长期不变，结合
+进程和 backend 日志诊断，不能只凭耗时判断。宿主截断不是 backend receipt，也不是源文本层
+损坏的证据；不能据此启动 OCR 或第二个 writer。
+
+只有实际失去 writer 身份或结果的可核验性，或宿主明确要求结束当前 invocation、无法继续
+观察时，才以 blocked 交接尚未收敛的 writer；diagnostics 保留 exact PID、日志与 receipt 路径、
+最后观察到的进度和停止原因。恢复时先核对已有 writer 与产物，仍在运行就接续观察，不重复启动。
 
 若 failure 显示源文本层破碎且 layout OCR 有现实机会修复，使用 request 的 exact recovery
 path 建立 OCR source，再从该 source 重新观察和翻译。是否继续由你根据实际诊断判断；不把
-固定次数当成业务结论。任何 writer durable outcome 不明时停止为 `blocked`，留待后续 dispatch
-重新观察，而不是在本次 invocation 盲写。
+固定次数当成业务结论。已有 writer 的身份、generation ownership 或退出后的 durable outcome
+无法核验时停止为 `blocked`，留待后续 dispatch 重新观察，而不是在本次 invocation 盲写。
 
 ## 阶段判断
 
@@ -53,7 +64,8 @@ path 建立 OCR source，再从该 source 重新观察和翻译。是否继续�
   `translation.configuration_required`。完整非 null `gate` 放在 `terminal.needs_input`：source
   selection 带候选与 fingerprint；configuration 带缺失的 Configure fields、空候选和 null
   fingerprint。返回一个清楚的问题。
-- `blocked`：writer outcome、generation ownership 或验证观察无法确认。
+- `blocked`：writer outcome、generation ownership 或验证观察无法确认，或宿主强制结束使观察
+  无法继续；已确认仍在运行的 writer 仅仅耗时较长不构成 blocked。
 - `failed`：现有 source 与能力无法得到合格翻译；给出失败证据和可能需要的新输入。
 
 ## 输出

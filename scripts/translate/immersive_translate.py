@@ -502,10 +502,19 @@ def poll_until_complete(
     pdf_id: str,
     *,
     interval_seconds: int = 10,
-    max_polls: int = 180,
+    max_polls: int | None = None,
 ) -> dict[str, Any]:
-    for _ in range(max_polls):
+    # Whole books can take more than an hour. A responsive task is not a
+    # failure after 180 checks; only an explicit caller budget bounds polling.
+    if interval_seconds <= 0 or (max_polls is not None and max_polls < 1):
+        raise TranslationError("Polling interval and explicit maximum must be positive")
+    polls = 0
+    started = time.monotonic()
+    last_report = started
+    last_progress = None
+    while max_polls is None or polls < max_polls:
         status = client.get_translate_status(pdf_id)
+        polls += 1
         status_value = str(status.get("status") or "").lower()
         if status_value == "ok" and status.get("overall_progress") == 100:
             return status
@@ -513,6 +522,18 @@ def poll_until_complete(
         if status_value and status_value != "ok":
             message = status.get("message") or status.get("status")
             raise TranslationError(f"Translation failed for {pdf_id}: {message}")
+        now = time.monotonic()
+        progress = status.get("overall_progress")
+        if polls == 1 or progress != last_progress or now - last_report >= 60:
+            print(
+                f"[immersive] task {pdf_id}: progress={progress}; "
+                f"waiting {now - started:.0f}s ({polls} status checks)",
+                file=sys.stderr,
+                flush=True,
+            )
+            last_report, last_progress = now, progress
+        if max_polls is not None and polls >= max_polls:
+            break
         time.sleep(interval_seconds)
     raise TranslationError(f"Timed out waiting for translation task {pdf_id}")
 
@@ -545,7 +566,7 @@ def translate_to_candidate(
     work_dir: Path,
     on_state,
     poll_interval: int = 10,
-    max_polls: int = 180,
+    max_polls: int | None = None,
 ) -> dict[str, Any]:
     """Run Immersive once and write only the caller's staged candidate path."""
     settings = load_settings_from_env()
@@ -603,7 +624,7 @@ def translate_slug(
     target_language: str | None = None,
     project_root: Path = PROJECT_ROOT,
     poll_interval: int = 10,
-    max_polls: int = 180,
+    max_polls: int | None = None,
     toc_json: Path | None = None,
     toc_page_side: str = "original",
 ) -> dict[str, Any]:
@@ -692,8 +713,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-polls",
         type=int,
-        default=180,
-        help="Maximum polling attempts before timing out",
+        default=None,
+        help="Optional polling limit; by default wait for the task's terminal status",
     )
     parser.add_argument(
         "--toc-json",
