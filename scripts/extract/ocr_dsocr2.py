@@ -16,7 +16,8 @@ registration so the processor resolves. Modeled on larryteal/Mac-M5-Deepseek-OCR
 The recognized text is written into a text-layer PDF (one page per input page)
 so the existing `split` flow is unchanged. Fail-soft: if uvx/mlx-vlm or the
 model is missing, or this isn't Apple Silicon, exit non-zero so extract.py
-falls back to tesseract.
+falls back to tesseract for ordinary OCR. Explicit --layout fails instead of
+silently substituting an ungrouped text layer.
 
 Two output shapes:
   default    reflowed markdown in one textbox per page — for `split`/analysis.
@@ -45,6 +46,10 @@ import tempfile
 from pathlib import Path
 
 import fitz  # PyMuPDF — quasi dep
+if __package__:
+    from . import layout_evidence
+else:
+    import layout_evidence
 
 # A line's box hugs its ink, so its height depends on whether that line happens to
 # carry ascenders and descenders, not on the type size. Deriving the font size from
@@ -365,6 +370,7 @@ def draw_layout_page(
     fontfile: str | None,
     snap_to: float = 0.0,
     blocks: list[dict] | None = None,
+    stats: dict | None = None,
 ) -> int:
     """Invisible text at the OCR boxes, over the scan — an ocrmypdf-shaped layer.
 
@@ -417,6 +423,8 @@ def draw_layout_page(
         if left >= 0:      # never grow the box; a block that still overruns goes per-line
             claimed.update(n for n, _ in mine)
             drawn += 1
+            if stats is not None:
+                stats["paragraphs"] = stats.get("paragraphs", 0) + 1
     for n, (body, rect) in enumerate(lines):
         if n in claimed:
             continue
@@ -444,6 +452,7 @@ def relayer_page(
     fontfile: str | None,
     snap_to: float = 0.0,
     blocks: list[dict] | None = None,
+    stats: dict | None = None,
 ) -> int:
     """Replace one page's text layer with the model's grounded lines.
 
@@ -452,19 +461,17 @@ def relayer_page(
     stripping would leave a blank, and the layer it already has is the clean one
     --layout exists to produce for scans.
     """
-    if not page.get_images():
+    if not layout_evidence.has_page_image(page):
         return -1
     lines = parse_grounding(raw, page.rect.width, page.rect.height)
     strip_text(page)
-    return draw_layout_page(page, lines, fontname, fontfile, snap_to, blocks)
+    return draw_layout_page(page, lines, fontname, fontfile, snap_to, blocks, stats)
 
 
 def _detect_layout(pngs: list[str], td: Path) -> list[list[dict]]:
-    """Paragraph blocks per page from MinerU2.5-Pro, or [] if it cannot run.
-
-    Fail-soft like the rest of this engine: no MinerU means the per-line layer,
-    which is what shipped before paragraph flow existed — degraded, never broken.
-    """
+    """Require usable MinerU output; an entirely per-line book is not layout OCR."""
+    if not pngs:
+        return []
     model = os.environ.get("QUASI_MINERU_MODEL", "").strip() or _MINERU_MODEL_DEFAULT
     resfile, pnglist = td / "layout.json", td / "layout-pngs.json"
     pnglist.write_text(json.dumps(pngs))
@@ -476,16 +483,17 @@ def _detect_layout(pngs: list[str], td: Path) -> list[list[dict]]:
     proc = subprocess.run(_MINERU_CMD + [_MINERU_RUNNER], env=env, text=True,
                           stdout=subprocess.PIPE)
     if proc.returncode != 0 or not resfile.exists():
-        sys.stderr.write(
-            f"[dsocr2] WARNING: layout detection unavailable (exit {proc.returncode}); "
-            "falling back to a per-line text layer.\n")
-        return []
+        raise RuntimeError(f"layout detection unavailable (exit {proc.returncode})")
     layouts = json.loads(resfile.read_text())
+    if not isinstance(layouts, list) or len(layouts) != len(pngs) or any(
+        not isinstance(blocks, list) for blocks in layouts
+    ):
+        raise RuntimeError("MinerU returned an incomplete or malformed page list")
     grouped = sum(bool(blocks) for blocks in layouts)
     if not grouped and pngs:
-        sys.stderr.write(
-            f"[dsocr2] WARNING: MinerU returned no paragraph blocks on all {len(pngs)} pages; "
-            "using a per-line text layer throughout. Check the MinerU log for per-page errors.\n")
+        raise RuntimeError(
+            f"MinerU returned no paragraph blocks on all {len(pngs)} pages; "
+            "layout OCR cannot publish a per-line replacement")
     else:
         sys.stderr.write(
             f"[dsocr2] paragraph blocks detected on {grouped}/{len(pngs)} pages; "
@@ -494,11 +502,6 @@ def _detect_layout(pngs: list[str], td: Path) -> list[list[dict]]:
 
 
 def main() -> int:
-    if platform.system() != "Darwin" or platform.machine() != "arm64":
-        _die("requires macOS Apple Silicon (MLX). Use --engine tesseract.")
-    if not shutil.which("uvx"):
-        _die("`uvx` not on PATH (install uv). Use --engine tesseract.")
-
     args = sys.argv[1:]
     layout = "--layout" in args
     args = [a for a in args if a != "--layout"]
@@ -510,13 +513,26 @@ def main() -> int:
         sys.stderr.write(f"[dsocr2] input not found: {input_pdf}\n")
         return 2
 
+    source_sha = layout_evidence.file_sha256(input_pdf) if layout else None
+    src = fitz.open(input_pdf)
+    n = src.page_count
+    image_indices = [i for i in range(n) if layout_evidence.has_page_image(src[i])] if layout else []
+    if layout and not image_indices:
+        layout_evidence.stamp(src, source_sha256=source_sha, grouped_pages=0, paragraphs=0)
+        src.save(str(output_pdf))
+        src.close()
+        sys.stderr.write(f"[dsocr2] kept {n} born-digital pages unchanged; no layout OCR needed\n")
+        return 0
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        _die("requires macOS Apple Silicon (MLX).")
+    if not shutil.which("uvx"):
+        _die("`uvx` not on PATH (install uv).")
+
     model = _resolve_model()
     fontfile = _find_unicode_font()
     if fontfile is None:
         sys.stderr.write("[dsocr2] WARNING: no Unicode font; CJK text layer may degrade.\n")
 
-    src = fitz.open(input_pdf)
-    n = src.page_count
     matrix = fitz.Matrix(RENDER_DPI / 72, RENDER_DPI / 72)
 
     with tempfile.TemporaryDirectory() as td_s:
@@ -542,6 +558,10 @@ def main() -> int:
             sys.stderr.write(f"[dsocr2] mlx-vlm inference failed (exit {proc.returncode}); see its log above.\n")
             return 3
         texts = json.loads(resfile.read_text(encoding="utf-8"))
+        if layout and (not isinstance(texts, list) or len(texts) != n or any(not isinstance(t, str) for t in texts)):
+            sys.stderr.write("[dsocr2] layout failed: incomplete OCR page results\n")
+            src.close()
+            return 4
 
         fontname, fontfile, texts = pick_font(texts, fontfile)
         # Layout mode edits the source's own pages so the scan is never re-encoded.
@@ -560,15 +580,28 @@ def main() -> int:
                 ruler,
             )
             sys.stderr.write(f"[dsocr2] body text {snap:.2f}pt, snapping within {SNAP:.0%}\n")
-            layouts = _detect_layout(pngs, td)
+            try:
+                detected = _detect_layout([pngs[i] for i in image_indices], td)
+            except (RuntimeError, ValueError, OSError) as exc:
+                sys.stderr.write(f"[dsocr2] layout failed: {exc}\n")
+                out.close()
+                src.close()
+                return 4
+            layouts = [[] for _ in range(n)]
+            for i, blocks in zip(image_indices, detected):
+                layouts[i] = blocks
         untouched = []
+        grouped_pages = paragraphs = 0
         for i in range(n):
             rect = src[i].rect
             new = out[i] if layout else out.new_page(width=rect.width, height=rect.height)
             raw = texts[i] if i < len(texts) else ""
             if layout:
+                stats = {"paragraphs": 0}
                 drawn = relayer_page(new, raw, fontname, fontfile, snap,
-                                     layouts[i] if i < len(layouts) else None)
+                                     layouts[i] if i < len(layouts) else None, stats)
+                paragraphs += stats["paragraphs"]
+                grouped_pages += stats["paragraphs"] > 0
                 if drawn < 0:
                     untouched.append(i + 1)
                 elif not drawn:
@@ -585,6 +618,13 @@ def main() -> int:
                 f"[dsocr2] left {len(untouched)}/{n} born-digital page(s) alone "
                 f"(no image behind the text): {untouched[:10]}{'...' if len(untouched) > 10 else ''}\n",
             )
+        if layout:
+            if not paragraphs or layout_evidence.file_sha256(input_pdf) != source_sha:
+                sys.stderr.write("[dsocr2] layout failed: no paragraph was placed, or source changed; output not published\n")
+                out.close()
+                src.close()
+                return 4
+            layout_evidence.stamp(out, source_sha256=source_sha, grouped_pages=grouped_pages, paragraphs=paragraphs)
         out.save(str(output_pdf), garbage=3, deflate=True)
         out.close()
     src.close()

@@ -88,7 +88,8 @@ quasi-translate SLUG [--backend immersive|pdf2zh] ...
 
 The measured reasoning behind each rule is in `docs/PDF_PIPELINE.md`; do not relax one without reading its paragraph there.
 
-- `quasi-extract ocr` defaults to DS OCR2 and pins `mlx-vlm==0.3.12` with `mlx<0.32` in both DS OCR2 and MinerU uvx commands; 0.4+ breaks the model's loader and generate path. Do not reject a candidate OCR model for requiring transformers 5.x. Never pass `trust_remote_code=True` when loading DS OCR2 (`tests/test_extract_cli.py` guards it). Fallback is tesseract.
+- `quasi-extract ocr` defaults to DS OCR2 and pins `mlx-vlm==0.3.12` with `mlx<0.32` in both DS OCR2 and MinerU uvx commands; 0.4+ breaks the model's loader and generate path. Do not reject a candidate OCR model for requiring transformers 5.x. Never pass `trust_remote_code=True` when loading DS OCR2 (`tests/test_extract_cli.py` guards it). Ordinary OCR may fall back to tesseract; explicit `--layout` must not.
+- New translations of image-bearing sources require `--layout` at the existing recovery path before provider work. Classify by page image objects, never font names. In-PDF layout evidence binds the source hash and actual paragraph placement; unproven recovery files cannot bypass the gate. Successful translation fences are cleaned recursively; lock waiters recheck inode identity before entering after lock-file removal.
 - `--layout` writes a replacement text layer drawn over the scan image (never under it), snaps line sizes to the book-wide dominant size, flows one textbox per MinerU-grouped paragraph at a flat `SHRINK` 0.90, strips old text layers including Form XObjects, and skips pages with no image object (born-digital pages keep their own text).
 - Both translate backends share one output contract (`processing/translations/{slug}-{canonical-target-lower}.pdf`, with Mainland Chinese canonicalized to `-zh.pdf`; alternating original/translated pages, bookmarks) and both must run `tounicode.py::repair_pdf` before the Chinese coverage gate (median >= 0.30; ratios < 0.05 on at most 10% of measurable source pages). Provider adapters map canonical `zh` to `zh-CN`. Rejected or uncertain generations stay in their fenced `processing/translations/.{stem}.translate-*` directory and never become canonical output.
 - Backend selection is user config (`translate_backend`), not a free caller argument. For pdf2zh, a root-only `translate_base_url` gets `/v1` appended; explicit paths are preserved. Provider credentials stay out of argv.
@@ -114,7 +115,7 @@ Agent / Helper 合同
 ## Runtime state and dependencies
 
 - `bin/` tools may be invoked as bare commands while the plugin is enabled. Python dependencies are declared in `scripts/requirements.txt`; `scripts/bootstrap-venv.sh` installs them into `${CLAUDE_PLUGIN_DATA}/.venv` (SessionStart hook; each shim also self-bootstraps). Do not put pip installs back inside individual shims.
-- Optional out-of-venv deps are fail-soft: `ffmpeg`/`whisper-cli`/`uvx` for transcription, `mlx-vlm` for DS OCR2 OCR, `mineru-vl-utils` for `--layout` paragraph grouping.
+- Optional out-of-venv deps are fail-soft: `ffmpeg`/`whisper-cli`/`uvx` for transcription, `mlx-vlm` for ordinary DS OCR2 OCR. Explicit `--layout` requires DS OCR2 and `mineru-vl-utils`; all-page grouping failure or zero placed paragraphs is a hard failure.
 - EZProxy global throttle state lives under `${CLAUDE_PLUGIN_DATA:-~/.cache/quasi}/ezproxy-throttle.state` and is owned by `scripts/download/download.py`.
 
 ## Change checklist

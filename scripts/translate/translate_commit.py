@@ -14,7 +14,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import stat
+import sys
 import tempfile
 import uuid
 from pathlib import Path
@@ -22,6 +24,16 @@ from typing import Any, Callable, Iterator, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 import pymupdf
+
+if __package__ == "scripts.translate":
+    from scripts.extract import layout_evidence
+else:
+    from core import load_script_module
+
+    layout_evidence = load_script_module(
+        "quasi_translation_layout_evidence",
+        Path(__file__).resolve().parents[1] / "extract" / "layout_evidence.py",
+    )
 
 
 MANIFEST_SCHEMA = "quasi.translation.manifest/0.1"
@@ -288,25 +300,68 @@ def output_lock(paths: dict[str, Path | str]) -> Iterator[None]:
     flags = os.O_CREAT | os.O_RDWR
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
-    try:
-        descriptor = os.open(lock_path, flags, 0o600)
-    except OSError as exc:
-        raise TranslateContractError(
-            "translation.output_lock_unsafe",
-            f"failed to open safe output lock: {redact_text(exc)}",
-        ) from exc
-    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-        os.close(descriptor)
-        raise TranslateContractError(
-            "translation.output_lock_unsafe",
-            "output lock must be a regular file",
-        )
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield
-    finally:
+    # A waiter may already have the old inode open when its owner unlinks it.
+    # Recheck *after* flock, and reopen if detached, before entering any work.
+    while True:
+        try:
+            descriptor = os.open(lock_path, flags, 0o600)
+        except OSError as exc:
+            raise TranslateContractError(
+                "translation.output_lock_unsafe",
+                f"failed to open safe output lock: {redact_text(exc)}",
+            ) from exc
+        owned = os.fstat(descriptor)
+        if not stat.S_ISREG(owned.st_mode):
+            os.close(descriptor)
+            raise TranslateContractError("translation.output_lock_unsafe", "output lock must be a regular file")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            try:
+                current = lock_path.lstat()
+            except FileNotFoundError:
+                current = None
+            if current is not None and (owned.st_dev, owned.st_ino) == (current.st_dev, current.st_ino):
+                break
+        except BaseException:
+            os.close(descriptor)
+            raise
         fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
+    try:
+        yield
+    finally:
+        try:
+            current = lock_path.lstat()
+            if (owned.st_dev, owned.st_ino) == (current.st_dev, current.st_ino):
+                lock_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            print(f"[translate] could not remove released lock: {redact_text(exc)}", file=sys.stderr)
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+
+def _layout_failure(source: Path, paths: dict, operation: str) -> dict | None:
+    try:
+        evidence = layout_evidence.inspect(source)
+    except Exception as exc:
+        raise TranslateContractError(
+            "translation.layout_inspection_failed",
+            f"could not inspect exact source layout: {redact_text(exc)}",
+        ) from exc
+    if evidence["image_pages"] and not evidence["prepared"]:
+        recovery = Path(paths["output_dir"]) / f"{paths['stem']}-reocr.pdf"
+        return operation_failure(
+            code="translation.layout_required",
+            operation_key=operation,
+            outcome="known",
+            message=(f"source has {evidence['image_pages']} image-bearing pages without verified layout OCR; "
+                     f"prepare paragraph layout at {project_relative(recovery, Path(paths['project_root']))} "
+                     "with quasi-extract ocr --layout --no-clobber --json before translation"),
+        )
+    return None
 
 
 def _fsync_directory(path: Path) -> None:
@@ -1055,9 +1110,10 @@ def observe(
             signal="configuration_required",
             gate=config_gate,
         )
+    layout_failure = _layout_failure(source, paths, "translation.reconcile")
     return _receipt(
         operation="translation.reconcile",
-        status="succeeded",
+        status="failed" if layout_failure else "succeeded",
         slug=slug,
         backend=backend,
         target_language=target_language,
@@ -1069,11 +1125,11 @@ def observe(
         toc_json=toc,
         toc_page_side=toc_page_side,
         coverage=None,
-        failure=None,
+        failure=layout_failure,
         mode=mode,
         generation_attempt=desired_attempt,
         requested_source=requested,
-        signal="missing",
+        signal=None if layout_failure else "missing",
         candidates_fingerprint=(
             current_candidates_fp if decision_path is not None else None
         ),
@@ -1109,6 +1165,22 @@ def _persist_receipt(generation_dir: Path, receipt: dict[str, Any]) -> None:
         _write_json(generation_dir / "receipt.json", receipt)
     except Exception:
         pass
+
+
+def _cleanup_generation(generation_dir: Path) -> None:
+    # Only a transaction-proven successful fence reaches here. Failed/unknown
+    # fences remain inspectable, and rmtree does not follow nested symlinks.
+    try:
+        shutil.rmtree(generation_dir)
+    except OSError as exc:
+        print(f"[translate] could not clean committed work directory {generation_dir}: {redact_text(exc)}", file=sys.stderr)
+
+
+def _cleanup_published_generations(paths: dict, request_fp: str) -> None:
+    for generation_dir in _generation_dirs(paths):
+        intent = _read_json(generation_dir / "intent.json")
+        if intent and intent.get("request_fingerprint") == request_fp and intent.get("state") == "published":
+            _cleanup_generation(generation_dir)
 
 
 def run_transaction(
@@ -1265,6 +1337,7 @@ def run_transaction(
             config_fingerprint=config_fingerprint,
             generation_attempt=attempt,
         ):
+            _cleanup_published_generations(paths, request_fp)
             return run_receipt(
                 "succeeded",
                 failure=None,
@@ -1285,6 +1358,10 @@ def run_transaction(
                     message="strict run will not overwrite an unproven existing generation",
                 ),
             )
+
+        layout_failure = _layout_failure(source, paths, "translation.run")
+        if layout_failure:
+            return run_receipt("failed", failure=layout_failure)
 
         for generation_dir in _generation_dirs(paths):
             intent = _read_json(generation_dir / "intent.json")
@@ -1499,12 +1576,7 @@ def run_transaction(
                 canonical=True,
                 toc_entries=toc_entries,
             )
-            try:
-                for child in generation_dir.iterdir():
-                    child.unlink(missing_ok=True)
-                generation_dir.rmdir()
-            except OSError:
-                pass
+            _cleanup_generation(generation_dir)
             return result
         except BaseException as exc:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):

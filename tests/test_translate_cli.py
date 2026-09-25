@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -556,6 +557,123 @@ def test_run_publishes_manifest_last_and_reconcile_is_backend_free(tmp_path):
     assert manifest["output_path"] == first["output_path"]
     assert manifest["output_sha256"] == commit.sha256_file(output)
     assert first["manifest_sha256"] == commit.sha256_file(manifest_path)
+
+
+@pytest.mark.parametrize('backend', ['pdf2zh', 'immersive'])
+def test_scan_requires_layout_before_any_provider_even_with_real_font_names(tmp_path, backend):
+    source, _ = source_fixture(tmp_path)
+    with pymupdf.open(source) as doc:
+        page = doc[0]
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 2, 2), False)
+        pix.clear_with(255)
+        page.insert_image(page.rect, pixmap=pix)
+        page.insert_text((72, 72), 'ABBYY scan text', fontname='tiro')
+        doc.xref_set_key(page.get_fonts()[0][0], 'BaseFont', '/TimesNewRomanPSMT')
+        doc.saveIncr()
+    source_sha = commit.sha256_file(source)
+    calls = []
+    observed = commit.observe(**{**observe_kwargs(tmp_path, source=source), 'backend': backend})
+    assert observed['failure']['code'] == 'translation.layout_required'
+    receipt = commit.run_transaction(**run_kwargs(tmp_path, source, source_sha, passing_runner(calls), backend=backend))
+    assert receipt['failure']['code'] == 'translation.layout_required'
+    assert calls == []
+    assert not list((tmp_path / 'processing/translations').glob('*.lock'))
+
+    recovery = tmp_path / 'processing/translations/strict-translation-zh-reocr.pdf'
+    recovery.write_bytes(source.read_bytes())
+    unproven = commit.run_transaction(**run_kwargs(tmp_path, recovery, commit.sha256_file(recovery), passing_runner(calls), backend=backend))
+    assert unproven['failure']['code'] == 'translation.layout_required'
+    with pymupdf.open(recovery) as doc:
+        commit.layout_evidence.stamp(doc, source_sha256=source_sha, grouped_pages=1, paragraphs=1)
+        doc.saveIncr()
+    assert commit.observe(**observe_kwargs(tmp_path, source=recovery, mode='recovery'))['signal'] == 'missing'
+    result = commit.run_transaction(**run_kwargs(tmp_path, recovery, commit.sha256_file(recovery), passing_runner(calls), backend=backend, attempt=2))
+    assert result['status'] == 'succeeded' and len(calls) == 1
+    with pymupdf.open(recovery) as doc:
+        doc[0].insert_text((72, 100), 'later alteration')
+        doc.saveIncr()
+    assert not commit.layout_evidence.inspect(recovery)['prepared']
+
+
+@pytest.mark.parametrize('cleanup_interrupted', [False, True])
+def test_success_cleans_nested_work_and_lock_but_preserves_other_fences(tmp_path, monkeypatch, cleanup_interrupted):
+    source, source_sha = source_fixture(tmp_path)
+    kept = tmp_path / 'outside-work'
+    kept.mkdir()
+    (kept / 'keep.txt').write_text('keep')
+    output_dir = tmp_path / 'processing/translations'
+    untouched = output_dir / ('.strict-translation-zh.translate-' + 'a' * 32)
+    untouched.mkdir(parents=True)
+    (untouched / 'intent.json').write_text(json.dumps({'state': 'backend_failed', 'request_fingerprint': 'unrelated'}))
+    fences = []
+
+    def backend(source, candidate, language, work_dir, on_state):
+        fences.append(work_dir)
+        nested = work_dir / 'pdf2zh' / 'cache'
+        nested.mkdir(parents=True)
+        (nested / 'partial.pdf').write_bytes(b'working')
+        (nested / 'outside-link').symlink_to(kept, target_is_directory=True)
+        coverage.build_dual(candidate, [FULL] * 4)
+        return {'task_id': None}
+
+    original_cleanup = commit.shutil.rmtree
+    if cleanup_interrupted:
+        monkeypatch.setattr(commit.shutil, 'rmtree', lambda _: (_ for _ in ()).throw(OSError('simulated cleanup failure')))
+    kwargs = run_kwargs(tmp_path, source, source_sha, backend)
+    result = commit.run_transaction(**kwargs)
+    assert result['status'] == 'succeeded'
+    assert fences[0].exists() is cleanup_interrupted
+    assert not list(output_dir.glob('*.lock'))
+    monkeypatch.setattr(commit.shutil, 'rmtree', original_cleanup)
+    reused = commit.run_transaction(**kwargs)
+    assert reused['disposition'] == 'reconciled' and len(fences) == 1
+    assert not fences[0].exists()
+    assert untouched.is_dir() and (kept / 'keep.txt').read_text() == 'keep'
+    assert not list(output_dir.glob('*.lock'))
+
+
+def test_lock_waiter_reopens_unlinked_inode_before_entering(tmp_path, monkeypatch):
+    paths = commit.output_paths(project_root=tmp_path, slug='strict-translation', target_language='zh')
+    opened, acquired_old, resume, retried, entered = (threading.Event() for _ in range(5))
+    errors = []
+    real_flock = commit.fcntl.flock
+    waits = []
+
+    def flock(fd, operation):
+        if threading.current_thread().name == 'old-waiter' and operation == commit.fcntl.LOCK_EX:
+            waits.append(fd)
+            (opened if len(waits) == 1 else retried).set()
+            real_flock(fd, operation)
+            if len(waits) == 1:
+                acquired_old.set()
+                assert resume.wait(5)
+        else:
+            real_flock(fd, operation)
+
+    def waiter():
+        try:
+            with commit.output_lock(paths):
+                entered.set()
+        except BaseException as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(commit.fcntl, 'flock', flock)
+    worker = threading.Thread(target=waiter, name='old-waiter')
+    try:
+        with commit.output_lock(paths):
+            worker.start()
+            assert opened.wait(5)
+        assert acquired_old.wait(5)
+        with commit.output_lock(paths):
+            resume.set()
+            assert retried.wait(5)
+            assert not entered.is_set()
+    finally:
+        resume.set()
+        worker.join(5)
+    assert not worker.is_alive() and not errors
+    assert entered.is_set() and len(waits) >= 2
+    assert not paths['lock_path'].exists()
 
 
 def test_recovery_mode_uses_generation_attempt_two(tmp_path):

@@ -11,7 +11,7 @@ model: sonnet
 ## 能力与边界
 
 你使用 `quasi-translate observe` 观察 source/config/output generation，使用
-`quasi-translate run` 完成事务化翻译，必要时使用 `quasi-extract ocr --layout` 为扫描版建立
+`quasi-translate run` 完成事务化翻译，翻译扫描版前必须使用 `quasi-extract ocr --layout` 建立
 保留页面布局的 recovery source。Backend 由 plugin config 和 CLI 决定；你根据它的实际
 receipt 工作，而不是另选 provider。
 
@@ -30,7 +30,19 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 没有足够证据时，把完整候选、候选 fingerprint 与明确选择问题交给用户。配置缺失同样形成
 一个具体 gate，但配置由用户在 Configure 中补齐后重新观察，不接受 acknowledgement decision。
 
-缺少可复用 output 时运行翻译，并阅读 typed validation：output pages 应与双页布局一致，
+缺少可复用 output 时，先处理 `quasi-translate observe` 的 source 证据。
+`translation.layout_required` 是可在本阶段处理的前置条件：按 request 的 exact recovery path
+（中文目标为 `processing/translations/{slug}-zh-reocr.pdf`）运行
+`quasi-extract ocr INPUT RECOVERY --layout --no-clobber --json`，成功后以 recovery source 重新
+observe，再运行翻译。扫描页沿用 `relayer_page` 的图像对象判断；字体名不能证明是否扫描，
+ABBYY 文字层也可能是 TimesNewRomanPSMT。无图像对象的原生文字页保留原文字层。
+
+layout receipt 必须证明成功或已验证的 existing；CLI 在 PDF 内核验来源 hash 与实际段落排版
+证据，文件名或“有文字层”都不能替代。MinerU 整本失败、全书没有排入段落或 Tesseract 的逐行
+输出不能当作 layout 成功，也不能绕过检查直接翻译原扫描本。既有 recovery 缺少证据或不匹配
+当前 source 时保留该文件并报告 exact path 冲突，不盲目覆盖。
+
+运行翻译后阅读 typed validation：output pages 应与双页布局一致，
 manifest 与 hash 应匹配，ToUnicode 应可复制搜索，中文目标还要通过 coverage 证据。一个
 外观正常但正文大面积未翻译的 PDF 不算完成。
 
@@ -51,8 +63,8 @@ invocation 内继续等待；短时间日志不更新或暂未生成 PDF 不代�
 观察时，才以 blocked 交接尚未收敛的 writer；diagnostics 保留 exact PID、日志与 receipt 路径、
 最后观察到的进度和停止原因。恢复时先核对已有 writer 与产物，仍在运行就接续观察，不重复启动。
 
-若 failure 显示源文本层破碎且 layout OCR 有现实机会修复，使用 request 的 exact recovery
-path 建立 OCR source，再从该 source 重新观察和翻译。是否继续由你根据实际诊断判断；不把
+扫描本的 layout 在首次付费翻译前完成；coverage failure 后先检查既有 layout 与翻译证据，
+不要无条件重复 OCR 或付费重译。其他 failure 的恢复根据实际诊断判断；不把
 固定次数当成业务结论。已有 writer 的身份、generation ownership 或退出后的 durable outcome
 无法核验时停止为 `blocked`，留待后续 dispatch 重新观察，而不是在本次 invocation 盲写。
 

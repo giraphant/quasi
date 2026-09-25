@@ -56,7 +56,7 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
 
     `--engine dsocr2` (default, DeepSeek-OCR-2 via mlx-vlm) | `tesseract`
     (ocrmypdf). dsocr2 auto-falls-back to tesseract if it is unavailable or
-    fails, so OCR still works on machines without MLX or the model.
+    fails for ordinary OCR. Explicit layout mode requires paragraph grouping.
     """
     engine = "dsocr2"
     layout: list[str] = []
@@ -172,6 +172,8 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
 
     if engine not in ("dsocr2", "tesseract"):
         errors.append(f"unknown engine '{engine}' (expected dsocr2|tesseract)")
+    if layout and engine == "tesseract":
+        errors.append("--layout requires DS OCR2 and MinerU paragraph grouping; tesseract cannot supply it")
     if not positional or not positional[0]:
         errors.append("missing INPUT")
     if len(positional) > 3:
@@ -205,6 +207,23 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
 
     input_arg = positional[0]
     output_arg = positional[1] if len(positional) > 1 else ""
+    if layout:
+        import layout_evidence
+        try:
+            layout_source_sha = layout_evidence.file_sha256(Path(input_arg))
+        except OSError as exc:
+            return fail(f"cannot read layout source: {exc}")
+
+    def layout_valid(path: str) -> bool:
+        if not layout:
+            return True
+        try:
+            return (
+                layout_evidence.inspect(Path(path), source_sha256=layout_source_sha)["prepared"]
+                and layout_evidence.file_sha256(Path(input_arg)) == layout_source_sha
+            )
+        except Exception:
+            return False
     if resume:
         from ocr_resume import run_ocr_step
 
@@ -262,7 +281,7 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
     if no_clobber:
         exists, size, regular = _ocr_output_state(output_arg)
         if exists:
-            if regular and size > 0:
+            if regular and size > 0 and layout_valid(output_arg):
                 if json_mode:
                     _emit_ocr_json(
                         status="existing",
@@ -276,7 +295,7 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
                 else:
                     print(f"OCR output already exists: {output_arg}", file=sys.stderr)
                 return 0
-            code = "output_empty" if regular else "output_not_regular"
+            code = "layout_unproven" if regular and size > 0 else ("output_empty" if regular else "output_not_regular")
             return _ocr_collision_failure(
                 input_arg=input_arg,
                 output_arg=output_arg,
@@ -290,6 +309,8 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
     if no_clobber:
         output_path = Path(output_arg)
         try:
+            if layout:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
             stage_dir = Path(
                 tempfile.mkdtemp(
                     prefix=f".{output_path.name}.ocr-",
@@ -345,9 +366,7 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
                     *layout,
                 ]
             )
-            if rc != 0:
-                # tesseract always writes image + text layer, so it satisfies
-                # --layout by default.
+            if rc != 0 and not layout:
                 sys.stderr.write(
                     "[extract] DS OCR2 unavailable/failed; falling back to tesseract.\n"
                 )
@@ -355,20 +374,21 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
                     ["bash", str(here / "ocr_pdf.sh"), *engine_positional]
                 )
 
-        if not (json_mode or no_clobber):
+        if not (json_mode or no_clobber or layout):
             return rc
 
         validation_path = engine_positional[1]
         staged_exists, staged_size, staged_regular = _ocr_output_state(
             validation_path
         )
-        success = rc == 0 and staged_regular and staged_size > 0
+        layout_proven = layout_valid(validation_path) if rc == 0 and staged_regular and staged_size > 0 else False
+        success = rc == 0 and staged_regular and staged_size > 0 and layout_proven
         if not success:
             exists, size, _ = _ocr_output_state(output_arg)
             failure = None
             if rc != 0:
                 failure = {
-                    "code": "ocr_failed",
+                    "code": "layout_failed" if layout else "ocr_failed",
                     "message": f"final OCR engine exited {rc}",
                 }
             elif not staged_exists:
@@ -381,10 +401,15 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
                     "code": "output_not_regular",
                     "message": "OCR output is not a regular file",
                 }
-            else:
+            elif staged_size == 0:
                 failure = {
                     "code": "output_empty",
                     "message": "OCR output is empty",
+                }
+            else:
+                failure = {
+                    "code": "layout_unproven",
+                    "message": "layout output does not prove paragraph placement for this exact source",
                 }
             if json_mode:
                 _emit_ocr_json(
@@ -396,6 +421,8 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
                     size=size,
                     failure=failure,
                 )
+            elif failure:
+                print(f"[extract] {failure['message']}", file=sys.stderr)
             return rc if rc != 0 else 1
 
         if no_clobber:
@@ -403,7 +430,7 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
                 os.link(validation_path, output_arg)
             except FileExistsError:
                 exists, size, regular = _ocr_output_state(output_arg)
-                if regular and size > 0:
+                if regular and size > 0 and layout_valid(output_arg):
                     if json_mode:
                         _emit_ocr_json(
                             status="existing",
@@ -435,7 +462,7 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
                             },
                         )
                     return rc if rc != 0 else 1
-                code = "output_empty" if regular else "output_not_regular"
+                code = "layout_unproven" if regular and size > 0 else ("output_empty" if regular else "output_not_regular")
                 return _ocr_collision_failure(
                     input_arg=input_arg,
                     output_arg=output_arg,
@@ -515,10 +542,11 @@ def _print_ocr_help() -> None:
     )
     print(
         "Default engine: dsocr2 (DeepSeek-OCR-2). "
-        "Falls back to tesseract if unavailable."
+        "Ordinary OCR falls back to tesseract if unavailable."
     )
     print("--layout: page image + invisible text at the OCR boxes, to re-OCR a")
-    print("          source PDF before quasi-translate. Default output is reflowed text.")
+    print("          source PDF before quasi-translate; requires MinerU paragraph grouping.")
+    print("          No tesseract fallback in layout mode. Default output is reflowed text.")
     print("--no-clobber: require an explicit OUTPUT and never overwrite an existing path.")
     print("--json: require an explicit OUTPUT; emit exactly one JSON receipt on stdout.")
     print("--resume: run one Book OCR page range and persist exact progress.")
@@ -562,11 +590,12 @@ def _ocr_collision_failure(
     receipt_exit: int = 2,
     cli_exit: int = 2,
 ) -> int:
-    message = (
-        "refusing to overwrite an empty output"
-        if code == "output_empty"
-        else "refusing to overwrite a non-regular output"
-    )
+    if code == "layout_unproven":
+        message = "existing output has no valid layout evidence for this source; preserved without overwriting"
+    elif code == "output_empty":
+        message = "refusing to overwrite an empty output"
+    else:
+        message = "refusing to overwrite a non-regular output"
     if json_mode:
         _emit_ocr_json(
             status="failed",

@@ -156,7 +156,7 @@ so unrelated subagents retain Claude Code's default row.
 | `proofread-agent` | draft sections prepared by `quasi-helpers` |
 | `citecheck-agent` | citation manifest prepared by `quasi-helpers` |
 | `transcribe-agent` | `quasi-transcribe` capabilities → Talk Prepare Stage |
-| `translate-agent` | `quasi-translate` + optional layout OCR → Translation Prepare Stage |
+| `translate-agent` | `quasi-translate` + required layout OCR for image-bearing sources → Translation Prepare Stage |
 | `webpage-agent` | `quasi-webpage` + vault resolve → Webpage identity, snapshot, and source projection |
 
 ### Write ownership

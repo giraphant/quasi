@@ -1211,12 +1211,99 @@ def test_mineru_success_exit_reports_actual_paragraph_grouping(tmp_path, monkeyp
         Path(env['MINERU_RESULTS']).write_text(json.dumps([blocks, []]))
         return subprocess.CompletedProcess(command, 0, stdout='')
     monkeypatch.setattr(ocr_dsocr2.subprocess, 'run', run)
+    if not has_blocks:
+        with pytest.raises(RuntimeError, match='no paragraph blocks'):
+            ocr_dsocr2._detect_layout(['one.png', 'two.png'], tmp_path)
+        return
     assert ocr_dsocr2._detect_layout(['one.png', 'two.png'], tmp_path) == [blocks, []]
     message = capsys.readouterr().err
     assert 'per-line text layer' in message
-    assert ('WARNING' in message) is (not has_blocks)
     if has_blocks:
         assert '1/2 pages' in message
+
+
+@pytest.mark.parametrize('engine_rc', [0, 4])
+def test_layout_never_falls_back_or_publishes_unproven_output(tmp_path, monkeypatch, capsys, engine_rc):
+    source, output = tmp_path / 'source.pdf', tmp_path / 'reocr.pdf'
+    _write_pdf(source, ['original source'])
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        _write_pdf(Path(command[3]), ['unproven per-line output'])
+        return engine_rc
+
+    monkeypatch.setattr(extract_cli.subprocess, 'call', run)
+    rc = extract_cli._run_ocr(EXTRACT_DIR, [str(source), str(output), '--layout', '--no-clobber', '--json'])
+    assert rc != 0 and len(calls) == 1
+    assert not output.exists()
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt['failure']['code'] == ('layout_failed' if engine_rc else 'layout_unproven')
+
+
+def test_layout_rejects_tesseract_without_starting_engine(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(extract_cli.subprocess, 'call', lambda *a, **k: pytest.fail('must not start'))
+    rc = extract_cli._run_ocr(EXTRACT_DIR, ['source.pdf', 'out.pdf', '--layout', '--engine=tesseract', '--json'])
+    assert rc != 0
+    assert 'paragraph grouping' in json.loads(capsys.readouterr().out)['failure']['message']
+
+
+def test_layout_born_digital_output_is_preserved_and_reuse_is_source_bound(tmp_path):
+    source = tmp_path / 'source.pdf'
+    output = tmp_path / 'processing' / 'translations' / 'book-zh-reocr.pdf'
+    _write_pdf(source, ['Born digital unchanged'])
+    result = run_extract('ocr', str(source), str(output), '--layout', '--no-clobber', '--json')
+    assert result.returncode == 0, result.stderr
+    before = output.read_bytes()
+    reused = run_extract('ocr', str(source), str(output), '--layout', '--no-clobber', '--json')
+    assert json.loads(reused.stdout)['status'] == 'existing'
+    with ocr_dsocr2.fitz.open(output) as doc:
+        assert 'Born digital unchanged' in doc[0].get_text()
+    _write_pdf(source, ['Different source'])
+    stale = run_extract('ocr', str(source), str(output), '--layout', '--no-clobber', '--json')
+    assert stale.returncode != 0 and output.read_bytes() == before
+    assert json.loads(stale.stdout)['failure']['code'] == 'layout_unproven'
+
+
+@pytest.mark.parametrize('blocks', [[], [{'c': 'image', 'b': [0, 0, 1, 1]}], [{'c': 'text', 'b': [.1, .1, .9, .4]}]])
+def test_layout_engine_requires_actual_paragraph_placement(tmp_path, monkeypatch, blocks):
+    fitz = ocr_dsocr2.fitz
+    source, output = tmp_path / 'source.pdf', tmp_path / 'reocr.pdf'
+    with fitz.open() as doc:
+        page = doc.new_page()
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 2, 2), False)
+        pix.clear_with(255)
+        page.insert_image(page.rect, pixmap=pix)
+        page.insert_text((72, 72), 'old ABBYY text', fontname='tiro')
+        doc.new_page().insert_text((72, 72), 'digital page stays intact')
+        doc.save(source)
+    raw = ''.join(f'<|ref|>the same body line here<|/ref|><|det|>[[120,{y},670,{y+15}]]<|/det|>\n' for y in (120, 139, 158, 177, 196))
+
+    def run(command, *, env, **kwargs):
+        if 'DSOCR2_RESULTS' in env:
+            Path(env['DSOCR2_RESULTS']).write_text(json.dumps([raw, '']))
+        else:
+            assert len(json.loads(Path(env['MINERU_PNG_LIST']).read_text())) == 1
+            Path(env['MINERU_RESULTS']).write_text(json.dumps([blocks]))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(ocr_dsocr2.platform, 'system', lambda: 'Darwin')
+    monkeypatch.setattr(ocr_dsocr2.platform, 'machine', lambda: 'arm64')
+    monkeypatch.setattr(ocr_dsocr2.shutil, 'which', lambda _: '/fake/uvx')
+    monkeypatch.setattr(ocr_dsocr2, '_resolve_model', lambda: 'fake-model')
+    monkeypatch.setattr(ocr_dsocr2, '_find_unicode_font', lambda: None)
+    monkeypatch.setattr(ocr_dsocr2, 'RENDER_DPI', 72)
+    monkeypatch.setattr(ocr_dsocr2.subprocess, 'run', run)
+    monkeypatch.setattr(sys, 'argv', ['ocr_dsocr2.py', str(source), str(output), '--layout'])
+    rc = ocr_dsocr2.main()
+    if not blocks or blocks[0]['c'] == 'image':
+        assert rc != 0 and not output.exists()
+    else:
+        assert rc == 0
+        assert ocr_dsocr2.layout_evidence.inspect(output, source_sha256=hashlib.sha256(source.read_bytes()).hexdigest())['prepared']
+        with fitz.open(output) as doc:
+            assert 'old ABBYY' not in doc[0].get_text()
+            assert 'digital page stays intact' in doc[1].get_text()
 
 
 def test_dsocr2_runner_does_not_trust_remote_code():
@@ -1417,7 +1504,7 @@ def test_layout_flows_a_block_as_one_paragraph():
     Handed a LINE box, BabelDOC must fit that line's Chinese into that line's width
     and parks the tail in the margin, so the translation arrives cut into pieces.
     A paragraph box rewraps internally instead. Without blocks it must still draw
-    per-line, because that is the fallback when MinerU cannot run.
+    per-line for isolated ungrouped pages; the engine rejects total degradation.
     """
     import fitz
 
