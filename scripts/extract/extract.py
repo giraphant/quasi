@@ -28,13 +28,13 @@ quasi-extract — file → MD pipeline.
 Usage:
   quasi-extract epub  SOURCE_EPUB CHAPTERS_DIR [--json]
   quasi-extract text  INPUT.pdf OUTPUT.txt [--json]
-  quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine dsocr2|tesseract]
+  quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine mineru|tesseract]
                                 [--layout] [--no-clobber] [--json]
                                 [--resume --progress-file PATH --chunk-pages N]
   quasi-extract ocr-generation --kind paper|book --slug SLUG
                                 --source-file PATH --expected-source-sha256 SHA256
                                 --generation-key SHA256
-                                --profile dsocr2-text|tesseract-text [--json]
+                                --profile mineru-text|tesseract-text [--json]
   quasi-extract split INPUT.pdf --output-dir DIR
                                 [--method toc|pattern]
                                 [--max-chapters N]
@@ -54,11 +54,10 @@ Each subcommand has its own --help with full args:
 def _run_ocr(here: Path, rest: list[str]) -> int:
     """Dispatch `quasi-extract ocr` to an OCR engine.
 
-    `--engine dsocr2` (default, DeepSeek-OCR-2 via mlx-vlm) | `tesseract`
-    (ocrmypdf). dsocr2 auto-falls-back to tesseract if it is unavailable or
-    fails for ordinary OCR. Explicit layout mode requires paragraph grouping.
+    `--engine mineru` (default, MinerU2.5-Pro via mlx-vlm) | `tesseract`
+    (ocrmypdf, explicit only). MinerU failure never silently changes engines.
     """
-    engine = "dsocr2"
+    engine = "mineru"
     layout: list[str] = []
     positional: list[str] = []
     json_mode = "--json" in rest
@@ -145,7 +144,7 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
             if "engine" in seen:
                 errors.append("duplicate --engine")
             if i + 1 >= len(rest) or rest[i + 1].startswith("-"):
-                errors.append("--engine requires a value (dsocr2|tesseract)")
+                errors.append("--engine requires a value (mineru|tesseract)")
                 seen.add("engine")
                 i += 1
             else:
@@ -158,7 +157,7 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
             seen.add("engine")
             engine = a.split("=", 1)[1]
             if not engine:
-                errors.append("--engine requires a value (dsocr2|tesseract)")
+                errors.append("--engine requires a value (mineru|tesseract)")
             i += 1
         elif a in ("-h", "--help"):
             errors.append("--help cannot be combined with --json")
@@ -170,10 +169,21 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
             positional.append(a)
             i += 1
 
-    if engine not in ("dsocr2", "tesseract"):
-        errors.append(f"unknown engine '{engine}' (expected dsocr2|tesseract)")
+    if resume and progress_file and "engine" not in seen:
+        # Resume only the engine named by the caller's exact legacy progress;
+        # the helper below still validates every identity field before writing.
+        try:
+            saved_progress = json.loads(Path(progress_file).read_text())
+            if isinstance(saved_progress, dict) and saved_progress.get("engine") in {"mineru", "tesseract", "dsocr2"}:
+                engine = saved_progress["engine"]
+        except (OSError, ValueError):
+            pass  # The normal resume validator reports malformed/missing state.
+    if engine == "dsocr2":
+        errors.append("DS OCR2 progress is read-only; start a new mineru-text generation")
+    elif engine not in ("mineru", "tesseract"):
+        errors.append(f"unknown engine '{engine}' (expected mineru|tesseract)")
     if layout and engine == "tesseract":
-        errors.append("--layout requires DS OCR2 and MinerU paragraph grouping; tesseract cannot supply it")
+        errors.append("--layout requires MinerU recognition and paragraph placement; tesseract cannot supply it")
     if not positional or not positional[0]:
         errors.append("missing INPUT")
     if len(positional) > 3:
@@ -200,8 +210,8 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
     if errors:
         return fail(errors[0])
 
-    # dsocr2 needs an explicit output path (ocr_pdf.sh auto-generates one).
-    if engine == "dsocr2" and len(positional) < 2:
+    # mineru needs an explicit output path (ocr_pdf.sh auto-generates one).
+    if engine == "mineru" and len(positional) < 2:
         stem = positional[0][: -len(".pdf")] if positional[0].lower().endswith(".pdf") else positional[0]
         positional.append(f"{stem}_ocr.pdf")
 
@@ -241,18 +251,8 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
             if selected_engine == "tesseract":
                 command = ["bash", str(here / "ocr_pdf.sh"), *args]
                 return subprocess.call(command, stdout=sys.stderr, stderr=sys.stderr)
-            command = [sys.executable, str(here / "ocr_dsocr2.py"), *args]
-            rc = subprocess.call(command, stdout=sys.stderr, stderr=sys.stderr)
-            if rc == 0:
-                return 0
-            sys.stderr.write(
-                "[extract] DS OCR2 unavailable/failed; falling back to tesseract.\n"
-            )
-            return subprocess.call(
-                ["bash", str(here / "ocr_pdf.sh"), *args],
-                stdout=sys.stderr,
-                stderr=sys.stderr,
-            )
+            command = [sys.executable, str(here / "ocr_mineru.py"), *args]
+            return subprocess.call(command, stdout=sys.stderr, stderr=sys.stderr)
 
         try:
             result = run_ocr_step(
@@ -361,18 +361,11 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
             rc = run_child(
                 [
                     sys.executable,
-                    str(here / "ocr_dsocr2.py"),
+                    str(here / "ocr_mineru.py"),
                     *engine_positional,
                     *layout,
                 ]
             )
-            if rc != 0 and not layout:
-                sys.stderr.write(
-                    "[extract] DS OCR2 unavailable/failed; falling back to tesseract.\n"
-                )
-                rc = run_child(
-                    ["bash", str(here / "ocr_pdf.sh"), *engine_positional]
-                )
 
         if not (json_mode or no_clobber or layout):
             return rc
@@ -537,12 +530,12 @@ def _ocr_output_state(output_arg: str) -> tuple[bool, int, bool]:
 def _print_ocr_help() -> None:
     print(
         "Usage: quasi-extract ocr INPUT.pdf [OUTPUT.pdf] [LANGUAGE] "
-        "[--engine dsocr2|tesseract] [--layout] [--no-clobber] [--json] "
+        "[--engine mineru|tesseract] [--layout] [--no-clobber] [--json] "
         "[--resume --progress-file PATH --chunk-pages N]"
     )
     print(
-        "Default engine: dsocr2 (DeepSeek-OCR-2). "
-        "Ordinary OCR falls back to tesseract if unavailable."
+        "Default engine: mineru (MinerU2.5-Pro). "
+        "Tesseract is available only when explicitly selected."
     )
     print("--layout: page image + invisible text at the OCR boxes, to re-OCR a")
     print("          source PDF before quasi-translate; requires MinerU paragraph grouping.")

@@ -17,7 +17,7 @@ import fitz
 
 
 SCHEMA_VERSION = "quasi.ocr.progress/0.1"
-ENGINES = {"dsocr2", "tesseract"}
+ENGINES = {"dsocr2", "mineru", "tesseract"}
 PROGRESS_KEYS = {
     "schema_version",
     "input_path",
@@ -241,8 +241,8 @@ def run_ocr_step(
     source = Path(input_path)
     output = Path(output_path)
     progress_file = Path(progress_path)
-    if engine not in ENGINES:
-        raise ValueError("engine must be dsocr2 or tesseract")
+    if engine not in {"mineru", "tesseract"}:
+        raise ValueError("engine must be mineru or tesseract (dsocr2 is legacy read-only)")
     if isinstance(chunk_pages, bool) or not 1 <= chunk_pages <= 32:
         raise ValueError("chunk_pages must be between 1 and 32")
     _regular_file(source)

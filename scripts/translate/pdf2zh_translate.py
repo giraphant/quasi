@@ -203,7 +203,8 @@ def run_pdf2zh(cmd: list[str], work_dir: Path) -> None:
             "PDF2ZH_OPENAI_COMPATIBLE_MODEL": cfg["model"],
         }
     )
-    result = subprocess.run(cmd, check=False, env=child_env)
+    # The strict CLI's stdout is one receipt; provider progress belongs on stderr.
+    result = subprocess.run(cmd, check=False, env=child_env, stdout=sys.stderr)
     if result.returncode != 0:
         raise TranslationError(
             redact_text(

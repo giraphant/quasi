@@ -349,9 +349,11 @@ def missing_paper_ocr_generation() -> dict[str, Any]:
         "schema_version": "quasi.ocr.profile/0.2",
         "language": "chi_sim+eng",
         "text_extractor": "pymupdf",
-        "engine_order": ["dsocr2", "tesseract"],
+        "engine_order": ["mineru"],
         "chunk_pages": 16,
-        "name": "dsocr2-text",
+        "name": "mineru-text",
+        "model": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+        "engine_revision": "mineru25-pro-2605-text/1",
         "validation_policy": "paper-text-v1",
     }
     config_fingerprint = hashlib.sha256(
@@ -475,10 +477,10 @@ def test_paper_status_parser_accepts_each_closed_ocr_generation_state(
                             {
                                 "start_page": 1,
                                 "end_page": 16,
-                                "engine": "dsocr2",
+                                "engine": "mineru",
                                 "path": (
                                     f"{generation['paths']['work_dir']}/parts/"
-                                    "part-000001-000016.dsocr2.pdf"
+                                    "part-000001-000016.mineru.pdf"
                                 ),
                                 "sha256": "f" * 64,
                                 "pages": 16,
@@ -543,7 +545,7 @@ def test_paper_status_parser_rejects_noncanonical_ocr_range_slot() -> None:
                     {
                         "start_page": 1,
                         "end_page": 16,
-                        "engine": "dsocr2",
+                        "engine": "mineru",
                         "path": f"{generation['paths']['work_dir']}/parts/foreign.pdf",
                         "sha256": "f" * 64,
                         "pages": 16,

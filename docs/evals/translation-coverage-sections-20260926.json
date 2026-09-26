@@ -1,0 +1,157 @@
+{
+  "date": "2026-09-26",
+  "dataset": "existing BTS PDFs, paths relative to vault root",
+  "method": "Read-only PyMuPDF remeasurement; no repair, OCR, translation, or publication. SHA-256 checked before and after. Selected translated pages rendered with Poppler and visually inspected, not a full quality audit.",
+  "visual_spot_checks": [
+    {
+      "document": "greenspan_current",
+      "source_book_pages": [
+        48,
+        49
+      ]
+    },
+    {
+      "document": "buthe_mattli_candidate",
+      "source_book_pages": [
+        245
+      ]
+    }
+  ],
+  "documents": {
+    "greenspan_current": {
+      "path": "processing/translations/greenspan-wireless-undertow-2023-zh.pdf",
+      "sha256": "097ffda7f7b5e65147f9aa317eea2997caae75855266d69c74559353d30bdc2a",
+      "unchanged": true,
+      "unfiltered": {
+        "median": 0.30086669418076767,
+        "measured_pages": 279,
+        "near_zero_pages": 58,
+        "near_zero_fraction": 0.2078853046594982,
+        "passes": false
+      },
+      "body": {
+        "median": 0.3103843368563972,
+        "measured_pages": 204,
+        "near_zero_pages": 0,
+        "near_zero_fraction": 0.0,
+        "passes": true
+      },
+      "excluded_measurable_pages": 75,
+      "sections": [
+        {
+          "start_page": 20,
+          "end_page": 21,
+          "kind": "notes",
+          "evidence": "numbered Notes heading p19"
+        },
+        {
+          "start_page": 49,
+          "end_page": 55,
+          "kind": "notes",
+          "evidence": "numbered Notes heading p48"
+        },
+        {
+          "start_page": 90,
+          "end_page": 97,
+          "kind": "notes",
+          "evidence": "numbered Notes heading p89"
+        },
+        {
+          "start_page": 133,
+          "end_page": 136,
+          "kind": "notes",
+          "evidence": "numbered Notes heading p132"
+        },
+        {
+          "start_page": 166,
+          "end_page": 170,
+          "kind": "notes",
+          "evidence": "numbered Notes heading p165"
+        },
+        {
+          "start_page": 200,
+          "end_page": 205,
+          "kind": "notes",
+          "evidence": "numbered Notes heading p199"
+        },
+        {
+          "start_page": 237,
+          "end_page": 241,
+          "kind": "notes",
+          "evidence": "numbered Notes heading p236"
+        },
+        {
+          "start_page": 246,
+          "end_page": 277,
+          "kind": "references",
+          "evidence": "outline 'Bibliography'"
+        },
+        {
+          "start_page": 278,
+          "end_page": 289,
+          "kind": "index",
+          "evidence": "outline 'Index'"
+        }
+      ],
+      "signal": "pass"
+    },
+    "buthe_mattli_candidate": {
+      "path": "processing/translations/.buthe-mattli-new-global-rulers-2011-zh.translate-2a87f189a40d4a43bee46bf04bf57205/candidate.pdf",
+      "sha256": "e408fbd029b78e0fb520ffe4316ef3c57e66d99c61527c1fd6fdb466e2d4f9f5",
+      "unchanged": true,
+      "unfiltered": {
+        "median": 0.2938870692080432,
+        "measured_pages": 304,
+        "near_zero_pages": 0,
+        "near_zero_fraction": 0.0,
+        "passes": false
+      },
+      "body": {
+        "median": 0.3001443710820348,
+        "measured_pages": 250,
+        "near_zero_pages": 0,
+        "near_zero_fraction": 0.0,
+        "passes": true
+      },
+      "excluded_measurable_pages": 54,
+      "sections": [
+        {
+          "start_page": 269,
+          "end_page": 324,
+          "kind": "references",
+          "evidence": "outline 'References'"
+        }
+      ],
+      "signal": "pass"
+    },
+    "buthe_mattli_older": {
+      "path": ".quasi/temp/buthe-mattli-new-global-rulers-2011-zh.old.pdf",
+      "sha256": "c7f539701615f3c509a18dbf60e1bb1f494a2537a750ae0fe9fdaafe1e9eb8ef",
+      "unchanged": true,
+      "unfiltered": {
+        "median": 0.28556090542414275,
+        "measured_pages": 312,
+        "near_zero_pages": 62,
+        "near_zero_fraction": 0.1987179487179487,
+        "passes": false
+      },
+      "body": {
+        "median": 0.2916490586510796,
+        "measured_pages": 258,
+        "near_zero_pages": 9,
+        "near_zero_fraction": 0.03488372093023256,
+        "passes": false
+      },
+      "excluded_measurable_pages": 54,
+      "sections": [
+        {
+          "start_page": 269,
+          "end_page": 324,
+          "kind": "references",
+          "evidence": "outline 'References'"
+        }
+      ],
+      "signal": "under_translated"
+    }
+  }
+}

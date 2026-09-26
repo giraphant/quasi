@@ -20,10 +20,16 @@ from typing import Any, Callable, Iterator, Literal
 
 import fitz
 
+if __package__:
+    from . import ocr_quality
+else:
+    import ocr_quality
+
 PROFILE_SCHEMA = "quasi.ocr.profile/0.2"
 REQUEST_SCHEMA = "quasi.ocr.generation.request/0.1"
 PROGRESS_SCHEMA = "quasi.ocr.generation.progress/0.1"
 MANIFEST_SCHEMA = "quasi.ocr.generation.manifest/0.1"
+MINERU_MANIFEST_SCHEMA = "quasi.ocr.generation.manifest/0.2"
 RECEIPT_SCHEMA = "quasi.operation.ocr-generation.receipt/0.1"
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -34,6 +40,13 @@ PROFILE_BASE: dict[str, Any] = {
     "text_extractor": "pymupdf",
 }
 PROFILE_ENGINES: dict[str, dict[str, Any]] = {
+    "mineru-text": {
+        "engine_order": ["mineru"],
+        "chunk_pages": 16,
+        "model": ocr_quality.MODEL,
+        "engine_revision": ocr_quality.PROFILE,
+    },
+    # Read historical generations without reinterpreting their fingerprints.
     "dsocr2-text": {
         "engine_order": ["dsocr2", "tesseract"],
         "chunk_pages": 16,
@@ -48,7 +61,7 @@ VALIDATION_POLICIES = {"paper": "paper-text-v1", "book": "book-pdf-v1"}
 
 @dataclass(frozen=True)
 class EngineResult:
-    engine: Literal["dsocr2", "tesseract"]
+    engine: Literal["mineru", "dsocr2", "tesseract"]
     returncode: int
 
 
@@ -103,7 +116,7 @@ def resolve_profile(kind: str, profile_name: str) -> dict[str, Any]:
     if engine is None:
         raise OcrGenerationContractError(
             "ocr.generation_invalid_profile",
-            "profile must be dsocr2-text or tesseract-text",
+            "profile must be mineru-text or tesseract-text (dsocr2-text is read-only)",
         )
     return {
         **PROFILE_BASE,
@@ -113,7 +126,7 @@ def resolve_profile(kind: str, profile_name: str) -> dict[str, Any]:
     }
 
 
-def profile_fingerprint(kind: str = "paper", profile_name: str = "dsocr2-text") -> str:
+def profile_fingerprint(kind: str = "paper", profile_name: str = "mineru-text") -> str:
     return fingerprint(resolve_profile(kind, profile_name))
 
 
@@ -141,7 +154,7 @@ def request_payload(
 
 def generation_key(
     *, kind: str = "paper", slug: str, source_path: str | None = None,
-    source_sha256: str, profile_name: str = "dsocr2-text",
+    source_sha256: str, profile_name: str = "mineru-text",
 ) -> str:
     source_path = source_path or f"sources/{slug}.pdf"
     return fingerprint(request_payload(
@@ -540,6 +553,10 @@ def _validate_progress(
                 item["pages"],
                 str(profile["validation_policy"]),
             )
+            if item["engine"] == "mineru" and ocr_quality.inspect(candidate) is None:
+                raise OcrGenerationContractError(
+                    "ocr.generation_progress_invalid", "MinerU range quality evidence is invalid"
+                )
         except OcrGenerationContractError as exc:
             if exc.code == "ocr.generation_progress_invalid":
                 raise
@@ -595,8 +612,8 @@ def _validate_progress(
     return value
 
 
-def _expected_manifest_keys() -> set[str]:
-    return {
+def _expected_manifest_keys(profile: dict | None = None) -> set[str]:
+    keys = {
         "schema_version",
         "material_key",
         "kind",
@@ -609,6 +626,7 @@ def _expected_manifest_keys() -> set[str]:
         "recovery_pdf",
         "normalized_text",
     }
+    return keys | {"quality"} if profile and profile["name"] == "mineru-text" else keys
 
 
 def _artifact_keys(kind: str) -> set[str]:
@@ -679,9 +697,10 @@ def _manifest_matches(
     source_pages: int,
     generation: str,
 ) -> bool:
-    if set(manifest) != _expected_manifest_keys():
+    if set(manifest) != _expected_manifest_keys(profile):
         return False
-    if manifest.get("schema_version") != MANIFEST_SCHEMA:
+    mineru = profile["name"] == "mineru-text"
+    if manifest.get("schema_version") != (MINERU_MANIFEST_SCHEMA if mineru else MANIFEST_SCHEMA):
         return False
     if (
         manifest.get("material_key") != f"{kind}:{slug}"
@@ -745,6 +764,11 @@ def _manifest_matches(
         return False
     if text_value != signals["text"]:
         return False
+    if mineru:
+        evidence = ocr_quality.inspect(pdf)
+        if (evidence is None or evidence["source_sha256"] != source_sha256
+                or manifest["quality"] != evidence["quality"]):
+            return False
     exact_recovery = {
         "path": project_relative(pdf, paths["project_root"]),
         "sha256": pdf_sha,
@@ -787,7 +811,7 @@ def observe_generation(
     source_size: int,
     source_pages: int,
     generation: str,
-    profile_name: str = "dsocr2-text",
+    profile_name: str = "mineru-text",
 ) -> dict[str, Any]:
     root = project_root.expanduser().resolve()
     source_path = f"sources/{slug}.pdf"
@@ -1040,9 +1064,9 @@ def _engine_runner(extract_dir: Path) -> Runner:
         last_rc = 1
         for engine in engine_order:
             candidate.unlink(missing_ok=True)
-            if engine == "dsocr2":
+            if engine == "mineru":
                 command = [
-                    sys.executable, str(extract_dir / "ocr_dsocr2.py"),
+                    sys.executable, str(extract_dir / "ocr_mineru.py"),
                     str(source_slice), str(candidate),
                 ]
             elif engine == "tesseract":
@@ -1060,6 +1084,10 @@ def _engine_runner(extract_dir: Path) -> Runner:
                 continue
             try:
                 validate_pdf_quality(candidate, expected_pages, validation_policy)
+                if engine == "mineru":
+                    evidence = ocr_quality.inspect(candidate)
+                    if evidence is None or evidence["source_sha256"] != sha256_file(source_slice):
+                        raise OcrGenerationContractError("ocr.generation_evidence_invalid", "MinerU output lacks source-bound quality evidence")
             except OcrGenerationContractError as exc:
                 sys.stderr.write(
                     f"[extract] {engine} quality rejection ({exc.code}).\n"
@@ -1082,17 +1110,32 @@ def _slice_pdf(source: Path, target: Path, start: int, end: int) -> None:
     with fitz.open(source) as document:
         sliced = fitz.open()
         sliced.insert_pdf(document, from_page=start - 1, to_page=end - 1)
-        sliced.save(target)
+        # Stable slice bytes let crash recovery verify the orphan's exact source.
+        sliced.save(target, no_new_id=True)
         sliced.close()
 
 
-def _merge_parts(records: list[dict[str, Any]], root: Path, output: Path) -> None:
+def _merge_parts(records: list[dict[str, Any]], root: Path, output: Path,
+                 *, source_sha256: str | None = None) -> None:
     merged = fitz.open()
+    quality_parts = []
+    models = set()
     try:
         for record in records:
             part = root / str(record["path"])
             with fitz.open(part) as document:
+                if record["engine"] == "mineru":
+                    evidence = ocr_quality.read(document)
+                    if evidence is None:
+                        raise OcrGenerationContractError("ocr.generation_evidence_invalid", "MinerU part lacks quality evidence")
+                    quality_parts.append((record["start_page"] - 1, evidence["quality"]))
+                    models.add(evidence["model"])
                 merged.insert_pdf(document)
+        if quality_parts:
+            if len(quality_parts) != len(records) or len(models) != 1 or not source_sha256:
+                raise OcrGenerationContractError("ocr.generation_evidence_invalid", "inconsistent MinerU part provenance")
+            ocr_quality.stamp(merged, source_sha256=source_sha256,
+                              quality=ocr_quality.combine(quality_parts), model=next(iter(models)))
         merged.save(output)
     finally:
         merged.close()
@@ -1142,6 +1185,15 @@ def _advance_one_range(
                 "ocr.generation_orphan_invalid", "orphan OCR part engine is invalid"
             )
         validate_pdf_quality(part, end - start + 1, str(profile["validation_policy"]))
+        if engine == "mineru":
+            with tempfile.TemporaryDirectory(prefix=".verify-", dir=paths["work_dir"]) as directory:
+                source_slice = Path(directory) / "source.pdf"
+                _slice_pdf(source, source_slice, start, end)
+                evidence = ocr_quality.inspect(part)
+                if evidence is None or evidence["source_sha256"] != sha256_file(source_slice):
+                    raise OcrGenerationContractError(
+                        "ocr.generation_orphan_invalid", "MinerU orphan lacks exact source evidence"
+                    )
     else:
         stage_dir = Path(tempfile.mkdtemp(prefix=".range-", dir=str(paths["work_dir"])))
         try:
@@ -1161,6 +1213,12 @@ def _advance_one_range(
                 candidate, end - start + 1, str(profile["validation_policy"])
             )
             engine = result.engine
+            if engine not in profile["engine_order"]:
+                raise OcrGenerationContractError("ocr.generation_engine_invalid", "runner returned an engine outside the profile")
+            if engine == "mineru":
+                evidence = ocr_quality.inspect(candidate)
+                if evidence is None or evidence["source_sha256"] != sha256_file(source_slice):
+                    raise OcrGenerationContractError("ocr.generation_evidence_invalid", "MinerU range lacks exact source evidence")
             part = parts_dir / _part_name(start, end, engine)
             if part.exists() or part.is_symlink():
                 raise OcrGenerationContractError(
@@ -1201,8 +1259,13 @@ def _build_manifest(
     signals: dict[str, Any],
 ) -> dict[str, Any]:
     pdf_sha = sha256_file(paths["work_pdf"])
+    mineru = profile["name"] == "mineru-text"
+    evidence = ocr_quality.inspect(paths["work_pdf"]) if mineru else None
+    if mineru and (evidence is None or evidence["source_sha256"] != source_sha256):
+        raise OcrGenerationContractError("ocr.generation_evidence_invalid", "merged MinerU PDF lacks source-bound quality evidence")
     return {
-        "schema_version": MANIFEST_SCHEMA,
+        "schema_version": MINERU_MANIFEST_SCHEMA if mineru else MANIFEST_SCHEMA,
+        **({"quality": evidence["quality"]} if evidence else {}),
         "material_key": f"{kind}:{slug}",
         "kind": kind,
         "slug": slug,
@@ -1283,7 +1346,7 @@ def run_transaction(
     source_file: Path,
     expected_source_sha256: str,
     expected_generation_key: str,
-    profile_name: str = "dsocr2-text",
+    profile_name: str = "mineru-text",
     extract_dir: Path | None = None,
     runner: Runner | None = None,
 ) -> dict[str, Any]:
@@ -1381,6 +1444,12 @@ def run_transaction(
             )
             if observed["state"] == "committed":
                 return result("succeeded", "reconciled", "committed")
+            if profile_name == "dsocr2-text":
+                return result(
+                    "blocked", None, "invalid", progress=observed["progress"],
+                    failure=_failure("ocr.generation_profile_retired",
+                                     "DS OCR2 execution is retired; preserve this generation and observe mineru-text"),
+                )
             if observed["state"] in {"invalid", "unknown"}:
                 return result(
                     "blocked",
@@ -1433,7 +1502,7 @@ def run_transaction(
                 )
 
             if not paths["work_pdf"].exists():
-                _merge_parts(progress["ranges"], root, paths["work_pdf"])
+                _merge_parts(progress["ranges"], root, paths["work_pdf"], source_sha256=source_sha)
                 _fsync_directory(paths["work_dir"])
             signals = validate_pdf_quality(
                 paths["work_pdf"], source_pages, str(profile["validation_policy"])

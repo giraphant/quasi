@@ -8,10 +8,10 @@
 #   quasi-extract text  INPUT.pdf OUTPUT.txt [--json]
 #       Atomically extract the PDF text layer and report deterministic signals.
 #
-#   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine dsocr2|tesseract] [--no-clobber] [--json]
+#   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine mineru|tesseract] [--no-clobber] [--json]
 #       [--resume --progress-file PATH --chunk-pages N]
-#       OCR a scanned PDF into a searchable PDF. Default engine dsocr2
-#       (DeepSeek-OCR-2 via mlx-vlm); auto-falls-back to tesseract if unavailable.
+#       OCR a scanned PDF into a searchable PDF. Default engine MinerU2.5-Pro
+#       (recognition + paragraph layout via MLX); Tesseract is explicit-only.
 #
 #   quasi-extract split INPUT.pdf --output-dir DIR [--method toc|pattern] [--max-chapters N]
 #       [--expected-manifest-fingerprint SHA256] [--json]

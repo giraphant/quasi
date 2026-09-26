@@ -68,11 +68,13 @@ profile fingerprint、锁、private work subtree 与 immutable final subtree。�
 - 没有完整 CLI JSON receipt、宿主截断或 durable outcome 不明确：立即 `blocked`，不得根据文件
   是否存在猜测成功，也不得重放 writer。
 
-profile 决定 range 大小：`dsocr2-text` 为 16 页，`tesseract-text` 为 32 页。DS OCR2 的质量
-拒绝可在同一 16 页 range 内切换到 Tesseract；receipt 与 manifest 必须保留实际采用的 engine，
+profile 决定 range 大小：`mineru-text` 为 16 页，显式 `tesseract-text` 为 32 页。MinerU 不会
+自动切换引擎；旧 DS OCR2 代际只读，不用新引擎续写。receipt 与 manifest 保留实际 engine，
 但 Agent 不自行选 chunk size、改 profile 或额外启动 fallback command。generic `quasi-extract ocr`
 不属于新的 Paper/Book OCR generation 能力。generation 的锁、页段恢复、逐页质量证明、source
-drift 检查和 manifest-last 发布全部由 CLI 拥有；Agent 不重现这些逻辑。
+drift 检查和 manifest-last 发布全部由 CLI 拥有；Agent 不重现这些逻辑。MinerU manifest 的
+quality 记录新旧层不一致的正文段落和缺少旧层的页；新识别会保留，存疑不是旧层正确的证明。
+核看 caller exact source 和产物时据此检查，不能把这些提示当成已排除编造的质量保证。
 
 ## Book Prepare
 

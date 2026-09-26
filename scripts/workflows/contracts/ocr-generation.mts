@@ -9,15 +9,17 @@ const exactEnvelopeKeys = exactKeys;
 const SHA256 = /^[0-9a-f]{64}$/;
 
 export type OcrMaterialKind = "paper" | "book";
-export type OcrProfileName = "dsocr2-text" | "tesseract-text";
+export type OcrProfileName = "mineru-text" | "dsocr2-text" | "tesseract-text";
 
 export interface OcrGenerationProfile {
   schema_version: "quasi.ocr.profile/0.2";
   language: "chi_sim+eng";
   text_extractor: "pymupdf";
-  engine_order: Array<"dsocr2" | "tesseract">;
+  engine_order: Array<"mineru" | "dsocr2" | "tesseract">;
   chunk_pages: 16 | 32;
   name: OcrProfileName;
+  model?: "opendatalab/MinerU2.5-Pro-2605-1.2B";
+  engine_revision?: "mineru25-pro-2605-text/1";
   validation_policy: "paper-text-v1" | "book-pdf-v1";
 }
 
@@ -41,7 +43,7 @@ export interface OcrGenerationPaths {
 export interface OcrGenerationRange {
   start_page: number;
   end_page: number;
-  engine: "dsocr2" | "tesseract";
+  engine: "mineru" | "dsocr2" | "tesseract";
   path: string;
   sha256: string;
   pages: number;
@@ -101,6 +103,7 @@ const parseProfile = (
     !exactEnvelopeKeys(value, [
       "schema_version", "language", "text_extractor", "engine_order",
       "chunk_pages", "name", "validation_policy",
+      ...(value.name === "mineru-text" ? ["model", "engine_revision"] : []),
     ]) ||
     value.schema_version !== "quasi.ocr.profile/0.2" ||
     value.language !== "chi_sim+eng" ||
@@ -112,10 +115,15 @@ const parseProfile = (
     value.name === "dsocr2-text" && value.chunk_pages === 16 &&
     value.engine_order.length === 2 && value.engine_order[0] === "dsocr2" &&
     value.engine_order[1] === "tesseract";
+  const mineru =
+    value.name === "mineru-text" && value.chunk_pages === 16 &&
+    value.model === "opendatalab/MinerU2.5-Pro-2605-1.2B" &&
+    value.engine_revision === "mineru25-pro-2605-text/1" &&
+    value.engine_order.length === 1 && value.engine_order[0] === "mineru";
   const tesseract =
     value.name === "tesseract-text" && value.chunk_pages === 32 &&
     value.engine_order.length === 1 && value.engine_order[0] === "tesseract";
-  return ds || tesseract ? value as unknown as OcrGenerationProfile : null;
+  return mineru || ds || tesseract ? value as unknown as OcrGenerationProfile : null;
 };
 
 const validFileBase = (
@@ -190,7 +198,7 @@ const parseProgress = (
       !isRecord(range) ||
       !exactEnvelopeKeys(range, ["start_page", "end_page", "engine", "path", "sha256", "pages"]) ||
       range.start_page !== cursor || range.end_page !== expectedEnd ||
-      !profile.engine_order.includes(range.engine as "dsocr2" | "tesseract") ||
+      !profile.engine_order.includes(range.engine as "mineru" | "dsocr2" | "tesseract") ||
       range.pages !== (range.end_page as number) - cursor + 1 ||
       range.path !== (
         `${workRoot}/parts/part-${String(cursor).padStart(6, "0")}-` +

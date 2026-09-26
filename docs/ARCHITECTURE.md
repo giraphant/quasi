@@ -36,7 +36,7 @@ separate:
 |---|---|
 | `quasi-search` | `book|paper` metadata discovery |
 | `quasi-download` | `book candidates|fetch`; `paper fetch|diagnose`; `accept` |
-| `quasi-extract` | `epub|text|ocr|ocr-generation|split` text extraction and normalisation (`ocr` default engine DS OCR2, `--engine dsocr2\|tesseract`, `--layout` replacement text layer; `ocr-generation` is the shared source/profile-bound immutable Paper/Book OCR transaction) |
+| `quasi-extract` | `epub|text|ocr|ocr-generation|split` text extraction and normalisation (`ocr` default engine MinerU2.5-Pro, `--engine mineru\|tesseract`, `--layout` replacement text layer; `ocr-generation` is the shared source/profile-bound immutable Paper/Book OCR transaction) |
 | `quasi-audit` | agent-facing `--path PATH` autofix + typecheck + classify |
 | `quasi-status` | read-only disk oracle: `--kind paper|book|talk|author|topic|webpage|archive --slug SLUG --json`; Translation additionally requires `--target-language TAG`; `--scan --json` |
 | `quasi-transcribe` | `run|classify|silent` talk transcript engines |
@@ -74,7 +74,7 @@ Removed legacy bins:
 - `scripts/citation/citation.py`: deterministic draft citation helpers only.
 - `scripts/proofread/proofread.py`: deterministic proofread setup/cleanup only.
 - `scripts/doctor/doctor.py`: runtime healthcheck for venv sync, core Python deps, and optional system tools by profile.
-- `scripts/translate/immersive_translate.py` and `pdf2zh_translate.py`: interchangeable PDF translation backends behind the `quasi-translate` shim. Both run `tounicode.py` repair followed by `coverage.py` acceptance; DS OCR2/MinerU are recovery dependencies only after `Under-translated`, not pdf2zh startup requirements.
+- `scripts/translate/immersive_translate.py` and `pdf2zh_translate.py`: interchangeable PDF translation backends behind the `quasi-translate` shim. Both run `tounicode.py` repair followed by `coverage.py` acceptance; MinerU layout preparation is required before translating image-bearing sources; born-digital sources need no OCR. Low coverage alone does not prove OCR damage.
 - `scripts/webpage/webpage.py`: exact public-URL inspection, snapshot capture, and extraction behind the `quasi-webpage` shim.
 
 ## Workflow source and runtime
@@ -122,11 +122,14 @@ readable, non-empty PDF container, while verified scholarly HTML or strict UTF-8
 normalized into the text alternative. A bounded Paper fetch returns before the host ceiling
 instead of claiming an unfinished provider cascade was exhausted.
 
-Book Prepare projects resumable OCR progress through status. Each `quasi-extract ocr
---resume` call owns one exact page range and atomically advances a source/config-bound part
-inventory; the Book entry returns `needs_observation` between ranges and finalizes only after
-the merged OCR output is durable. No background OCR process or hidden Workflow cursor is
-introduced.
+Paper and Book project source/profile-bound OCR generations through status. Each
+`quasi-extract ocr-generation` call owns one exact range (16 pages for `mineru-text`,
+32 for explicit `tesseract-text`) and returns for a fresh observation. MinerU profiles
+bind the model and implementation revision; their manifests include page-numbered
+recognition disagreement evidence. DS OCR2 generations remain read-only. Compatible
+fixed Book progress can still finish through `ocr --resume`; retired DS partial progress
+stays untouched and no longer admits a legacy writer. No background OCR process or
+hidden Workflow cursor is introduced.
 
 Inside a named plan, each descriptor row gives one specialist a goal, exact refs,
 declared capabilities, and a closed

@@ -69,6 +69,8 @@ def copying_ocr_runner(
     _validation_policy: str,
 ) -> ocr_generation.EngineResult:
     with fitz.open(source) as document:
+        if engines[0] == "mineru":
+            ocr_generation.ocr_quality.stamp(document, source_sha256=ocr_generation.sha256_file(source), quality=ocr_generation.ocr_quality.empty_quality(), model=ocr_generation.ocr_quality.MODEL)
         document.save(output)
     return ocr_generation.EngineResult(engine=engines[0], returncode=0)
 
@@ -685,7 +687,7 @@ def test_book_status_projects_closed_resumable_ocr_progress(tmp_path: Path):
         "input_path": f"sources/{slug}.pdf",
         "output_path": f"processing/chapters/{slug}/ocr.pdf",
         "source_sha256": "a" * 64,
-        "engine": "dsocr2",
+        "engine": "mineru",
         "chunk_pages": 8,
         "total_pages": 100,
         "completed_pages": 8,
@@ -705,6 +707,16 @@ def test_book_status_projects_closed_resumable_ocr_progress(tmp_path: Path):
         "completed_pages": 8,
         "next_page": 9,
     }
+
+    progress["engine"] = "dsocr2"
+    write(progress_path, json.dumps(progress))
+    retired = run_status(project, "--kind", "book", "--slug", slug, "--json")
+    assert json.loads(retired.stdout)["facts"]["legacy_ocr"]["usable"] is False
+    assert json.loads(progress_path.read_text())["completed_pages"] == 8
+    progress["engine"] = "tesseract"
+    write(progress_path, json.dumps(progress))
+    active = run_status(project, "--kind", "book", "--slug", slug, "--json")
+    assert json.loads(active.stdout)["facts"]["legacy_ocr"]["usable"] is True
 
     progress["unexpected"] = True
     write(progress_path, json.dumps(progress))

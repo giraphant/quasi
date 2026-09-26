@@ -395,7 +395,7 @@ def ocr_generation_status(
     if not isinstance(candidate, dict) or candidate.get("path") != f"sources/{slug}.pdf":
         return None
     source_path = root / candidate["path"]
-    profile_name = "dsocr2-text"
+    profile_name = "mineru-text"
     generation = ocr_generation_key(
         kind=kind, slug=slug, source_path=candidate["path"],
         source_sha256=candidate["sha256"], profile_name=profile_name,
@@ -647,7 +647,7 @@ def book_ocr_progress(root: Path, slug: str) -> dict[str, Any]:
         != f"processing/chapters/{slug}/ocr.pdf"
         or not isinstance(source_hash, str)
         or re.fullmatch(r"[0-9a-f]{64}", source_hash) is None
-        or value.get("engine") not in {"dsocr2", "tesseract"}
+        or value.get("engine") not in {"dsocr2", "mineru", "tesseract"}
         or type(chunk) is not int
         or not 1 <= chunk <= 32
         or type(total) is not int
@@ -655,6 +655,7 @@ def book_ocr_progress(root: Path, slug: str) -> dict[str, Any]:
         or type(completed) is not int
         or not 0 <= completed <= total
         or next_page != expected_next
+        or (value.get("engine") == "dsocr2" and completed < total)
     ):
         return projected
     projected.update(

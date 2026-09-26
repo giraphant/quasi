@@ -88,7 +88,8 @@ def test_build_command_uses_alternating_dual_and_keeps_secrets_out_of_argv():
 def test_run_pdf2zh_delivers_provider_config_only_through_env(tmp_path, monkeypatch):
     captured = {}
 
-    def fake_run(cmd, *, check, env):
+    def fake_run(cmd, *, check, env, stdout):
+        assert stdout is p2z.sys.stderr
         captured.update({"cmd": cmd, "check": check, "env": env})
         return type("Result", (), {"returncode": 0})()
 
@@ -229,5 +230,16 @@ def test_correct_page_count_is_not_enough(tmp_path, monkeypatch):
             [full] + [""] * 3,
         ),
     )
-    with pytest.raises(TranslationError, match="Under-translated"):
+    with pytest.raises(TranslationError, match="Coverage below threshold"):
         p2z.translate_slug("slug", project_root=tmp_path)
+
+
+def test_provider_stdout_does_not_pollute_receipt_stream(tmp_path, monkeypatch, capfd):
+    monkeypatch.setattr(p2z.shutil, 'which', lambda _: '/test/uvx')
+    monkeypatch.setattr(p2z, 'load_backend_config', lambda: {
+        'base_url': 'https://example.invalid/v1', 'api_key': 'test-only', 'model': 'test',
+    })
+    p2z.run_pdf2zh([p2z.sys.executable, '-c', "print('provider progress')"], tmp_path)
+    captured=capfd.readouterr()
+    assert captured.out == ''
+    assert 'provider progress' in captured.err

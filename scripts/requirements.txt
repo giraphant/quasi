@@ -4,6 +4,7 @@ curl_cffi
 pydantic
 pyyaml
 pymupdf
+pylatexenc==2.10
 bibtexparser>=1.4,<2
 trafilatura
 lxml_html_clean

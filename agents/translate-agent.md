@@ -38,13 +38,20 @@ observe，再运行翻译。扫描页沿用 `relayer_page` 的图像对象判断
 ABBYY 文字层也可能是 TimesNewRomanPSMT。无图像对象的原生文字页保留原文字层。
 
 layout receipt 必须证明成功或已验证的 existing；CLI 在 PDF 内核验来源 hash 与实际段落排版
-证据，文件名或“有文字层”都不能替代。MinerU 整本失败、全书没有排入段落或 Tesseract 的逐行
+证据，文件名或“有文字层”都不能替代。MinerU 识别失败、全书没有排入段落或 Tesseract 的逐行
 输出不能当作 layout 成功，也不能绕过检查直接翻译原扫描本。既有 recovery 缺少证据或不匹配
-当前 source 时保留该文件并报告 exact path 冲突，不盲目覆盖。
+当前 source 时保留该文件并报告 exact path 冲突，不盲目覆盖。MinerU 新 layout profile 与旧证据
+不同，不能把旧 DS OCR2 recovery 当成新引擎产物。OCR PDF 内保留的新旧层差异是核看线索，
+不是对新旧任一文字层的真伪裁决。
 
 运行翻译后阅读 typed validation：output pages 应与双页布局一致，
 manifest 与 hash 应匹配，ToUnicode 应可复制搜索，中文目标还要通过 coverage 证据。一个
 外观正常但正文大面积未翻译的 PDF 不算完成。
+
+coverage 的范围是可测正文：CLI 根据目录和有明确结束位置的原文 Notes 标题，排除书目、
+索引与独立注释区段，并在 detail 中列出页码范围和依据。被排除区段不因此获得“已经完整
+翻译”的证明；正文与注释混排的起始页仍可能拉低比值。遇到低覆盖率，先核看 detail 的统计
+范围和最弱页，区分正文漏译与尚未识别的参考材料，不能仅凭低比值认定 OCR 损坏。
 
 Workflow 内的 Bash 可能在约两分钟截断前台或 tool-background 长命令。对
 `quasi-translate run` 和 layout OCR，只启动一个以 `nohup` 脱离宿主的 writer，把 stdout、

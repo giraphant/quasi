@@ -712,7 +712,7 @@ def ocr_generation(
     slug: str,
     *,
     kind: str = "paper",
-    profile_name: str = "dsocr2-text",
+    profile_name: str = "mineru-text",
     state: str = "missing",
     completed_pages: int | None = None,
     source_sha256: str = "a" * 64,
@@ -725,16 +725,18 @@ def ocr_generation(
         "language": "chi_sim+eng",
         "text_extractor": "pymupdf",
         "engine_order": (
-            ["dsocr2", "tesseract"]
-            if profile_name == "dsocr2-text"
+            ["mineru"]
+            if profile_name == "mineru-text"
             else ["tesseract"]
         ),
-        "chunk_pages": 16 if profile_name == "dsocr2-text" else 32,
+        "chunk_pages": 16 if profile_name == "mineru-text" else 32,
         "name": profile_name,
         "validation_policy": (
             "paper-text-v1" if kind == "paper" else "book-pdf-v1"
         ),
     }
+    if profile_name == "mineru-text":
+        profile.update(model="opendatalab/MinerU2.5-Pro-2605-1.2B", engine_revision="mineru25-pro-2605-text/1")
     config_fingerprint = hashlib.sha256(
         json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -880,7 +882,7 @@ def paper_observation(
     ocr_state: str = "missing",
     ocr_completed_pages: int | None = None,
     ocr_failure: str | None = None,
-    ocr_profile_name: str = "dsocr2-text",
+    ocr_profile_name: str = "mineru-text",
     ocr_source_pages: int = 40,
 ) -> dict[str, Any]:
     return {
@@ -1007,7 +1009,7 @@ def canonical_input(
     ocr_state: str = "missing",
     ocr_completed_pages: int | None = None,
     ocr_failure: str | None = None,
-    ocr_profile_name: str = "dsocr2-text",
+    ocr_profile_name: str = "mineru-text",
     ocr_source_pages: int = 40,
 ) -> dict[str, Any]:
     return {

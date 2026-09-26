@@ -758,6 +758,39 @@ def test_undertranslated_candidate_is_preserved_but_never_canonical(tmp_path, ba
     assert coverage.check(candidates[0])['detail'].replace(str(candidates[0]), 'the preserved staged candidate') == receipt['coverage']['detail']
 
 
+@pytest.mark.parametrize('backend_name', ['pdf2zh', 'immersive'])
+@pytest.mark.parametrize('body', [FULL, '中' * 78])
+def test_reference_exclusions_survive_transaction_receipts(tmp_path, backend_name, body):
+    source, _ = source_fixture(tmp_path, pages=10)
+    with pymupdf.open(source) as doc:
+        doc.set_toc([[1, 'Body', 1], [1, 'References', 5]])
+        doc.saveIncr()
+
+    def backend(source, candidate, language, work_dir, on_state):
+        coverage.build_dual(candidate, [body] * 4 + [''] * 6)
+        return {'task_id': None}
+
+    kwargs = run_kwargs(tmp_path, source, commit.sha256_file(source), backend, backend=backend_name)
+    kwargs['add_toc'] = immersive.add_toc_to_split_pdf
+    receipt = commit.run_transaction(**kwargs)
+    assert receipt['coverage']['measured_pages'] == 4
+    assert 'excluded 6/10' in receipt['coverage']['detail']
+    assert 'p5-10 references' in receipt['coverage']['detail']
+    output = tmp_path / receipt['output_path']
+    if body == FULL:
+        assert receipt['status'] == 'succeeded' and receipt['canonical_committed']
+        manifest = json.loads((tmp_path / receipt['manifest_path']).read_text())
+        assert manifest['coverage'] == receipt['coverage']
+        assert output.exists()
+    else:
+        assert receipt['status'] == 'failed' and not receipt['canonical_committed']
+        assert not output.exists()
+        candidates = list(output.parent.glob('.strict-translation-zh.translate-*/candidate.pdf'))
+        assert len(candidates) == 1
+        persisted = json.loads(candidates[0].with_name('receipt.json').read_text())
+        assert persisted['coverage'] == receipt['coverage']
+
+
 def test_fenced_unknown_immersive_generation_never_starts_second_backend(tmp_path):
     source, source_sha = source_fixture(tmp_path)
     calls: list[str] = []

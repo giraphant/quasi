@@ -31,7 +31,7 @@ const progressSchema = {
             properties: {
               start_page: { type: "integer", minimum: 1 },
               end_page: { type: "integer", minimum: 1 },
-              engine: { type: "string", enum: ["dsocr2", "tesseract"] },
+              engine: { type: "string", enum: ["mineru", "dsocr2", "tesseract"] },
               path: { type: "string", minLength: 1, maxLength: 2048 },
               sha256: { type: "string", pattern: SHA256_PATTERN },
               pages: { type: "integer", minimum: 1 },

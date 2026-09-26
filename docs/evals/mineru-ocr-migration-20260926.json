@@ -1,0 +1,818 @@
+{
+  "date": "2026-09-26",
+  "engine": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+  "dependencies": {
+    "mineru-vl-utils": "2.0.5",
+    "mlx-vlm": "0.7.3",
+    "mlx": "0.32.2"
+  },
+  "dpi": 200,
+  "method": "Real local two_step_extract recognition; all recognized blocks conserved during output placement; old/new agreement is not a truth test.",
+  "sample_inference_seconds": 133.33,
+  "samples": [
+    {
+      "sample": "harrington-p031",
+      "page": 1,
+      "model_blocks": 9,
+      "layout_text_blocks": 9,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true,
+      "longest_latin_token": 16
+    },
+    {
+      "sample": "harrington-p100",
+      "page": 2,
+      "model_blocks": 7,
+      "layout_text_blocks": 7,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true,
+      "longest_latin_token": 17
+    },
+    {
+      "sample": "harrington-p136",
+      "page": 3,
+      "model_blocks": 9,
+      "layout_text_blocks": 9,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true,
+      "longest_latin_token": 16
+    },
+    {
+      "sample": "harrington-p215",
+      "page": 4,
+      "model_blocks": 8,
+      "layout_text_blocks": 8,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true,
+      "longest_latin_token": 14
+    },
+    {
+      "sample": "harrington-p360",
+      "page": 5,
+      "model_blocks": 20,
+      "layout_text_blocks": 18,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true,
+      "longest_latin_token": 16
+    },
+    {
+      "sample": "harrington-p041",
+      "page": 6,
+      "model_blocks": 10,
+      "layout_text_blocks": 10,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true,
+      "longest_latin_token": 13
+    },
+    {
+      "sample": "harrington-p048",
+      "page": 7,
+      "model_blocks": 11,
+      "layout_text_blocks": 10,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true,
+      "longest_latin_token": 17
+    },
+    {
+      "sample": "harrington-p157",
+      "page": 8,
+      "model_blocks": 8,
+      "layout_text_blocks": 8,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true,
+      "longest_latin_token": 13
+    },
+    {
+      "sample": "harrington-p212",
+      "page": 9,
+      "model_blocks": 8,
+      "layout_text_blocks": 8,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true,
+      "longest_latin_token": 15
+    },
+    {
+      "sample": "harrington-p216",
+      "page": 10,
+      "model_blocks": 6,
+      "layout_text_blocks": 6,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true,
+      "longest_latin_token": 15
+    },
+    {
+      "sample": "harrington-p271",
+      "page": 11,
+      "model_blocks": 7,
+      "layout_text_blocks": 7,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true,
+      "longest_latin_token": 14
+    },
+    {
+      "sample": "harrington-p339",
+      "page": 12,
+      "model_blocks": 5,
+      "layout_text_blocks": 5,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true,
+      "longest_latin_token": 14
+    },
+    {
+      "sample": "collins-p052",
+      "page": 13,
+      "model_blocks": 10,
+      "layout_text_blocks": 10,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "dreyfus-p024",
+      "page": 14,
+      "model_blocks": 4,
+      "layout_text_blocks": 4,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "dreyfus-p025",
+      "page": 15,
+      "model_blocks": 5,
+      "layout_text_blocks": 5,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "dreyfus-p026",
+      "page": 16,
+      "model_blocks": 7,
+      "layout_text_blocks": 6,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "huizinga-p094",
+      "page": 17,
+      "model_blocks": 7,
+      "layout_text_blocks": 6,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "huizinga-p188",
+      "page": 18,
+      "model_blocks": 6,
+      "layout_text_blocks": 5,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "huizinga-p282",
+      "page": 19,
+      "model_blocks": 9,
+      "layout_text_blocks": 7,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "xuping-p307",
+      "page": 20,
+      "model_blocks": 10,
+      "layout_text_blocks": 10,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "xuping-p615",
+      "page": 21,
+      "model_blocks": 8,
+      "layout_text_blocks": 8,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "xuping-p923",
+      "page": 22,
+      "model_blocks": 9,
+      "layout_text_blocks": 9,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "france1923-p043",
+      "page": 23,
+      "model_blocks": 9,
+      "layout_text_blocks": 9,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "france1923-p057",
+      "page": 24,
+      "model_blocks": 11,
+      "layout_text_blocks": 10,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "bell1973-p270",
+      "page": 25,
+      "model_blocks": 8,
+      "layout_text_blocks": 6,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "bell1973-p280",
+      "page": 26,
+      "model_blocks": 6,
+      "layout_text_blocks": 6,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "abbott1929-p150",
+      "page": 27,
+      "model_blocks": 8,
+      "layout_text_blocks": 7,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "abbott1929-p313",
+      "page": 28,
+      "model_blocks": 10,
+      "layout_text_blocks": 9,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "pitt1906-p145",
+      "page": 29,
+      "model_blocks": 5,
+      "layout_text_blocks": 5,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "pitt1906-p155",
+      "page": 30,
+      "model_blocks": 10,
+      "layout_text_blocks": 9,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "wiener1961-p123",
+      "page": 31,
+      "model_blocks": 14,
+      "layout_text_blocks": 9,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "wiener1961-p133",
+      "page": 32,
+      "model_blocks": 7,
+      "layout_text_blocks": 6,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "marx1936-p113",
+      "page": 33,
+      "model_blocks": 11,
+      "layout_text_blocks": 10,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "marx1936-p123",
+      "page": 34,
+      "model_blocks": 8,
+      "layout_text_blocks": 8,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "lehrer1966-p115",
+      "page": 35,
+      "model_blocks": 4,
+      "layout_text_blocks": 4,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "lehrer1966-p125",
+      "page": 36,
+      "model_blocks": 15,
+      "layout_text_blocks": 15,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    },
+    {
+      "sample": "usher1905-p019",
+      "page": 37,
+      "model_blocks": 10,
+      "layout_text_blocks": 9,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": false,
+      "visual_note": "Usher scan image is unchanged; replacement removes the old visible JSTOR download footer outside the scan. Visually checked."
+    },
+    {
+      "sample": "boring1950-p143",
+      "page": 38,
+      "model_blocks": 14,
+      "layout_text_blocks": 14,
+      "missing_recognized_characters": {
+        "layout": {},
+        "text": {}
+      },
+      "scan_image_streams_unchanged": true,
+      "render_identical_at_72dpi": true
+    }
+  ],
+  "sample_outputs": {
+    "layout": {
+      "path": "/private/tmp/quasi-mineru-migration/real/layout.pdf",
+      "sha256": "e0601f5bf6d701479f88a9a0338dfd12f30cda92b9d67551d604a7b872dafdb7",
+      "bytes": 18184290,
+      "quality": {
+        "threshold": 0.85,
+        "policy": "retain-new-and-report",
+        "checked_blocks": 124,
+        "reference_blocks": 33,
+        "unavailable_pages": [
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24
+        ],
+        "empty_pages": [],
+        "suspects": [
+          {
+            "page": 4,
+            "block": 2,
+            "type": "text",
+            "bbox": [
+              0.081,
+              0.068,
+              0.842,
+              0.121
+            ],
+            "agreement": 0.625
+          },
+          {
+            "page": 4,
+            "block": 3,
+            "type": "text",
+            "bbox": [
+              0.081,
+              0.123,
+              0.842,
+              0.289
+            ],
+            "agreement": 0.621951
+          },
+          {
+            "page": 4,
+            "block": 4,
+            "type": "text",
+            "bbox": [
+              0.079,
+              0.291,
+              0.842,
+              0.514
+            ],
+            "agreement": 0.751634
+          },
+          {
+            "page": 4,
+            "block": 7,
+            "type": "text",
+            "bbox": [
+              0.071,
+              0.812,
+              0.836,
+              0.906
+            ],
+            "agreement": 0.794521
+          },
+          {
+            "page": 6,
+            "block": 9,
+            "type": "text",
+            "bbox": [
+              0.102,
+              0.784,
+              0.845,
+              0.894
+            ],
+            "agreement": 0.651163
+          }
+        ]
+      }
+    },
+    "text": {
+      "path": "/private/tmp/quasi-mineru-migration/real/text.pdf",
+      "sha256": "afb1c3c8c0fc3cb52ba064a585fb677ec50e87d3fd0f72b08b6e0acc7b077ba4",
+      "bytes": 15316426,
+      "quality": {
+        "threshold": 0.85,
+        "policy": "retain-new-and-report",
+        "checked_blocks": 124,
+        "reference_blocks": 33,
+        "unavailable_pages": [
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24
+        ],
+        "empty_pages": [],
+        "suspects": [
+          {
+            "page": 4,
+            "block": 2,
+            "type": "text",
+            "bbox": [
+              0.081,
+              0.068,
+              0.842,
+              0.121
+            ],
+            "agreement": 0.625
+          },
+          {
+            "page": 4,
+            "block": 3,
+            "type": "text",
+            "bbox": [
+              0.081,
+              0.123,
+              0.842,
+              0.289
+            ],
+            "agreement": 0.621951
+          },
+          {
+            "page": 4,
+            "block": 4,
+            "type": "text",
+            "bbox": [
+              0.079,
+              0.291,
+              0.842,
+              0.514
+            ],
+            "agreement": 0.751634
+          },
+          {
+            "page": 4,
+            "block": 7,
+            "type": "text",
+            "bbox": [
+              0.071,
+              0.812,
+              0.836,
+              0.906
+            ],
+            "agreement": 0.794521
+          },
+          {
+            "page": 6,
+            "block": 9,
+            "type": "text",
+            "bbox": [
+              0.102,
+              0.784,
+              0.845,
+              0.894
+            ],
+            "agreement": 0.651163
+          }
+        ]
+      }
+    }
+  },
+  "whole_book": {
+    "source": {
+      "path": "/Users/ramudai/Documents/Learn/bts/sources/barnes-understanding-agency-2000.pdf",
+      "sha256": "0c0ebf988067dda07a3cf00f35b3c9a3d78fbc30dd859c5dee33009356a22b4c",
+      "bytes": 12581648
+    },
+    "output": {
+      "path": "/private/tmp/quasi-mineru-migration/barnes-mineru-layout.pdf",
+      "sha256": "3bbd8934d1f442e4e543d61bf75759ce4fa10873767d854a7098c8e842e61aae",
+      "bytes": 27463197
+    },
+    "pages": 178,
+    "quality": {
+      "threshold": 0.85,
+      "policy": "retain-new-and-report",
+      "checked_blocks": 568,
+      "reference_blocks": 151,
+      "unavailable_pages": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        176,
+        177
+      ],
+      "empty_pages": [
+        2,
+        176,
+        177
+      ],
+      "suspects": [
+        {
+          "page": 57,
+          "block": 10,
+          "type": "text",
+          "bbox": [
+            0.051,
+            0.947,
+            0.887,
+            0.966
+          ],
+          "agreement": 0.833333
+        }
+      ]
+    },
+    "layout_evidence": {
+      "pages": 178,
+      "image_pages": 178,
+      "prepared": true
+    },
+    "blank_output_pages": [
+      2,
+      176,
+      177
+    ],
+    "scan_image_streams_unchanged": true,
+    "inference_seconds": 765.24,
+    "missing_recognized_characters_pages": [],
+    "first_attempt": "Failed closed on physical page 176 before output. Visual inspection confirmed blank paper with 44 old OCR noise tokens; empty recognition now uses the same 50-token baseline criterion and is recorded explicitly.",
+    "visual_qa": [
+      "Physical page 69 original image and visible text-layer diagnostic; Romanian ș and punctuation copy correctly."
+    ],
+    "cli_no_clobber_recheck": "existing; source-bound layout prepared; no writer replay"
+  },
+  "validation": {
+    "full_suite": {
+      "passed": 1822,
+      "skipped": 1
+    },
+    "final_ocr_status_subset": {
+      "passed": 153
+    },
+    "workflow_parity_types": "passed",
+    "mirrored_instructions": "passed",
+    "translation_stdio_subset": {
+      "passed": 74
+    },
+    "release": {
+      "version": "0.68.0",
+      "full_suite": {
+        "passed": 1827,
+        "skipped": 1,
+        "seconds": 225.63
+      },
+      "workflow_build_parity_types": "passed",
+      "plugin_and_marketplace_manifests": "passed",
+      "mirrored_instructions": "passed",
+      "diff_check": "passed",
+      "additional_model_inference_or_translation": false
+    }
+  },
+  "external_translation": {
+    "status": "candidate_generated_coverage_rejected",
+    "scope": "Three source pages only, as requested by the user; one provider invocation. Cached MinerU blocks reused without another recognition run.",
+    "backend": "pdf2zh",
+    "provider_host": "router.ramu.us",
+    "model": "GPT",
+    "selection": {
+      "samples": [
+        "harrington-p031",
+        "bell1973-p270",
+        "abbott1929-p313"
+      ],
+      "source_pages": 3,
+      "source_sha256": "be2e7db1fc666c505703f44a47f28aee77e50408c79e38599e2156550d3ac0a9",
+      "recovery_sha256": "bab67b826aa719c3ab3840955280b09b15d2313c288077b63ffd5592218bfde5"
+    },
+    "seconds": 101.97,
+    "returncode": 1,
+    "candidate_pages": 6,
+    "canonical_committed": false,
+    "failure_code": "translation.under_translated",
+    "coverage": {
+      "detail": "Coverage below threshold: median 0.299 is below 0.30. Median 0.299 Chinese characters per source Latin letter over 3 measurable pages; near-zero (<0.05) pages 0/3 (0.0%; maximum 10.0%). This can indicate skipped body text, fragmented source paragraphs, or unclassified reference material. Weakest pages: p2=0.29, p3=0.30, p1=0.35. Inspect these pages; if the source text layer is fragmented, re-OCR with `quasi-extract ocr SRC OUT --layout` and translate that instead. Output kept at the preserved staged candidate.",
+      "measured_pages": 3,
+      "median": 0.2985553772070626,
+      "minimum_median": 0.3,
+      "signal": "under_translated",
+      "weakest": [
+        {
+          "page": 2,
+          "ratio": 0.28650442477876104
+        },
+        {
+          "page": 3,
+          "ratio": 0.2985553772070626
+        },
+        {
+          "page": 1,
+          "ratio": 0.3539156626506024
+        }
+      ]
+    },
+    "near_zero_pages": 0,
+    "maximum_near_zero_fraction": 0.1,
+    "review_pdf": {
+      "path": "/private/tmp/quasi-mineru-migration/smoke-translation-eval/three-page-review.pdf",
+      "sha256": "5aac819d7bb123d3b8a1efb5873033f051c7b4d5bcbea48964e4b21afac5dceb",
+      "bytes": 334077
+    },
+    "visual_qa": [
+      "Inspected all three translated pages alongside the original-page context. Body paragraphs appear complete with no line fragmentation or overlap; this is bounded visual review, not proof of semantic completeness.",
+      "Harrington p31: previously missing facere/factum passage appears in the translation.",
+      "Bell p270: body, caption and surrounding note translated; both tables remain legible original images.",
+      "Abbott p313: body and footnote translated; table remains a legible original image.",
+      "No visible raw LaTeX or HTML in these three translated pages."
+    ],
+    "acceptance": "The unchanged 0.30 gate rejects median 0.2985553772070626. Retained the staged candidate for review; did not lower the threshold or replay the provider.",
+    "whole_book_translation": "Not run; user limited this translation test to a sample.",
+    "stdio_issue": "Live provider progress polluted receipt stdout. Redirected child stdout to stderr and verified with a real local child process; no provider replay."
+  },
+  "sample_findings": {
+    "harrington_p31_known_missing_lines": true,
+    "harrington_p215_suspect_blocks": 4,
+    "remaining_other_suspect": "Harrington p41: garbled old layer differs from coherent new text; retained for review, not automatically replaced.",
+    "visual_qa": [
+      "Harrington p31 text placement",
+      "Chinese Xuping p615 complete footnote in independent box",
+      "Bell p270 table image",
+      "Abbott p313 table image",
+      "Usher p19 original and layout comparison"
+    ],
+    "scope": "OCR evidence plus visual review of one three-page translation sample. Tables remain original images. The sample failed the unchanged Chinese coverage gate; no whole-book translation acceptance is claimed."
+  }
+}

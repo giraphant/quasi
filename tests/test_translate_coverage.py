@@ -57,7 +57,7 @@ def test_old_point_23_translation_is_rejected(tmp_path):
     ([.35] * 8 + [.05] * 2, True),
 ])
 def test_coverage_threshold_boundaries(monkeypatch, ratios, passes):
-    monkeypatch.setattr(coverage, 'page_ratios', lambda _: list(enumerate(ratios, 1)))
+    monkeypatch.setattr(coverage, '_measure', lambda _: (list(enumerate(ratios, 1)), []))
     report = coverage.check(Path('assigned.pdf'))
     assert report['ok'] is passes
 
@@ -100,6 +100,142 @@ def test_too_few_measurable_pages_abstains(tmp_path):
     assert report["ok"]
     assert report["signal"] == "insufficient_evidence"
     assert report["measured_pages"] == 2
+
+
+def _book(tmp_path, translated, toc, *, headings=(), translated_side=False):
+    pdf = coverage.build_dual(tmp_path / "sections.pdf", translated)
+    with coverage.pymupdf.open(pdf) as doc:
+        doc.set_toc([
+            [level, title, 2 * page - (0 if translated_side else 1)]
+            for level, title, page in toc
+        ])
+        for page, text, side in headings:
+            doc[2 * (page - 1) + side].insert_text((20, 500), text, fontsize=9)
+        doc.saveIncr()
+    return pdf
+
+
+@pytest.mark.parametrize("translated_side", [False, True])
+def test_reference_heavy_book_keeps_body_threshold(tmp_path, translated_side):
+    pdf = _book(tmp_path, [FULL] * 4 + [""] * 6, [
+        [1, "Body", 1], [1, "Bibliography", 5], [1, "Index", 9],
+    ], translated_side=translated_side)
+    report = coverage.check(pdf)
+    assert report["ok"] and report["measured_pages"] == 4
+    assert report["minimum_median"] == .30
+    assert "excluded 6/10" in report["detail"]
+    assert "p5-8 references" in report["detail"] and "p9-10 index" in report["detail"]
+    assert "0/4" in report["detail"]
+
+
+def test_reference_section_ends_at_sibling_not_its_children(tmp_path):
+    pdf = _book(tmp_path, [FULL] * 6 + [""] * 4 + [FULL] * 2, [
+        [1, "Chapter 1", 1], [2, "References", 7], [3, "Primary sources", 8],
+        [1, "Chapter 2", 9],
+    ])
+    report = coverage.check(pdf)
+    assert not report["ok"] and report["measured_pages"] == 10
+    assert "2/10" in report["detail"]
+    assert {item["page"] for item in report["weakest"]}.issuperset({9, 10})
+    assert not {item["page"] for item in report["weakest"]}.intersection({7, 8})
+
+
+@pytest.mark.parametrize("title", ["Notes", "References"])
+def test_bookmarked_mixed_opening_page_stays_scored(tmp_path, title):
+    pdf = _book(tmp_path, [FULL] * 3 + [""] * 4, [[1, "Body", 1], [1, title, 4]],
+                headings=[(4, f"{title}\n1. First citation.\n2. Second citation.", 0)])
+    report = coverage.check(pdf)
+    assert not report["ok"] and report["measured_pages"] == 4
+    assert report["weakest"][0]["page"] == 4
+    assert "p5-7" in report["detail"]
+
+
+@pytest.mark.parametrize("title", ["Notes on Method", "Index of Economic Activity", "References in Fiction"])
+def test_words_in_body_titles_do_not_exempt_chapters(tmp_path, title):
+    pdf = _book(tmp_path, [FULL] * 3 + [""] * 4, [[1, "Body", 1], [1, title, 4]])
+    report = coverage.check(pdf)
+    assert not report["ok"] and report["measured_pages"] == 7
+
+
+def test_unbookmarked_numbered_notes_keep_mixed_page_and_stop_at_next_section(tmp_path):
+    pdf = _book(tmp_path, [FULL] * 3 + [""] * 4 + [FULL] * 3, [
+        [1, "Chapter 1", 1], [1, "Chapter 2", 7],
+    ], headings=[(3, "Notes\n1. First citation.\n2. Second citation.", 0)])
+    report = coverage.check(pdf)
+    assert not report["ok"] and report["measured_pages"] == 7
+    assert "p4-6 notes (numbered Notes heading p3)" in report["detail"]
+    assert "1/7" in report["detail"]
+    assert report["weakest"][0]["page"] == 7
+
+
+@pytest.mark.parametrize(("heading", "side", "has_end"), [
+    ("Notes", 0, True),  # No numbered entries to support the heading.
+    ("Notes\n3. A point.\n4. Another point.", 0, True),
+    ("Notes\n1. First citation.\n2. Second citation.", 1, True),  # Target is not evidence.
+    ("Notes\n1. First citation.\n2. Second citation.", 0, False),  # Unbounded.
+])
+def test_ambiguous_notes_stay_measurable(tmp_path, heading, side, has_end):
+    toc = [[1, "Chapter 1", 1]] + ([[1, "Chapter 2", 7]] if has_end else [])
+    pdf = _book(tmp_path, [FULL] * 3 + [""] * 4, toc, headings=[(3, heading, side)])
+    report = coverage.check(pdf)
+    assert not report["ok"] and report["measured_pages"] == 7
+
+
+def test_numbered_notes_without_an_outline_do_not_hide_later_body(tmp_path):
+    pdf = _book(tmp_path, [FULL] * 3 + [""] * 4, [], headings=[
+        (3, "Notes\n1. First citation.\n2. Second citation.", 0),
+    ])
+    assert coverage.check(pdf)["measured_pages"] == 7
+
+
+def test_reference_exclusion_does_not_turn_failure_into_insufficient_evidence(tmp_path):
+    pdf = _book(tmp_path, [FULL] * 2 + [""] * 5, [[1, "Body", 1], [1, "References", 3]])
+    report = coverage.check(pdf)
+    assert not report["ok"] and report["signal"] == "under_translated"
+    assert report["measured_pages"] == 7
+    assert "exclusions not applied" in report["detail"]
+
+
+@pytest.mark.parametrize(("dead", "passes"), [(1, True), (2, False)])
+def test_ten_percent_allowance_uses_remaining_body_pages(tmp_path, dead, passes):
+    pdf = _book(tmp_path, [FULL] * (10 - dead) + [""] * (dead + 10), [
+        [1, "Body", 1], [1, "References", 11],
+    ])
+    report = coverage.check(pdf)
+    assert report["ok"] is passes and report["measured_pages"] == 10
+    assert f"{dead}/10" in report["detail"]
+
+
+def test_bad_body_is_not_rescued_by_reference_exclusion(tmp_path):
+    pdf = _book(tmp_path, ["中" * 78] * 4 + [""] * 4, [[1, "Body", 1], [1, "References", 5]])
+    report = coverage.check(pdf)
+    assert not report["ok"] and report["median"] == pytest.approx(.23, abs=.005)
+    assert report["measured_pages"] == 4
+
+
+def test_out_of_order_outline_is_not_used_for_exclusions(tmp_path):
+    pdf = _book(tmp_path, [FULL] * 3 + [""] * 4, [
+        [1, "Body", 1], [1, "References", 4], [1, "Later body", 2],
+    ])
+    report = coverage.check(pdf)
+    assert not report["ok"] and report["measured_pages"] == 7
+
+
+def test_outline_destination_without_a_page_is_not_an_exemption(tmp_path):
+    pdf = _book(tmp_path, [FULL] * 3 + [""] * 4, [])
+    with coverage.pymupdf.open(pdf) as doc:
+        doc.set_toc([[1, "Body", 1], [1, "References", -1]])
+        doc.saveIncr()
+    assert coverage.check(pdf)["measured_pages"] == 7
+
+
+def test_dangling_odd_page_does_not_supply_a_section_destination(tmp_path):
+    pdf = _book(tmp_path, [FULL] * 3, [])
+    with coverage.pymupdf.open(pdf) as doc:
+        doc.new_page()
+        doc.set_toc([[1, "References", 7]])
+        doc.saveIncr()
+    assert coverage.check(pdf)["measured_pages"] == 3
 
 
 def _first_named_call(function: ast.FunctionDef, name: str) -> ast.Call:

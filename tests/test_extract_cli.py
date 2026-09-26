@@ -18,7 +18,7 @@ EXTRACT = PLUGIN_ROOT / "scripts" / "extract" / "extract.py"
 EXTRACT_DIR = PLUGIN_ROOT / "scripts" / "extract"
 sys.path.insert(0, str(EXTRACT_DIR))
 
-import ocr_dsocr2  # noqa: E402
+import ocr_mineru  # noqa: E402
 import split_chapters  # noqa: E402
 import extract as extract_cli  # noqa: E402
 import chapter_commit  # noqa: E402
@@ -48,7 +48,7 @@ def test_extract_help_exposes_agent_contract():
     assert "quasi-extract ocr-generation" in result.stdout
     assert "quasi-extract split" in result.stdout
     # OCR engine switch is part of the documented surface.
-    assert "--engine dsocr2|tesseract" in result.stdout
+    assert "--engine mineru|tesseract" in result.stdout
 
 
 def test_ocr_help_exposes_engine_flag():
@@ -56,7 +56,7 @@ def test_ocr_help_exposes_engine_flag():
 
     assert result.returncode == 0
     assert "--engine" in result.stdout
-    assert "dsocr2" in result.stdout
+    assert "mineru" in result.stdout
     assert "--no-clobber" in result.stdout
     assert "--json" in result.stdout
 
@@ -92,7 +92,7 @@ def test_ocr_json_is_single_object_and_routes_progress_to_stderr(
     assert payload["exists"] is True
 
 
-def test_ocr_json_reports_final_fallback_rc_even_with_partial_output(
+def test_ocr_json_reports_failure_without_fallback_even_with_partial_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
     source = str(tmp_path / "paper.pdf")
@@ -110,13 +110,13 @@ def test_ocr_json_reports_final_fallback_rc_even_with_partial_output(
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    assert len(calls) == 2
-    assert rc == 7
+    assert len(calls) == 1
+    assert rc == 3
     assert payload["status"] == "failed"
-    assert payload["exit"] == 7
+    assert payload["exit"] == 3
     assert payload["exists"] is True
     assert payload["size"] == len(b"partial")
-    assert "falling back to tesseract" in captured.err
+    assert "falling back" not in captured.err
 
 
 def test_ocr_json_child_rc_is_not_replaced_by_output_stat(
@@ -420,7 +420,7 @@ def test_ocr_duplicate_engine_is_rejected_before_subprocess(
             "in.pdf",
             "out.pdf",
             "--engine",
-            "dsocr2",
+            "mineru",
             "--engine=tesseract",
             "--json",
         ],
@@ -682,6 +682,10 @@ def _ocr_generation_runner(calls: list[tuple[int, tuple[str, ...]]]):
             count = sliced.page_count
         calls.append((count, engines))
         _write_pdf(output, [f"recovered page {index}" for index in range(1, count + 1)])
+        if engines[0] == "mineru":
+            with fitz.open(output) as document:
+                ocr_generation.ocr_quality.stamp(document, source_sha256=ocr_generation.sha256_file(source), quality=ocr_generation.ocr_quality.empty_quality(), model=ocr_generation.ocr_quality.MODEL)
+                document.saveIncr()
         return ocr_generation.EngineResult(engine=engines[0], returncode=0)
 
     return run
@@ -697,7 +701,7 @@ def test_ocr_generation_key_and_paths_are_material_safe(kind, root, tmp_path):
         "slug": "exact-material",
         "source_path": "sources/exact-material.pdf",
         "source_sha256": "a" * 64,
-        "profile_name": "dsocr2-text",
+        "profile_name": "mineru-text",
     }
     first = ocr_generation.generation_key(**kwargs)
     same = ocr_generation.generation_key(**kwargs)
@@ -717,46 +721,30 @@ def test_ocr_generation_key_and_paths_are_material_safe(kind, root, tmp_path):
 
 
 def test_ocr_generation_profiles_bind_engine_specific_range_sizes():
-    assert ocr_generation.resolve_profile("paper", "dsocr2-text")["chunk_pages"] == 16
-    assert ocr_generation.resolve_profile("book", "dsocr2-text")["chunk_pages"] == 16
+    assert ocr_generation.resolve_profile("paper", "mineru-text")["chunk_pages"] == 16
+    assert ocr_generation.resolve_profile("book", "mineru-text")["chunk_pages"] == 16
     assert ocr_generation.resolve_profile("paper", "tesseract-text")["chunk_pages"] == 32
     assert ocr_generation.resolve_profile("book", "tesseract-text")["chunk_pages"] == 32
 
 
-def test_ocr_generation_dsocr_quality_failure_falls_back_to_tesseract(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    source = tmp_path / "slice.pdf"
-    output = tmp_path / "candidate.pdf"
+def test_ocr_generation_mineru_quality_failure_never_falls_back(tmp_path, monkeypatch):
+    source, output = tmp_path / "slice.pdf", tmp_path / "candidate.pdf"
     _write_pdf(source, ["", ""])
-    calls: list[list[str]] = []
-
-    def fake_call(command, **_kwargs):
+    calls = []
+    def fake_call(command, **kwargs):
         calls.append(command)
-        candidate = Path(command[3])
-        if len(calls) == 1:
-            _write_pdf(candidate, ["DS page one", ""])
-        else:
-            _write_pdf(candidate, ["Tesseract page one", "Tesseract page two"])
+        _write_pdf(Path(command[3]), ["Only page one", ""])
         return 0
-
     monkeypatch.setattr(ocr_generation.subprocess, "call", fake_call)
-    runner = ocr_generation._engine_runner(EXTRACT_DIR)
-
-    result = runner(
-        source, output, ("dsocr2", "tesseract"),
-        "chi_sim+eng", "paper-text-v1",
-    )
-    assert result == ocr_generation.EngineResult(engine="tesseract", returncode=0)
-    assert len(calls) == 2
-    assert calls[0][1].endswith("ocr_dsocr2.py")
-    assert calls[1][1].endswith("ocr_pdf.sh")
-    assert ocr_generation.validate_pdf_quality(output, 2)["text_pages"] == 2
+    result = ocr_generation._engine_runner(EXTRACT_DIR)(source, output, ("mineru",), "chi_sim+eng", "paper-text-v1")
+    assert result.returncode != 0 and len(calls) == 1
+    assert calls[0][1].endswith("ocr_mineru.py")
+    assert not output.exists()
 
 
 @pytest.mark.parametrize(
     ("kind", "profile_name", "pages", "first_range"),
-    [("paper", "dsocr2-text", 17, 16), ("book", "tesseract-text", 33, 32)],
+    [("paper", "mineru-text", 17, 16), ("book", "tesseract-text", 33, 32)],
 )
 def test_ocr_generation_advances_one_range_then_commits_manifest_last(
     tmp_path: Path, kind: str, profile_name: str, pages: int, first_range: int,
@@ -805,13 +793,13 @@ def test_ocr_generation_advances_one_range_then_commits_manifest_last(
     assert second["disposition"] == "created"
     assert second["state"] == "committed"
     assert second["progress"] is None
-    expected_engines = ("dsocr2", "tesseract") if profile_name == "dsocr2-text" else ("tesseract",)
+    expected_engines = ("mineru",) if profile_name == "mineru-text" else ("tesseract",)
     assert calls == [(first_range, expected_engines), (pages - first_range, expected_engines)]
     paths = ocr_generation.paths_for(
         project_root=tmp_path, kind=kind, slug=slug, generation=generation
     )
     manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == ocr_generation.MANIFEST_SCHEMA
+    assert manifest["schema_version"] == (ocr_generation.MINERU_MANIFEST_SCHEMA if profile_name == "mineru-text" else ocr_generation.MANIFEST_SCHEMA)
     assert manifest["kind"] == kind
     assert manifest["source"]["pages"] == pages
     assert manifest["recovery_pdf"]["pages"] == pages
@@ -839,7 +827,7 @@ def test_ocr_generation_rejects_a_tampered_committed_range(tmp_path: Path):
         kind="paper",
         slug=slug,
         source_sha256=source_sha,
-        profile_name="dsocr2-text",
+        profile_name="mineru-text",
     )
     partial = ocr_generation.run_transaction(
         project_root=tmp_path,
@@ -848,7 +836,7 @@ def test_ocr_generation_rejects_a_tampered_committed_range(tmp_path: Path):
         source_file=source,
         expected_source_sha256=source_sha,
         expected_generation_key=generation,
-        profile_name="dsocr2-text",
+        profile_name="mineru-text",
         runner=_ocr_generation_runner([]),
     )
     part = tmp_path / partial["progress"]["ranges"][0]["path"]
@@ -862,7 +850,7 @@ def test_ocr_generation_rejects_a_tampered_committed_range(tmp_path: Path):
         source_size=source.stat().st_size,
         source_pages=17,
         generation=generation,
-        profile_name="dsocr2-text",
+        profile_name="mineru-text",
     )
 
     assert observed["state"] == "invalid"
@@ -879,7 +867,7 @@ def test_ocr_generation_stops_on_unknown_private_part_inventory(tmp_path: Path):
         kind="paper",
         slug=slug,
         source_sha256=source_sha,
-        profile_name="dsocr2-text",
+        profile_name="mineru-text",
     )
     partial = ocr_generation.run_transaction(
         project_root=tmp_path,
@@ -888,7 +876,7 @@ def test_ocr_generation_stops_on_unknown_private_part_inventory(tmp_path: Path):
         source_file=source,
         expected_source_sha256=source_sha,
         expected_generation_key=generation,
-        profile_name="dsocr2-text",
+        profile_name="mineru-text",
         runner=_ocr_generation_runner([]),
     )
     parts = (tmp_path / partial["paths"]["work_dir"] / "parts")
@@ -902,7 +890,7 @@ def test_ocr_generation_stops_on_unknown_private_part_inventory(tmp_path: Path):
         source_size=source.stat().st_size,
         source_pages=17,
         generation=generation,
-        profile_name="dsocr2-text",
+        profile_name="mineru-text",
     )
 
     assert observed["state"] == "unknown"
@@ -919,7 +907,7 @@ def test_ocr_generation_rejects_tampered_committed_manifest_ranges(tmp_path: Pat
         kind="paper",
         slug=slug,
         source_sha256=source_sha,
-        profile_name="dsocr2-text",
+        profile_name="mineru-text",
     )
     created = ocr_generation.run_transaction(
         project_root=tmp_path,
@@ -928,7 +916,7 @@ def test_ocr_generation_rejects_tampered_committed_manifest_ranges(tmp_path: Pat
         source_file=source,
         expected_source_sha256=source_sha,
         expected_generation_key=generation,
-        profile_name="dsocr2-text",
+        profile_name="mineru-text",
         runner=_ocr_generation_runner([]),
     )
     assert created["disposition"] == "created"
@@ -947,7 +935,7 @@ def test_ocr_generation_rejects_tampered_committed_manifest_ranges(tmp_path: Pat
         source_size=source.stat().st_size,
         source_pages=1,
         generation=generation,
-        profile_name="dsocr2-text",
+        profile_name="mineru-text",
     )
 
     assert observed["state"] == "invalid"
@@ -969,7 +957,7 @@ def test_ocr_generation_reconciles_without_rewriting_or_touching_legacy(tmp_path
     source_sha = ocr_generation.sha256_file(source)
     generation = ocr_generation.generation_key(
         kind="paper", slug=slug, source_path=f"sources/{slug}.pdf",
-        source_sha256=source_sha, profile_name="dsocr2-text",
+        source_sha256=source_sha, profile_name="mineru-text",
     )
 
     created = ocr_generation.run_transaction(
@@ -979,7 +967,7 @@ def test_ocr_generation_reconciles_without_rewriting_or_touching_legacy(tmp_path
         source_file=source,
         expected_source_sha256=source_sha,
         expected_generation_key=generation,
-        profile_name="dsocr2-text",
+        profile_name="mineru-text",
         runner=_ocr_generation_runner([]),
     )
     paths = ocr_generation.paths_for(
@@ -995,7 +983,7 @@ def test_ocr_generation_reconciles_without_rewriting_or_touching_legacy(tmp_path
         source_file=source,
         expected_source_sha256=source_sha,
         expected_generation_key=generation,
-        profile_name="dsocr2-text",
+        profile_name="mineru-text",
         runner=lambda *_args: pytest.fail("committed generation must not rerun OCR"),
     )
 
@@ -1015,7 +1003,7 @@ def test_ocr_generation_rejects_empty_text_page_without_publication(tmp_path: Pa
     source_sha = ocr_generation.sha256_file(source)
     generation = ocr_generation.generation_key(
         kind="paper", slug=slug, source_path=f"sources/{slug}.pdf",
-        source_sha256=source_sha, profile_name="dsocr2-text",
+        source_sha256=source_sha, profile_name="mineru-text",
     )
 
     def incomplete_runner(
@@ -1023,7 +1011,7 @@ def test_ocr_generation_rejects_empty_text_page_without_publication(tmp_path: Pa
         _language: str, _policy: str,
     ) -> ocr_generation.EngineResult:
         _write_pdf(output, ["page one", "", "page three"])
-        return ocr_generation.EngineResult(engine="dsocr2", returncode=0)
+        return ocr_generation.EngineResult(engine="mineru", returncode=0)
 
     result = ocr_generation.run_transaction(
         project_root=tmp_path,
@@ -1032,7 +1020,7 @@ def test_ocr_generation_rejects_empty_text_page_without_publication(tmp_path: Pa
         source_file=source,
         expected_source_sha256=source_sha,
         expected_generation_key=generation,
-        profile_name="dsocr2-text",
+        profile_name="mineru-text",
         runner=incomplete_runner,
     )
     paths = ocr_generation.paths_for(
@@ -1196,30 +1184,8 @@ def test_text_extract_atomic_overwrite_is_idempotent(tmp_path: Path):
     assert list(tmp_path.glob(".paper.txt.*.tmp")) == []
 
 
-@pytest.mark.parametrize('command', [ocr_dsocr2._MLXVLM_CMD, ocr_dsocr2._MINERU_CMD])
-def test_ocr_uvx_environments_bound_mlx_for_pinned_vlm(command):
-    assert command[command.index('--from') + 1] == 'mlx-vlm==0.3.12'
-    requirements = [command[index + 1] for index, arg in enumerate(command) if arg == '--with']
-    assert 'mlx<0.32' in requirements
 
 
-@pytest.mark.parametrize('has_blocks', [False, True])
-def test_mineru_success_exit_reports_actual_paragraph_grouping(tmp_path, monkeypatch, capsys, has_blocks):
-    blocks = [{'c': 'text', 'b': [0, 0, 1, 1]}] if has_blocks else []
-    def run(command, *, env, **kwargs):
-        assert command[:len(ocr_dsocr2._MINERU_CMD)] == ocr_dsocr2._MINERU_CMD
-        Path(env['MINERU_RESULTS']).write_text(json.dumps([blocks, []]))
-        return subprocess.CompletedProcess(command, 0, stdout='')
-    monkeypatch.setattr(ocr_dsocr2.subprocess, 'run', run)
-    if not has_blocks:
-        with pytest.raises(RuntimeError, match='no paragraph blocks'):
-            ocr_dsocr2._detect_layout(['one.png', 'two.png'], tmp_path)
-        return
-    assert ocr_dsocr2._detect_layout(['one.png', 'two.png'], tmp_path) == [blocks, []]
-    message = capsys.readouterr().err
-    assert 'per-line text layer' in message
-    if has_blocks:
-        assert '1/2 pages' in message
 
 
 @pytest.mark.parametrize('engine_rc', [0, 4])
@@ -1245,7 +1211,7 @@ def test_layout_rejects_tesseract_without_starting_engine(tmp_path, monkeypatch,
     monkeypatch.setattr(extract_cli.subprocess, 'call', lambda *a, **k: pytest.fail('must not start'))
     rc = extract_cli._run_ocr(EXTRACT_DIR, ['source.pdf', 'out.pdf', '--layout', '--engine=tesseract', '--json'])
     assert rc != 0
-    assert 'paragraph grouping' in json.loads(capsys.readouterr().out)['failure']['message']
+    assert 'paragraph placement' in json.loads(capsys.readouterr().out)['failure']['message']
 
 
 def test_layout_born_digital_output_is_preserved_and_reuse_is_source_bound(tmp_path):
@@ -1257,7 +1223,7 @@ def test_layout_born_digital_output_is_preserved_and_reuse_is_source_bound(tmp_p
     before = output.read_bytes()
     reused = run_extract('ocr', str(source), str(output), '--layout', '--no-clobber', '--json')
     assert json.loads(reused.stdout)['status'] == 'existing'
-    with ocr_dsocr2.fitz.open(output) as doc:
+    with ocr_mineru.fitz.open(output) as doc:
         assert 'Born digital unchanged' in doc[0].get_text()
     _write_pdf(source, ['Different source'])
     stale = run_extract('ocr', str(source), str(output), '--layout', '--no-clobber', '--json')
@@ -1265,148 +1231,19 @@ def test_layout_born_digital_output_is_preserved_and_reuse_is_source_bound(tmp_p
     assert json.loads(stale.stdout)['failure']['code'] == 'layout_unproven'
 
 
-@pytest.mark.parametrize('blocks', [[], [{'c': 'image', 'b': [0, 0, 1, 1]}], [{'c': 'text', 'b': [.1, .1, .9, .4]}]])
-def test_layout_engine_requires_actual_paragraph_placement(tmp_path, monkeypatch, blocks):
-    fitz = ocr_dsocr2.fitz
-    source, output = tmp_path / 'source.pdf', tmp_path / 'reocr.pdf'
-    with fitz.open() as doc:
-        page = doc.new_page()
-        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 2, 2), False)
-        pix.clear_with(255)
-        page.insert_image(page.rect, pixmap=pix)
-        page.insert_text((72, 72), 'old ABBYY text', fontname='tiro')
-        doc.new_page().insert_text((72, 72), 'digital page stays intact')
-        doc.save(source)
-    raw = ''.join(f'<|ref|>the same body line here<|/ref|><|det|>[[120,{y},670,{y+15}]]<|/det|>\n' for y in (120, 139, 158, 177, 196))
-
-    def run(command, *, env, **kwargs):
-        if 'DSOCR2_RESULTS' in env:
-            Path(env['DSOCR2_RESULTS']).write_text(json.dumps([raw, '']))
-        else:
-            assert len(json.loads(Path(env['MINERU_PNG_LIST']).read_text())) == 1
-            Path(env['MINERU_RESULTS']).write_text(json.dumps([blocks]))
-        return subprocess.CompletedProcess(command, 0)
-
-    monkeypatch.setattr(ocr_dsocr2.platform, 'system', lambda: 'Darwin')
-    monkeypatch.setattr(ocr_dsocr2.platform, 'machine', lambda: 'arm64')
-    monkeypatch.setattr(ocr_dsocr2.shutil, 'which', lambda _: '/fake/uvx')
-    monkeypatch.setattr(ocr_dsocr2, '_resolve_model', lambda: 'fake-model')
-    monkeypatch.setattr(ocr_dsocr2, '_find_unicode_font', lambda: None)
-    monkeypatch.setattr(ocr_dsocr2, 'RENDER_DPI', 72)
-    monkeypatch.setattr(ocr_dsocr2.subprocess, 'run', run)
-    monkeypatch.setattr(sys, 'argv', ['ocr_dsocr2.py', str(source), str(output), '--layout'])
-    rc = ocr_dsocr2.main()
-    if not blocks or blocks[0]['c'] == 'image':
-        assert rc != 0 and not output.exists()
-    else:
-        assert rc == 0
-        assert ocr_dsocr2.layout_evidence.inspect(output, source_sha256=hashlib.sha256(source.read_bytes()).hexdigest())['prepared']
-        with fitz.open(output) as doc:
-            assert 'old ABBYY' not in doc[0].get_text()
-            assert 'digital page stays intact' in doc[1].get_text()
 
 
-def test_dsocr2_runner_does_not_trust_remote_code():
-    """The repo's remote code imports LlamaFlashAttention2, gone from transformers.
-
-    mlx-vlm swallows that ImportError and reports "Unrecognized processing class",
-    so passing trust_remote_code sends every run silently to the tesseract fallback.
-    """
-    source = (EXTRACT_DIR / "ocr_dsocr2.py").read_text(encoding="utf-8")
-    outer = ast.parse(source)
-    runner_assignments = [
-        node
-        for node in outer.body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "_RUNNER"
-            for target in node.targets
-        )
-    ]
-    assert len(runner_assignments) == 1
-    runner = ast.literal_eval(runner_assignments[0].value)
-    assert isinstance(runner, str)
-    nested = ast.parse(runner)
-
-    load_calls = [
-        node
-        for node in ast.walk(nested)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "load"
-    ]
-    assert len(load_calls) == 1
-    load_call = load_calls[0]
-    assert len(load_call.args) >= 2
-    assert isinstance(load_call.args[0], ast.Name)
-    assert load_call.args[0].id == "model_id"
-    assert isinstance(load_call.args[1], ast.Constant)
-    assert load_call.args[1].value is None
-
-    trust_env = "HF_HUB_TRUST_REMOTE_CODE"
-    for tree in (outer, nested):
-        assert not any(
-            isinstance(node, ast.keyword)
-            and node.arg == "trust_remote_code"
-            and isinstance(node.value, ast.Constant)
-            and node.value.value is True
-            for node in ast.walk(tree)
-        )
-        assert not any(
-            isinstance(node, ast.Name)
-            and isinstance(node.ctx, ast.Store)
-            and node.id == trust_env
-            for node in ast.walk(tree)
-        )
-        assert not any(
-            isinstance(node, ast.Subscript)
-            and isinstance(node.ctx, ast.Store)
-            and isinstance(node.slice, ast.Constant)
-            and node.slice.value == trust_env
-            for node in ast.walk(tree)
-        )
-        assert not any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in {"setdefault", "__setitem__", "putenv"}
-            and node.args
-            and isinstance(node.args[0], ast.Constant)
-            and node.args[0].value == trust_env
-            for node in ast.walk(tree)
-        )
 
 
-def test_parse_grounding_maps_boxes_onto_the_page():
-    raw = (
-        "<|ref|>Culture and agency<|/ref|><|det|>[[217, 62, 395, 83]]<|/det|>\n"
-        "<|ref|>now-familiar reliance<|/ref|><|det|>[[135, 91, 866, 112]]<|/det|>\n"
-        "<|ref|>  <|/ref|><|det|>[[100, 100, 200, 200]]<|/det|>\n"  # blank line
-        "<|ref|>flat<|/ref|><|det|>[[10, 10, 500, 10]]<|/det|>\n"  # zero-height box
-        "<|ref|>truncated<|/ref|><|det|>[[10, 10]]<|/det|>\n"
-    )
-    lines = ocr_dsocr2.parse_grounding(raw, 432.0, 648.0)
-
-    assert [text for text, _ in lines] == ["Culture and agency", "now-familiar reliance"]
-    rect = lines[0][1]
-    # 0-999 space scaled onto the page box.
-    assert rect.x0 == pytest.approx(217 / 999 * 432, abs=0.1)
-    assert rect.y1 == pytest.approx(83 / 999 * 648, abs=0.1)
 
 
 def test_pick_font_avoids_embedding_for_latin_text():
-    """PyMuPDF cannot subset without fontTools, so an embedded font costs ~16MB."""
-    assert ocr_dsocr2.pick_font(["plain ascii"], "/some/Arial Unicode.ttf") == (
-        "helv",
-        None,
-        ["plain ascii"],
+    # Latin text needs no external font, even when a candidate font is unavailable.
+    assert ocr_mineru.pick_font(["plain ascii"], "/missing/font.ttf") == (
+        "helv", None, ["plain ascii"],
     )
-    assert ocr_dsocr2.pick_font(["文化与能动性"], "/some/Arial Unicode.ttf") == (
-        "cjk",
-        "/some/Arial Unicode.ttf",
-        ["文化与能动性"],
-    )
-    # No Unicode font on this machine: base-14 is all there is.
-    assert ocr_dsocr2.pick_font(["文化"], None)[0] == "helv"
+    with pytest.raises(ValueError, match="Unicode font"):
+        ocr_mineru.pick_font(["文化与能动性"], "/missing/font.ttf")
 
 
 def test_pick_font_straightens_quotes_instead_of_embedding():
@@ -1415,29 +1252,13 @@ def test_pick_font_straightens_quotes_instead_of_embedding():
     Font.has_glyph says otherwise, so it cannot be the test — every English book
     has curly quotes, and trusting it silently corrupted the whole text layer.
     """
-    name, fontfile, texts = ocr_dsocr2.pick_font(['we mean “the same” — really'], "/x.ttf")
+    name, fontfile, texts = ocr_mineru.pick_font(['we mean “the same” — really'], "/x.ttf")
 
     assert (name, fontfile) == ("helv", None)
     assert texts == ['we mean "the same" - really']
     texts[0].encode("latin-1")  # what insert_text will actually do
 
 
-def test_layout_leaves_born_digital_pages_alone(tmp_path):
-    """Stripping a page whose text is the only content blanks it — silently.
-
-    --layout draws its replacement text invisibly over the scan, so on a source
-    with no scan behind the text the output looks like an empty book.
-    """
-    import fitz
-
-    doc = fitz.open()
-    doc.new_page().insert_text((72, 72), "born digital body text", fontsize=11)
-    page = doc[0]
-    raw = "<|ref|>born digital body text<|/ref|><|det|>[[100, 100, 800, 130]]<|/det|>"
-
-    assert ocr_dsocr2.relayer_page(page, raw, "helv", None) == -1
-    assert "born digital body text" in page.get_text()
-    doc.close()
 
 
 def test_strip_reaches_a_text_layer_hidden_in_a_form_xobject():
@@ -1455,131 +1276,21 @@ def test_strip_reaches_a_text_layer_hidden_in_a_form_xobject():
     page.show_pdf_page(page.rect, inner, 0)          # lands in a Form XObject
     assert "old scanner text layer" in page.get_text()
 
-    ocr_dsocr2.strip_text(page)
+    ocr_mineru.strip_text(page)
 
     assert "old scanner text layer" not in doc.reload_page(page).get_text()
     doc.close()
     inner.close()
 
 
-def test_layout_snaps_grid_jitter_to_one_body_size():
-    """Box height drives the font size, and it tracks ink, not type size.
-
-    Identically-set body lines therefore compute sizes -9%/+4% apart, and BabelDOC
-    copies the source size onto its translation: 25 distinct sizes over a 10-page
-    slice whose own text layer used 2. Only something far outside that band keeps
-    its own size — which real headings are not, hence SNAP's documented ceiling.
-    """
-    import fitz
-
-    ruler = fitz.Font("helv")
-    body = [
-        ("the same body line here", fitz.Rect(72, y, 400, y + h))
-        for y, h in [(100, 13.0), (120, 13.4), (140, 12.7), (160, 13.2), (180, 12.9)]
-    ]
-    heading = ("A Chapter Heading", fitz.Rect(72, 60, 400, 86))
-    lines = [heading, *body]
-
-    snap = ocr_dsocr2.dominant_size([lines], ruler)
-    doc = fitz.open()
-    page = doc.new_page()
-    ocr_dsocr2.draw_layout_page(page, lines, "helv", None, snap)
-    sizes = sorted(
-        {
-            round(span["size"], 2)
-            for block in page.get_text("dict")["blocks"]
-            for line in block.get("lines", [])
-            for span in line["spans"]
-        }
-    )
-    doc.close()
-
-    assert len(sizes) == 2, sizes
-    assert sizes[1] > sizes[0] * 1.5  # the heading kept its own size
 
 
-def test_layout_flows_a_block_as_one_paragraph():
-    """The whole point of the MinerU pass: one text object per paragraph.
-
-    Handed a LINE box, BabelDOC must fit that line's Chinese into that line's width
-    and parks the tail in the margin, so the translation arrives cut into pieces.
-    A paragraph box rewraps internally instead. Without blocks it must still draw
-    per-line for isolated ungrouped pages; the engine rejects total degradation.
-    """
-    import fitz
-
-    lines = [
-        ("the same body line here", fitz.Rect(72, y, 400, y + 13.0))
-        for y in (100, 116, 132, 148, 164)
-    ]
-    blocks = [{"c": "text", "b": [0.1, 0.11, 0.7, 0.30]}]
-
-    def drawn(blocks):
-        # a fresh doc per page: new_page() invalidates page objects already held
-        doc = fitz.open()
-        page = doc.new_page()
-        count = ocr_dsocr2.draw_layout_page(page, lines, "helv", None, 0.0, blocks)
-        out = count, page.get_text()
-        doc.close()
-        return out
-
-    count, text = drawn(blocks)
-    per_line, _ = drawn(None)
-
-    assert (count, per_line) == (1, len(lines))
-    # one flowed object holding the block's lines joined, not five separate strings
-    assert text.split() == " ".join(t for t, _ in lines).split()
 
 
-def test_layout_survives_a_block_whose_lines_come_back_out_of_order():
-    """DS OCR2 returns reading order, and on a page with figures that is not top-down.
-
-    Taking the box from lines[0]/lines[-1] built an inverted rect and PyMuPDF raised
-    "text box must be finite and not empty" — a hard crash on a real book (stewart).
-    """
-    import fitz
-
-    lines = [
-        ("second visually but first in reading order", fitz.Rect(72, 200, 400, 213)),
-        ("the line that sits higher on the page", fitz.Rect(72, 100, 400, 113)),
-    ]
-    page = fitz.open().new_page()
-
-    assert ocr_dsocr2.draw_layout_page(
-        page, lines, "helv", None, 0.0, [{"c": "text", "b": [0.1, 0.1, 0.7, 0.4]}]
-    ) == 1
 
 
-def test_layout_join_undoes_line_break_hyphens_only():
-    """A hyphen at a line end is a break; one inside a word is the author's."""
-    assert ocr_dsocr2.join_lines(["the rep-", "resentation"]) == "the representation"
-    assert ocr_dsocr2.join_lines(["a pre-logical", "mind"]) == "a pre-logical mind"
-    # suspended hyphen: ends a line, but the next word is not its other half
-    assert ocr_dsocr2.join_lines(["a table-", "or room-sized"]) == "a table- or room-sized"
 
 
-def test_layout_blocks_keep_geometry_before_the_flow_filter():
-    """Filter order is load-bearing, and getting it wrong wrecked a real book.
-
-    Drop non-flowable blocks first and a `list` of footnotes looks childless once
-    its `ref_text` children are gone, so six numbered notes flow as one blob; and a
-    body block above a figure grows through it and swallows the caption.
-    """
-    import fitz
-
-    page = fitz.open().new_page(width=200, height=300)
-    boxes = ocr_dsocr2.flow_boxes(page, [
-        {"c": "text", "b": [0.1, 0.1, 0.9, 0.4]},
-        {"c": "image", "b": [0.1, 0.5, 0.9, 0.8]},
-        {"c": "list", "b": [0.1, 0.85, 0.9, 0.95]},
-        {"c": "ref_text", "b": [0.12, 0.86, 0.88, 0.90]},
-    ])
-
-    # the note flows on its own; its `list` parent is dropped for holding a child,
-    # so six numbered notes cannot come out as one blob
-    assert len(boxes) == 2
-    assert boxes[0].y1 < 0.5 * page.rect.height   # and text stopped above the image
-    assert boxes[1].y0 > 0.8 * page.rect.height   # the survivor is the note, not the list
 
 
 def test_ocr_rejects_unknown_engine():
@@ -2411,3 +2122,96 @@ def test_book_post_manifest_fsync_failure_keeps_new_generation_coherent(
     assert reconcile["manifest_fingerprint"] == receipt["manifest_fingerprint"]
     assert list(tmp_path.glob(".chapters.stage-*")) == []
     assert list(tmp_path.glob(".chapters.backup-*")) == []
+
+
+def _migration_request(tmp_path, *, pages=1, profile='mineru-text'):
+    slug = 'migration-book'
+    source = tmp_path / 'sources' / f'{slug}.pdf'
+    source.parent.mkdir(exist_ok=True)
+    _write_pdf(source, ['source page' for _ in range(pages)])
+    sha = ocr_generation.sha256_file(source)
+    generation = ocr_generation.generation_key(kind='book', slug=slug, source_sha256=sha, profile_name=profile)
+    return dict(project_root=tmp_path, kind='book', slug=slug, source_file=source,
+                expected_source_sha256=sha, expected_generation_key=generation, profile_name=profile)
+
+
+def test_retired_ds_generation_reconciles_but_never_starts_a_writer(tmp_path):
+    args = _migration_request(tmp_path, profile='dsocr2-text')
+    never = lambda *_: pytest.fail('retired DS OCR2 must never execute')
+    result = ocr_generation.run_transaction(**args, runner=never)
+    assert result['status'] == 'blocked'
+    assert result['failure']['code'] == 'ocr.generation_profile_retired'
+    paths = ocr_generation.paths_for(project_root=tmp_path, kind='book', slug=args['slug'], generation=args['expected_generation_key'])
+    assert not paths['progress'].exists()
+    # Construct the original schema-0.1 committed artifacts, without old execution.
+    paths['work_dir'].mkdir(parents=True, exist_ok=True)
+    _write_pdf(paths['work_pdf'], ['retained historical recognition'])
+    signals = ocr_generation.text_signals(paths['work_pdf'])
+    paths['work_text'].write_text(signals['text'])
+    record = dict(start_page=1, end_page=1, engine='dsocr2', pages=1, sha256='b'*64,
+                  path=ocr_generation.project_relative(paths['work_dir'] / 'parts/part-000001-000001.dsocr2.pdf', tmp_path))
+    manifest = ocr_generation._build_manifest(paths=paths, kind='book', slug=args['slug'],
+        generation=args['expected_generation_key'], profile=ocr_generation.resolve_profile('book','dsocr2-text'),
+        ranges=[record], source_sha256=args['expected_source_sha256'], source_size=args['source_file'].stat().st_size,
+        source_pages=1, signals=signals)
+    assert manifest['schema_version'] == 'quasi.ocr.generation.manifest/0.1' and 'quality' not in manifest
+    ocr_generation._publish(paths=paths, manifest=manifest)
+    before = {key: paths[key].read_bytes() for key in ['pdf','text','manifest']}
+    result = ocr_generation.run_transaction(**args, runner=never)
+    assert result['disposition'] == 'reconciled'
+    assert before == {key: paths[key].read_bytes() for key in before}
+
+
+@pytest.mark.parametrize('wrong_source', [False, True])
+def test_mineru_orphan_requires_exact_source_evidence_without_replay(tmp_path, wrong_source):
+    args = _migration_request(tmp_path, pages=17)
+    result = ocr_generation.run_transaction(**args, runner=_ocr_generation_runner([]))
+    paths = ocr_generation.paths_for(project_root=tmp_path, kind='book', slug=args['slug'], generation=args['expected_generation_key'])
+    progress = json.loads(paths['progress'].read_text())
+    # Simulate publication of the next part followed by a crash before progress.
+    sliced = tmp_path / 'slice.pdf'
+    ocr_generation._slice_pdf(args['source_file'], sliced, 17, 17)
+    if wrong_source:
+        _write_pdf(sliced, ['unrelated source'])
+    orphan = paths['work_dir'] / 'parts/part-000017-000017.mineru.pdf'
+    _ocr_generation_runner([])(sliced, orphan, ('mineru',), 'chi_sim+eng', 'book-pdf-v1')
+    result = ocr_generation.run_transaction(**args, runner=lambda *_: pytest.fail('never replay orphan writer'))
+    if wrong_source:
+        assert result['failure']['code'] == 'ocr.generation_orphan_invalid'
+        assert json.loads(paths['progress'].read_text()) == progress
+        assert not paths['manifest'].exists()
+    else:
+        assert result['disposition'] == 'created'
+        assert json.loads(paths['manifest'].read_text())['quality']['suspects'] == []
+
+
+@pytest.mark.parametrize('field,value', [('model','foreign-model'), ('profile','foreign-profile')])
+def test_mineru_invalid_quality_stops_before_advancing_another_range(tmp_path, field, value):
+    import fitz
+    args = _migration_request(tmp_path, pages=17)
+    result = ocr_generation.run_transaction(**args, runner=_ocr_generation_runner([]))
+    part = tmp_path / result['progress']['ranges'][0]['path']
+    with fitz.open(part) as doc:
+        evidence = ocr_generation.ocr_quality.read(doc)
+        evidence[field] = value
+        doc.xref_set_key(doc.pdf_catalog(), 'QuasiOCR', fitz.get_pdf_str(json.dumps(evidence)))
+        doc.saveIncr()
+    paths = ocr_generation.paths_for(project_root=tmp_path, kind='book', slug=args['slug'], generation=args['expected_generation_key'])
+    progress = json.loads(paths['progress'].read_text())
+    progress['ranges'][0]['sha256'] = ocr_generation.sha256_file(part)
+    paths['progress'].write_text(json.dumps(progress))
+    result = ocr_generation.run_transaction(**args, runner=lambda *_: pytest.fail('invalid evidence must stop before model work'))
+    assert result['failure']['code'] == 'ocr.generation_progress_invalid'
+
+
+def test_resume_defaults_to_exact_saved_tesseract_engine(tmp_path, monkeypatch, capsys):
+    source = tmp_path / 'source.pdf'; output = tmp_path / 'out.pdf'; progress = tmp_path / 'progress.json'
+    _write_pdf(source, ['source'])
+    # Full identity validation belongs to run_ocr_step; prove the CLI forwards the saved engine.
+    progress.write_text(json.dumps({'engine':'tesseract'}))
+    import ocr_resume
+    def step(_source, _output, _progress, engine, *args, **kwargs):
+        assert engine == 'tesseract'
+        return {'status':'existing','input':str(source),'output':str(output),'progress':None}
+    monkeypatch.setattr(ocr_resume, 'run_ocr_step', step)
+    assert extract_cli._run_ocr(EXTRACT_DIR, [str(source),str(output),'--resume','--progress-file',str(progress),'--chunk-pages','8','--no-clobber','--json']) == 0

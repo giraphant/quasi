@@ -7,9 +7,11 @@ text. It happens when the source PDF's text layer is fragmented enough that
 BabelDOC's layout model stops recognising paragraphs as translatable blocks, so
 it leaves them as untouched scan. The page-count gate cannot see it.
 
-Measured across three healthy runs and one bad one, translated Han characters
-per source Latin letter separates them cleanly: 0.30-0.36 on every healthy page,
-0.15 median (0.01 at worst) on a book that came out only 43% translated.
+Translated Han characters per source Latin letter flags large omissions, but
+bibliographies, indexes and endnotes can legitimately retain much English.
+Exclude sections supported by the source's outline or bounded note headings;
+never infer a page's kind from a low translation ratio. This tests body coverage,
+not the quality or completeness of the excluded reference material.
 
 Run it only on a PDF whose ToUnicode CMap is already repaired: an unrepaired book
 extracts as mojibake in the CJK extension-A block, which this counter deliberately
@@ -19,15 +21,16 @@ auditing an old file by hand; both backends already call these two in that order
 
 from __future__ import annotations
 
+import re
 import statistics
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf
 
-# Healthy pages sat at 0.30-0.36. The old 0.22 threshold admitted a visibly
-# incomplete 0.23 translation; require the measured healthy lower bound.
+# Keep the body threshold: the old 0.22 admitted an incomplete 0.23 translation.
 MIN_MEDIAN = 0.30
 # A healthy median can hide many effectively untranslated body pages. These
 # thresholds apply only to the measurable source pages, never plates/titles.
@@ -47,24 +50,136 @@ def _han(text: str) -> int:
     return sum("一" <= c <= "鿿" for c in text)
 
 
+@dataclass(frozen=True)
+class Section:
+    # One-based source-book pages, stop exclusive (not dual PDF page numbers).
+    start: int
+    stop: int
+    kind: str
+    evidence: str
+
+
+def _section_kind(title: str) -> str | None:
+    title = " ".join(title.casefold().split()).strip(" .:")
+    if title in {"bibliography", "selected bibliography", "references", "works cited"}:
+        return "references"
+    if title in {"index", "general index", "subject index", "name index", "index of names"}:
+        return "index"
+    if title in {"notes", "endnotes", "end notes", "chapter notes"}:
+        return "notes"
+    return None
+
+
+def _source_sections(doc: pymupdf.Document, source_text: list[str]) -> list[Section]:
+    """Conservative source-only evidence; ambiguous outlines exempt nothing.
+
+    Explicit reference sections end at the next sibling/ancestor bookmark.
+    Unbookmarked Notes headings need numbered entries 1 and 2, and a later
+    bookmark to bound their continuation. Their opening page stays measurable:
+    it may still contain the end of the chapter's body.
+    """
+    toc = doc.get_toc()
+    if not toc or any(
+        not 1 <= page <= 2 * len(source_text) or level < 1 for level, _, page in toc
+    ):
+        return []
+    outline = [(level, title, (page + 1) // 2) for level, title, page in toc]
+    if any(a[2] > b[2] for a, b in zip(outline, outline[1:])):
+        return []
+    sections = []
+    for i, (level, title, start) in enumerate(outline):
+        kind = _section_kind(title)
+        if kind is None:
+            continue
+        stop = next(
+            (page for next_level, _, page in outline[i + 1:] if next_level <= level),
+            len(source_text) + 1,
+        )
+        # A bookmark can target the bottom of a mixed body/reference page.
+        # Uncertain extraction order also errs toward retaining that page.
+        lines = source_text[start - 1].splitlines()
+        for j, line in enumerate(lines):
+            if _section_kind(line) == kind:
+                if _latin("\n".join(lines[:j])) >= MIN_SOURCE_CHARS:
+                    start += 1
+                break
+        if start < stop:
+            sections.append(Section(start, stop, kind, f"outline {title!r}"))
+
+    boundaries = sorted({page for _, _, page in outline})
+    for page, text in enumerate(source_text, 1):
+        if any(section.start <= page < section.stop for section in sections):
+            continue
+        # No inferred range without both a containing section and a known end.
+        if page < boundaries[0]:
+            continue
+        stop = next((boundary for boundary in boundaries if boundary > page), None)
+        if stop is None or stop <= page + 1:
+            continue
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            if _section_kind(line) != "notes":
+                continue
+            numbers = re.findall(r"^\s*(\d{1,3})[.)]\s+\S", "\n".join(lines[i + 1:]), re.M)
+            if numbers[:2] == ["1", "2"]:
+                sections.append(Section(page + 1, stop, "notes", f"numbered Notes heading p{page}"))
+                break
+    return sorted(sections, key=lambda section: section.start)
+
+
+def _measure(pdf_path: Path) -> tuple[list[tuple[int, float]], list[Section]]:
+    with pymupdf.open(str(pdf_path)) as doc:
+        source_text = []
+        ratios = []
+        for i in range(0, len(doc) - 1, 2):
+            # OCR content streams need not follow visual reading order. Use
+            # positioned blocks for headings, preserving the original counter.
+            # Full sorted-text reconstruction is needlessly costly on books.
+            source_text.append("\n".join(
+                block[4] for block in doc[i].get_text("blocks", sort=True) if block[6] == 0
+            ))
+            source = _latin(doc[i].get_text())
+            if source >= MIN_SOURCE_CHARS:
+                ratios.append((i // 2 + 1, _han(doc[i + 1].get_text()) / source))
+        return ratios, _source_sections(doc, source_text)
+
+
 def page_ratios(pdf_path: Path) -> list[tuple[int, float]]:
-    """(book page number, translated Han per source Latin letter) for each spread.
+    """Unfiltered (book page, translated Han per source Latin letter) pairs.
 
     The dual PDF alternates original/translated, so pages 2i and 2i+1 are the two
     sides of one book page. Pages carrying too little source text are dropped
     rather than scored — a plate would otherwise read as a translation failure.
     """
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        ratios = []
-        for i in range(0, len(doc) - 1, 2):
-            source = _latin(doc[i].get_text())
-            if source < MIN_SOURCE_CHARS:
-                continue
-            ratios.append((i // 2 + 1, _han(doc[i + 1].get_text()) / source))
-    finally:
-        doc.close()
-    return ratios
+    return _measure(pdf_path)[0]
+
+
+def _body_ratios(
+    ratios: list[tuple[int, float]], sections: list[Section],
+) -> tuple[list[tuple[int, float]], str]:
+    excluded = {
+        page: next((s for s in sections if s.start <= page < s.stop), None)
+        for page, _ in ratios
+    }
+    body = [(page, ratio) for page, ratio in ratios if excluded[page] is None]
+    if len(body) == len(ratios):
+        return ratios, ""
+    # Exemptions must not turn an otherwise measurable failure into abstention.
+    if len(body) < MIN_PAGES:
+        return ratios, (
+            f" Section exclusions not applied: only {len(body)} body page(s) remain; "
+            "using all measurable pages."
+        )
+    evidence = "; ".join(
+        f"p{s.start}-{s.stop - 1} {s.kind} ({s.evidence})"
+        for s in sections if s in excluded.values()
+    )
+    raw_median = statistics.median(ratio for _, ratio in ratios)
+    return body, (
+        f" Body scope: excluded {len(ratios) - len(body)}/{len(ratios)} measurable "
+        f"reference pages; unfiltered median {raw_median:.3f}; {evidence}. "
+        "Excluded sections are not translation-validated."
+    )
 
 
 def check(pdf_path: Path, *, target_language: str = "zh-CN") -> dict[str, object]:
@@ -82,7 +197,8 @@ def check(pdf_path: Path, *, target_language: str = "zh-CN") -> dict[str, object
             "detail": f"coverage check skipped: target {target_language} is not Chinese",
         }
 
-    ratios = page_ratios(pdf_path)
+    ratios, sections = _measure(pdf_path)
+    ratios, scope = _body_ratios(ratios, sections)
     if len(ratios) < MIN_PAGES:
         return {
             "ok": True,
@@ -94,7 +210,7 @@ def check(pdf_path: Path, *, target_language: str = "zh-CN") -> dict[str, object
                 {"page": page, "ratio": ratio}
                 for page, ratio in sorted(ratios, key=lambda item: item[1])[:5]
             ],
-            "detail": f"coverage check skipped: only {len(ratios)} page(s) carry enough source text",
+            "detail": f"coverage check skipped: only {len(ratios)} page(s) carry enough source text{scope}",
         }
 
     median = statistics.median(ratio for _, ratio in ratios)
@@ -117,7 +233,7 @@ def check(pdf_path: Path, *, target_language: str = "zh-CN") -> dict[str, object
             "measured_pages": len(ratios),
             "minimum_median": MIN_MEDIAN,
             "weakest": weakest,
-            "detail": f"coverage {median:.3f} over {len(ratios)} pages; {distribution} (weakest {worst})",
+            "detail": f"coverage {median:.3f} over {len(ratios)} pages; {distribution} (weakest {worst}).{scope}",
         }
     reasons = []
     if median < MIN_MEDIAN:
@@ -132,13 +248,14 @@ def check(pdf_path: Path, *, target_language: str = "zh-CN") -> dict[str, object
         "minimum_median": MIN_MEDIAN,
         "weakest": weakest,
         "detail": (
-            f"Under-translated: {'; '.join(reasons)}. "
+            f"Coverage below threshold: {'; '.join(reasons)}. "
             f"Median {median:.3f} Chinese characters per source Latin letter over "
             f"{len(ratios)} measurable pages; {distribution}. This can indicate skipped body "
-            f"text or fragmented source paragraphs. Weakest pages: {worst}. "
+            f"text, fragmented source paragraphs, or unclassified reference material. "
+            f"Weakest pages: {worst}. "
             f"Inspect these pages; if the source text layer is fragmented, re-OCR with "
             f"`quasi-extract ocr SRC OUT --layout` and translate that instead. "
-            f"Output kept at {pdf_path}."
+            f"Output kept at {pdf_path}.{scope}"
         ),
     }
 

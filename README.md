@@ -36,8 +36,8 @@ Python 依赖在首次会话时自动装入插件数据目录下的 venv,无需�
 | 依赖 | 用途 |
 |---|---|
 | `ffmpeg`、`whisper-cli` | 讲座 / 会议录音转写 |
-| `uvx` | Anna's Archive 浏览器挑战、pdf2zh 翻译后端、DS OCR2 OCR |
-| Apple Silicon + `mlx-vlm` | 本地 OCR(DeepSeek-OCR-2;缺失时回退 tesseract) |
+| `uvx` | Anna's Archive 浏览器挑战、pdf2zh 翻译后端、MinerU2.5-Pro OCR |
+| Apple Silicon + `mlx-vlm` | 本地 OCR（MinerU2.5-Pro；Tesseract 仅手动选择） |
 | `mineru-vl-utils` | 扫描书翻译的段落级版面恢复 |
 
 ## 配置

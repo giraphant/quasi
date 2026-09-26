@@ -121,7 +121,7 @@ def _ocr_generation(
     *,
     kind: str = "paper",
     slug: str = "exact-material",
-    profile_name: str = "dsocr2-text",
+    profile_name: str = "mineru-text",
     source_sha256: str = "a" * 64,
     state: str = "missing",
     completed_pages: int = 0,
@@ -132,16 +132,18 @@ def _ocr_generation(
         "language": "chi_sim+eng",
         "text_extractor": "pymupdf",
         "engine_order": (
-            ["dsocr2", "tesseract"]
-            if profile_name == "dsocr2-text"
+            ["mineru"]
+            if profile_name == "mineru-text"
             else ["tesseract"]
         ),
-        "chunk_pages": 16 if profile_name == "dsocr2-text" else 32,
+        "chunk_pages": 16 if profile_name == "mineru-text" else 32,
         "name": profile_name,
         "validation_policy": (
             "paper-text-v1" if kind == "paper" else "book-pdf-v1"
         ),
     }
+    if profile_name == "mineru-text":
+        profile.update(model="opendatalab/MinerU2.5-Pro-2605-1.2B", engine_revision="mineru25-pro-2605-text/1")
     config_fingerprint = hashlib.sha256(
         json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -1830,7 +1832,7 @@ def test_paper_ocr_owns_only_the_exact_generation_transaction() -> None:
         "--source-file 'sources/exact-material.pdf' "
         f"--expected-source-sha256 '{generation['source']['sha256']}' "
         f"--generation-key '{generation['generation_key']}' "
-        "--profile 'dsocr2-text' --json"
+        "--profile 'mineru-text' --json"
     ]
     progress_schema = prepared["options"]["schema"]["properties"]["progress"]
     assert progress_schema["anyOf"][1]["properties"]["next_page"] == {
@@ -1856,10 +1858,10 @@ def test_paper_ocr_accepts_one_profile_range_and_rejects_extra_progress() -> Non
                 {
                     "start_page": 1,
                     "end_page": 16,
-                    "engine": "dsocr2",
+                    "engine": "mineru",
                     "path": (
                         f"{generation['paths']['work_dir']}/parts/"
-                        "part-000001-000016.dsocr2.pdf"
+                        "part-000001-000016.mineru.pdf"
                     ),
                     "sha256": "f" * 64,
                     "pages": 16,
@@ -1914,10 +1916,10 @@ def test_paper_ocr_requires_committed_artifacts_for_publication() -> None:
             {
                 "start_page": 1,
                 "end_page": 7,
-                "engine": "dsocr2",
+                "engine": "mineru",
                 "path": (
                     f"{generation['paths']['work_dir']}/parts/"
-                    "part-000001-000007.dsocr2.pdf"
+                    "part-000001-000007.mineru.pdf"
                 ),
                 "sha256": "f" * 64,
                 "pages": 7,

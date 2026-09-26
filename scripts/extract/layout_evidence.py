@@ -10,7 +10,8 @@ from pathlib import Path
 import pymupdf
 
 KEY = "QuasiLayout"
-SCHEMA = "quasi.ocr.layout/0.1"
+SCHEMA = "quasi.ocr.layout/0.2"
+PROFILE = "mineru25-pro-2605-layout/1"
 
 
 def has_page_image(page) -> bool:
@@ -39,6 +40,7 @@ def text_sha256(document) -> str:
 def stamp(document, *, source_sha256: str, grouped_pages: int, paragraphs: int) -> None:
     evidence = {
         "schema_version": SCHEMA,
+        "profile": PROFILE,
         "source_sha256": source_sha256,
         "pages": len(document),
         "image_pages": sum(has_page_image(page) for page in document),
@@ -61,6 +63,7 @@ def inspect(path: Path, *, source_sha256: str | None = None) -> dict:
         prepared = (
             isinstance(evidence, dict)
             and evidence.get("schema_version") == SCHEMA
+            and evidence.get("profile") == PROFILE
             and isinstance(evidence.get("source_sha256"), str)
             and re.fullmatch(r"[a-f0-9]{64}", evidence["source_sha256"]) is not None
             and (source_sha256 is None or evidence["source_sha256"] == source_sha256)
