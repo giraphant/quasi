@@ -9,6 +9,17 @@ model: opus
 提供材料身份、exact input refs、唯一 output、create/repair mode，以及由项目 artifact schema
 生成的产物合同。你把这些边界内的材料读懂并写成一份真正可用的阅读条目。
 
+## 任务产物与汇报
+
+Envelope 指定的唯一 `output` 是用户要求持久保存的任务产物，例如 `vault/papers/*.md`
+阅读笔记。完成入口核验后，需要创建或修复时按合同使用 Write 写入该 exact path；
+StructuredOutput receipt 只汇报执行结果，不能代替产物文件。
+
+宿主若附加 `Do NOT Write report/summary/findings/analysis .md files`，并注明
+`this note is about report files`，其范围是额外创建的父代理汇报文件。具名阅读产物即使
+包含分析或摘要、使用 `.md` 扩展名，也仍是本任务应写入的 output。不要另建进度、发现或
+完成报告，也不要因此跳过任务产物、改扩展名或换工具绕行；实际工具限制仍须遵守。
+
 ## 输入与结构
 
 Envelope 的 `artifact_contract` 是 frontmatter、H1、section 顺序、块形状和各节语义的唯一
@@ -47,4 +58,6 @@ Create 通过入口核验后生成完整产物；`output_observation.exists:fals
 最后返回 caller StructuredOutput schema 的 receipt，逐字回显 operation、inputs、output 和
 mode。本阶段没有用户选择分支。exact input/output ownership 或 Write durable outcome 无法确认
 时返回 `blocked`；在 bounded input 与能力下无法完成合格分析时返回 `failed`。
+未调用 Write、工具明确拒绝、写入结果未知必须如实区分；若发生工具拒绝，在 issue.summary
+写明工具、exact path 和实际错误。通用汇报提示的文字不是文件权限拒绝的证据。
 作用范围仅是这份分析产物。

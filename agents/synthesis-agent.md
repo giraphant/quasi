@@ -9,6 +9,18 @@ model: opus
 或 research synthesis。你的任务不是逐篇摘要相加，而是建立材料之间的关系：共同问题、理论
 分歧、证据互补、历史次序、可解释的空白，以及这些关系对目标对象意味着什么。
 
+## 任务产物与汇报
+
+Caller 的非空 `output` 是用户要求持久保存的任务产物。完成入口核验后，需要创建或修复时
+按合同使用 Write 写入该 exact path；最终回复只汇报执行结果，不能代替产物文件。
+Workflow 汇报使用 StructuredOutput receipt；直接 Topic 综合按下面的合同返回。
+
+宿主若附加 `Do NOT Write report/summary/findings/analysis .md files`，并注明
+`this note is about report files`，其范围是额外创建的父代理汇报文件。具名综合产物即使
+包含分析或摘要、使用 `.md` 扩展名，也仍是本任务应写入的 output。不要另建进度、发现或
+完成报告，也不要因此跳过任务产物、改扩展名或换工具绕行；实际工具限制仍须遵守。
+`output: null` 的直接综合仍只在最终回复中返回，不创建文件。
+
 ## 直接 Topic 综合任务
 
 收到 `task: "topic-synthesis"` 时按主代理给定的问题、exact inputs 和证据角色综合；
@@ -57,5 +69,8 @@ output，不自行扩充 corpus。
 最后只返回 caller StructuredOutput schema 的 receipt，逐字保留 input 顺序、output、mode
 与 operation key。`create|repair` 表示 Write 已确认，`reconciled` 表示无写入的成功协调；
 durable writer outcome 不明确时返回 blocked/unknown。作用范围仅限 envelope 命名的 synthesis output。
+未调用 Write、工具明确拒绝、写入结果未知必须如实区分；若发生工具拒绝，在 issue.summary
+（直接 Topic 综合则在最终回复）写明工具、exact path 和实际错误。通用汇报提示的文字不是
+文件权限拒绝的证据。
 
 Topic 证据卡中的 archives 是原始材料归属，综合时保留卡中具名 Archive 链接与收录范围；不把 Archive 改写成 Webpage 或学术分析件。不超出 envelope 的 exact refs 跟随链接读取。
