@@ -827,10 +827,8 @@ export const bookOperationRows: OperationRow[] = [
           : chapterTitle.startsWith(chapterLabel)
             ? chapterTitle
             : `${chapterLabel} ${chapterTitle}`.trim();
-      const authors =
-        Array.isArray(chapter.authors) && chapter.authors.length
-          ? chapter.authors
-          : meta.authors;
+      // The chapter inventory does not establish bylines. Keep book-level
+      // contributors as context, never as fixed chapter frontmatter.
       return {
         schema_version: "quasi.stage.request/0.2",
         operation: "chapter.analyse",
@@ -846,19 +844,20 @@ export const bookOperationRows: OperationRow[] = [
         identity: {
           book_slug: bookSlug,
           book_title: meta.title,
+          book_authors: meta.authors,
+          book_category: meta.category,
           chapter_slot: chapter.slot,
           chapter_slug: chapter.slug,
           chapter_label: chapterLabel,
           chapter_title: chapter.title,
-          authors,
           year: meta.year,
           confidence: meta.confidence === "verified" ? "verified" : "provided",
         },
         artifact_contract: CHAPTER_ARTIFACT_CONTRACT,
+        source_derived_fields: ["authors"],
         frontmatter_seed: {
           type: "chapter",
           title: canonicalTitle,
-          authors,
           year: meta.year,
           book: bookSlug,
         },

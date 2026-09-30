@@ -1456,6 +1456,96 @@ def test_chapter_analyse_preserves_or_prefixes_the_manifest_title_once(
     }
 
 
+@pytest.mark.parametrize("category", ["edited-volume", "handbook", "monograph", "other"])
+@pytest.mark.parametrize("mode", ["create", "repair"])
+def test_chapter_authorship_is_not_fixed_from_book_contributors(
+    category: str, mode: str,
+) -> None:
+    contributors = ["Jeremy Coote", "Anthony Shelton"]
+    prepared = _prepare(
+        "chapter.analyse",
+        context=_context(
+            meta={**BASE_META, "authors": contributors, "category": category},
+            chapter={
+                "slot": "01",
+                "slug": "art-and-anthropology",
+                "filename": "01_Art_and_Anthropology.txt",
+                "title": "Art and Anthropology",
+            },
+            mode=mode,
+            outputExists=mode == "repair",
+        ),
+    )
+    request = _prompt_request(prepared["prompt"])
+
+    # The source byline (Raymond Firth in the reported case) must remain
+    # assignable without contradicting any fixed caller metadata.
+    assert "authors" not in request["frontmatter_seed"]
+    assert "authors" not in request["identity"]
+    assert request["identity"]["book_authors"] == contributors
+    assert request["identity"]["book_category"] == category
+    assert request["source_derived_fields"] == ["authors"]
+    schema = request["artifact_contract"]["frontmatter"]["json_schema"]
+    assert "authors" in schema["required"]
+    assert schema["properties"]["authors"]["minItems"] == 1
+
+
+@pytest.mark.parametrize("from_status", [False, True])
+def test_generated_book_keeps_editors_at_book_scope_through_chapter_repair(
+    from_status: bool,
+) -> None:
+    from test_material_plans import (
+        audit_complete,
+        book_prepare_complete,
+        book_synthesise_complete,
+        canonical_book_input,
+        chapter_complete,
+        chapter_repair_complete,
+    )
+
+    chapter = {
+        "slot": "01", "slug": "art-and-anthropology",
+        "title": "Art and Anthropology", "filename": "01_Art_and_Anthropology.txt",
+        "word_count": 120, "start_page": None, "end_page": None,
+    }
+    value = canonical_book_input(
+        source_format="epub", manifest=from_status, inventory=[chapter],
+        chapter_inputs=(True,), chapter_outputs=(False,),
+    )
+    contributors = ["Jeremy Coote", "Anthony Shelton"]
+    value["seed"]["identity"].update(authors=contributors, category="edited-volume")
+    value["observation"]["identity"]["authors"] = contributors
+    diagnostic = {
+        "path": "vault/books/exact-book/ch01-art-and-anthropology.md",
+        "kind": "frontmatter",
+        "reason": "The chapter byline names Raymond Firth, not the book editors.",
+    }
+    outputs = ([] if from_status else [book_prepare_complete(chapters=[chapter])]) + [
+        chapter_complete(), book_synthesise_complete("repair"),
+        audit_complete(escalated=[diagnostic]), chapter_repair_complete(),
+        audit_complete(),
+    ]
+
+    report = run_generated_workflow("book", value, outputs, capture_agent_requests=True)
+    requests = [_prompt_request(call["prompt"]) for call in report["agentRequests"]]
+    chapters = [request for request in requests if request["operation"] == "chapter.analyse"]
+
+    assert report["value"]["terminal"] == "complete"
+    assert [request["mode"] for request in chapters] == ["create", "repair"]
+    for request in chapters:
+        assert "authors" not in request["frontmatter_seed"]
+        assert "authors" not in request["identity"]
+        assert request["identity"]["book_authors"] == contributors
+        assert request["identity"]["book_category"] == "edited-volume"
+        assert request["source_derived_fields"] == ["authors"]
+        assert request["input"]["path"] == "processing/chapters/exact-book/01_Art_and_Anthropology.txt"
+        assert request["output"]["path"] == diagnostic["path"]
+    assert chapters[-1]["repair_diagnostics"] == [diagnostic]
+    overview = next(request for request in requests if request["operation"] == "book.synthesise")
+    assert overview["frontmatter_seed"]["authors"] == contributors
+    assert overview["frontmatter_seed"]["category"] == "edited-volume"
+
+
 def test_paper_acquire_preserves_both_urls_and_real_diagnostic_capabilities() -> None:
     prepared = _prepare(
         "paper.acquire",
