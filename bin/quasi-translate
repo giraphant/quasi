@@ -18,7 +18,8 @@ PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_PATH")")"
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
 PYTHON="$DATA_DIR/.venv/bin/python"
 
-[ -x "$PYTHON" ] || "$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
+# Sync new dependencies even when an older venv already exists.
+"$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
 
 # Strict graph-facing surface.  Backend ownership remains in configured
 # QUASI_TRANSLATE_BACKEND; translate.py rejects a caller --backend override.

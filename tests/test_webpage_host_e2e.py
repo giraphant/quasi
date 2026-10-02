@@ -636,7 +636,7 @@ def test_real_named_webpage_workflow():
     for executable in ("claude", "swiftc", "node"):
         require(shutil.which(executable), f"Host E2E missing dependency: {executable}")
     for module in ("trafilatura", "yaml", "pydantic", "pymupdf", "requests",
-                   "bs4", "curl_cffi", "bibtexparser", "lxml_html_clean"):
+                   "bs4", "curl_cffi", "bibtexparser", "lxml_html_clean", "pylatexenc"):
         require(importlib.util.find_spec(module), f"Host E2E missing Python dependency: {module}")
     require((Path(sys.prefix) / "bin/python").is_file(),
             "Host E2E requires a provisioned virtualenv with bin/python")
@@ -651,6 +651,9 @@ def test_real_named_webpage_workflow():
         data = vault / ".plugin-data"
         data.mkdir()
         (data / ".venv").symlink_to(Path(sys.prefix), target_is_directory=True)
+        # This harness provisions its own environment; keep shim bootstrap
+        # from installing packages into the shared test interpreter.
+        shutil.copy2(ROOT / "scripts" / "requirements.txt", data / "requirements.txt")
         env = dict(os.environ)
         env.pop("CLAUDECODE", None)
         env.pop("QUA_PROJECT_ROOT", None)

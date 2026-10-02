@@ -14,7 +14,7 @@ import re
 import yaml
 
 from scripts.status import status as status_module
-from workflow_test_support import run_workflow_export
+from workflow_test_support import run_generated_workflow, run_workflow_export
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -288,6 +288,52 @@ def test_collect_material_routes_leaf_kinds_to_generated_named_entries() -> None
         relative = entry.removeprefix("$CLAUDE_PLUGIN_ROOT/")
         assert relative != entry
         assert (ROOT / relative).is_file(), entry
+
+
+def test_collect_material_literal_paper_tool_call_reaches_search() -> None:
+    """Exercise the documented tool envelope, not just the material parser."""
+    from test_material_plans import paper_observation
+
+    text = (ROOT / "skills" / "collect-material" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    calls = [
+        node
+        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Workflow"
+        and any(
+            keyword.arg == "args" and isinstance(keyword.value, ast.Dict)
+            for keyword in node.keywords
+        )
+    ]
+    assert len(calls) == 1, "show one complete tool call with nested material args"
+
+    # The real Workflow tool accepts scriptPath and args; a lifted options key
+    # must fail here, before the generated material entry sees any input.
+    def workflow(*, scriptPath: str, args: dict) -> dict:
+        expected = collect_material_leaf_workflow_manifest()["paper"]
+        assert scriptPath == expected["entry"].replace("$CLAUDE_PLUGIN_ROOT", str(ROOT))
+        assert set(args) == set(expected["required"])
+        assert args["options"] == {}
+        return run_generated_workflow("paper", args, capture_agent_requests=True)
+
+    report = eval(
+        compile(ast.Expression(calls[0]), "collect-material tool example", "eval"),
+        {"__builtins__": {}, "Workflow": workflow},
+        {
+            "entry": str(ROOT / "workflows" / "paper.mjs"),
+            "request_key": "request-paper-1",
+            "identity_hints": {"doi": "10.1146/annurev.anthro.30.1.109"},
+            "exact_status": paper_observation("request-paper-1"),
+        },
+    )
+    assert report["agentCalls"] == 1
+    assert report["pipelineCalls"] == 0
+    request = json.loads(report["agentRequests"][0]["prompt"])
+    assert request["operation"] == "material.search"
 
 
 def test_collect_material_transports_a_webpage_url_without_an_initial_observation() -> None:

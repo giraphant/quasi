@@ -2837,6 +2837,7 @@ def test_download_paper_adds_cell_pdf_hints_before_fetch(monkeypatch, tmp_path):
 
 
 def test_ezproxy_sciencedirect_url_tracking_deduplicates(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(tmp_path / "plugin-data"))
     mod = _load_module(DOWNLOAD, "download_ezproxy_sciencedirect_dedupe_under_test")
     article_url = "https://www-sciencedirect-com.eux.idm.oclc.org/science/article/pii/S0378216626001025"
 

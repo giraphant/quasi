@@ -57,6 +57,7 @@ def test_core_dependency_mapping_includes_curl_cffi(tmp_path: Path):
     assert imports["beautifulsoup4"] == "bs4"
     assert imports["pyyaml"] == "yaml"
     assert imports["pymupdf"] == "fitz"
+    assert imports["pylatexenc"] == "pylatexenc.latex2text"
 
 
 def test_bin_help_works_without_venv(tmp_path: Path):

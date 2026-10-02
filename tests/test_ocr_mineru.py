@@ -90,6 +90,38 @@ def test_unicode_font_absence_fails_instead_of_losing_chinese(monkeypatch):
         engine.pick_font(["文化"])
 
 
+@pytest.mark.skipif(
+    not Path('/System/Library/Fonts/Supplemental/STIXTwoMath.otf').is_file(),
+    reason='requires macOS STIX math font',
+)
+@pytest.mark.parametrize('layout', [True, False])
+def test_long_math_arrow_survives_pdf_round_trip(tmp_path, layout):
+    # Gell's contents uses a long relational arrow, which the regular macOS
+    # text fonts do not cover. Keep its exact codepoint in the searchable PDF.
+    source = source_pdf(tmp_path / 'source.pdf')
+    output = tmp_path / 'output.pdf'
+    text = r'Index-A \(\longrightarrow\) Artist-P'
+    engine.write_output(source, output, [[block(text)]], layout=layout, model=engine.MODEL)
+    with fitz.open(output) as doc:
+        assert ' '.join(doc[0].get_text().split()) == 'Index-A ⟶ Artist-P'
+
+
+@pytest.mark.parametrize('layout', [True, False])
+def test_font_failure_identifies_page_and_missing_character(tmp_path, monkeypatch, layout):
+    from types import SimpleNamespace
+    font = tmp_path / 'limited.ttf'
+    font.touch()
+    monkeypatch.setattr(engine, '_FONT_FILES', [str(font)])
+    monkeypatch.setattr(engine, '_unicode_font', lambda _: SimpleNamespace(
+        has_glyph=lambda code: code != ord('⟶')))
+    source = source_pdf(tmp_path / 'source.pdf')
+    output = tmp_path / 'output.pdf'
+    with pytest.raises(ValueError, match=r'page 1:.*U\+27F6'):
+        engine.write_output(source, output, [[block('Index-A ⟶ Artist-P')]],
+                            layout=layout, model=engine.MODEL)
+    assert not output.exists()
+
+
 def test_layout_preserves_images_uses_one_box_and_keeps_footnotes(tmp_path):
     source = source_pdf(tmp_path / "source.pdf")
     out = tmp_path / "layout.pdf"
@@ -282,5 +314,5 @@ def test_font_rejects_alias_mapping_even_with_available_glyphs(tmp_path, monkeyp
     path=tmp_path/'aliases.ttf';path.touch()
     monkeypatch.setattr(engine,'_unicode_font',lambda _:SimpleNamespace(has_glyph=lambda _:True))
     monkeypatch.setattr(engine,'_font_roundtrips',lambda *_:False)
-    with pytest.raises(ValueError,match='faithful text extraction'):
+    with pytest.raises(ValueError,match='faithful text extraction.*aliases.ttf: text round-trip mismatch'):
         engine.pick_font(['Ceaușescu; a-name'],str(path))

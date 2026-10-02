@@ -29,6 +29,7 @@ CORE_PYTHON_DEPS = [
     {"name": "pydantic", "import": "pydantic"},
     {"name": "pyyaml", "import": "yaml"},
     {"name": "pymupdf", "import": "fitz"},
+    {"name": "pylatexenc", "import": "pylatexenc.latex2text"},
 ]
 
 EXTERNAL_PROFILES = {

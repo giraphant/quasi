@@ -76,6 +76,8 @@ _FONT_FILES = [
     "/System/Library/Fonts/Supplemental/Georgia.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+    "/System/Library/Fonts/Supplemental/STIXTwoMath.otf",
+    "/System/Library/Fonts/Supplemental/STIXGeneral.otf",
     "/System/Library/Fonts/PingFang.ttc", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
 ]
 _ASCIIFY = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"',
@@ -176,15 +178,28 @@ def pick_font(texts: list[str], fontfile: str | None = None) -> tuple[str, str |
         return "helv", None, straight
     except UnicodeEncodeError:
         required = {ord(char) for text in texts for char in text if not char.isspace()}
+        rejected = []
         for candidate in ([fontfile] if fontfile else _FONT_FILES):
-            if (Path(candidate).is_file()
-                    and all(_unicode_font(candidate).has_glyph(code) for code in required)
-                    and _font_roundtrips(candidate, tuple(sorted(required)))):
-                # A page may need a different font than earlier pages. Distinct
-                # resource names also prevent accidentally reusing a limited font.
-                name = "quasiunicode" + hashlib.sha256(candidate.encode()).hexdigest()[:8]
-                return name, candidate, texts
-        raise ValueError("a Unicode font covering every recognized character with faithful text extraction is required; refusing to discard text")
+            if not Path(candidate).is_file():
+                continue
+            font = _unicode_font(candidate)
+            missing = sorted(code for code in required if not font.has_glyph(code))
+            if missing:
+                codes = ", ".join(f"U+{code:04X}" for code in missing[:8])
+                if len(missing) > 8:
+                    codes += f" (+{len(missing) - 8} more)"
+                rejected.append(f"{Path(candidate).name}: missing {codes}")
+                continue
+            if not _font_roundtrips(candidate, tuple(sorted(required))):
+                rejected.append(f"{Path(candidate).name}: text round-trip mismatch")
+                continue
+            # A page may need a different font than earlier pages. Distinct
+            # resource names also prevent accidentally reusing a limited font.
+            name = "quasiunicode" + hashlib.sha256(candidate.encode()).hexdigest()[:8]
+            return name, candidate, texts
+        reason = "; ".join(rejected) or "no candidate font files are available"
+        raise ValueError("a Unicode font covering every recognized character with faithful text extraction "
+                         f"is required; refusing to discard text ({reason})")
 
 
 def strip_text(page) -> None:
@@ -245,7 +260,10 @@ def write_output(source: Path, output: Path, pages: list[list[dict]], *, layout:
             if layout:
                 page = out[i]
                 selected = [b for b in blocks if b["type"] in TEXT]
-                fontname, fontfile, texts = pick_font([b["content"] for b in selected])
+                try:
+                    fontname, fontfile, texts = pick_font([b["content"] for b in selected])
+                except ValueError as exc:
+                    raise ValueError(f"page {i + 1}: {exc}") from exc
                 plan = []
                 for block, text in zip(selected, texts):
                     rect = rectangle(page, block)
@@ -262,7 +280,10 @@ def write_output(source: Path, output: Path, pages: list[list[dict]], *, layout:
                     out.insert_pdf(src, from_page=i, to_page=i)
                     continue
                 page = out.new_page(width=src[i].rect.width, height=src[i].rect.height)
-                name, fontfile, texts = pick_font([text])
+                try:
+                    name, fontfile, texts = pick_font([text])
+                except ValueError as exc:
+                    raise ValueError(f"page {i + 1}: {exc}") from exc
                 rect = fitz.Rect(20, 20, page.rect.width - 20, page.rect.height - 20)
                 size = natural_size(page, rect, texts[0], name, fontfile)
                 if _textbox(page, rect, texts[0], min(9.0, size * .98), name, fontfile, invisible=False, commit=True) < 0:

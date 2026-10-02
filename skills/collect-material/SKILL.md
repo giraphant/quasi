@@ -145,13 +145,30 @@ Paper 完成后的 status 绑定使用闭合投影；Book 使用同形的 shared
 先运行 exact status，再把闭合输入交给映射中的入口：
 
 把 `workflow_input` 对象直接作为 Workflow 工具的 `args` 值；tool call 中 `args` 必须是
-object，不是 JSON string。不要先做 `JSON.stringify`、`json.dumps` 或其它手工序列化。
+object，不是 JSON string。工具层只传 `scriptPath` 和 `args`；`seed`、`observation`、
+`options`、`target_language`、`userDecision` 或恢复字段都属于 `args` 内的材料输入。
+`options` 即使为空也保留在 `args` 内。不要先做 `JSON.stringify`、`json.dumps` 或其它手工序列化。
+
+Paper 初次调用的完整嵌套形状（`entry` 是 Paper 入口的实际绝对路径，`exact_status` 是本次实际观察对象）：
 
 ```python
-result = Workflow(scriptPath=entry, args=workflow_input)
+result = Workflow(
+    scriptPath=entry,
+    args={
+        "seed": {"state": "provisional", "requested_slug": request_key,
+                 "hints": identity_hints},
+        "observation": exact_status,
+        "options": {},
+    },
+)
 ```
 
-Paper/Book 输入：
+其它初次或恢复调用同样用 `Workflow(scriptPath=entry, args=workflow_input)`。
+若工具报 `unexpected parameter options`，先核对实际 call 的字段层级；工具在派发前拒绝
+的顶层参数应移入 `args`，不能从材料输入删除。只有明确尚未派发的工具参数错误可就地纠正；
+已启动或结果未知的 writer 仍按停止与 fresh observation 规则处理。
+
+Paper/Book 的通用材料输入（含用户决定时也整体作为 `args`）：
 
 ```python
 workflow_input = {

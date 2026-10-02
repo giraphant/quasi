@@ -318,6 +318,12 @@ Every Python-facing `quasi-*` shim sources `scripts/load-keychain-env.sh`, which
 
 ## Guardrails
 
+Python capability shims run the shared bootstrap before dispatch, including when
+the persistent venv already exists. The bootstrap compares the current dependency
+list with its installed mirror and installs only when they differ; failed sync
+stops dispatch. `quasi-doctor` stays read-only unless `--sync` is requested and
+checks the host-side `pylatexenc.latex2text` import used by MinerU text cleanup.
+
 - Keep scripts as large, sectioned entrypoints unless splitting removes real
   duplication.
 - Add shared code to `scripts/core/` only when at least two capability domains need the

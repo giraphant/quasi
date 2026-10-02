@@ -116,6 +116,19 @@ def test_named_entries_reject_unknown_input_before_agent_dispatch(entry: str) ->
     assert report["value"]["issue"]["code"] == "material.invalid_input"
 
 
+def test_paper_requires_options_inside_the_material_input() -> None:
+    # Deleting a misplaced tool-level options key does not repair args: the
+    # complete material envelope still needs its own options object.
+    value = provisional_input()
+    del value["options"]
+
+    report = run_generated_workflow("paper", value)
+
+    assert report["agentCalls"] == 0
+    assert report["pipelineCalls"] == 0
+    assert report["value"]["issue"]["code"] == "material.invalid_input"
+
+
 @pytest.mark.parametrize(
     ("entry", "catalogs", "rows", "contracts"),
     [
