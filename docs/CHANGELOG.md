@@ -2,6 +2,9 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.68.5** (2026-10-04): Support field-based Archive collections. Accept one optional `collection` string in `archive.md`, preserve it when collecting more originals or updating Topic membership, and keep `topics`/`themes` multi-valued. Collection membership no longer requires a parent directory or `collection.md`; legacy grouped paths remain readable during migration.
+  - Validation: 130 targeted Archive, Topic, material-plan and contract tests passed; generated Workflow parity and TypeScript checks passed. Pair with Marple's field-based grouping UI when migrating directory collections.
+
 - **0.68.4** (2026-10-04): Repair the battery-book preparation failures and clarify additive translation requests.
   - Accept MinerU's empty image/equation containers and chart blocks while retaining their separately recognized children. Preserve standalone visual math as source pixels in layout; convert inline annotated arrows with direction and both labels intact. Unknown placed prose, malformed containers and missing glyphs still fail; normalization errors now identify the page.
   - Add repeatable, exact `quasi-extract epub --exclude-title` selections through the existing generation transaction, with manifest preconditions and request fingerprint binding. This lets the extraction specialist remove a verified promotional catalogue without a publisher blacklist or manual manifest edits. Expose the capability in Book Prepare and carry earlier exclusions forward.
