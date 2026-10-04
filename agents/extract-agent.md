@@ -81,6 +81,11 @@ quality 记录新旧层不一致的正文段落和缺少旧层的页；新识别
 目标是得到一个 manifest 明列、顺序稳定、边界语义可靠的章节集合。
 
 - EPUB：使用 EPUB extractor 形成章节集合，然后读取 manifest 及各章代表性头尾与正文。
+  确认某项是宣传页、他作列表等非阅读材料时，用 `--exclude-title EXACT_TITLE`（可重复）
+  明列应排除的 manifest 原样标题，以 `--expected-manifest-fingerprint` 绑定刚读过的清单，
+  通过同一 `quasi-extract epub` 事务重建。把既有 `skipped` 中 `excluded_by_request` 的标题
+  一并带上，保留先前排除决定。每个标题必须唯一精确匹配；歧义、拼写不符或全排除都会失败。
+  排除判断来自实际正文，不靠通用关键词猜测；不得手改 manifest 或删除章节文件。
 - PDF：先抽取文本层到 request 的 exact `normalized_document` ref，并实际阅读开头、中段
   和结尾的代表性正文。只要正文连贯可读，就使用原 PDF 继续切分；缺少目录、TOC/pattern
   切分失败、章节边界不理想或需要 manual ranges，都只是结构问题，不是 OCR 依据。

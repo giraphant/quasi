@@ -7,6 +7,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 EXTRACT = PLUGIN_ROOT / "scripts" / "extract" / "extract.py"
@@ -19,6 +21,7 @@ def _write_epub(
     include_ncx: bool = True,
     filename_template: str = "chapter-{index}",
     nav_title_template: str = "Chapter {index}: Title",
+    titles: list[str] | None = None,
 ) -> None:
     navpoints = []
     with zipfile.ZipFile(path, "w") as archive:
@@ -27,7 +30,7 @@ def _write_epub(
             navpoints.append(
                 f"""
                 <navPoint id="chapter-{index}">
-                  <navLabel><text>{nav_title_template.format(index=index)}</text></navLabel>
+                  <navLabel><text>{titles[index - 1] if titles else nav_title_template.format(index=index)}</text></navLabel>
                   <content src="{filename}"/>
                 </navPoint>
                 """
@@ -181,6 +184,71 @@ def test_epub_invalid_archive_preserves_previous_generation(tmp_path: Path):
     ).hexdigest()
     assert receipt["previous_manifest_preserved"] is True
     assert (output / "manifest.json").read_bytes() == manifest_before
+
+
+def test_epub_explicit_exclusion_rebuilds_and_reuses_exact_generation(tmp_path):
+    source, output = tmp_path / 'book.epub', tmp_path / 'chapters'
+    titles = ['Preface', 'Batteries and Society', 'WEYERHAEUSER ENVIRONMENTAL BOOKS']
+    _write_epub(source, chapter_count=3, titles=titles)
+    initial = json.loads(_run('epub', str(source), str(output), '--json').stdout)
+    assert [c['title'] for c in initial['chapters']] == titles
+    retained = {c['title']: (output / c['filename']).read_bytes() for c in initial['chapters'][:2]}
+    excluded = output / initial['chapters'][-1]['filename']
+    args = ['epub', str(source), str(output), '--exclude-title', titles[-1], '--json']
+    changed = _run(*args, '--expected-manifest-fingerprint', initial['manifest_fingerprint'])
+    receipt = json.loads(changed.stdout)
+    assert changed.returncode == 0, changed.stderr
+    assert receipt['disposition'] == 'replaced'
+    assert [c['title'] for c in receipt['chapters']] == titles[:2]
+    assert not excluded.exists()
+    for row in receipt['chapters']:
+        assert (output / row['filename']).read_bytes() == retained[row['title']]
+    manifest = json.loads((output / 'manifest.json').read_text())
+    committed = (output / 'manifest.json').read_bytes()
+    assert {'title': titles[-1], 'reason': 'excluded_by_request'} in manifest['skipped']
+    again = _run(*args, '--expected-manifest-fingerprint', receipt['manifest_fingerprint'])
+    assert json.loads(again.stdout)['disposition'] == 'reconciled'
+    stale = _run(*args, '--expected-manifest-fingerprint', initial['manifest_fingerprint'])
+    assert stale.returncode != 0
+    assert json.loads(stale.stdout)['failure']['code'] == 'expected_manifest_mismatch'
+    assert (output / 'manifest.json').read_bytes() == committed
+
+
+@pytest.mark.parametrize('excluded', ['Missing', 'Batteries', 'batteries and society', ''])
+def test_epub_exclusion_requires_one_exact_nonempty_title_and_preserves_files(tmp_path, excluded):
+    source, output = tmp_path / 'book.epub', tmp_path / 'chapters'
+    _write_epub(source, titles=['Batteries and Society', 'A Different Chapter'])
+    assert _run('epub', str(source), str(output), '--json').returncode == 0
+    before = {p.name: p.read_bytes() for p in output.iterdir() if p.is_file()}
+    result = _run('epub', str(source), str(output), '--exclude-title', excluded, '--json')
+    assert result.returncode != 0
+    assert json.loads(result.stdout)['failure']['code'] == 'invalid_chapter_exclusion'
+    assert {p.name: p.read_bytes() for p in output.iterdir() if p.is_file()} == before
+
+
+def test_epub_exclusion_rejects_ambiguous_and_duplicate_titles(tmp_path):
+    source, output = tmp_path / 'book.epub', tmp_path / 'chapters'
+    _write_epub(source, titles=['Same Title', 'Same Title'])
+    for exclusions in [['Same Title'], ['Same Title', 'Same Title']]:
+        args = [item for title in exclusions for item in ['--exclude-title', title]]
+        result = _run('epub', str(source), str(output), *args, '--json')
+        assert result.returncode != 0
+        assert json.loads(result.stdout)['failure']['code'] == 'invalid_chapter_exclusion'
+        assert not (output / 'manifest.json').exists()
+
+
+def test_epub_exclusions_are_a_set_and_cannot_remove_every_chapter(tmp_path):
+    source, output = tmp_path / 'book.epub', tmp_path / 'chapters'
+    _write_epub(source, chapter_count=3, titles=['First', 'Second', 'Third'])
+    args = ['epub', str(source), str(output), '--json']
+    one = _run(*args, '--exclude-title', 'First', '--exclude-title', 'Third')
+    assert one.returncode == 0, one.stderr
+    two = _run(*args, '--exclude-title', 'Third', '--exclude-title', 'First')
+    assert json.loads(two.stdout)['disposition'] == 'reconciled'
+    before = (output / 'manifest.json').read_bytes()
+    empty = _run(*args, '--exclude-title', 'First', '--exclude-title', 'Second', '--exclude-title', 'Third')
+    assert empty.returncode != 0
+    assert (output / 'manifest.json').read_bytes() == before
 
 
 def test_epub_uses_opf_spine_order_and_keeps_unlisted_heading(tmp_path: Path):

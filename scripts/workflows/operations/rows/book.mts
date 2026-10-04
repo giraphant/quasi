@@ -719,6 +719,9 @@ export const bookOperationRows: OperationRow[] = [
             ]
           : []),
         "quasi-extract epub INPUT OUTPUT_DIR --json",
+        ...(refs.format === "epub"
+          ? ["quasi-extract epub INPUT OUTPUT_DIR --exclude-title EXACT_TITLE [--exclude-title EXACT_TITLE ...] --expected-manifest-fingerprint SHA --json"]
+          : []),
         ...(refs.format === "pdf"
           ? [
               `quasi-extract split ${posixSingleQuote(refs.input)} --output-dir ${posixSingleQuote(refs.outputDir)} --method toc|pattern --json`,
@@ -833,6 +836,8 @@ export const bookOperationRows: OperationRow[] = [
         schema_version: "quasi.stage.request/0.2",
         operation: "chapter.analyse",
         stage: "Analyse",
+        objective:
+          "Produce this chapter's reading artifact within Book processing. A separately requested subsequent translation is a different material task, not the output of this operation.",
         material_key: materialKey,
         input: { role: "normalized_chapter", path: refs.input },
         output: { role: "chapter_canonical", path: refs.output },

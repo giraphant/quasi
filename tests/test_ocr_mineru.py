@@ -84,6 +84,82 @@ def test_unknown_markup_or_block_never_silently_discards_text():
         with pytest.raises(ValueError): engine.normalize_blocks([invalid])
 
 
+@pytest.mark.parametrize('layout', [True, False])
+def test_mineru_visual_containers_keep_children_and_source_images(tmp_path, layout):
+    source = source_pdf(tmp_path / 'source.pdf')
+    output = tmp_path / 'output.pdf'
+    rows = [block('', 'image_block'), block('', 'chart'),
+            block('Figure caption', 'image_caption'), block('', 'equation_block'),
+            block(r'\[x+y=3\]', 'equation'), block('Body paragraph.')]
+    engine.write_output(source, output, [rows], layout=layout, model=engine.MODEL)
+    with fitz.open(source) as src, fitz.open(output) as doc:
+        text = ' '.join(doc[0].get_text().split())
+        assert 'Figure caption' in text and 'Body paragraph.' in text
+        assert ('x+y=3' in text) == (not layout)
+        if layout:
+            assert src[0].get_pixmap().samples == doc[0].get_pixmap().samples
+            assert layout_evidence.inspect(output)['prepared']
+
+
+@pytest.mark.parametrize('layout', [True, False])
+def test_annotated_arrow_keeps_direction_and_both_labels_in_pdf(tmp_path, layout):
+    source = source_pdf(tmp_path / 'source.pdf')
+    output = tmp_path / 'output.pdf'
+    text = r'\( A \xrightarrow[discharge]{charge} B \)'
+    engine.write_output(source, output, [[block(text)]], layout=layout, model=engine.MODEL)
+    with fitz.open(output) as doc:
+        assert ' '.join(doc[0].get_text().split()) == 'A ⟶[above: charge; below: discharge] B'
+
+
+@pytest.mark.parametrize(('raw', 'expected'), [
+    (r'A \xrightarrow{charge} B', 'A ⟶[above: charge] B'),
+    (r'\(A \xleftarrow[\beta]{\text{fast charge}} B\)',
+     'A ⟵[above: fast charge; below: β] B'),
+    (r'\(A \xrightarrow{} B\)', 'A ⟶ B'),
+])
+def test_annotated_arrow_markup(raw, expected):
+    assert engine.clean(raw) == expected
+
+
+def test_unknown_arrow_annotation_is_not_discarded():
+    with pytest.raises(ValueError, match='unknownsecret'):
+        engine.clean(r'\(A \xrightarrow{\unknownsecret{charge}} B\)')
+
+
+@pytest.mark.parametrize('raw', [r'\(A \xrightarrow\)', r'\xrightarrow[charge]'])
+def test_annotated_arrow_missing_required_argument_fails(raw):
+    with pytest.raises(ValueError, match='malformed'):
+        engine.clean(raw)
+
+
+@pytest.mark.parametrize('kind', ['list', 'image_block', 'equation_block'])
+def test_unexpected_container_text_is_not_silently_dropped(kind):
+    with pytest.raises(ValueError, match='unexpected text'):
+        engine.normalize_blocks([block('Unexpected meaningful content', kind)], layout=True)
+
+
+@pytest.mark.parametrize('kind', ['table', 'equation'])
+def test_layout_keeps_unconverted_visual_math_in_image_only(tmp_path, kind):
+    source = source_pdf(tmp_path / 'source.pdf')
+    output = tmp_path / 'output.pdf'
+    rows = [block('Body paragraph.'), block(r'\[\unknownsecret{meaning}\]', kind)]
+    engine.write_output(source, output, [rows], layout=True, model=engine.MODEL)
+    with fitz.open(source) as src, fitz.open(output) as doc:
+        assert ' '.join(doc[0].get_text().split()) == 'Body paragraph.'
+        assert src[0].get_pixmap().samples == doc[0].get_pixmap().samples
+    with pytest.raises(ValueError, match='page 1:.*unknownsecret'):
+        engine.write_output(source, tmp_path / 'text.pdf', [rows], layout=False, model=engine.MODEL)
+
+
+def test_layout_unknown_body_math_still_stops_publication(tmp_path):
+    source = source_pdf(tmp_path / 'source.pdf')
+    output = tmp_path / 'output.pdf'
+    with pytest.raises(ValueError, match='page 1:.*unknownsecret'):
+        engine.write_output(source, output, [[block(r'\(\unknownsecret{meaning}\)')]],
+                            layout=True, model=engine.MODEL)
+    assert not output.exists()
+
+
 def test_unicode_font_absence_fails_instead_of_losing_chinese(monkeypatch):
     monkeypatch.setattr(engine, "_FONT_FILES", [])
     with pytest.raises(ValueError, match="Unicode font"):

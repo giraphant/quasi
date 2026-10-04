@@ -24,7 +24,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import pymupdf as fitz
-from pylatexenc.latex2text import LatexNodes2Text
+from pylatexenc.latex2text import LatexNodes2Text, MacroTextSpec
 
 if __package__:
     from . import layout_evidence, ocr_quality
@@ -40,8 +40,11 @@ SHRINK = (0.90, 0.85, 0.80, 0.75)
 TEXT = {"text", "title", "paragraph_title", "page_footnote", "ref_text", "table_footnote",
         "table_caption", "image_caption", "header", "footer", "page_number", "aside_text"}
 FURNITURE = {"header", "footer", "page_number", "aside_text"}
-PICTURES = {"table", "equation", "image", "image_body", "table_body"}
-TYPES = TEXT | PICTURES | {"list"}
+PICTURES = {"table", "equation", "image", "image_body", "table_body", "chart"}
+# mineru-vl-utils 2.0.5 leaves these containers empty and recognizes their
+# children separately. A container is not an additional paragraph or image.
+CONTAINERS = {"list", "image_block", "equation_block"}
+TYPES = TEXT | PICTURES | CONTAINERS
 _MINERU_CMD = [
     "uvx", "--python", "3.12", "--from", "mlx-vlm==0.7.3",
     "--with", "mlx==0.32.2", "--with", "mineru-vl-utils==2.0.5",
@@ -103,6 +106,28 @@ def clean(text: str) -> str:
     """Convert inline math/HTML without interpreting plain prose as LaTeX."""
     converter = LatexNodes2Text(math_mode="text")
 
+    def annotated_arrow(node, l2tobj):
+        # pylatexenc's parser knows amsmath's [{ arguments, but its text
+        # converter has no replacement. Keep both labels and their positions.
+        args = node.nodeargd.argnlist if node.nodeargd else []
+        if len(args) != 2 or args[1] is None:
+            raise ValueError(f"malformed inline LaTeX command: {node.macroname}")
+        labels = []
+        for label, arg in (("above", args[1]), ("below", args[0])):
+            if arg is not None:
+                value = l2tobj.nodelist_to_text([arg]).strip()
+                if value:
+                    labels.append(f"{label}: {value}")
+        arrow = "⟶" if node.macroname == "xrightarrow" else "⟵"
+        return arrow + ("[" + "; ".join(labels) + "]" if labels else "")
+
+    converter.latex_context.add_context_category(
+        "quasi-annotated-arrows",
+        macros=[MacroTextSpec(name, simplify_repl=annotated_arrow)
+                for name in ("xrightarrow", "xleftarrow")],
+        prepend=True,
+    )
+
     def latex(fragment: str) -> str:
         fragment = re.sub(r"\\tag\s*\{([^{}]*)\}", r"(\1)", fragment)
         footnote = re.fullmatch(r"\s*\^\{([^{}]+)\}\s*", fragment)
@@ -114,7 +139,8 @@ def clean(text: str) -> str:
         return converter.latex_to_text(fragment)
 
     text = re.sub(r"\\\((.*?)\\\)|\\\[(.*?)\\\]", lambda m: latex(m[1] if m[1] is not None else m[2]), text, flags=re.S)
-    text = re.sub(r"\\[a-zA-Z]+(?:\s*\{(?:[^{}]|\{[^{}]*\})*\})*", lambda m: latex(m[0]), text)
+    text = re.sub(r"\\[a-zA-Z]+(?:\s*\[(?:[^\[\]{}]|\{[^{}]*\})*\])?(?:\s*\{(?:[^{}]|\{[^{}]*\})*\})*",
+                  lambda m: latex(m[0]), text)
     text = re.sub(r"\\([$%&#_{}])", r"\1", text)
     if re.search(r"\\[()\[\]a-zA-Z]", text):
         raise ValueError("unconverted LaTeX markup")
@@ -127,7 +153,7 @@ def clean(text: str) -> str:
     return re.sub(r"[ \t]+", " ", text).strip()
 
 
-def normalize_blocks(rows: object) -> list[dict]:
+def normalize_blocks(rows: object, *, layout: bool = False) -> list[dict]:
     if not isinstance(rows, list):
         raise ValueError("MinerU page result is not a list")
     result = []
@@ -146,10 +172,15 @@ def normalize_blocks(rows: object) -> list[dict]:
             raise ValueError("MinerU block content is not text")
         if row["type"] in TEXT and not content.strip():
             raise ValueError(f"MinerU returned an empty {row['type']} block")
+        if row["type"] in CONTAINERS and content.strip():
+            raise ValueError(f"unexpected text in MinerU container: {row['type']}")
         angle = row.get("angle") or 0
         if type(angle) is not int or angle not in {0, 90, 180, 270}:
             raise ValueError("unsupported MinerU text rotation")
-        result.append({"type": row["type"], "bbox": list(box), "content": clean(content), "angle": angle})
+        # Layout preserves tables and equations as source pixels. Converting
+        # their unused LaTeX can fail the entire book for no placement benefit.
+        cleaned = content if layout and row["type"] in PICTURES else clean(content)
+        result.append({"type": row["type"], "bbox": list(box), "content": cleaned, "angle": angle})
     return result
 
 
@@ -251,7 +282,10 @@ def write_output(source: Path, output: Path, pages: list[list[dict]], *, layout:
             if layout and not layout_evidence.has_page_image(src[i]):
                 plans.append([])
                 continue
-            blocks = normalize_blocks(rows)
+            try:
+                blocks = normalize_blocks(rows, layout=layout)
+            except ValueError as exc:
+                raise ValueError(f"page {i + 1}: {exc}") from exc
             if not blocks and len(ocr_quality.words(src[i].get_text())) >= 50:
                 raise ValueError(f"page {i + 1}: no recognized blocks despite a usable old text layer")
             ocr_quality.check_page(src[i], blocks, i + 1, quality)
@@ -275,7 +309,9 @@ def write_output(source: Path, output: Path, pages: list[list[dict]], *, layout:
                 plans.append(plan)
             else:
                 # Preserve model reading order; footnotes remain separate blocks.
-                text = "\n\n".join(b["content"] for b in blocks if b["type"] not in FURNITURE | {"list", "image", "image_body"} and b["content"])
+                text = "\n\n".join(b["content"] for b in blocks
+                                   if b["type"] not in FURNITURE | CONTAINERS | {"image", "image_body", "chart"}
+                                   and b["content"])
                 if not text:
                     out.insert_pdf(src, from_page=i, to_page=i)
                     continue

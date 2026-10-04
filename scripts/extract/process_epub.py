@@ -147,7 +147,7 @@ def _first_heading(html_content: str) -> str | None:
     return title or None
 
 
-def process_epub(epub_path, output_dir, *, structured=False):
+def process_epub(epub_path, output_dir, *, structured=False, exclude_titles=()):
     """处理epub文件"""
     epub_path = Path(epub_path)
     output_dir = Path(output_dir)
@@ -336,6 +336,27 @@ def process_epub(epub_path, output_dir, *, structured=False):
 
             entries.append({'title': title, 'text': text})
 
+        # The specialist owns the semantic decision; the CLI only applies
+        # exact, unambiguous selections inside the ordinary generation commit.
+        if (any(not title.strip() for title in exclude_titles)
+                or len(set(exclude_titles)) != len(exclude_titles)):
+            raise ChapterFailure('invalid_chapter_exclusion',
+                                 'excluded titles must be nonempty and distinct', exit_code=2)
+        for title in exclude_titles:
+            matches = sum(entry['title'] == title for entry in entries)
+            if matches != 1:
+                raise ChapterFailure('invalid_chapter_exclusion',
+                                     f'excluded title must match exactly one extracted chapter: {title!r} ({matches} matches)',
+                                     exit_code=2)
+        if exclude_titles:
+            excluded = set(exclude_titles)
+            skipped.extend({'title': entry['title'], 'reason': 'excluded_by_request'}
+                           for entry in entries if entry['title'] in excluded)
+            entries = [entry for entry in entries if entry['title'] not in excluded]
+            if not entries:
+                raise ChapterFailure('invalid_chapter_exclusion',
+                                     'exclusions would remove every extracted chapter', exit_code=2)
+
         # Pass 2: 分配 slot
         assign_slots(entries)
 
@@ -408,6 +429,10 @@ def _make_parser(json_mode: bool = False) -> argparse.ArgumentParser:
         '--expected-manifest-fingerprint',
         help='Require the current manifest to match this SHA-256 before writing',
     )
+    parser.add_argument(
+        '--exclude-title', action='append', default=[], metavar='EXACT_TITLE',
+        help='Exclude one uniquely matching extracted title; repeat for multiple titles',
+    )
     return parser
 
 
@@ -468,7 +493,8 @@ def _commit_epub(args, *, progress_stream) -> tuple[int, dict]:
 
     def build(stage_dir: Path, _previous_manifest: dict | None) -> dict:
         try:
-            return process_epub(input_path, stage_dir, structured=True)
+            return process_epub(input_path, stage_dir, structured=True,
+                                exclude_titles=args.exclude_title)
         except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as exc:
             raise ChapterFailure(
                 'invalid_epub',
@@ -484,6 +510,7 @@ def _commit_epub(args, *, progress_stream) -> tuple[int, dict]:
             options={
                 'extractor': 'epub',
                 'chapter_ref_contract': CHAPTER_REF_CONTRACT,
+                **({'exclude_titles': sorted(args.exclude_title)} if args.exclude_title else {}),
             },
             max_chapters=args.max_chapters,
             build_stage=build,

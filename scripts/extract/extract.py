@@ -26,7 +26,8 @@ HELP = """\
 quasi-extract — file → MD pipeline.
 
 Usage:
-  quasi-extract epub  SOURCE_EPUB CHAPTERS_DIR [--json]
+  quasi-extract epub  SOURCE_EPUB CHAPTERS_DIR [--exclude-title EXACT_TITLE ...]
+                      [--expected-manifest-fingerprint SHA] [--json]
   quasi-extract text  INPUT.pdf OUTPUT.txt [--json]
   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine mineru|tesseract]
                                 [--layout] [--no-clobber] [--json]

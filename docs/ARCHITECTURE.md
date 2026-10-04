@@ -167,6 +167,12 @@ so unrelated subagents retain Claude Code's default row.
 - `metadata-agent` and `discovery-agent` return JSON and do not write files.
 - `download-agent` reconciles or accepts one exact Book/Paper source through `quasi-download`; it returns that material's direct Acquire receipt, including a standard `needs_input` terminal for a Book year gate, and does not own caller manifests. A failed download preserves `failure_reason` and per-source `attempts` in its receipt.
 - `extract-agent` owns Paper/Book Prepare judgement and local recovery over caller-named refs. It invokes deterministic `quasi-extract` transactions; those CLI transactions own chapter files and `processing/chapters/{slug}/manifest.json`.
+  EPUB semantic repair uses repeatable `quasi-extract epub --exclude-title EXACT_TITLE`
+  with the observed `--expected-manifest-fingerprint`. Each selection must uniquely
+  match an extracted title; the CLI records `excluded_by_request`, binds the sorted
+  exclusion set into the generation request and publishes the whole set atomically.
+  The specialist carries earlier explicit exclusions forward when adding another;
+  the CLI does not classify promotional material by publisher name or edit a manifest in place.
 - `analyse-agent`, `synthesis-agent`, `proofread-agent`, and `citecheck-agent` write only the exact product path assigned by the caller.
 - Chapter Analyse receives parent `book_authors` and `book_category` as context, not fixed chapter authors. Chapter inventories do not establish bylines: the request leaves `authors` out of `frontmatter_seed` and marks it in `source_derived_fields` for the analyst to resolve from the exact chapter. Book overview metadata retains its own author/editor list.
 - The research main agent owns Topic outline/resources updates by batch, preserving user edits. It may delegate one exact output to synthesis; one writer owns each shared file. Independent synthesis reports may run in parallel without writes.

@@ -72,6 +72,21 @@ MinerU's normalized paragraph boxes replace DS OCR2's grounded line boxes. The f
 
 `text`, `title`, `paragraph_title`, `ref_text`, `page_footnote`, `table_footnote`, and captions are independent textboxes. All three footnote labels matter because the model uses them inconsistently. Furniture keeps its own size. Empty `list` containers add no text; their recognized children carry the notes. `table`, `equation`, and image blocks add **no layout text**, so BabelDOC cannot shred their original image into translated line fragments. Ordinary OCR still emits recognized table/formula content. Inline math and HTML are cleaned before placement, including superscript note numbers. Rotation follows the model's crop orientation.
 
+The Battery and Bottled Energy exposed two adapter failures on 2026-10-04, after
+326 and 448 pages respectively had completed recognition. The pinned
+mineru-vl-utils 2.0.5 also emits empty `image_block` and `equation_block` containers,
+plus `chart` visual blocks. Accept these known types, keep their separately returned
+captions/equations, and reject unexpected container text rather than losing it.
+In layout mode, leave independent table/formula content in the preserved source
+image without trying to convert unused LaTeX. Ordinary text OCR still converts
+that recognized content. For inline `\xrightarrow` and `\xleftarrow`, pylatexenc's
+parser already understands the optional lower and required upper arguments; the
+missing text projection now preserves the arrow and explicitly labelled
+`above`/`below` annotations. Unknown commands in placed prose still fail, and
+normalization errors identify the source page within the invocation. Full glyph
+coverage, PDF text round trips and layout provenance remain required. See the
+[ablation reasoning and validation record](evals/battery-books-recovery-20261004.md).
+
 In addition to `QuasiLayout`, both OCR outputs carry `QuasiOCR` (`quasi.ocr.evidence/0.1`, profile `mineru25-pro-2605-text/1`) bound to the source hash, model, page count and extracted-text digest. For body paragraphs with at least ten word tokens, compare new word order with the source page's old text layer. Agreement below **0.85** records page, block, box, score and short old/new excerpts. `ref_text`, `page_footnote` and `table_footnote` are exempt. A text block containing at least three page ranges is also exempt when both the old source and MinerU agree on an exact Notes/References/Bibliography heading at the top of the page. Merely containing names, acronyms or a title such as “Notes on Method” is insufficient. Comparison normalizes compound and line-break hyphens alike without changing the emitted recognition text; fewer than 50 old tokens means the baseline is unavailable, not a successful check. Empty model pages are recorded separately in `empty_pages`; an empty page with at least 50 old tokens fails. This distinction is measured: Barnes physical page 176 is visibly blank paper with 44 old OCR noise tokens. With an unavailable baseline, retain the image and record the empty result rather than claiming recognized text. The default keeps new recognition and reports differences. Old text can itself be wrong: the real Harrington p41 sample is a readable new paragraph against garbled old OCR. Agreement is a review signal, not a truth test or an automatic reason to restore old text.
 
 MinerU generation manifests use `quasi.ocr.generation.manifest/0.2` and include combined quality evidence with source-book page numbers. Other profiles retain manifest 0.1. Direct `ocr` writes only its named PDF; its embedded evidence avoids adding an uncontracted sidecar. Suspect text remains inspectable in the result. Books without an old text layer have no independent recognition check.

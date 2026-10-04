@@ -2068,6 +2068,20 @@ def test_only_operations_with_typed_gates_expose_needs_input() -> None:
     assert "needs_input" not in _terminal_statuses(_prepare("book.prepare"))
 
 
+@pytest.mark.parametrize("format", ["epub", "pdf"])
+def test_book_prepare_exposes_transactional_epub_exclusion_only_for_epub(format):
+    request = _prompt_request(_prepare(
+        "book.prepare", context=_context(format=format,
+            source=f"sources/exact-material.{format}",
+            input=f"sources/exact-material.{format}"),
+    )["prompt"])
+    capabilities = [item for item in request["capabilities"] if "--exclude-title" in item]
+    assert len(capabilities) == (1 if format == "epub" else 0)
+    if capabilities:
+        assert "--expected-manifest-fingerprint" in capabilities[0]
+        assert capabilities[0].startswith("quasi-extract epub ")
+
+
 def test_every_writer_has_normalized_project_relative_targets():
     registered = _registered_operations()
 

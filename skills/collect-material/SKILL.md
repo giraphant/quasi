@@ -22,7 +22,7 @@ description: Use when the user wants to collect an archival source, preserve a p
 - Book：`title|isbn` 至少一个；identity hints 可带 `authors/year/publisher/category`；`format`
   只作为下载偏好，不属于 identity hints。
 - Talk：一个已经接受到 `sources/{slug}.{media-ext}` 的媒体，以及 `slug/title/date`；可带 `engines/lang/prepare_media`；`prepare_media` 省略时由 entry parser 按媒体类型决定（视频 true，音频 false）。
-- Translation：Paper 的 canonical slug；可带 `target_language/source_file/toc_json/toc_page_side`，用户未指定 target 时用 `zh`。
+- Translation：已接受 PDF 的 canonical slug（Paper 或 Book）；可带 `target_language/source_file/toc_json/toc_page_side`，用户未指定 target 时用 `zh`。只有 EPUB 的 Book 仍需先取得 PDF，不能把 EPUB 路径送给 PDF 翻译入口。
 - Author：`slug/full_name/topic`；可用 `maxBooks/maxPapers` 向下限制默认的 5/10 个代表作。
 - Archive：用户明确收为档案的一个 exact 公共 URL；初次 seed 为 `{state:"provisional",url}`、observation 为 null，options 可含 topics（Topic slug 数组）。由 Archive owner 判材料 kind；网页入口不改变档案归属。
 - Webpage：仅当用户要保存该公共 URL 对应的网页本身时使用；明确作为 Paper/Book clue 提供的 URL 仍归属原材料。
@@ -32,6 +32,14 @@ description: Use when the user wants to collect an archival source, preserve a p
 输入的一基序号分配 `request-{kind}-{ordinal}`；这个 key 只是本次请求身份，不是 canonical
 slug。Talk/Translation 使用其 exact source slug。Paper/Book 把原始事实放进 provisional
 seed；严格 hint、identity、owner 与路径验证只由 TypeScript entry parser 负责。
+
+运行中收到「每处理完一本就翻译」等追加请求时，保留尚未完成的原处理任务，并为每个
+完成且经 fresh status 核验的材料接上独立 Translation。明确取消或替换才撤掉原任务；
+不要把最后一条消息当作完整任务历史。主线程向用户说明现行顺序与尚在运行的材料，
+沿用已有 writer，不重复派发。Workflow 宿主可能只向后续 specialist 转交最后一条消息；
+不要伪造用户原话、增加未经支持的工具参数或在 computed request 中声称新的授权。
+若因此返回 scope conflict，保留 typed failure 与原请求证据；续跑先核对是否仍有 writer，
+在明确的完整任务范围下重新观察 exact status，不把失败回执改判成功或直接重放章节。
 
 ## 硬约束
 
