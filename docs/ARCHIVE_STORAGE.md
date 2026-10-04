@@ -39,7 +39,17 @@ created 是本库建档日期，date 仅为原材料发布日期。网页采集�
 manifest 继续管理逐文件原始 URL、异源覆盖及保存记录。初次采集后保留已有正文和元数据；
 补充已知元数据只填空缺，遇到已有不同值先明确协调，不静默覆盖。
 
-## 目录合集（Collection）
+## 字段合集（Collection）
+
+`archive.md` 的可选 `collection` 字段是单个文本值，例如 `collection: 苹果维修手册`。
+一份 Archive 最多属于一个合集，空缺表示未归组；`topics`、`themes` 仍为多值字段。
+Marple 按字段生成分组，整理、改名和移出只更新此字段，不移动文件。
+补采和 Topic membership 更新保留已有 collection；采集器不推断、重设用户的整理归属。
+取消分组是视图操作，不清除字段。集合名称不充当目录名或路径引用。
+
+### 旧目录读取兼容
+
+旧库可能仍包含以下目录布局；读写继续定位实际 Archive 路径，不自动迁移：
 
 ```text
 vault/archives/
@@ -52,7 +62,7 @@ vault/archives/
 
 仅支持一级合集。`collection.md` 是唯一标记，可以为空；首个 H1 是显示标题，
 否则使用目录名。正文是自由说明，不设 manifest、成员列表或 Archive collection_id。
-成员关系就是目录父子关系；完整移动 Archive 目录即可入组、换组、移出。
+旧版成员关系由目录父子关系表达；新版 Marple 以 archive.md 中的 collection 为准。
 Book 和混合类型合集不在本次范围。Archive 自身的 manifest/0.2 与 originals 相对路径不变。
 同一目录不能同时有 archive.md 和 collection.md；不跟随符号链接，不接受嵌套合集。
 合集名可用中文、空格；Archive slug 仍须在整个 archives 下唯一。
@@ -62,9 +72,9 @@ Book 和混合类型合集不在本次范围。Archive 自身的 manifest/0.2 �
 revision 包含对象所在目录，移动后旧 observation 会失效，需要 fresh status。
 Topic card 的 archives 字段记录实际路径（允许合集这一层）；URL owner 查找同时覆盖根目录和合集。
 
-Marple GUI 与 `marple-cli collections` 提供创建、改名和移动，按已支持的 Markdown/wiki/
-结构化路径引用同步修改，并保留操作回执。Finder 移动可被发现，但不会自动修复 Topic 等外部链接。
-请在写入停止时手动整理，或使用 Marple 的受控移动。
+新版 Marple GUI 与 `marple-cli collections assign/remove/rename` 只编辑字段，并保留操作回执。
+旧目录转字段、目录展平和外部链接修复需单独迁移；本次字段兼容不会执行这些操作。
+Finder 移动仍可被发现，但不会自动修复 Topic 等外部链接。
 
 采集除原有 slug/URL 锁外，还持有 `.marple/archive-collections.lock` 的共享 flock；
 Marple 整理持有同一路径的排他锁，忙时立即拒绝。锁是跨进程本机协调，不能保证 iCloud

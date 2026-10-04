@@ -51,6 +51,19 @@ def test_archive_required_fields(field):
         ArchiveSchema.model_validate({k: v for k, v in MINIMAL.items() if k != field})
 
 
+@pytest.mark.parametrize("collection", [None, "苹果维修手册", "维修: A/B"])
+def test_collection_is_optional_single_choice_and_topics_are_multiple(collection):
+    record = ArchiveSchema.model_validate({**MINIMAL, "collection": collection, "topics": ["one", "two"]})
+    assert record.collection == collection
+    assert record.topics == ["one", "two"]
+
+
+@pytest.mark.parametrize("collection", [["A"], ["A", "B"], {"name": "A"}, 42, True])
+def test_collection_rejects_lists_objects_and_non_text_values(collection):
+    with pytest.raises(ValidationError):
+        ArchiveSchema.model_validate({**MINIMAL, "collection": collection})
+
+
 @pytest.mark.parametrize("body", ["", "简短说明。\n", "# 评论截图\n\n## 自定义栏目\n\n[来源](https://example.com)\n"])
 def test_archive_audit_and_discovery_without_attachments(tmp_path, body):
     path = write_archive(tmp_path, body)

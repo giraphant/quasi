@@ -22,6 +22,7 @@ class ArchiveSchema(BaseModel):
     date: Optional[Date] = Field(default=None, strict=False, description="已核实的原材料完整发布日期；更新日期或部分日期写正文，未知省略")
     source: Optional[str] = Field(default=None, description="来源平台、发布机构或转存出处")
     url: Optional[str] = Field(default=None, description="材料原始直接链接，与 manifest 共同出处对应")
+    collection: Optional[str] = Field(default=None, description="可选的单选整理归属；保存在本页，不映射目录，空缺表示未归组")
     themes: list[str] = Field(default_factory=list)
     topics: list[str] = Field(default_factory=list)
     rating: Optional[Rating] = None

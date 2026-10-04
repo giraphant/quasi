@@ -505,6 +505,7 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
       "date",
       "source",
       "url",
+      "collection",
       "themes",
       "topics",
       "rating"
@@ -512,6 +513,19 @@ export const ARCHIVE_ARTIFACT_CONTRACT = {
     "json_schema": {
       "additionalProperties": false,
       "properties": {
+        "collection": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "可选的单选整理归属；保存在本页，不映射目录，空缺表示未归组",
+          "title": "Collection"
+        },
         "created": {
           "description": "本库建档日期，不是原文发布日期或快照时间",
           "format": "date",

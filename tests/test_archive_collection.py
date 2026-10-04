@@ -89,6 +89,26 @@ def test_link_only_inventory_and_membership_preserve_user_content(tmp_path):
     assert new.frontmatter['topics'] == ['repair', 'second-topic']
 
 
+def test_collect_preserves_marple_collection_and_paths(tmp_path, downloaded):
+    assert cli.collect(tmp_path, request(tmp_path, files=[asset()]))['status'] == 'complete'
+    directory = tmp_path / 'vault/archives' / SLUG
+    page = directory / 'archive.md'
+    page.write_text(page.read_text().replace('type: archive', 'type: archive\ncollection: 苹果维修手册'))
+    original = (directory / 'originals/001-screen-discoloration.jpg').read_bytes()
+    body = read_frontmatter(page).body
+    assert archive_status(tmp_path, SLUG)['facts']['canonical']['usable']
+    followup = request(tmp_path, topics=['another-topic'])
+    followup.update(body='', coverage='')
+    result = cli.collect(tmp_path, followup)
+    assert result['status'] == 'complete', result
+    document = read_frontmatter(page)
+    assert document.frontmatter['collection'] == '苹果维修手册'
+    assert document.frontmatter['topics'] == ['repair', 'another-topic']
+    assert document.body == body
+    assert (directory / 'originals/001-screen-discoloration.jpg').read_bytes() == original
+    assert sorted(path.name for path in (tmp_path / 'vault/archives').iterdir()) == [SLUG]
+
+
 def test_legacy_record_enriches_without_rewriting_body(tmp_path, downloaded):
     page = tmp_path / 'vault/archives' / SLUG / 'archive.md'
     page.parent.mkdir(parents=True)

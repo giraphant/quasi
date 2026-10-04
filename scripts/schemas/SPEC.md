@@ -633,14 +633,14 @@ export const WebpageSchema = z.object({
 单件档案材料：一条帖子及其回复、一段视频及其评论可作为一件，收录范围在正文说明。
 已有 `image`、`talk`、`webpage` 类型继续保留，不自动迁移。多次保存同一材料不自动建立新对象。
 
-新建入口为 `vault/archives/<slug>/archive.md`，也可移动到一层带 `collection.md` 的 `vault/archives/<collection>/<slug>/archive.md`。合集成员关系由目录表示，无单独 manifest。slug 使用 kebab-case，跨合集唯一；已有对象使用观察到的实际路径。
+新建入口为 `vault/archives/<slug>/archive.md`。合集归属由本页可选的 `collection` 单值文本字段表示，不随分组移动文件。读取兼容旧的一层目录 `vault/archives/<collection>/<slug>/archive.md`；已有对象使用观察到的实际路径。slug 使用 kebab-case，跨旧目录唯一。
 必填字段为 `type: archive`、`title`、`kind`、`created`（完整 `YYYY-MM-DD` 建档日期）。
 `kind` 描述对象而非保存格式，只接受 `patent|thread|post|video|image|webpage|document`。
 截图中的帖子仍为 `post` 或 `thread`，PDF 专利仍为 `patent`。
 
 可选字段：`creator`（姓名字符串数组，沿用 image）、`date`（原材料完整发布日期，
 专利为公开日期）、`source`（来源自由文本）、`url`（原始对象直接链接）、
-`themes`（主题字符串数组）、`topics`（专题 slug 数组）、`rating`（现有整数 1..5）。
+`collection`（单选整理归属，可省略，不接受数组）、`themes`（主题字符串数组）、`topics`（专题 slug 数组）、`rating`（现有整数 1..5）。
 未知字段省略；年份或约略年代写在正文，不补造完整日期。类别专属信息暂放正文。
 
 正文自由，可为空；材料概况、来源与保存、内容与摘录、关联只是建议栏目。
