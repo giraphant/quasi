@@ -343,6 +343,30 @@ def output_lock(paths: dict[str, Path | str]) -> Iterator[None]:
             os.close(descriptor)
 
 
+def writer_active(paths: dict) -> bool:
+    """Observe the existing publication lock; never create a lock or a writer."""
+    path = paths["lock_path"]
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return False
+    try:
+        owned = os.fstat(descriptor)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            try:
+                current = path.stat()
+            except FileNotFoundError:
+                return False
+            return (owned.st_dev, owned.st_ino) == (current.st_dev, current.st_ino)
+        else:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            return False
+    finally:
+        os.close(descriptor)
+
+
 def _layout_failure(source: Path, paths: dict, operation: str) -> dict | None:
     try:
         evidence = layout_evidence.inspect(source)
@@ -1054,6 +1078,27 @@ def observe(
                 current_candidates_fp if decision_path is not None else None
             ),
             toc_entries=int(manifest["toc_entries"]),
+        )
+    if writer_active(paths):
+        return _receipt(
+            operation="translation.reconcile",
+            status="succeeded",
+            slug=slug,
+            backend=backend,
+            target_language=target_language,
+            paths=paths,
+            input_path=source,
+            source_sha256=source_sha,
+            source_pages=source_pages,
+            request_fingerprint_value=request_fp,
+            toc_json=toc,
+            toc_page_side=toc_page_side,
+            coverage=None,
+            failure=None,
+            mode=mode,
+            generation_attempt=matching_attempt,
+            requested_source=requested,
+            signal="running",
         )
     if output_exists or manifest_exists:
         return _receipt(

@@ -6,6 +6,7 @@ scan text while preserving the images. Neither path silently changes engines.
 """
 from __future__ import annotations
 
+import argparse
 import html
 import hashlib
 import json
@@ -41,10 +42,11 @@ TEXT = {"text", "title", "paragraph_title", "page_footnote", "ref_text", "table_
         "table_caption", "image_caption", "header", "footer", "page_number", "aside_text"}
 FURNITURE = {"header", "footer", "page_number", "aside_text"}
 PICTURES = {"table", "equation", "image", "image_body", "table_body", "chart"}
-# mineru-vl-utils 2.0.5 leaves these containers empty and recognizes their
-# children separately. A container is not an additional paragraph or image.
-CONTAINERS = {"list", "image_block", "equation_block"}
-TYPES = TEXT | PICTURES | CONTAINERS
+# Labels select special presentation, not admission. Other nonempty content is
+# an ordinary paragraph; an unfamiliar name must never silently lose its text.
+TEXT_ALIASES = {"doc_title": "title", "image_footnote": "page_footnote",
+                "footnote": "page_footnote"}
+RECOGNITION_PROFILE = "mineru25-pro-2605-two-step/1"
 _MINERU_CMD = [
     "uvx", "--python", "3.12", "--from", "mlx-vlm==0.7.3",
     "--with", "mlx==0.32.2", "--with", "mineru-vl-utils==2.0.5",
@@ -157,30 +159,40 @@ def normalize_blocks(rows: object, *, layout: bool = False) -> list[dict]:
     if not isinstance(rows, list):
         raise ValueError("MinerU page result is not a list")
     result = []
-    for row in rows:
-        if not isinstance(row, dict) or row.get("type") not in TYPES:
-            raise ValueError(f"unknown or malformed MinerU block type: {row.get('type') if isinstance(row, dict) else None}")
+    for index, row in enumerate(rows, 1):
+        if not isinstance(row, dict):
+            raise ValueError(f"block {index}: MinerU block is not an object")
+        original_kind = row.get("type")
+        kind = original_kind if isinstance(original_kind, str) else ""
+        kind = TEXT_ALIASES.get(kind, kind)
         box = row.get("bbox")
         if (not isinstance(box, (list, tuple)) or len(box) != 4
                 or any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1 for v in box)
                 or box[0] >= box[2] or box[1] >= box[3]):
-            raise ValueError("invalid normalized MinerU bounding box")
+            raise ValueError(f"block {index} ({original_kind}): invalid normalized MinerU bounding box")
         content = row.get("content")
         if content is None or content == "None":
             content = ""
         if not isinstance(content, str):
-            raise ValueError("MinerU block content is not text")
-        if row["type"] in TEXT and not content.strip():
-            raise ValueError(f"MinerU returned an empty {row['type']} block")
-        if row["type"] in CONTAINERS and content.strip():
-            raise ValueError(f"unexpected text in MinerU container: {row['type']}")
+            raise ValueError(f"block {index} ({original_kind}): MinerU block content is not text")
+        if kind in TEXT and not content.strip():
+            raise ValueError(f"block {index}: MinerU returned an empty {kind} block")
+        if kind not in PICTURES and kind not in TEXT:
+            # Containers with their own content also need a text projection.
+            kind = "text" if content.strip() else "image"
+            if content.strip():
+                print(f"[mineru] block {index}: treating {original_kind!r} as text", file=sys.stderr)
         angle = row.get("angle") or 0
         if type(angle) is not int or angle not in {0, 90, 180, 270}:
-            raise ValueError("unsupported MinerU text rotation")
+            raise ValueError(f"block {index} ({original_kind}): unsupported MinerU text rotation")
         # Layout preserves tables and equations as source pixels. Converting
         # their unused LaTeX can fail the entire book for no placement benefit.
-        cleaned = content if layout and row["type"] in PICTURES else clean(content)
-        result.append({"type": row["type"], "bbox": list(box), "content": cleaned, "angle": angle})
+        try:
+            cleaned = content if layout and kind in PICTURES else clean(content)
+        except ValueError as exc:
+            raise ValueError(f"block {index} ({original_kind}): {exc}") from exc
+        result.append({"type": kind, "bbox": list(box), "content": cleaned, "angle": angle,
+                       "source_type": original_kind, "source_block": index})
     return result
 
 
@@ -302,7 +314,14 @@ def write_output(source: Path, output: Path, pages: list[list[dict]], *, layout:
                 for block, text in zip(selected, texts):
                     rect = rectangle(page, block)
                     rotate = (-block["angle"]) % 360
-                    size = natural_size(page, rect, text, fontname, fontfile, rotate=rotate)
+                    try:
+                        size = natural_size(page, rect, text, fontname, fontfile, rotate=rotate)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"page {i + 1}, block {block['source_block']} ({block['source_type']}), "
+                            f"bbox={block['bbox']}, rotation={block['angle']}, chars={len(text)}, "
+                            f"excerpt={text[:120]!r}: {exc}"
+                        ) from exc
                     plan.append((block, rect, text, size, fontname, fontfile, rotate))
                     if block["type"] == "text" and len(text) >= 200:
                         sizes.append(size)
@@ -310,7 +329,7 @@ def write_output(source: Path, output: Path, pages: list[list[dict]], *, layout:
             else:
                 # Preserve model reading order; footnotes remain separate blocks.
                 text = "\n\n".join(b["content"] for b in blocks
-                                   if b["type"] not in FURNITURE | CONTAINERS | {"image", "image_body", "chart"}
+                                   if b["type"] not in FURNITURE | {"image", "image_body", "chart"}
                                    and b["content"])
                 if not text:
                     out.insert_pdf(src, from_page=i, to_page=i)
@@ -362,45 +381,107 @@ def write_output(source: Path, output: Path, pages: list[list[dict]], *, layout:
     return quality
 
 
-def main() -> int:
-    args = sys.argv[1:]
-    layout = "--layout" in args
-    args = [a for a in args if a != "--layout"]
-    if len(args) not in {2, 3}:
-        print("Usage: ocr_mineru.py INPUT.pdf OUTPUT.pdf [LANGUAGE] [--layout]", file=sys.stderr)
-        return 2
-    source, output = Path(args[0]), Path(args[1])
+def read_recognition(path: Path, source_sha: str, page_count: int) -> list | None:
     try:
+        saved = json.loads(path.read_text())
+    except FileNotFoundError:
+        return None
+    if (not isinstance(saved, dict)
+            or saved.get("profile") != RECOGNITION_PROFILE
+            or saved.get("source_sha256") != source_sha
+            or saved.get("model") != MODEL
+            or saved.get("render_dpi") != RENDER_DPI):
+        raise ValueError(f"recognition artifact does not match this source/model: {path}; preserved")
+    pages = saved.get("pages")
+    if not isinstance(pages, list) or len(pages) != page_count or any(not isinstance(p, list) for p in pages):
+        raise ValueError(f"recognition artifact has incomplete page results: {path}; preserved")
+    return pages
+
+
+def save_recognition(path: Path, source_sha: str, pages: list) -> list:
+    """Publish complete raw recognition before placement, without replacing a peer."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", delete=False) as handle:
+            temporary = Path(handle.name)
+            json.dump({"profile": RECOGNITION_PROFILE, "source_sha256": source_sha,
+                       "model": MODEL, "render_dpi": RENDER_DPI, "pages": pages}, handle, ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            existing = read_recognition(path, source_sha, len(pages))
+            if existing is None:
+                raise ValueError(f"recognition artifact disappeared during publication: {path}")
+            return existing
+        return pages
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def recognize(source: Path, *, layout: bool) -> list:
+    with fitz.open(source) as doc, tempfile.TemporaryDirectory(prefix="quasi-mineru-") as directory:
+        indices = [i for i in range(len(doc)) if not layout or layout_evidence.has_page_image(doc[i])]
+        results = [[] for _ in doc]
+        if not indices:
+            return results
+        if platform.system() != "Darwin" or platform.machine() != "arm64" or not shutil.which("uvx"):
+            raise RuntimeError("MinerU requires macOS Apple Silicon and uvx")
+        temporary = Path(directory)
+        pngs = []
+        for i in indices:
+            png = temporary / f"p{i + 1:06d}.png"
+            doc[i].get_pixmap(dpi=RENDER_DPI, alpha=False).save(png)
+            pngs.append(str(png))
+        listing, result_file = temporary / "pages.json", temporary / "results.json"
+        listing.write_text(json.dumps(pngs))
+        env = dict(os.environ, MINERU_MODEL=MODEL, MINERU_PNG_LIST=str(listing),
+                   MINERU_RESULTS=str(result_file), LOGURU_LEVEL="WARNING")
+        print(f"[mineru] {len(indices)} pages; two_step_extract, model loaded once", file=sys.stderr)
+        process = subprocess.run(_MINERU_CMD + [_RUNNER], env=env, stdout=subprocess.PIPE, text=True)
+        if process.returncode or not result_file.is_file():
+            raise RuntimeError(f"MinerU inference failed ({process.returncode}); no engine fallback")
+        detected = json.loads(result_file.read_text())
+        if not isinstance(detected, list) or len(detected) != len(indices):
+            raise ValueError("incomplete MinerU page list")
+        for i, blocks in zip(indices, detected):
+            results[i] = blocks
+        return results
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("source", type=Path)
+    parser.add_argument("output", type=Path)
+    parser.add_argument("language", nargs="?")
+    parser.add_argument("--layout", action="store_true")
+    parser.add_argument("--recognition-json", type=Path)
+    args = parser.parse_args()
+    source, output, layout = args.source, args.output, args.layout
+    recognition = args.recognition_json
+    try:
+        if recognition is not None and (not layout or recognition.resolve() in {source.resolve(), output.resolve()}):
+            raise ValueError("--recognition-json requires layout and a separate JSON artifact path")
         initial_sha = layout_evidence.file_sha256(source)
-        model = MODEL
-        with fitz.open(source) as doc, tempfile.TemporaryDirectory(prefix="quasi-mineru-") as directory:
-            indices = [i for i in range(len(doc)) if not layout or layout_evidence.has_page_image(doc[i])]
-            results = [[] for _ in doc]
-            if indices:
-                if platform.system() != "Darwin" or platform.machine() != "arm64" or not shutil.which("uvx"):
-                    raise RuntimeError("MinerU requires macOS Apple Silicon and uvx")
-                temporary = Path(directory)
-                pngs = []
-                for i in indices:
-                    png = temporary / f"p{i + 1:06d}.png"
-                    doc[i].get_pixmap(dpi=RENDER_DPI, alpha=False).save(png)
-                    pngs.append(str(png))
-                listing, result_file = temporary / "pages.json", temporary / "results.json"
-                listing.write_text(json.dumps(pngs))
-                env = dict(os.environ, MINERU_MODEL=model, MINERU_PNG_LIST=str(listing),
-                           MINERU_RESULTS=str(result_file), LOGURU_LEVEL="WARNING")
-                print(f"[mineru] {len(indices)} pages; two_step_extract, model loaded once", file=sys.stderr)
-                process = subprocess.run(_MINERU_CMD + [_RUNNER], env=env, stdout=subprocess.PIPE, text=True)
-                if process.returncode or not result_file.is_file():
-                    raise RuntimeError(f"MinerU inference failed ({process.returncode}); no engine fallback")
-                detected = json.loads(result_file.read_text())
-                if not isinstance(detected, list) or len(detected) != len(indices):
-                    raise ValueError("incomplete MinerU page list")
-                for i, blocks in zip(indices, detected):
-                    results[i] = blocks
+        with fitz.open(source) as doc:
+            pages = len(doc)
+        results = read_recognition(recognition, initial_sha, pages) if recognition else None
+        if results is None:
+            results = recognize(source, layout=layout)
+            if recognition is not None:
+                if layout_evidence.file_sha256(source) != initial_sha:
+                    raise ValueError("source changed during recognition")
+                results = save_recognition(recognition, initial_sha, results)
+                print(f"[mineru] recognition saved: {recognition}", file=sys.stderr)
+        else:
+            print(f"[mineru] reusing recognition: {recognition}; placement only", file=sys.stderr)
         if layout_evidence.file_sha256(source) != initial_sha:
             raise ValueError("source changed during recognition")
-        write_output(source, output, results, layout=layout, model=model)
+        write_output(source, output, results, layout=layout, model=MODEL)
         return 0
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"[mineru] failed: {exc}", file=sys.stderr)

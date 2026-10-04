@@ -182,9 +182,6 @@ const completedPaper = (
 const auditIsClean = (receipt: StageReceipt): boolean =>
   receipt.remaining_violations === 0 && receipt.escalated.length === 0;
 
-const auditIsSettled = (receipt: StageReceipt): boolean =>
-  auditIsClean(receipt) && receipt.mutated_paths.length === 0;
-
 const auditOwnsTarget = (
   receipt: StageReceipt,
   target: string,
@@ -202,16 +199,6 @@ const auditOwnershipBlock = (state: PaperState): MaterialResult =>
       "workflow.owner_ambiguity",
       "paper.audit",
       "Audit evidence targeted an artifact outside this Paper.",
-    ),
-  );
-
-const auditUnstableBlock = (state: PaperState): MaterialResult =>
-  blockedMaterialResult(
-    resultSeed(state),
-    planIssue(
-      "workflow.audit_unstable",
-      "paper.audit",
-      "The final Paper audit was not stable and mutation-free.",
     ),
   );
 
@@ -239,23 +226,10 @@ const auditPaper = async (
   const target = firstReceipt.target_path as string;
   if (!auditOwnsTarget(firstReceipt, target))
     return auditOwnershipBlock(state);
-  if (auditIsSettled(firstReceipt))
+  // Audit validates after its mechanical fixes. A clean result already proves
+  // the current artifact; mutation history alone does not require another pass.
+  if (auditIsClean(firstReceipt))
     return completedPaper(state, sourcePath, selectedInput, target);
-
-  if (auditIsClean(firstReceipt)) {
-    const stabilityAudit = await dispatch(runtime, "paper.audit", slug, {
-      ...common,
-      pass: 2,
-    });
-    const stabilityStop = stopForOutcome(state, stabilityAudit);
-    if (stabilityStop !== null) return stabilityStop;
-    const stabilityReceipt = stabilityAudit.receipt as StageReceipt;
-    if (!auditOwnsTarget(stabilityReceipt, target))
-      return auditOwnershipBlock(state);
-    return auditIsSettled(stabilityReceipt)
-      ? completedPaper(state, sourcePath, selectedInput, target)
-      : auditUnstableBlock(state);
-  }
 
   const repaired = await dispatch(runtime, "paper.analyse", slug, {
     ...common,
@@ -275,9 +249,8 @@ const auditPaper = async (
   const secondReceipt = secondAudit.receipt as StageReceipt;
   if (!auditOwnsTarget(secondReceipt, target))
     return auditOwnershipBlock(state);
-  if (auditIsSettled(secondReceipt))
+  if (auditIsClean(secondReceipt))
     return completedPaper(state, sourcePath, selectedInput, target);
-  if (auditIsClean(secondReceipt)) return auditUnstableBlock(state);
   return blockedMaterialResult(
     resultSeed(state),
     planIssue(

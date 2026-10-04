@@ -30,7 +30,7 @@ Usage:
                       [--expected-manifest-fingerprint SHA] [--json]
   quasi-extract text  INPUT.pdf OUTPUT.txt [--json]
   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine mineru|tesseract]
-                                [--layout] [--no-clobber] [--json]
+                                [--layout [--recognition-json PATH]] [--no-clobber] [--json]
                                 [--resume --progress-file PATH --chunk-pages N]
   quasi-extract ocr-generation --kind paper|book --slug SLUG
                                 --source-file PATH --expected-source-sha256 SHA256
@@ -65,6 +65,7 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
     no_clobber = False
     resume = False
     progress_file = ""
+    recognition_file = ""
     chunk_pages = 8
     seen: set[str] = set()
     errors: list[str] = []
@@ -118,6 +119,16 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
             seen.add("resume")
             resume = True
             i += 1
+        elif a == "--recognition-json":
+            if "recognition-json" in seen:
+                errors.append("duplicate --recognition-json")
+            seen.add("recognition-json")
+            if i + 1 >= len(rest) or rest[i + 1].startswith("-"):
+                errors.append("--recognition-json requires a path")
+                i += 1
+            else:
+                recognition_file = rest[i + 1]
+                i += 2
         elif a == "--progress-file":
             if "progress-file" in seen:
                 errors.append("duplicate --progress-file")
@@ -185,6 +196,11 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
         errors.append(f"unknown engine '{engine}' (expected mineru|tesseract)")
     if layout and engine == "tesseract":
         errors.append("--layout requires MinerU recognition and paragraph placement; tesseract cannot supply it")
+    if recognition_file:
+        if not layout:
+            errors.append("--recognition-json requires --layout")
+        if any(Path(recognition_file).resolve() == Path(p).resolve() for p in positional[:2]):
+            errors.append("--recognition-json must be separate from INPUT and OUTPUT")
     if not positional or not positional[0]:
         errors.append("missing INPUT")
     if len(positional) > 3:
@@ -365,6 +381,7 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
                     str(here / "ocr_mineru.py"),
                     *engine_positional,
                     *layout,
+                    *(["--recognition-json", recognition_file] if recognition_file else []),
                 ]
             )
 
@@ -531,7 +548,7 @@ def _ocr_output_state(output_arg: str) -> tuple[bool, int, bool]:
 def _print_ocr_help() -> None:
     print(
         "Usage: quasi-extract ocr INPUT.pdf [OUTPUT.pdf] [LANGUAGE] "
-        "[--engine mineru|tesseract] [--layout] [--no-clobber] [--json] "
+        "[--engine mineru|tesseract] [--layout [--recognition-json PATH]] [--no-clobber] [--json] "
         "[--resume --progress-file PATH --chunk-pages N]"
     )
     print(
@@ -542,6 +559,7 @@ def _print_ocr_help() -> None:
     print("          source PDF before quasi-translate; requires MinerU paragraph grouping.")
     print("          No tesseract fallback in layout mode. Default output is reflowed text.")
     print("--no-clobber: require an explicit OUTPUT and never overwrite an existing path.")
+    print("--recognition-json PATH: keep source-bound raw layout recognition and reuse it on re-placement.")
     print("--json: require an explicit OUTPUT; emit exactly one JSON receipt on stdout.")
     print("--resume: run one Book OCR page range and persist exact progress.")
     print("--progress-file: exact durable JSON progress path required by --resume.")

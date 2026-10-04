@@ -219,6 +219,7 @@ OPERATION_CATALOG = {
             "output": "processing/translations/{slug}-{target}.pdf",
             "manifest": "processing/translations/{slug}-{target}.manifest.json",
             "recoverySource": "processing/translations/{slug}-{target}-reocr.pdf",
+            "layoutRecognition": "processing/translations/{slug}-{target}-recognition.json",
         },
     },
     "topic.recall": {

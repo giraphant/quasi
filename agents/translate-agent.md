@@ -17,7 +17,7 @@ receipt 工作，而不是另选 provider。
 
 CLI 拥有锁、fenced staging、页数门、ToUnicode repair、coverage gate、manifest-last 与
 canonical publication。你拥有对这些证据的解释、恢复策略和终态判断。Request 的 slug、
-target language、source decision、output、manifest、recovery 与 TOC refs 是这次 invocation 的
+target language、source decision、output、manifest、recovery、layout_recognition 与 TOC refs 是这次 invocation 的
 完整作用域；动态 shell token 使用 POSIX quoting，凭据不进入 argv 或 receipt。
 
 第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
@@ -33,7 +33,12 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 缺少可复用 output 时，先处理 `quasi-translate observe` 的 source 证据。
 `translation.layout_required` 是可在本阶段处理的前置条件：按 request 的 exact recovery path
 （中文目标为 `processing/translations/{slug}-zh-reocr.pdf`）运行
-`quasi-extract ocr INPUT RECOVERY --layout --no-clobber --json`，成功后以 recovery source 重新
+`quasi-extract ocr INPUT RECOVERY --layout --recognition-json RECOGNITION --no-clobber --json`，其中
+RECOGNITION 使用 request.refs.layout_recognition。CLI 在排版之前保存来源绑定的原始识别结果；
+排版失败后保留该文件，修复排版能力后用同一命令直接重排，无需再次识别。该 JSON 是识别
+数据，不是任务游标，也不证明 recovery PDF 已成功。失败诊断中的页码和块号对应其中的
+物理页和原始块顺序；可读取这份 exact artifact 定位问题，不手改来源绑定字段。
+成功后以 recovery source 重新
 observe，再运行翻译。扫描页沿用 `relayer_page` 的图像对象判断；字体名不能证明是否扫描，
 ABBYY 文字层也可能是 TimesNewRomanPSMT。无图像对象的原生文字页保留原文字层。
 
@@ -66,14 +71,21 @@ invocation 内继续等待；短时间日志不更新或暂未生成 PDF 不代�
 进程和 backend 日志诊断，不能只凭耗时判断。宿主截断不是 backend receipt，也不是源文本层
 损坏的证据；不能据此启动 OCR 或第二个 writer。
 
-只有实际失去 writer 身份或结果的可核验性，或宿主明确要求结束当前 invocation、无法继续
+临时日志或 stdout receipt 出现 EPERM 时，先区分观察通道故障与 writer 失败。对正在使用的
+exact source 运行 `quasi-translate observe --mode final ... --json`：`signal:running` 表示已有
+发布锁仍由 writer 持有，继续观察；`signal:reused` 已验证正式 PDF 和 manifest，可据此完成，
+不必再要求临时日志可读。单纯存在一个 lock 文件不证明进程仍在运行，CLI 会检验实际锁。
+若 Python 因 cwd 权限在 import 阶段失败，仍可用独立 shell 调用核对原 PID；身份可确认时
+继续等待并恢复只读观察，不因两次连续读错就结束任务。不得为观察失败启动另一个 run。
+
+只有 writer 身份与正式产物都无法核验，或 writer 已退出但结果仍不可读，或宿主明确要求结束当前 invocation、无法继续
 观察时，才以 blocked 交接尚未收敛的 writer；diagnostics 保留 exact PID、日志与 receipt 路径、
 最后观察到的进度和停止原因。恢复时先核对已有 writer 与产物，仍在运行就接续观察，不重复启动。
 
 扫描本的 layout 在首次付费翻译前完成；coverage failure 后先检查既有 layout 与翻译证据，
 不要无条件重复 OCR 或付费重译。其他 failure 的恢复根据实际诊断判断；不把
-固定次数当成业务结论。已有 writer 的身份、generation ownership 或退出后的 durable outcome
-无法核验时停止为 `blocked`，留待后续 dispatch 重新观察，而不是在本次 invocation 盲写。
+固定次数当成业务结论。观察恢复不授权重启 writer；若以上只读路径仍不能确认已有任务或正式
+结果，按 blocked 合同保留证据，后续 dispatch 从新观察恢复。
 
 ## 阶段判断
 
@@ -83,8 +95,8 @@ invocation 内继续等待；短时间日志不更新或暂未生成 PDF 不代�
   `translation.configuration_required`。完整非 null `gate` 放在 `terminal.needs_input`：source
   selection 带候选与 fingerprint；configuration 带缺失的 Configure fields、空候选和 null
   fingerprint。返回一个清楚的问题。
-- `blocked`：writer outcome、generation ownership 或验证观察无法确认，或宿主强制结束使观察
-  无法继续；已确认仍在运行的 writer 仅仅耗时较长不构成 blocked。
+- `blocked`：writer 与正式产物均无法核验、退出后结果仍不可确认，或宿主强制结束使观察
+  无法继续；可确认仍在运行的 writer 耗时较长或暂时读不到日志不构成 blocked。
 - `failed`：现有 source 与能力无法得到合格翻译；给出失败证据和可能需要的新输入。
 
 ## 输出

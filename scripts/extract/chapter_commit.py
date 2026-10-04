@@ -131,8 +131,13 @@ def _source_identity(path: Path) -> dict:
     }
 
 
-def request_fingerprint(input_path: Path, mode: str, options: dict) -> tuple[str, dict]:
-    identity = _source_identity(input_path)
+def _content_identity(identity: dict) -> dict:
+    # mtime is useful for detecting a change during one transaction, but a
+    # timestamp-only change does not invalidate already extracted chapters.
+    return {key: identity.get(key) for key in ("path", "size", "sha256")}
+
+
+def _request_digest(identity: dict, mode: str, options: dict) -> str:
     encoded = json.dumps(
         {
             "input": identity,
@@ -146,7 +151,28 @@ def request_fingerprint(input_path: Path, mode: str, options: dict) -> tuple[str
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest(), identity
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def request_fingerprint(input_path: Path, mode: str, options: dict) -> tuple[str, dict]:
+    identity = _source_identity(input_path)
+    return _request_digest(_content_identity(identity), mode, options), identity
+
+
+def _matches_request(
+    manifest: dict, fingerprint: str, identity: dict, mode: str, options: dict
+) -> bool:
+    if manifest.get("request_fingerprint") == fingerprint:
+        return True
+    # Released manifests hashed the complete source observation, including
+    # mtime. Verify that old request using its recorded observation and today's
+    # exact content/options; no migration, file rewrite or extraction required.
+    recorded = manifest.get("source_identity")
+    return (
+        isinstance(recorded, dict)
+        and _content_identity(recorded) == _content_identity(identity)
+        and manifest.get("request_fingerprint") == _request_digest(recorded, mode, options)
+    )
 
 
 def _manifest_digest(path: Path) -> str | None:
@@ -633,7 +659,7 @@ def commit_chapter_set(
             if observed_manifest_digest != expected_manifest_digest:
                 if (
                     previous_manifest is not None
-                    and previous_manifest.get("request_fingerprint") == fingerprint
+                    and _matches_request(previous_manifest, fingerprint, initial_identity, mode, options)
                 ):
                     validate_manifest(previous_manifest, output_dir)
                     return 0, _receipt(
@@ -667,7 +693,10 @@ def commit_chapter_set(
                 )
                 if (
                     recorded_identity is not None
-                    and recorded_identity != initial_identity
+                    and (
+                        not isinstance(recorded_identity, dict)
+                        or _content_identity(recorded_identity) != _content_identity(initial_identity)
+                    )
                 ) or (
                     recorded_identity is None
                     and recorded_name is not None
@@ -682,7 +711,7 @@ def commit_chapter_set(
 
             if (
                 previous_manifest is not None
-                and previous_manifest.get("request_fingerprint") == fingerprint
+                and _matches_request(previous_manifest, fingerprint, initial_identity, mode, options)
             ):
                 validate_manifest(previous_manifest, output_dir)
                 return 0, _receipt(

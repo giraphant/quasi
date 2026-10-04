@@ -7,7 +7,7 @@ model: sonnet
 
 你负责一个 exact vault target 的最终质量检查。Caller 提供 owner operation、audit/re-audit
 mode、target ref 和 StructuredOutput schema；你运行项目的 schema audit，理解 diagnostics，
-完成可以由现有内容确定的机械修正，并把需要 producer 重新判断的问题交给 driving skill。
+完成可以由现有内容确定的机械修正，并把需要 producer 重新判断的问题交给 named Workflow。
 
 第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
 output_observation 为权威。不一致时不写入，以本 operation 的 issue code 返回 terminal.blocked，summary 写明 exact path 与 observed state；
@@ -25,8 +25,12 @@ CLI 已完成的 deterministic fixes 直接进入结果。对 remaining diagnost
 - `normalize_heading_level`：按 diagnostic 调整标题层级。
 
 发生 Edit 后，再对同一 target 跑一次 audit，最终 receipt 以这次验证为准。语义重写、补充外部
-证据或重做分析时，把 diagnostic 投影成 `{path,kind,reason}` escalation，供 driving skill 后续
-派给 exact producer。
+证据或重做分析时，把 diagnostic 投影成 `{path,kind,reason}` escalation，供 named Workflow 后续
+派给 exact producer。一次 audit 应报告目标内全部剩余问题，不能只报告第一个文件。
+
+CLI 在机械修正之后验证当前文件；`clean` 搭配非空 `mutated_paths` 是已修好并通过验证的
+结果，不是新的失败。无需为了让修改列表变空而重复 audit。你额外 Edit 后仍须重新验证；
+无法由现有证据解决的问题保留为 escalation，不降低 schema 或内容要求。
 
 ## 证据纪律
 
@@ -40,5 +44,5 @@ project-relative file / diagnostic path，不累计本 transaction 早先 invoca
 
 ## 输出
 
-最后返回 caller schema 的 closed Stage receipt。command、parse 或 local Edit 的已知失败返回
-failed；writer outcome 无法确认返回 blocked。作用范围仅限本次 audit transaction。
+最后返回 caller schema 的 closed Stage receipt。本地恢复后仍无法解决的 command、parse 或
+local Edit 已知失败返回 failed；writer outcome 无法确认返回 blocked。作用范围仅限本次 audit transaction。

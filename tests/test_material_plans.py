@@ -2208,88 +2208,6 @@ def test_paper_existing_canonical_reconciles_prepare_then_repairs_once() -> None
     assert report["result"]["terminal"] == "complete"
 
 
-def test_paper_clean_mutating_audit_requires_stability_pass() -> None:
-    target = "vault/papers/exact-paper.md"
-    report = run_paper(
-        canonical_input(
-            source=True,
-            prepared=True,
-            canonical=True,
-            admitted=True,
-        ),
-        [
-            prepare_complete(),
-            audit_complete(mutated_paths=[target]),
-            audit_complete(),
-        ],
-    )
-
-    assert [call["request"]["operation"] for call in report["calls"]] == [
-        "paper.prepare",
-        "paper.audit",
-        "paper.audit",
-    ]
-    assert report["calls"][2]["request"]["pass"] == 2
-    assert report["result"]["terminal"] == "complete"
-
-
-def test_paper_repeated_clean_audit_mutation_blocks_as_unstable() -> None:
-    target = "vault/papers/exact-paper.md"
-    report = run_paper(
-        canonical_input(
-            source=True,
-            prepared=True,
-            canonical=True,
-            admitted=True,
-        ),
-        [
-            prepare_complete(),
-            audit_complete(mutated_paths=[target]),
-            audit_complete(mutated_paths=[target]),
-        ],
-    )
-
-    assert [call["request"]["operation"] for call in report["calls"]] == [
-        "paper.prepare",
-        "paper.audit",
-        "paper.audit",
-    ]
-    assert report["result"]["terminal"] == "blocked"
-    assert report["result"]["issue"]["code"] == "workflow.audit_unstable"
-
-
-def test_paper_repaired_but_mutating_final_audit_blocks_as_unstable() -> None:
-    target = "vault/papers/exact-paper.md"
-    diagnostic = {
-        "path": target,
-        "kind": "missing-section",
-        "reason": "The Analysis section is absent.",
-    }
-    report = run_paper(
-        canonical_input(
-            source=True,
-            prepared=True,
-            canonical=True,
-            admitted=True,
-        ),
-        [
-            prepare_complete(),
-            audit_complete(escalated=[diagnostic]),
-            analyse_complete("repair"),
-            audit_complete(mutated_paths=[target]),
-        ],
-    )
-
-    assert [call["request"]["operation"] for call in report["calls"]] == [
-        "paper.prepare",
-        "paper.audit",
-        "paper.analyse",
-        "paper.audit",
-    ]
-    assert report["result"]["terminal"] == "blocked"
-    assert report["result"]["issue"]["code"] == "workflow.audit_unstable"
-
-
 def test_paper_second_audit_escalation_stops_as_repair_exhausted() -> None:
     diagnostic = {
         "path": "vault/papers/exact-paper.md",
@@ -3458,10 +3376,8 @@ def test_book_chapter_join_settles_all_and_unknown_dominates() -> None:
         call["request"]["operation"] == "chapter.analyse"
         for call in report["calls"]
     )
-    assert report["result"]["terminal"] == "needs_observation"
-    assert report["result"]["routes"] == [
-        {"kind": "book", "slug": "exact-book"}
-    ]
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"
     assert report["remaining"] == 0
 
     first_blocked = chapter_blocked()
@@ -3486,7 +3402,7 @@ def test_book_chapter_join_settles_all_and_unknown_dominates() -> None:
     )
 
 
-def test_book_unknown_chapter_requests_fresh_book_observation() -> None:
+def test_book_unknown_chapter_stops_without_automatic_replay() -> None:
     value = canonical_book_input(
         manifest=True,
         chapter_inputs=(True, True),
@@ -3494,15 +3410,10 @@ def test_book_unknown_chapter_requests_fresh_book_observation() -> None:
     )
     report = run_book(value, [chapter_complete(), "__throw__"])
 
-    assert report["result"]["terminal"] == "needs_observation"
-    assert report["result"]["routes"] == [
-        {"kind": "book", "slug": "exact-book"}
-    ]
-    assert report["result"]["resume_seed"] == {
-        "route": {"kind": "book", "slug": "exact-book"},
-        "seed": value["seed"],
-        "options": {},
-    }
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"
+    assert "resume_seed" not in report["result"]
+    assert len(report["calls"]) == 2
 
 
 def test_book_retryable_chapter_output_mismatch_requests_fresh_observation() -> None:
@@ -3552,7 +3463,7 @@ def test_book_does_not_reobserve_other_chapter_blocks(
     assert report["result"]["issue"]["code"] == expected_code
 
 
-def test_book_incoherent_chapter_requests_fresh_book_observation() -> None:
+def test_book_incoherent_chapter_stops_without_automatic_replay() -> None:
     value = canonical_book_input(
         manifest=True,
         chapter_inputs=(True, True),
@@ -3563,10 +3474,8 @@ def test_book_incoherent_chapter_requests_fresh_book_observation() -> None:
         [chapter_complete(), chapter_complete(reconciled=True)],
     )
 
-    assert report["result"]["terminal"] == "needs_observation"
-    assert report["result"]["routes"] == [
-        {"kind": "book", "slug": "exact-book"}
-    ]
+    assert report["result"]["terminal"] == "blocked"
+    assert report["result"]["issue"]["code"] == "workflow.incoherent_complete"
 
 
 def test_book_fresh_status_dispatches_only_unusable_chapters() -> None:
@@ -4948,7 +4857,8 @@ def test_author_lifts_paper_source_gate_for_one_member() -> None:
     assert report["result"]["resume_seed"]["decision_member"] == route
 
 
-def test_author_lifts_partial_book_observation_request() -> None:
+@pytest.mark.parametrize("unknown_writer", [False, True])
+def test_author_preserves_partial_book_recovery_boundary(unknown_writer: bool) -> None:
     identity = book_identity("book-one", "Book One")
     route = {"kind": "book", "slug": "book-one"}
     observation = book_observation(
@@ -4969,16 +4879,22 @@ def test_author_lifts_partial_book_observation_request() -> None:
             [author_member(route, route, identity)],
             [(route, observation)],
         ),
-        [book_search_complete(identity), "__throw__"],
+        [book_search_complete(identity),
+         "__throw__" if unknown_writer else chapter_output_observation_mismatch()],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
         "material.search",
         "chapter.analyse",
     ]
-    assert report["result"]["terminal"] == "needs_observation"
-    assert report["result"]["routes"] == [route]
-    assert report["result"]["resume_seed"]["members"][0]["leaf"]["route"] == route
+    if unknown_writer:
+        assert report["result"]["terminal"] == "blocked"
+        assert report["result"]["issue"]["code"] == "workflow.unknown_outcome"
+        assert "resume_seed" not in report["result"]
+    else:
+        assert report["result"]["terminal"] == "needs_observation"
+        assert report["result"]["routes"] == [route]
+        assert report["result"]["resume_seed"]["members"][0]["leaf"]["route"] == route
 
 
 @pytest.mark.parametrize("media_extension", ["mov", "mp4", "m4v", "mkv", "webm"])

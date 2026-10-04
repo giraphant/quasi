@@ -112,6 +112,16 @@ recovery observations. A typed gate returns the current effective
 `{route,seed,options}`; the caller obtains fresh exact status and adds only the new
 decision. Unknown writer outcomes stop instead of racing a second writer.
 
+Recovery belongs at the boundary that owns the evidence. CLI-local known failures
+may be corrected by the specialist inside its existing operation. A clean audit
+already validates the artifact after mechanical fixes; Paper does not require a
+second mutation-free audit. Book repairs every distinct audit-listed owner once,
+in chapter order and then the overview, before its final audit. Remaining semantic
+violations still stop; no receipt failure is relabelled as success. At the chapter
+join, only the explicit pre-write output-observation mismatch requests fresh
+status. Unknown or incoherent writer outcomes and other failures take precedence
+over that refresh, so it cannot silently replay writers or discard a sibling failure.
+
 A Paper complete result names the exact accepted source, the normalized text selected by
 Prepare, and the canonical page. An existing canonical owner therefore still reconciles
 Prepare before Audit; if its source is absent, Acquire runs first. Audit alone proves only
@@ -167,6 +177,12 @@ so unrelated subagents retain Claude Code's default row.
 - `metadata-agent` and `discovery-agent` return JSON and do not write files.
 - `download-agent` reconciles or accepts one exact Book/Paper source through `quasi-download`; it returns that material's direct Acquire receipt, including a standard `needs_input` terminal for a Book year gate, and does not own caller manifests. A failed download preserves `failure_reason` and per-source `attempts` in its receipt.
 - `extract-agent` owns Paper/Book Prepare judgement and local recovery over caller-named refs. It invokes deterministic `quasi-extract` transactions; those CLI transactions own chapter files and `processing/chapters/{slug}/manifest.json`.
+  Chapter request reuse binds exact source path, size, content SHA-256, extraction
+  options and the filter contract. Source mtime remains transaction observation
+  evidence, not a reuse key or a reason to reject slot repair. Older timestamp-bound
+  manifests remain reusable after verifying their recorded request against current
+  content/options; no manifest migration is needed. Inputs changed during extraction,
+  changed chapter files and stale manifest preconditions still stop publication.
   EPUB semantic repair uses repeatable `quasi-extract epub --exclude-title EXACT_TITLE`
   with the observed `--expected-manifest-fingerprint`. Each selection must uniquely
   match an extracted title; the CLI records `excluded_by_request`, binds the sorted
@@ -179,6 +195,7 @@ so unrelated subagents retain Claude Code's default row.
 - `webcard-agent` discovers source URLs readonly for one topic `web_task`; after Archive collection it turns the exact Archive records into one evidence card at the caller-named `vault/topics/{slug}/cards/{card-slug}.md`; it writes nothing else, and returns `status: empty` rather than writing a card it could not verify. Cards travel on their own `cards` channel (outline `subquestions[].cards`, synth `card_paths`) and never enter the `book|paper|talk` corpus table.
 - `audit-agent` runs `quasi-audit --path`; it may apply local mechanical fixes but does not own workflow state.
 - `transcribe-agent` and `translate-agent` own Talk and Translation Prepare with the same terminal shape, preserving media reconciliation and fenced-generation publication contracts. Video Talks prepare `vault/talks/{slug}/recording.mp4` by default; when `prepare_media:true`, this file and its sidecar are part of Prepare and material completion, exposed by `quasi-status` as `facts.prepared`.
+- Translation Prepare names both the existing layout recovery PDF and `processing/translations/{slug}-{target}-recognition.json`. The latter stores complete source-bound raw OCR before placement, so placement recovery can reuse inference; it is not a completion signal or Workflow state. Translation observation reads the existing publication lock and canonical result independently of temporary stdout/log files and never starts a writer.
 - `archive-agent` selects same-object originals; `quasi-archive collect` publishes the exact Archive page, provenance manifest and originals, preserving existing Topic membership and user prose. It checks observed revision under per-slug and per-URL process locks.
 - `webpage-agent` owns exact-URL inspection, `vault/webpages/{slug}/snapshot.webarchive`, and `processing/webpages/{slug}/source.md`; `analyse-agent` owns `vault/webpages/{slug}/webpage.md` and `audit-agent` owns its mechanical repair.
 

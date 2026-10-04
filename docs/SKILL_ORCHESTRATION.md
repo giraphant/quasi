@@ -115,6 +115,13 @@ An Agent chooses its own useful number of searches, comparisons, or recovery
 steps. Numerical bounds belong at genuine shared-resource or composition
 boundaries, not as proxies for professional judgement.
 
+A tool error with a known unchanged or rolled-back output is local evidence for
+the specialist, not automatically a terminal material failure. A clean audit
+includes verification after mechanical fixes, even when it reports mutated paths.
+Book's repair boundary covers all distinct flagged owners in one round (chapters
+before the overview), rather than only the first diagnostic. It then audits again;
+unresolved semantic problems keep their failure meaning.
+
 ## Concurrency and recovery
 
 `collect-material` may run up to its documented number of distinct top-level
@@ -128,6 +135,13 @@ Unknown writer outcomes stop the invocation. A `needs_observation` result is not
 unknown writer outcome: the Skill resumes it with fresh exact status and the current
 opaque continuation, but never blindly replays a writer. Do not add automatic retry,
 lock, reservation, completed-prefix, or replay machinery.
+
+The Book chapter join refreshes only the declared pre-write output-observation
+mismatch. Unknown/incoherent writer outcomes and other failed siblings are returned
+first. The refresh is continued within the same user task; it is not a request for
+the user to say continue. This bridge is still performed by the host's main agent:
+the current Workflow runtime exposes agent/pipeline calls, not filesystem reads,
+so this repository does not claim a deterministic host-managed continuation loop.
 
 ## Review checklist
 

@@ -285,7 +285,8 @@ Author → exact Author status → discover/freeze → exact child status batch
      等于 `facts.ocr_generation.paths.text`，且该 capsule 为 `committed`，其 `normalized_text` fact 必须
      `exists:true`、`regular:true`、`utf8:true`、`size>0`、`non_whitespace_chars>0`。固定 legacy
      `processing/papers/{slug}/ocr.txt` 永不构成新的 normalized completion。只审计 canonical 不能证明
-     Paper complete；Workflow 的 complete 还必须来自 mutation-free final Audit。
+     Paper complete；Workflow 的 complete 必须来自对当前产物验证合格的 final Audit；机械
+     修正后已经验证 clean 的结果有效，不因 `mutated_paths` 非空额外发起审计。
    - Paper `complete` 且 `next.kind=="book"`：只按 `next.kind` 选 Book entry。先观察
      `next.identity.slug`，构造
      `{state:"canonical",material_slug:next.identity.slug,identity:next.identity}`，传 Book
@@ -299,7 +300,8 @@ Author → exact Author status → discover/freeze → exact child status batch
      Translation 的 `target_language` 逐字取自 route。Author 只展示外层 child gate 内的问题，
      收到答案后 refresh 返回的全部 `routes`，复制 opaque resume seed，并只附一个 typed decision。
      不要复用原 seed 或自行重建 canonical identity。
-   - `needs_observation`：不展示问题；对返回的每条 `routes` 做 fresh exact status，逐字复制 opaque
+   - `needs_observation`：这是同一任务的继续步骤，不作为阶段成果交回用户或等待 continue；
+     对返回的每条 `routes` 做 fresh exact status，逐字复制 opaque
      `resume_seed`，并重新调用同一 named Workflow。direct leaf 用
      `resume_seed.{seed,options}` 与一条 fresh route observation 重建普通 closed input；Author 保持
      exact child observation array 的 composed input。Paper/Book OCR 每次 Workflow invocation 至多推进一个

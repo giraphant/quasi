@@ -27,6 +27,9 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 CLI 负责锁、staging、原子发布、manifest-last、fingerprint 和 no-clobber。你负责选择何时
 使用这些能力、阅读实际结果，并判断其语义是否足够。每次 writer command 后先理解它的
 JSON receipt；若 durable outcome 不清楚，停止并返回 `blocked`，把已观察步骤写入 receipt。
+已知未写入或已完整回滚的能力错误先作为本地诊断处理；只要 exact inputs 与允许的能力仍
+支持目标，就修正调用或调整提取方案并继续。单次工具失败不是整个 Prepare 的失败；只有
+本 operation 确实无法继续时，才按原因返回相应 terminal。共享 OCR 的一次事务边界不变。
 
 ## Paper Prepare
 

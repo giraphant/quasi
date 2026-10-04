@@ -77,10 +77,10 @@ def test_markup_becomes_plain_text_without_damaging_prose(raw, expected):
     assert engine.clean(raw) == expected
 
 
-def test_unknown_markup_or_block_never_silently_discards_text():
+def test_unrepresentable_content_never_silently_discards_text():
     with pytest.raises(ValueError, match="unsupported"):
         engine.clean(r"\(\unknownsecret{meaning}\)")
-    for invalid in [block(kind="unrecognized"), block(bbox=[0, 0, float("nan"), 1]), block(text=""), block(angle=45)]:
+    for invalid in [block(bbox=[0, 0, float("nan"), 1]), block(text=""), block(angle=45)]:
         with pytest.raises(ValueError): engine.normalize_blocks([invalid])
 
 
@@ -132,10 +132,20 @@ def test_annotated_arrow_missing_required_argument_fails(raw):
         engine.clean(raw)
 
 
-@pytest.mark.parametrize('kind', ['list', 'image_block', 'equation_block'])
-def test_unexpected_container_text_is_not_silently_dropped(kind):
-    with pytest.raises(ValueError, match='unexpected text'):
-        engine.normalize_blocks([block('Unexpected meaningful content', kind)], layout=True)
+@pytest.mark.parametrize('layout', [True, False])
+def test_unfamiliar_labels_and_nonempty_containers_keep_their_text(tmp_path, layout):
+    source = source_pdf(tmp_path / 'source.pdf')
+    output = tmp_path / 'output.pdf'
+    rows = [block('Figure-specific note', 'image_footnote', [.1,.1,.9,.2]),
+            block('A future block label', 'new_model_label', [.1,.3,.9,.4]),
+            block('Container own words', 'image_block', [.1,.5,.9,.6]),
+            block('', 'new_empty_visual', [.1,.7,.9,.8])]
+    engine.write_output(source, output, [rows], layout=layout, model=engine.MODEL)
+    with fitz.open(source) as src, fitz.open(output) as doc:
+        text = ' '.join(doc[0].get_text().split())
+        assert all(row['content'] in text for row in rows if row['content'])
+        if layout:
+            assert src[0].get_pixmap().samples == doc[0].get_pixmap().samples
 
 
 @pytest.mark.parametrize('kind', ['table', 'equation'])

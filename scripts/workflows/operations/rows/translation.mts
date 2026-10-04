@@ -222,6 +222,7 @@ export const translationOperationRows: OperationRow[] = [
         output,
         manifest,
         recoverySource,
+        layoutRecognition,
         tocJson,
         tocPageSide,
       },
@@ -231,13 +232,15 @@ export const translationOperationRows: OperationRow[] = [
       output,
       manifest,
       recoverySource,
+      layoutRecognition,
       tocJson,
       tocPageSide,
     }),
-    writeTargets: ({ output, manifest, recoverySource }) => [
+    writeTargets: ({ output, manifest, recoverySource, layoutRecognition }) => [
       { scope: "exact", path: output },
       { scope: "exact", path: manifest },
       { scope: "exact", path: recoverySource },
+      { scope: "exact", path: layoutRecognition },
     ],
     payloadProperties: ({ slug, targetLanguage, output, manifest }) => ({
       required: [
@@ -336,13 +339,14 @@ export const translationOperationRows: OperationRow[] = [
         output: refs.output,
         manifest: refs.manifest,
         recovery_source: refs.recoverySource,
+        layout_recognition: refs.layoutRecognition,
         toc_json: refs.tocJson,
         toc_page_side: refs.tocPageSide,
       },
       capabilities: [
         "quasi-translate observe ... --json",
         "quasi-translate run ... --json",
-        "quasi-extract ocr INPUT OUTPUT --layout --no-clobber --json",
+        `quasi-extract ocr INPUT ${refs.recoverySource} --layout --recognition-json ${refs.layoutRecognition} --no-clobber --json`,
         "Read exact validation receipts and translated PDF text observations",
       ],
       backend_policy:

@@ -20,6 +20,7 @@ from test_material_plans import (
     book_search_complete,
     book_search_needs_input,
     book_structure_decision,
+    chapter_output_observation_mismatch,
     paper_observation,
     prepare_complete,
     search_complete,
@@ -758,7 +759,7 @@ def test_topic_lifts_partial_book_observation_request() -> None:
             seeds=[book_seed()],
             children=[(route, observation)],
         ),
-        [recall_complete(), book_search_complete(), "__throw__"],
+        [recall_complete(), book_search_complete(), chapter_output_observation_mismatch()],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [

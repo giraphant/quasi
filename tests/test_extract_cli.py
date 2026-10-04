@@ -245,6 +245,46 @@ def test_ocr_no_clobber_engine_failure_never_pollutes_final_and_cleans_staging(
     assert list(tmp_path.glob(".final.pdf.ocr-*")) == []
 
 
+def test_layout_recognition_survives_failed_pdf_staging(tmp_path, monkeypatch, capsys):
+    source, output = tmp_path / "source.pdf", tmp_path / "final.pdf"
+    recognition = tmp_path / "recognition.json"
+    source.write_bytes(b"source fixture for mocked engine")
+
+    def fail_placement(command, **kwargs):
+        assert "--layout" in command
+        raw_path = Path(command[command.index("--recognition-json") + 1])
+        assert raw_path == recognition
+        staged = Path(command[3])
+        assert staged != output and raw_path.parent != staged.parent
+        raw_path.write_text('{"pages": []}')
+        staged.write_bytes(b"partial")
+        return 3
+
+    monkeypatch.setattr(extract_cli.subprocess, "call", fail_placement)
+    rc = extract_cli._run_ocr(EXTRACT_DIR, [str(source), str(output), "--layout",
+                              "--recognition-json", str(recognition), "--no-clobber", "--json"])
+    assert rc == 3 and json.loads(capsys.readouterr().out)["status"] == "failed"
+    assert recognition.read_text() == '{"pages": []}'
+    assert not output.exists() and not list(tmp_path.glob(".final.pdf.ocr-*"))
+
+
+@pytest.mark.parametrize("case", ["without-layout", "source-alias", "output-alias", "missing", "duplicate"])
+def test_invalid_recognition_path_stops_before_engine(tmp_path, monkeypatch, capsys, case):
+    source, output, recognition = [tmp_path / name for name in ("source.pdf", "final.pdf", "raw.json")]
+    args = [str(source), str(output), "--json", "--no-clobber"]
+    if case != "without-layout":
+        args.append("--layout")
+    args.append("--recognition-json")
+    if case != "missing":
+        args.append(str({"source-alias": source, "output-alias": output}.get(case, recognition)))
+    if case == "duplicate":
+        args.extend(["--recognition-json", str(recognition)])
+    monkeypatch.setattr(extract_cli.subprocess, "call", lambda *a, **k: pytest.fail("must not start engine"))
+    assert extract_cli._run_ocr(EXTRACT_DIR, args) == 2
+    assert json.loads(capsys.readouterr().out)["failure"]["code"] == "invalid_arguments"
+    assert not list(tmp_path.iterdir())
+
+
 def test_ocr_no_clobber_commit_race_loser_reports_existing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
@@ -1654,6 +1694,70 @@ def test_book_identical_rerun_reconciles_without_rewriting(tmp_path: Path):
         (output / "manifest.json").read_bytes()
     ).hexdigest()
     assert (output / "manifest.json").stat().st_mtime_ns == manifest_mtime
+
+
+@pytest.mark.parametrize("legacy_fingerprint", [False, True])
+def test_book_timestamp_change_reuses_verified_chapters(tmp_path: Path, legacy_fingerprint: bool):
+    pdf, output = tmp_path / "book.pdf", tmp_path / "chapters"
+    _book_pdf(pdf, ["one " * 20])
+    assert _run_manual(pdf, output, 1).returncode == 0
+    manifest_path = output / "manifest.json"
+    if legacy_fingerprint:
+        manifest = json.loads(manifest_path.read_text())
+        options = {
+            "chapters": json.loads(_manual_specs(1)), "min_chapter_length": 0,
+            "chapter_ref_contract": split_chapters.CHAPTER_REF_CONTRACT,
+        }
+        payload = {"input": manifest["source_identity"], "mode": "manual", "options": options,
+                   "toc_filter_signature": chapter_commit.filter_signature()}
+        manifest["request_fingerprint"] = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        manifest_path.write_text(json.dumps(manifest))
+    before = {path.name: path.read_bytes() for path in output.iterdir() if path.is_file()}
+    info = pdf.stat()
+    os.utime(pdf, ns=(info.st_atime_ns, info.st_mtime_ns + 2_000_000_000))
+    result = _run_manual(pdf, output, 1)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["disposition"] == "reconciled"
+    assert {path.name: path.read_bytes() for path in output.iterdir() if path.is_file()} == before
+
+
+def test_book_timestamp_change_allows_exact_slot_repair(tmp_path: Path):
+    pdf, output = tmp_path / "book.pdf", tmp_path / "chapters"
+    _book_pdf(pdf, ["one " * 20, "two " * 20])
+    assert _run_manual(pdf, output, 2).returncode == 0
+    manifest_path = output / "manifest.json"
+    expected = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    info = pdf.stat()
+    os.utime(pdf, ns=(info.st_atime_ns, info.st_mtime_ns + 2_000_000_000))
+    result = run_extract("split", str(pdf), "--output-dir", str(output), "--pages", "1-1",
+                         "--title", "Revised chapter title", "--slot", "01",
+                         "--expected-manifest-fingerprint", expected, "--json")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["disposition"] == "repaired"
+
+
+def test_book_changed_bytes_with_same_size_and_timestamp_still_rebuild(tmp_path: Path):
+    import fitz
+
+    pdf, output = tmp_path / "book.pdf", tmp_path / "chapters"
+    _book_pdf(pdf, ["one " * 20])
+    with fitz.open(pdf) as document:
+        expanded = document.tobytes(expand=255)
+    pdf.write_bytes(expanded)
+    assert _run_manual(pdf, output, 1).returncode == 0
+    info = pdf.stat()
+    before = pdf.read_bytes()
+    after = before.replace(b"6f6e65", b"74776f").replace(b"6F6E65", b"74776f")
+    assert after != before and len(after) == len(before)
+    pdf.write_bytes(after)
+    os.utime(pdf, ns=(info.st_atime_ns, info.st_mtime_ns))
+    result = _run_manual(pdf, output, 1)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["disposition"] == "replaced"
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert "two" in (output / manifest["chapters"][0]["filename"]).read_text()
 
 
 def test_book_identical_rerun_rejects_unpaired_page_range(tmp_path: Path):

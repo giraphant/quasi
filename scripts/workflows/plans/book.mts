@@ -304,11 +304,11 @@ const auditBook = async (
     bookChapterOutputPath(slug, chapter),
   );
   const owners = [
-    { path: bookOverviewPath(slug), chapter: null },
     ...chapters.map((chapter) => ({
       path: bookChapterOutputPath(slug, chapter),
       chapter,
     })),
+    { path: bookOverviewPath(slug), chapter: null },
   ] satisfies BookAuditOwner[];
   const ownersByPath = new Map(owners.map((owner) => [owner.path, owner]));
   const ownerForAuditPath = (path: string): BookAuditOwner | undefined =>
@@ -339,13 +339,15 @@ const auditBook = async (
       ),
     );
 
-  const repairPath = escalated[0]!.path;
-  const repairOwner = ownerForAuditPath(repairPath)!;
-  const diagnostics = escalated.filter(
-    ({ path }) => path === repairOwner.path,
+  // Repair every distinct flagged owner once. Chapter repairs precede any
+  // overview repair so synthesis reads the repaired chapter artifacts.
+  const repairOwners = owners.filter((owner) =>
+    escalated.some(({ path }) => path === owner.path),
   );
-  if (repairOwner.chapter !== null) {
+  for (const repairOwner of repairOwners) {
+    const diagnostics = escalated.filter(({ path }) => path === repairOwner.path);
     if (
+      repairOwner.chapter !== null &&
       !observedOutputs.has(repairOwner.path) &&
       !currentRunOutputs.has(repairOwner.path)
     )
@@ -357,22 +359,20 @@ const auditBook = async (
           "Audit requested repair of a chapter output not established by disk or this run.",
         ),
       );
-    const repaired = await dispatch(runtime, "chapter.analyse", slug, {
-      ...common,
-      chapter: repairOwner.chapter,
-      mode: "repair",
-      outputExists: true,
-      diagnostics,
-    });
-    const repairStop = stopForOutcome(state, repaired);
-    if (repairStop !== null) return repairStop;
-  } else {
-    const repaired = await dispatch(runtime, "book.synthesise", slug, {
-      ...common,
-      inputPaths,
-      mode: "repair",
-      diagnostics,
-    });
+    const repaired = repairOwner.chapter !== null
+      ? await dispatch(runtime, "chapter.analyse", slug, {
+          ...common,
+          chapter: repairOwner.chapter,
+          mode: "repair",
+          outputExists: true,
+          diagnostics,
+        })
+      : await dispatch(runtime, "book.synthesise", slug, {
+          ...common,
+          inputPaths,
+          mode: "repair",
+          diagnostics,
+        });
     const repairStop = stopForOutcome(state, repaired);
     if (repairStop !== null) return repairStop;
   }
@@ -879,27 +879,29 @@ async function runBookPlanResult(
     preparedChapters,
     (operation) => dispatchPreparedOperation(runtime, operation),
   );
-  const observationRequired = outcomes.find(
+  // An unknown writer must not be turned into a fresh invocation which could
+  // replay it. Wait for all siblings, then retain the actual blocking evidence.
+  const uncertain = outcomes.find((outcome) => outcome.kind !== "receipt");
+  if (uncertain !== undefined) return stopForOutcome(state, uncertain)!;
+  const staleOutputs = outcomes.filter(
     (outcome) =>
-      outcome.kind === "unknown_outcome" ||
-      outcome.kind === "incoherent_complete" ||
-      (outcome.kind === "receipt" &&
-        outcome.receipt.terminal.status === "blocked" &&
-        outcome.receipt.terminal.issue.code ===
-          `${outcome.receipt.operation}.output_observation_mismatch` &&
-        outcome.receipt.terminal.issue.retryable === true),
+      outcome.kind === "receipt" &&
+      outcome.receipt.terminal.status === "blocked" &&
+      outcome.receipt.terminal.issue.code ===
+        `${outcome.receipt.operation}.output_observation_mismatch` &&
+      outcome.receipt.terminal.issue.retryable === true,
   );
-  if (observationRequired !== undefined)
+  for (const outcome of outcomes) {
+    if (staleOutputs.includes(outcome)) continue;
+    const stop = stopForOutcome(state, outcome);
+    if (stop !== null) return stop;
+  }
+  if (staleOutputs.length > 0)
     return needsObservationMaterialResult(
       resultSeed(state),
       [{ kind: "book", slug }],
       resumeSeed(input, state),
     );
-  for (const outcome of outcomes) {
-    const stop = stopForOutcome(state, outcome);
-    if (stop !== null) return stop;
-  }
-
   const currentRunOutputs = new Set(
     outcomes.map(
       (outcome) =>
