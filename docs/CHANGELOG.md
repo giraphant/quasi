@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.68.7** (2026-10-05): Give Translation Prepare a local OCR correction capability after Bottled Lightning's retained recognition still failed layout.
+  - Add optional source-bound `--review-json` at a caller-named path. The specialist visually reviews exact source pages, corrects supported text/geometry or identifies blank/show-through pages, and re-places saved recognition without new inference. Preserve original recognition and embed the applied review in the PDF; existing output must match an explicitly requested review. Keep native-text pages, font coverage, paragraph fit and final translation checks protected.
+  - Collect paragraph fit errors across the layout pass so the specialist can repair the affected pages together. No mandatory review stage, automatic blank-page classifier, writer replay or new quality threshold.
+  - Real validation: the retained 280-page Bottled Lightning recognition re-placed successfully after visual corrections on seven pages; all 477,599 projected characters extracted in order and every page's rendered pixels matched the source. No paid translation, user-vault write or restart of another book. [Whole-book evidence and ablation review](evals/lightning-layout-review-20261005.md).
+  - Regression validation: full suite 1,919 passed and 1 opt-in paid Host E2E skipped; after the final fit-diagnostic change, 156 targeted extraction/recovery tests passed, including an additional unplaceable-review case. The 21 required contract tests, Workflow parity/TypeScript checks, plugin validation, maintainer mirrors and diff checks passed.
+
 - **0.68.6** (2026-10-04): Keep useful validation at its owning boundary and finish known repairs before judging the whole material again.
   - Book repairs all distinct audit-listed chapters and then any flagged overview before its final audit. Paper accepts an audit that has already validated its mechanical fixes, without demanding an extra mutation-free pass.
   - Chapter reuse and exact slot repair ignore source timestamp-only changes while retaining content SHA-256, extraction options, source-drift and publication-precondition checks. Historical timestamp-bound manifests can reconcile without migration or rewriting.

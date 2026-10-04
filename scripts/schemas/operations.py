@@ -220,6 +220,7 @@ OPERATION_CATALOG = {
             "manifest": "processing/translations/{slug}-{target}.manifest.json",
             "recoverySource": "processing/translations/{slug}-{target}-reocr.pdf",
             "layoutRecognition": "processing/translations/{slug}-{target}-recognition.json",
+            "layoutReview": "processing/translations/{slug}-{target}-layout-review.json",
         },
     },
     "topic.recall": {

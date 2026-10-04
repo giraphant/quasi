@@ -2139,10 +2139,17 @@ def test_prepare_rows_expose_only_paths_they_can_publish():
             "scope": "exact",
             "path": "processing/translations/exact-material-zh-recognition.json",
         },
+        {
+            "scope": "exact",
+            "path": "processing/translations/exact-material-zh-layout-review.json",
+        },
     ]
     request = json.loads(_prepare("translation.prepare")["prompt"])
     assert request["refs"]["layout_recognition"] == "processing/translations/exact-material-zh-recognition.json"
     assert any("--recognition-json " + request["refs"]["layout_recognition"] in cap
+               for cap in request["capabilities"])
+    assert request["refs"]["layout_review"] == "processing/translations/exact-material-zh-layout-review.json"
+    assert any("--review-json " + request["refs"]["layout_review"] in cap
                for cap in request["capabilities"])
 
 

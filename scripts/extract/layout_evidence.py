@@ -37,7 +37,8 @@ def text_sha256(document) -> str:
     return digest.hexdigest()
 
 
-def stamp(document, *, source_sha256: str, grouped_pages: int, paragraphs: int) -> None:
+def stamp(document, *, source_sha256: str, grouped_pages: int, paragraphs: int,
+          review: dict | None = None) -> None:
     evidence = {
         "schema_version": SCHEMA,
         "profile": PROFILE,
@@ -48,10 +49,12 @@ def stamp(document, *, source_sha256: str, grouped_pages: int, paragraphs: int) 
         "paragraphs": paragraphs,
         "text_sha256": text_sha256(document),
     }
+    if review is not None:
+        evidence["review"] = review
     document.xref_set_key(document.pdf_catalog(), KEY, pymupdf.get_pdf_str(json.dumps(evidence)))
 
 
-def inspect(path: Path, *, source_sha256: str | None = None) -> dict:
+def inspect(path: Path, *, source_sha256: str | None = None, review: dict | None = None) -> dict:
     """Read exact PDF evidence; a recovery filename alone never proves layout."""
     with pymupdf.open(path) as document:
         image_pages = sum(has_page_image(page) for page in document)
@@ -67,6 +70,7 @@ def inspect(path: Path, *, source_sha256: str | None = None) -> dict:
             and isinstance(evidence.get("source_sha256"), str)
             and re.fullmatch(r"[a-f0-9]{64}", evidence["source_sha256"]) is not None
             and (source_sha256 is None or evidence["source_sha256"] == source_sha256)
+            and (review is None or evidence.get("review") == review)
             and evidence.get("pages") == len(document)
             and evidence.get("image_pages") == image_pages
             and type(evidence.get("grouped_pages")) is int

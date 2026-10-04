@@ -30,7 +30,8 @@ Usage:
                       [--expected-manifest-fingerprint SHA] [--json]
   quasi-extract text  INPUT.pdf OUTPUT.txt [--json]
   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine mineru|tesseract]
-                                [--layout [--recognition-json PATH]] [--no-clobber] [--json]
+                                [--layout [--recognition-json PATH] [--review-json PATH]]
+                                [--no-clobber] [--json]
                                 [--resume --progress-file PATH --chunk-pages N]
   quasi-extract ocr-generation --kind paper|book --slug SLUG
                                 --source-file PATH --expected-source-sha256 SHA256
@@ -66,6 +67,7 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
     resume = False
     progress_file = ""
     recognition_file = ""
+    review_file = ""
     chunk_pages = 8
     seen: set[str] = set()
     errors: list[str] = []
@@ -119,15 +121,18 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
             seen.add("resume")
             resume = True
             i += 1
-        elif a == "--recognition-json":
-            if "recognition-json" in seen:
-                errors.append("duplicate --recognition-json")
-            seen.add("recognition-json")
+        elif a in ("--recognition-json", "--review-json"):
+            if a in seen:
+                errors.append(f"duplicate {a}")
+            seen.add(a)
             if i + 1 >= len(rest) or rest[i + 1].startswith("-"):
-                errors.append("--recognition-json requires a path")
+                errors.append(f"{a} requires a path")
                 i += 1
             else:
-                recognition_file = rest[i + 1]
+                if a == "--recognition-json":
+                    recognition_file = rest[i + 1]
+                else:
+                    review_file = rest[i + 1]
                 i += 2
         elif a == "--progress-file":
             if "progress-file" in seen:
@@ -201,6 +206,8 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
             errors.append("--recognition-json requires --layout")
         if any(Path(recognition_file).resolve() == Path(p).resolve() for p in positional[:2]):
             errors.append("--recognition-json must be separate from INPUT and OUTPUT")
+    if review_file and (not layout or not recognition_file):
+        errors.append("--review-json requires --layout and --recognition-json")
     if not positional or not positional[0]:
         errors.append("missing INPUT")
     if len(positional) > 3:
@@ -234,19 +241,22 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
 
     input_arg = positional[0]
     output_arg = positional[1] if len(positional) > 1 else ""
+    review = None
     if layout:
         import layout_evidence
         try:
             layout_source_sha = layout_evidence.file_sha256(Path(input_arg))
-        except OSError as exc:
-            return fail(f"cannot read layout source: {exc}")
+            if review_file:
+                review = json.loads(Path(review_file).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return fail(f"cannot read layout source/review: {exc}")
 
     def layout_valid(path: str) -> bool:
         if not layout:
             return True
         try:
             return (
-                layout_evidence.inspect(Path(path), source_sha256=layout_source_sha)["prepared"]
+                layout_evidence.inspect(Path(path), source_sha256=layout_source_sha, review=review)["prepared"]
                 and layout_evidence.file_sha256(Path(input_arg)) == layout_source_sha
             )
         except Exception:
@@ -382,6 +392,7 @@ def _run_ocr(here: Path, rest: list[str]) -> int:
                     *engine_positional,
                     *layout,
                     *(["--recognition-json", recognition_file] if recognition_file else []),
+                    *(["--review-json", review_file] if review_file else []),
                 ]
             )
 
@@ -548,7 +559,7 @@ def _ocr_output_state(output_arg: str) -> tuple[bool, int, bool]:
 def _print_ocr_help() -> None:
     print(
         "Usage: quasi-extract ocr INPUT.pdf [OUTPUT.pdf] [LANGUAGE] "
-        "[--engine mineru|tesseract] [--layout [--recognition-json PATH]] [--no-clobber] [--json] "
+        "[--engine mineru|tesseract] [--layout [--recognition-json PATH] [--review-json PATH]] [--no-clobber] [--json] "
         "[--resume --progress-file PATH --chunk-pages N]"
     )
     print(
@@ -560,6 +571,9 @@ def _print_ocr_help() -> None:
     print("          No tesseract fallback in layout mode. Default output is reflowed text.")
     print("--no-clobber: require an explicit OUTPUT and never overwrite an existing path.")
     print("--recognition-json PATH: keep source-bound raw layout recognition and reuse it on re-placement.")
+    print("--review-json PATH: apply source-bound, visually reviewed page replacements to saved recognition.")
+    print('  Shape: {"source_sha256":"...","pages":[{"page":16,"reason":"...","blocks":[]}]}')
+    print("  Physical pages are one-based; blocks replace that entire page. Empty blocks mean a reviewed blank scan.")
     print("--json: require an explicit OUTPUT; emit exactly one JSON receipt on stdout.")
     print("--resume: run one Book OCR page range and persist exact progress.")
     print("--progress-file: exact durable JSON progress path required by --resume.")

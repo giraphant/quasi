@@ -283,22 +283,28 @@ def natural_size(page, rect, text, fontname, fontfile, *, rotate=0) -> float:
     return lo
 
 
-def write_output(source: Path, output: Path, pages: list[list[dict]], *, layout: bool, model: str) -> dict:
+def write_output(source: Path, output: Path, pages: list[list[dict]], *, layout: bool, model: str,
+                 review: dict | None = None) -> dict:
     source_sha = layout_evidence.file_sha256(source)
+    if review is not None and (not layout or review.get("source_sha256") != source_sha):
+        raise ValueError("layout review does not match the source being placed")
     quality = ocr_quality.empty_quality()
+    reviewed = {row["page"]: row["blocks"] for row in review["pages"]} if review else {}
     with fitz.open(source) as src, (fitz.open(source) if layout else fitz.open()) as out:
         if len(pages) != len(src):
             raise ValueError("incomplete MinerU page results")
-        plans, sizes = [], []
+        plans, sizes, placement_errors = [], [], []
         for i, rows in enumerate(pages):
             if layout and not layout_evidence.has_page_image(src[i]):
                 plans.append([])
                 continue
+            if i + 1 in reviewed:
+                rows = reviewed[i + 1]
             try:
                 blocks = normalize_blocks(rows, layout=layout)
             except ValueError as exc:
                 raise ValueError(f"page {i + 1}: {exc}") from exc
-            if not blocks and len(ocr_quality.words(src[i].get_text())) >= 50:
+            if not blocks and i + 1 not in reviewed and len(ocr_quality.words(src[i].get_text())) >= 50:
                 raise ValueError(f"page {i + 1}: no recognized blocks despite a usable old text layer")
             ocr_quality.check_page(src[i], blocks, i + 1, quality)
             if not blocks:
@@ -317,11 +323,12 @@ def write_output(source: Path, output: Path, pages: list[list[dict]], *, layout:
                     try:
                         size = natural_size(page, rect, text, fontname, fontfile, rotate=rotate)
                     except ValueError as exc:
-                        raise ValueError(
+                        placement_errors.append(
                             f"page {i + 1}, block {block['source_block']} ({block['source_type']}), "
                             f"bbox={block['bbox']}, rotation={block['angle']}, chars={len(text)}, "
                             f"excerpt={text[:120]!r}: {exc}"
-                        ) from exc
+                        )
+                        continue
                     plan.append((block, rect, text, size, fontname, fontfile, rotate))
                     if block["type"] == "text" and len(text) >= 200:
                         sizes.append(size)
@@ -343,6 +350,8 @@ def write_output(source: Path, output: Path, pages: list[list[dict]], *, layout:
                 size = natural_size(page, rect, texts[0], name, fontfile)
                 if _textbox(page, rect, texts[0], min(9.0, size * .98), name, fontfile, invisible=False, commit=True) < 0:
                     raise ValueError(f"page {i + 1}: failed to place all recognized text")
+        if placement_errors:
+            raise ValueError("layout placement failed:\n" + "\n".join(placement_errors))
         paragraphs = grouped_pages = 0
         if layout:
             dominant = statistics.median(sizes) if sizes else 0.0
@@ -369,7 +378,8 @@ def write_output(source: Path, output: Path, pages: list[list[dict]], *, layout:
             raise ValueError("source changed during OCR")
         ocr_quality.stamp(out, source_sha256=source_sha, quality=quality, model=model)
         if layout:
-            layout_evidence.stamp(out, source_sha256=source_sha, grouped_pages=grouped_pages, paragraphs=paragraphs)
+            layout_evidence.stamp(out, source_sha256=source_sha, grouped_pages=grouped_pages,
+                                  paragraphs=paragraphs, review=review)
         out.save(output, garbage=3, deflate=True)
     print(f"[mineru] agreement check: {quality['checked_blocks']} body blocks, {len(quality['suspects'])} suspect; "
           f"{len(quality['unavailable_pages'])} pages without a usable old layer. New recognition retained.", file=sys.stderr)
@@ -423,6 +433,36 @@ def save_recognition(path: Path, source_sha: str, pages: list) -> list:
             temporary.unlink(missing_ok=True)
 
 
+def read_review(path: Path, source_sha: str, document) -> dict:
+    """A source-bound replacement for selected raw pages, with review reasons.
+
+    {"source_sha256": "...", "pages": [{"page": 16, "reason": "...", "blocks": []}]}
+    Each blocks list replaces the whole selected page. Raw recognition is never
+    edited. Empty blocks explicitly mean a visually reviewed blank scan page.
+    """
+    review = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(review, dict) or review.get("source_sha256") != source_sha:
+        raise ValueError("layout review does not match this source")
+    pages = review.get("pages")
+    if not isinstance(pages, list):
+        raise ValueError("layout review pages must be a list")
+    seen = set()
+    for row in pages:
+        if not isinstance(row, dict):
+            raise ValueError("layout review page must be an object")
+        page = row.get("page")
+        if type(page) is not int or not 1 <= page <= len(document) or page in seen:
+            raise ValueError("layout review needs unique one-based physical page numbers within the source")
+        if not isinstance(row.get("reason"), str) or not row["reason"].strip():
+            raise ValueError(f"page {page}: layout review needs a reason")
+        if not isinstance(row.get("blocks"), list):
+            raise ValueError(f"page {page}: layout review blocks must be a list")
+        if not layout_evidence.has_page_image(document[page - 1]):
+            raise ValueError(f"page {page}: layout review cannot replace native text pages")
+        seen.add(page)
+    return review
+
+
 def recognize(source: Path, *, layout: bool) -> list:
     with fitz.open(source) as doc, tempfile.TemporaryDirectory(prefix="quasi-mineru-") as directory:
         indices = [i for i in range(len(doc)) if not layout or layout_evidence.has_page_image(doc[i])]
@@ -460,16 +500,22 @@ def main() -> int:
     parser.add_argument("language", nargs="?")
     parser.add_argument("--layout", action="store_true")
     parser.add_argument("--recognition-json", type=Path)
+    parser.add_argument("--review-json", type=Path)
     args = parser.parse_args()
     source, output, layout = args.source, args.output, args.layout
     recognition = args.recognition_json
     try:
         if recognition is not None and (not layout or recognition.resolve() in {source.resolve(), output.resolve()}):
             raise ValueError("--recognition-json requires layout and a separate JSON artifact path")
+        if args.review_json is not None and (not layout or recognition is None):
+            raise ValueError("--review-json requires --layout and --recognition-json")
         initial_sha = layout_evidence.file_sha256(source)
         with fitz.open(source) as doc:
             pages = len(doc)
+            review = read_review(args.review_json, initial_sha, doc) if args.review_json else None
         results = read_recognition(recognition, initial_sha, pages) if recognition else None
+        if review is not None and results is None:
+            raise ValueError("layout review requires saved recognition; no new inference started")
         if results is None:
             results = recognize(source, layout=layout)
             if recognition is not None:
@@ -481,7 +527,9 @@ def main() -> int:
             print(f"[mineru] reusing recognition: {recognition}; placement only", file=sys.stderr)
         if layout_evidence.file_sha256(source) != initial_sha:
             raise ValueError("source changed during recognition")
-        write_output(source, output, results, layout=layout, model=MODEL)
+        if review is not None:
+            print(f"[mineru] applying reviewed pages: {[r['page'] for r in review['pages']]}", file=sys.stderr)
+        write_output(source, output, results, layout=layout, model=MODEL, **({"review": review} if review else {}))
         return 0
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"[mineru] failed: {exc}", file=sys.stderr)

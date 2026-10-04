@@ -17,7 +17,7 @@ receipt 工作，而不是另选 provider。
 
 CLI 拥有锁、fenced staging、页数门、ToUnicode repair、coverage gate、manifest-last 与
 canonical publication。你拥有对这些证据的解释、恢复策略和终态判断。Request 的 slug、
-target language、source decision、output、manifest、recovery、layout_recognition 与 TOC refs 是这次 invocation 的
+target language、source decision、output、manifest、recovery、layout_recognition、layout_review 与 TOC refs 是这次 invocation 的
 完整作用域；动态 shell token 使用 POSIX quoting，凭据不进入 argv 或 receipt。
 
 第一次写入前，逐项核对 request envelope 的 exact refs：具名 input 必须存在且可读；request 若断言输出状态（存在 mode、output_observation 等字段时），磁盘必须与断言一致，其中
@@ -35,9 +35,21 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 （中文目标为 `processing/translations/{slug}-zh-reocr.pdf`）运行
 `quasi-extract ocr INPUT RECOVERY --layout --recognition-json RECOGNITION --no-clobber --json`，其中
 RECOGNITION 使用 request.refs.layout_recognition。CLI 在排版之前保存来源绑定的原始识别结果；
-排版失败后保留该文件，修复排版能力后用同一命令直接重排，无需再次识别。该 JSON 是识别
+排版失败后保留该文件，核对问题并作局部修订后用同一命令重排，无需再次识别。该 JSON 是识别
 数据，不是任务游标，也不证明 recovery PDF 已成功。失败诊断中的页码和块号对应其中的
-物理页和原始块顺序；可读取这份 exact artifact 定位问题，不手改来源绑定字段。
+物理页和当前采用的块顺序；可读取这份 exact artifact 定位问题，不改原始识别或来源绑定字段。
+
+已完成识别后的局部错误由你核看 exact source PDF 的对应物理页后处理，不必把已定位且可修复的
+错误立即交回为 failed。可在 refs.layout_review 写入
+`{"source_sha256":"原始识别的来源 SHA","pages":[{"page":1,"reason":"原页核看依据","blocks":[]}]}`，
+然后给同一 layout 命令加 `--review-json REVIEW` 重排；这条路径只用已保存识别，不启动新 OCR。
+每项 blocks 替换该页的完整块列表：从原始页复制，仅修正看得清的文字或框；其余块保持原样。
+确认空白／仅有透印时才使用空列表，保留原页图像并清除假文字；正文页的坏页眉或页码应修回
+原文，不能为了通过 fit 检查删掉整页正文。记录具体依据；无法读清的实质内容不凭猜测填补。
+CLI 把采用的修订嵌入 recovery PDF，原始识别仍可追溯。这是可选的局部恢复能力，不增加每本书
+必经的 review 阶段。若已有该 exact review 文件，读取并保留先前有效修订，重排时继续传入它。
+接续同一个已知失败的 layout，逐项解决新出现的具体问题；不要重新识别全书或启动付费翻译来试错。
+
 成功后以 recovery source 重新
 observe，再运行翻译。扫描页沿用 `relayer_page` 的图像对象判断；字体名不能证明是否扫描，
 ABBYY 文字层也可能是 TimesNewRomanPSMT。无图像对象的原生文字页保留原文字层。
@@ -105,4 +117,4 @@ exact source 运行 `quasi-translate observe --mode final ... --json`：`signal:
 记录内部 observe/run/recovery 的实际结果，`validation` 保留最终 generation 的可核验证据，
 交付前选择一个 `terminal` 分支并对照 schema 检查完整性；complete 的 issue 为 null，其他
 分支使用 typed issue；只有 needs_input terminal 拥有 `gate`。你只写 CLI contract 命名的 translation/recovery
-产物，不修改原 source；后续调度由 driving skill 决定。
+产物及 request.refs.layout_review，不修改原 source 和原始 recognition；后续调度由 driving skill 决定。

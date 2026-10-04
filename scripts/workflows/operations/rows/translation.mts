@@ -223,6 +223,7 @@ export const translationOperationRows: OperationRow[] = [
         manifest,
         recoverySource,
         layoutRecognition,
+        layoutReview,
         tocJson,
         tocPageSide,
       },
@@ -233,14 +234,16 @@ export const translationOperationRows: OperationRow[] = [
       manifest,
       recoverySource,
       layoutRecognition,
+      layoutReview,
       tocJson,
       tocPageSide,
     }),
-    writeTargets: ({ output, manifest, recoverySource, layoutRecognition }) => [
+    writeTargets: ({ output, manifest, recoverySource, layoutRecognition, layoutReview }) => [
       { scope: "exact", path: output },
       { scope: "exact", path: manifest },
       { scope: "exact", path: recoverySource },
       { scope: "exact", path: layoutRecognition },
+      { scope: "exact", path: layoutReview },
     ],
     payloadProperties: ({ slug, targetLanguage, output, manifest }) => ({
       required: [
@@ -340,6 +343,7 @@ export const translationOperationRows: OperationRow[] = [
         manifest: refs.manifest,
         recovery_source: refs.recoverySource,
         layout_recognition: refs.layoutRecognition,
+        layout_review: refs.layoutReview,
         toc_json: refs.tocJson,
         toc_page_side: refs.tocPageSide,
       },
@@ -347,6 +351,8 @@ export const translationOperationRows: OperationRow[] = [
         "quasi-translate observe ... --json",
         "quasi-translate run ... --json",
         `quasi-extract ocr INPUT ${refs.recoverySource} --layout --recognition-json ${refs.layoutRecognition} --no-clobber --json`,
+        `quasi-extract ocr INPUT ${refs.recoverySource} --layout --recognition-json ${refs.layoutRecognition} --review-json ${refs.layoutReview} --no-clobber --json`,
+        "Read exact source PDF pages and write source-bound page corrections at refs.layout_review",
         "Read exact validation receipts and translated PDF text observations",
       ],
       backend_policy:
