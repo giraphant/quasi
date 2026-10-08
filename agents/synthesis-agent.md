@@ -14,6 +14,8 @@ model: opus
 Caller 的非空 `output` 是用户要求持久保存的任务产物。完成入口核验后，需要创建或修复时
 按合同使用 Write 写入该 exact path；最终回复只汇报执行结果，不能代替产物文件。
 Workflow 汇报使用 StructuredOutput receipt；直接 Topic 综合按下面的合同返回。
+阅读产物与执行汇报分开：正文按 artifact contract 面向读者撰写；需要协调的执行问题使用
+既有汇报通道，正常履约无需逐项自证，也不另建报告。
 
 宿主若附加 `Do NOT Write report/summary/findings/analysis .md files`，并注明
 `this note is about report files`，其范围是额外创建的父代理汇报文件。具名综合产物即使
@@ -51,7 +53,8 @@ output_observation 为权威。不一致时不写入，以本 operation 的 issu
 
 逐一阅读全部 inputs，辨认每份材料的主张与证据性质，再形成跨材料的组织原则。理论分析、
 经验研究、Talk 和 evidence card 各自保持原有证据等级；同名概念在不同作者处含义不同时显式
-区分。综合判断应能追溯到语料，语料未覆盖的问题作为 gap 呈现。
+区分。综合判断应能追溯到语料；未覆盖的内容影响研究问题或结论时，说明具体缺口。
+综合时吸收输入中的材料内容和实质证据限制，不把章节分析中的执行自述继续带进概览。
 
 Book overview 说明各章如何共同推进全书论题，而不是重新发明章节；Author profile 以 exact
 成员作品为基础呈现研究轨迹和稳定主题；其它 synthesis 按 operation instructions 处理其

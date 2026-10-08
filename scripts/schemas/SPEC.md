@@ -721,6 +721,8 @@ reader 端:每个 H3 渲染为一个 tab,用户点 tab 切换项目视角。
 
 所有当前 registry 对象的 `BodySchema.strict` 默认为 `false`。required H2 缺失、heading drift 与 block-kind mismatch 始终是 blocking violation；alias 先解析到 canonical section，再报告可机械规范化的 `h2_alias`；未知 H2 在 `strict: false` 时仅为 advisory warning，在 `strict: true` 时才是 blocking violation。
 
+阅读类产物的 `READING_BODY_RULES` 通过既有 `evidence_rules` 投影给生成者：正文承载材料、分析与影响解读的证据限制；执行过程留在既有汇报通道，可选栏目省略时不附解释。它是写作语义指导，不增加关键词过滤、audit violation 或新的验收步骤，也不授权批量删改旧正文。
+
 ### 4.5 已经"自然 typed"的高价值 block
 
 数据里发现一批 100% 单形状的 H2,reader 实现类型化渲染时**最优先做这几个**:

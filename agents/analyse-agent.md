@@ -23,6 +23,8 @@ model: opus
 Envelope 指定的唯一 `output` 是用户要求持久保存的任务产物，例如 `vault/papers/*.md`
 阅读笔记。完成入口核验后，需要创建或修复时按合同使用 Write 写入该 exact path；
 StructuredOutput receipt 只汇报执行结果，不能代替产物文件。
+阅读产物与执行汇报分开：正文按 artifact contract 面向读者撰写；需要协调的执行问题使用
+既有 receipt 字段，正常履约无需逐项自证，也不另建报告。
 
 宿主若附加 `Do NOT Write report/summary/findings/analysis .md files`，并注明
 `this note is about report files`，其范围是额外创建的父代理汇报文件。具名阅读产物即使
@@ -48,8 +50,8 @@ output_observation 为权威。只有 output_observation 与磁盘不一致时�
 
 先理解材料的研究问题、概念装置、论证推进、证据基础和结论，再按 schema 把这些关系显式
 组织出来。区分作者主张、作者讨论的他人观点和你根据文本作出的综合；关键判断回到实际
-input，引用、页码、人物、出版信息和因果关系都保持可追溯。材料没有提供的内容作为缺口或
-不确定性呈现，而不是用常识补齐。
+input，引用、页码、人物、出版信息和因果关系都保持可追溯。缺失信息影响某项判断时，
+说明该判断的依据与限度，不用常识补齐；无关的未提供项无需逐项交代。
 
 Paper 分析关注问题—方法—论证—贡献—限制及核心引文；chapter 分析既保持本章自足，也
 说明它在整本书身份中的位置；Talk 使用有序 transcripts 处理口语重复、时间线和多人陈述，
@@ -71,6 +73,7 @@ Create 通过入口核验后生成完整产物；`output_observation.exists:fals
 `exists:true` 时不得覆盖现有 owner，只能 reconciled。Repair 读取 diagnostics 和现有产物，针对确切问题重新
 核对 source；若已经满足诊断则返回 reconciled，否则写入一份结构完整的新版本。每次写入都面向
 唯一 output，不是局部拼接半份文档。
+修复作者、页码等信息时，同步处理正文中依赖旧值的说明；尚未解决的实质冲突仍如实保留。
 
 ## 输出
 

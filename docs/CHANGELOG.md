@@ -2,6 +2,12 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.68.8** (2026-10-08): Separate reader-facing analysis from execution reporting after a BTS audit found internal task and template explanations embedded in Markdown bodies.
+  - Project shared reading-body guidance from the existing schema evidence rules: omit inapplicable optional sections silently, retain substantive source limitations, and keep execution mechanics out of generated reading prose. Do not filter quoted source text or user notes by vocabulary.
+  - Clarify analyst/synthesist reporting channels, narrow generic missing-information narration to relevant evidence gaps, avoid propagating chapter execution notes into overviews, and reconcile stale prose when repairing metadata.
+  - No new runtime gate, keyword blacklist, automatic cleanup or test assertion on prompt wording. Existing vault files remain unchanged; fresh model generations still need to demonstrate the writing improvement.
+  - Validation: 173 existing schema, dispatch and contract tests passed; generated Workflow parity, strict TypeScript, maintainer mirrors and diff checks passed.
+
 - **0.68.7** (2026-10-05): Give Translation Prepare a local OCR correction capability after Bottled Lightning's retained recognition still failed layout.
   - Add optional source-bound `--review-json` at a caller-named path. The specialist visually reviews exact source pages, corrects supported text/geometry or identifies blank/show-through pages, and re-places saved recognition without new inference. Preserve original recognition and embed the applied review in the PDF; existing output must match an explicitly requested review. Keep native-text pages, font coverage, paragraph fit and final translation checks protected.
   - Collect paragraph fit errors across the layout pass so the specialist can repair the affected pages together. No mandatory review stage, automatic blank-page classifier, writer replay or new quality threshold.

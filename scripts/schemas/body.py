@@ -80,6 +80,14 @@ class BodySchema:
         return None
 
 
+# Producer guidance only: no keyword filter or new audit violation.
+READING_BODY_RULES = [
+    "正文直接展开材料内容与分析，提供必要的来源定位；不要附加代理工作笔记，或向读者解释如何遵守调用约定、路径或槽位安排及模板要求。原文引述和用户笔记不因措辞相似而删改。",
+    "可选节条件不满足时直接省略，不在开头、结尾或其他节解释为什么没有生成该栏目。",
+    "缺页、识别疑误或未解决的署名冲突确实影响理解或引用时，在相关位置简短说明具体影响；保留实质问题，不为正常分析附加范围声明，也不逐项交代未做的工作。",
+]
+
+
 # ─── author body schema ──────────────────────────────────────
 
 AUTHOR_BODY = BodySchema(
@@ -89,6 +97,7 @@ AUTHOR_BODY = BodySchema(
     identity_fields=["name"],
     h1="使用 frontmatter.name",
     evidence_rules=[
+        *READING_BODY_RULES,
         "只使用 caller 提供并验证的 canonical Book/Paper corpus",
         "每份成员作品首次出现时使用由其 exact canonical path 推导的 wikilink",
         "保持原材料的证据类型，不虚构时间顺序、引文或作品关系",
@@ -168,6 +177,7 @@ BOOK_BODY = BodySchema(
         "category",
     ],
     h1="使用 frontmatter.title；不添加模板式或项目式后缀",
+    evidence_rules=[*READING_BODY_RULES],
     sections=[
         BodySection(
             h2="核心论点",
@@ -241,6 +251,7 @@ CHAPTER_BODY = BodySchema(
     metadata_lines=[
         "可写原文标题、作者和关键词；每一项必须由 input 或 caller identity 支持",
     ],
+    evidence_rules=[*READING_BODY_RULES],
     sections=[
         BodySection(
             h2="核心论点",
@@ -322,6 +333,7 @@ PAPER_BODY = BodySchema(
         "期刊来源",
         "仅在 identity 提供 DOI 时写 DOI",
     ],
+    evidence_rules=[*READING_BODY_RULES],
     sections=[
         BodySection(
             h2="核心论点",
@@ -402,6 +414,7 @@ TALK_BODY = BodySchema(
         "时长",
         "transcript 未说明的非必填展示项标为（未说明）",
     ],
+    evidence_rules=[*READING_BODY_RULES],
     sections=[
         BodySection(
             h2="核心论点",
@@ -484,6 +497,7 @@ TOPIC_BODY = BodySchema(
     identity_fields=["title", "kind"],
     h1="使用 frontmatter.title",
     evidence_rules=[
+        *READING_BODY_RULES,
         "所有 Topic 页使用 type: topic；kind 必须匹配请求的 output role：overview/resources/outline/card",
         "frontmatter 只允许 JSON Schema 声明的字段；请求的 research_key、topic_slug、query 等编排字段不写入产物",
         "outline 必须有非空 subquestions，id 唯一；subquestions/history 仅用于 outline",
