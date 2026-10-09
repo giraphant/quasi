@@ -564,7 +564,7 @@ def _fetch_aa_with_browser(url: str, page_kind: str = "search") -> str:
                 "--with",
                 "python-socks",
                 "python",
-                str(AA_BROWSER_SCRIPT),
+                str(AA_BROWSER_SCRIPT.resolve()),
                 "--url",
                 url,
                 "--output",
@@ -577,6 +577,7 @@ def _fetch_aa_with_browser(url: str, page_kind: str = "search") -> str:
             print("  Anna is checking the browser; waiting for the page...", file=sys.stderr)
             proc = subprocess.run(
                 command,
+                cwd=temp_dir,
                 text=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,

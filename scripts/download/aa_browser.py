@@ -172,7 +172,10 @@ async def _fetch(url: str, output: Path, timeout: float, page_kind: str = "searc
     deadline = time.monotonic() + timeout
     try:
         driver = await asyncio.wait_for(
-            cdp_driver.start_async(**_browser_options()),
+            cdp_driver.start_async(
+                **_browser_options(),
+                downloads_path=str(output.resolve().parent / "downloads"),
+            ),
             timeout=min(30.0, timeout),
         )
         remaining = max(1.0, deadline - time.monotonic())

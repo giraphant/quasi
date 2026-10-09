@@ -507,6 +507,10 @@ def test_aa_browser_fallback_is_bounded_and_uses_named_temp_output(
         observed["kwargs"] = kwargs
         output_index = command.index("--output") + 1
         output = Path(command[output_index])
+        # Browser dependencies may create files relative to their working directory.
+        downloads = Path(kwargs.get("cwd", Path.cwd())) / "downloaded_files"
+        downloads.mkdir()
+        (downloads / "partial.crdownload").write_bytes(b"partial browser download")
         output.write_text("<html><a href='/md5/abc'>book</a></html>", encoding="utf-8")
         return SimpleNamespace(returncode=0, stderr="")
 
@@ -532,6 +536,7 @@ def test_aa_browser_fallback_is_bounded_and_uses_named_temp_output(
     assert observed["kwargs"]["timeout"] == mod.AA_BROWSER_PROCESS_TIMEOUT
     assert observed["command"][observed["command"].index("--page-kind") + 1] == "detail"
     assert not list((tmp_path / ".quasi" / "temp").glob("aa-browser-*"))
+    assert not (tmp_path / "downloaded_files").exists()
 
 
 def test_aa_browser_fallback_fails_closed_without_uvx(monkeypatch):

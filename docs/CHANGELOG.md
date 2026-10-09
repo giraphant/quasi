@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.68.9** (2026-10-09): Keep Anna's Archive browser fallback files out of the vault root.
+  - Run the SeleniumBase helper inside its existing `.quasi/temp/aa-browser-*` directory and explicitly place browser downloads beneath it. Resolve the helper script before changing cwd; temporary browser files share the invocation's existing cleanup. No new recovery step or validation gate, and no deletion of existing user directories.
+  - Validation: 203 download, search and contract tests passed. Extend the existing cleanup test to simulate a dependency creating a relative download and check that it leaves no root directory. A local real Chromium run returned settled HTML; an automatic attachment request produced no saved file, so it does not establish successful browser-download placement.
+
 - **0.68.8** (2026-10-08): Separate reader-facing analysis from execution reporting after a BTS audit found internal task and template explanations embedded in Markdown bodies.
   - Project shared reading-body guidance from the existing schema evidence rules: omit inapplicable optional sections silently, retain substantive source limitations, and keep execution mechanics out of generated reading prose. Do not filter quoted source text or user notes by vocabulary.
   - Clarify analyst/synthesist reporting channels, narrow generic missing-information narration to relevant evidence gaps, avoid propagating chapter execution notes into overviews, and reconcile stale prose when repairing metadata.

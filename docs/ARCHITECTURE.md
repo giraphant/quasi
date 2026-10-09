@@ -65,7 +65,8 @@ Removed legacy bins:
   acquisition discovery, not metadata search. Its normal path is HTTP-only; a confirmed
   DDoS-Guard response invokes the bounded `scripts/download/aa_browser.py` helper through
   `uvx`, executes the site's JavaScript in isolated Chromium, and returns settled HTML to
-  the same parser.
+  the same parser. Its process cwd and browser download destination stay inside the
+  invocation's `.quasi/temp/aa-browser-*` directory and share its cleanup lifetime.
 - `scripts/extract/extract.py`: unified extraction dispatcher.
 - `scripts/audit/audit.py`: agent-facing typecheck wrapper. It always runs
   mechanical autofix, then typecheck, then residual issue classification, and
