@@ -99,6 +99,10 @@ def build_command(
         PDF2ZH_PYTHON,
         "--from",
         PDF2ZH_SPEC,
+        # BabelDOC still imports BitStream, which bitstring 5 removed. Constrain
+        # uvx's isolated environment; the plugin venv cannot supply this dependency.
+        "--with",
+        "bitstring<5",
         "pdf2zh_next",
         str(source_pdf),
         "--output",

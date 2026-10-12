@@ -2,6 +2,10 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.68.10** (2026-10-13): Restore pdf2zh startup after bitstring 5 removed the `BitStream` API still used by BabelDOC.
+  - Add `--with bitstring<5` to the pdf2zh uvx command so its isolated environment resolves a compatible dependency without a caller-supplied constraints file. Preserve translation validation and transaction replay behavior; a retained failed request still needs an explicit recovery attempt.
+  - Validation: 95 translation and contract tests passed. Confirmed the uvx argument placement and successful `BitStream` import and append with cached bitstring 4.4.0. No live translation was rerun.
+
 - **0.68.9** (2026-10-09): Keep Anna's Archive browser fallback files out of the vault root.
   - Run the SeleniumBase helper inside its existing `.quasi/temp/aa-browser-*` directory and explicitly place browser downloads beneath it. Resolve the helper script before changing cwd; temporary browser files share the invocation's existing cleanup. No new recovery step or validation gate, and no deletion of existing user directories.
   - Validation: 203 download, search and contract tests passed. Extend the existing cleanup test to simulate a dependency creating a relative download and check that it leaves no root directory. A local real Chromium run returned settled HTML; an automatic attachment request produced no saved file, so it does not establish successful browser-download placement.
