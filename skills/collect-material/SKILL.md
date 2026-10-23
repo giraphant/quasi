@@ -279,13 +279,14 @@ Author → exact Author status → discover/freeze → exact child status batch
      prepared、canonical 三个 returned refs 都必须与该 observation 相等、present 且 usable。Talk 的
      canonical returned ref 必须命中 `facts.canonical`；返回 `prepared_media` ref 时必须命中
      `facts.prepared` 且 present、usable。Paper 的
-     source 与 canonical returned refs 必须分别命中当前 observation 的 exact source/canonical 且
-     present、usable。Workflow 选定的 normalized_text 若是 fixed `processing/papers/{slug}/source.txt`，
+     canonical returned ref 必须命中 `facts.canonical` 且 present、usable；已有 canonical 经 Audit
+     通过后可只返回该 ref，此时不要求 source、prepared 或 OCR generation。返回 source ref 时必须
+     命中 exact source 且 present、usable。返回的 normalized_text 若是 fixed `processing/papers/{slug}/source.txt`，
      必须命中 `facts.prepared` 的 exact present/usable artifact；若是 immutable generation text，必须逐字
      等于 `facts.ocr_generation.paths.text`，且该 capsule 为 `committed`，其 `normalized_text` fact 必须
      `exists:true`、`regular:true`、`utf8:true`、`size>0`、`non_whitespace_chars>0`。固定 legacy
-     `processing/papers/{slug}/ocr.txt` 永不构成新的 normalized completion。只审计 canonical 不能证明
-     Paper complete；Workflow 的 complete 必须来自对当前产物验证合格的 final Audit；机械
+     `processing/papers/{slug}/ocr.txt` 永不构成新的 normalized completion。
+     Workflow 的 complete 必须来自对当前产物验证合格的 final Audit；机械
      修正后已经验证 clean 的结果有效，不因 `mutated_paths` 非空额外发起审计。
    - Paper `complete` 且 `next.kind=="book"`：只按 `next.kind` 选 Book entry。先观察
      `next.identity.slug`，构造

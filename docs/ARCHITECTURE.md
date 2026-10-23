@@ -123,11 +123,14 @@ join, only the explicit pre-write output-observation mismatch requests fresh
 status. Unknown or incoherent writer outcomes and other failures take precedence
 over that refresh, so it cannot silently replay writers or discard a sibling failure.
 
-A Paper complete result names the exact accepted source, the normalized text selected by
-Prepare, and the canonical page. An existing canonical owner therefore still reconciles
-Prepare before Audit; if its source is absent, Acquire runs first. Audit alone proves only
-the canonical page and cannot turn a missing source or prepared projection into complete.
-The accepted source is exactly one of `sources/{slug}.pdf` and `sources/{slug}.txt`;
+A Paper with an admitted canonical page enters Audit directly. A clean result returns
+only that canonical ref, without reacquiring missing sources, rebuilding prepared text,
+or entering OCR because the PDF changed after processing. If Audit requires semantic
+repair, the plan obtains the source and prepared input through the existing processing
+path, repairs once, and runs the second Audit without repeating the first. A newly
+produced or semantically repaired Paper returns the accepted source, Prepare-selected
+normalized text, and canonical page. Source-bound transaction checks remain unchanged.
+When processing is needed, the accepted source is exactly one of `sources/{slug}.pdf` and `sources/{slug}.txt`;
 simultaneous alternatives are a visible conflict. PDF responses and Paper accept require a
 readable, non-empty PDF container, while verified scholarly HTML or strict UTF-8 text may be
 normalized into the text alternative. A bounded Paper fetch returns before the host ceiling

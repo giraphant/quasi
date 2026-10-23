@@ -20,12 +20,13 @@ from test_material_plans import (
 @pytest.mark.parametrize("after_semantic_repair", [False, True])
 def test_paper_accepts_audit_that_validated_its_mechanical_fixes(after_semantic_repair):
     target = "vault/papers/exact-paper.md"
-    outputs = [prepare_complete()]
+    outputs = []
     if after_semantic_repair:
         outputs += [
             audit_complete(escalated=[{
                 "path": target, "kind": "missing-section", "reason": "Analysis absent.",
             }]),
+            prepare_complete(),
             analyse_complete("repair"),
         ]
     outputs.append(audit_complete(mutated_paths=[target]))

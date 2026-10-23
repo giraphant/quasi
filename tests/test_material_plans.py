@@ -1418,7 +1418,7 @@ def test_paper_provisional_happy_path_carries_prepare_selected_input() -> None:
     assert report["pipelineCalls"] == 0
 
 
-def test_paper_admitted_canonical_reconciles_prepare_and_ignores_stale_search_decision() -> None:
+def test_paper_admitted_canonical_skips_prepare_and_ignores_stale_search_decision() -> None:
     value = canonical_input(
         source=True,
         prepared=True,
@@ -1431,16 +1431,15 @@ def test_paper_admitted_canonical_reconciles_prepare_and_ignores_stale_search_de
         "value": {"stale": True},
     }
 
-    report = run_paper(value, [prepare_complete(), audit_complete()])
+    report = run_paper(value, [audit_complete()])
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
-        "paper.prepare",
         "paper.audit",
     ]
     assert report["result"]["terminal"] == "complete"
 
 
-def test_paper_existing_source_and_canonical_reconciles_missing_prepared_text() -> None:
+def test_paper_existing_canonical_does_not_rebuild_missing_prepared_text() -> None:
     report = run_paper(
         canonical_input(
             source=True,
@@ -1448,30 +1447,64 @@ def test_paper_existing_source_and_canonical_reconciles_missing_prepared_text() 
             canonical=True,
             admitted=True,
         ),
-        [prepare_complete(), audit_complete()],
+        [audit_complete()],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
-        "paper.prepare",
         "paper.audit",
     ]
+
+
+@pytest.mark.parametrize("state", ["missing", "invalid", "unknown", "in_progress", "committed"])
+def test_paper_completed_page_ignores_changed_pdf_and_ocr_state(state: str) -> None:
+    value = canonical_input(source=True, canonical=True, admitted=True)
+    facts = value["observation"]["facts"]
+    old_key = facts["ocr_generation"]["generation_key"]
+    facts["sources"][0]["candidate"].update(sha256="c" * 64, size=150)
+    facts["ocr_generation"] = paper_ocr_generation(
+        "exact-paper", source_sha256="c" * 64, source_size=150, state=state,
+        completed_pages=16 if state == "in_progress" else None,
+        failure="ocr.generation_manifest_invalid" if state in {"invalid", "unknown"} else None,
+    )
+    assert facts["ocr_generation"]["generation_key"] != old_key
+
+    report = run_paper(value, [audit_complete()])
+
+    assert [call["request"]["operation"] for call in report["calls"]] == ["paper.audit"]
+    assert report["result"]["terminal"] == "complete"
+    assert report["result"]["artifacts"] == [
+        {"role": "canonical", "path": "vault/papers/exact-paper.md"},
+    ]
+    assert report["remaining"] == 0
+
+
+def test_paper_completed_page_does_not_ask_to_choose_source_alternatives() -> None:
+    report = run_paper(
+        canonical_input(source=True, text_source=True, canonical=True, admitted=True),
+        [audit_complete()],
+    )
+
+    assert [call["request"]["operation"] for call in report["calls"]] == ["paper.audit"]
+    assert report["result"]["terminal"] == "complete"
 
 
 def test_paper_text_source_flows_through_prepare_and_completion() -> None:
     report = run_paper(
         canonical_input(
             text_source=True,
-            canonical=True,
-            admitted=True,
+            canonical=False,
+            admitted=False,
         ),
-        [prepare_complete(), audit_complete()],
+        [search_complete(), prepare_complete(), analyse_complete(), audit_complete()],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search",
         "paper.prepare",
+        "paper.analyse",
         "paper.audit",
     ]
-    assert report["calls"][0]["request"]["source"] == {
+    assert report["calls"][1]["request"]["source"] == {
         "format": "txt",
         "path": "sources/exact-paper.txt",
         "sha256": "b" * 64,
@@ -1487,13 +1520,14 @@ def test_paper_incomplete_text_source_stops_before_analyse_and_audit() -> None:
     report = run_paper(
         canonical_input(
             text_source=True,
-            canonical=True,
-            admitted=True,
+            canonical=False,
+            admitted=False,
         ),
-        [prepare_source_incomplete()],
+        [search_complete(), prepare_source_incomplete()],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search",
         "paper.prepare"
     ]
     assert report["result"]["terminal"] == "failed"
@@ -1505,13 +1539,13 @@ def test_paper_conflicting_source_alternatives_return_typed_gate() -> None:
         canonical_input(
             source=True,
             text_source=True,
-            canonical=True,
-            admitted=True,
+            canonical=False,
+            admitted=False,
         ),
-        [],
+        [search_complete()],
     )
 
-    assert report["calls"] == []
+    assert [call["request"]["operation"] for call in report["calls"]] == ["material.search"]
     assert report["result"]["terminal"] == "needs_input"
     assert report["result"]["issue"]["code"] == (
         "paper.source_selection_required"
@@ -1549,18 +1583,20 @@ def test_paper_source_gate_selects_one_exact_prepare_input(
     value = canonical_input(
         source=True,
         text_source=True,
-        canonical=True,
-        admitted=True,
+        canonical=False,
+        admitted=False,
     )
     value["userDecision"] = paper_source_decision(source_path)
 
-    report = run_paper(value, [prepare_complete(), audit_complete()])
+    report = run_paper(value, [search_complete(), prepare_complete(), analyse_complete(), audit_complete()])
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search",
         "paper.prepare",
+        "paper.analyse",
         "paper.audit",
     ]
-    assert report["calls"][0]["request"]["source"]["path"] == source_path
+    assert report["calls"][1]["request"]["source"]["path"] == source_path
     assert report["result"]["terminal"] == "complete"
     assert report["result"]["artifacts"][0] == {
         "role": "source",
@@ -1586,39 +1622,39 @@ def test_paper_source_gate_selects_one_exact_prepare_input(
         ),
     ],
 )
-def test_paper_stale_or_foreign_source_decision_regates_without_dispatch(
+def test_paper_stale_or_foreign_source_decision_regates_without_prepare(
     decision: dict[str, Any],
 ) -> None:
     value = canonical_input(
         source=True,
         text_source=True,
-        canonical=True,
-        admitted=True,
+        canonical=False,
+        admitted=False,
     )
     value["userDecision"] = decision
 
-    report = run_paper(value, [])
+    report = run_paper(value, [search_complete()])
 
-    assert report["calls"] == []
+    assert [call["request"]["operation"] for call in report["calls"]] == ["material.search"]
     assert report["result"]["terminal"] == "needs_input"
     assert report["result"]["gate"]["candidates_fingerprint"] == "3" * 64
 
 
-def test_paper_malformed_matching_source_decision_blocks_before_dispatch() -> None:
+def test_paper_malformed_matching_source_decision_blocks_before_prepare() -> None:
     value = canonical_input(
         source=True,
         text_source=True,
-        canonical=True,
-        admitted=True,
+        canonical=False,
+        admitted=False,
     )
     value["userDecision"] = paper_source_decision(
         "sources/exact-paper.pdf",
         fingerprint="not-a-fingerprint",
     )
 
-    report = run_paper(value, [])
+    report = run_paper(value, [search_complete()])
 
-    assert report["calls"] == []
+    assert [call["request"]["operation"] for call in report["calls"]] == ["material.search"]
     assert report["result"]["terminal"] == "blocked"
     assert report["result"]["issue"]["code"] == "workflow.incoherent_gate"
 
@@ -1627,16 +1663,16 @@ def test_paper_source_decision_is_ignored_after_drift_to_one_source() -> None:
     value = canonical_input(
         source=True,
         text_source=False,
-        canonical=True,
-        admitted=True,
+        canonical=False,
+        admitted=False,
     )
     value["userDecision"] = paper_source_decision(
         "sources/exact-paper.txt",
     )
 
-    report = run_paper(value, [prepare_complete(), audit_complete()])
+    report = run_paper(value, [search_complete(), prepare_complete(), analyse_complete(), audit_complete()])
 
-    assert report["calls"][0]["request"]["source"]["path"] == (
+    assert report["calls"][1]["request"]["source"]["path"] == (
         "sources/exact-paper.pdf"
     )
     assert report["result"]["terminal"] == "complete"
@@ -1644,11 +1680,12 @@ def test_paper_source_decision_is_ignored_after_drift_to_one_source() -> None:
 
 def test_paper_acquire_may_select_the_text_output() -> None:
     acquired = run_paper(
-        canonical_input(canonical=True, admitted=True),
-        [acquire_complete("sources/exact-paper.txt")],
+        canonical_input(canonical=False, admitted=False),
+        [search_complete(), acquire_complete("sources/exact-paper.txt")],
     )
 
     assert [call["request"]["operation"] for call in acquired["calls"]] == [
+        "material.search",
         "paper.acquire"
     ]
     assert acquired["result"]["terminal"] == "needs_observation"
@@ -1659,18 +1696,20 @@ def test_paper_acquire_may_select_the_text_output() -> None:
             "observation": paper_observation(
                 "exact-paper",
                 text_source=True,
-                canonical=True,
-                admitted=True,
+                canonical=False,
+                admitted=False,
             ),
             "options": resume_seed["options"],
         },
         [
+            search_complete(),
             prepare_complete(source_path="sources/exact-paper.txt"),
+            analyse_complete(),
             audit_complete(),
         ],
     )
 
-    assert report["calls"][0]["request"]["source"]["path"] == (
+    assert report["calls"][1]["request"]["source"]["path"] == (
         "sources/exact-paper.txt"
     )
     assert report["result"]["artifacts"][0]["path"] == (
@@ -1687,47 +1726,17 @@ def test_paper_acquire_may_select_the_text_output() -> None:
     ]
 
 
-def test_paper_existing_canonical_recovers_missing_source_before_prepare() -> None:
-    acquired = run_paper(
-        canonical_input(
-            source=False,
-            prepared=False,
-            canonical=True,
-            admitted=True,
-        ),
-        [acquire_complete()],
-    )
-
-    assert [call["request"]["operation"] for call in acquired["calls"]] == [
-        "paper.acquire"
-    ]
-    assert acquired["result"]["terminal"] == "needs_observation"
-    resume_seed = acquired["result"]["resume_seed"]
+def test_paper_existing_canonical_does_not_reacquire_missing_source() -> None:
     report = run_paper(
-        {
-            "seed": resume_seed["seed"],
-            "observation": paper_observation(
-                "exact-paper",
-                source=True,
-                canonical=True,
-                admitted=True,
-            ),
-            "options": resume_seed["options"],
-        },
-        [prepare_complete(), audit_complete()],
+        canonical_input(canonical=True, admitted=True),
+        [audit_complete()],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
-        "paper.prepare",
-        "paper.audit",
+        "paper.audit"
     ]
     assert report["result"]["terminal"] == "complete"
     assert report["result"]["artifacts"] == [
-        {"role": "source", "path": "sources/exact-paper.pdf"},
-        {
-            "role": "normalized_text",
-            "path": "processing/papers/exact-paper/source.txt",
-        },
         {"role": "canonical", "path": "vault/papers/exact-paper.md"},
     ]
 
@@ -1735,20 +1744,22 @@ def test_paper_existing_canonical_recovers_missing_source_before_prepare() -> No
 def test_paper_ocr_advances_one_range_per_fresh_observation() -> None:
     first_value = canonical_input(
         source=True,
-        canonical=True,
-        admitted=True,
+        canonical=False,
+        admitted=False,
         ocr_state="missing",
     )
     first_generation = first_value["observation"]["facts"]["ocr_generation"]
     first = run_paper(
         first_value,
         [
+            search_complete(),
             prepare_complete(disposition="ocr_required"),
             paper_ocr_complete(first_generation),
         ],
     )
 
     assert [call["request"]["operation"] for call in first["calls"]] == [
+        "material.search",
         "paper.prepare",
         "paper.ocr",
     ]
@@ -1759,47 +1770,52 @@ def test_paper_ocr_advances_one_range_per_fresh_observation() -> None:
 
     second_value = canonical_input(
         source=True,
-        canonical=True,
-        admitted=True,
+        canonical=False,
+        admitted=False,
         ocr_state="in_progress",
         ocr_completed_pages=16,
     )
     second_generation = second_value["observation"]["facts"]["ocr_generation"]
     second = run_paper(
         second_value,
-        [paper_ocr_complete(second_generation, disposition="created")],
+        [search_complete(), paper_ocr_complete(second_generation, disposition="created")],
     )
 
     assert [call["request"]["operation"] for call in second["calls"]] == [
+        "material.search",
         "paper.ocr"
     ]
     assert second["result"]["terminal"] == "needs_observation"
 
     final_value = canonical_input(
         source=True,
-        canonical=True,
-        admitted=True,
+        canonical=False,
+        admitted=False,
         ocr_state="committed",
     )
     final_generation = final_value["observation"]["facts"]["ocr_generation"]
     report = run_paper(
         final_value,
         [
+            search_complete(),
             prepare_complete(input_path=final_generation["paths"]["text"]),
+            analyse_complete(),
             audit_complete(),
         ],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search",
         "paper.prepare",
+        "paper.analyse",
         "paper.audit",
     ]
-    prepare_request = report["calls"][0]["request"]
+    prepare_request = report["calls"][1]["request"]
     assert prepare_request["input"] == {
         "role": "generation_text",
         "path": final_generation["paths"]["text"],
     }
-    assert "paper.analyse" not in [
+    assert "paper.analyse" in [
         call["request"]["operation"] for call in report["calls"]
     ]
     assert report["result"]["terminal"] == "complete"
@@ -1812,8 +1828,8 @@ def test_paper_ocr_advances_one_range_per_fresh_observation() -> None:
 def test_paper_tesseract_profile_advances_32_then_final_page() -> None:
     first_value = canonical_input(
         source=True,
-        canonical=True,
-        admitted=True,
+        canonical=False,
+        admitted=False,
         ocr_state="missing",
         ocr_profile_name="tesseract-text",
         ocr_source_pages=33,
@@ -1822,21 +1838,22 @@ def test_paper_tesseract_profile_advances_32_then_final_page() -> None:
     first = run_paper(
         first_value,
         [
+            search_complete(),
             prepare_complete(disposition="ocr_required"),
             paper_ocr_complete(first_generation),
         ],
     )
 
     assert first["result"]["terminal"] == "needs_observation"
-    request = first["calls"][1]["request"]
+    request = first["calls"][2]["request"]
     assert request["generation"]["profile"]["chunk_pages"] == 32
     assert request["generation"]["profile"]["engine_order"] == ["tesseract"]
     assert "--profile 'tesseract-text'" in request["capabilities"][0]
 
     second_value = canonical_input(
         source=True,
-        canonical=True,
-        admitted=True,
+        canonical=False,
+        admitted=False,
         ocr_state="in_progress",
         ocr_completed_pages=32,
         ocr_profile_name="tesseract-text",
@@ -1845,11 +1862,12 @@ def test_paper_tesseract_profile_advances_32_then_final_page() -> None:
     second_generation = second_value["observation"]["facts"]["ocr_generation"]
     second = run_paper(
         second_value,
-        [paper_ocr_complete(second_generation, disposition="created")],
+        [search_complete(), paper_ocr_complete(second_generation, disposition="created")],
     )
 
     assert second["result"]["terminal"] == "needs_observation"
     assert [call["request"]["operation"] for call in second["calls"]] == [
+        "material.search",
         "paper.ocr"
     ]
 
@@ -1868,15 +1886,15 @@ def test_paper_invalid_or_unknown_generation_blocks_without_writer(
     report = run_paper(
         canonical_input(
             source=True,
-            canonical=True,
-            admitted=True,
+            canonical=False,
+            admitted=False,
             ocr_state=state,
             ocr_failure=failure,
         ),
-        [],
+        [search_complete()],
     )
 
-    assert report["calls"] == []
+    assert [call["request"]["operation"] for call in report["calls"]] == ["material.search"]
     assert report["result"]["terminal"] == "blocked"
     assert report["result"]["issue"]["operation"] == "paper.ocr"
     assert report["result"]["issue"]["code"] == failure
@@ -1886,15 +1904,16 @@ def test_paper_unknown_ocr_writer_stops_without_replay() -> None:
     report = run_paper(
         canonical_input(
             source=True,
-            canonical=True,
-            admitted=True,
+            canonical=False,
+            admitted=False,
             ocr_state="in_progress",
             ocr_completed_pages=16,
         ),
-        ["__throw__"],
+        [search_complete(), "__throw__"],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
+        "material.search",
         "paper.ocr"
     ]
     assert report["result"]["terminal"] == "blocked"
@@ -1918,23 +1937,16 @@ def test_paper_search_owner_admits_usable_canonical_with_localized_identity() ->
         value,
         [
             search_complete(owner_slug="exact-paper"),
-            prepare_complete(),
             audit_complete(),
         ],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
         "material.search",
-        "paper.prepare",
         "paper.audit",
     ]
     assert report["result"]["terminal"] == "complete"
     assert report["result"]["artifacts"] == [
-        {"role": "source", "path": "sources/exact-paper.pdf"},
-        {
-            "role": "normalized_text",
-            "path": "processing/papers/exact-paper/source.txt",
-        },
         {"role": "canonical", "path": "vault/papers/exact-paper.md"},
     ]
 
@@ -2053,11 +2065,10 @@ def test_paper_search_owner_resume_admits_localized_canonical() -> None:
     }
     second = run_paper(
         resumed,
-        [prepare_complete("owned-paper"), audit_complete()],
+        [audit_complete()],
     )
 
     assert [call["request"]["operation"] for call in second["calls"]] == [
-        "paper.prepare",
         "paper.audit",
     ]
     assert second["result"]["terminal"] == "complete"
@@ -2175,7 +2186,7 @@ def test_paper_prepared_resume_reconciles_prepare_to_rebuild_selected_input() ->
     assert report["calls"][2]["request"]["mode"] == "repair"
 
 
-def test_paper_existing_canonical_reconciles_prepare_then_repairs_once() -> None:
+def test_paper_existing_canonical_prepares_only_after_audit_requests_repair() -> None:
     diagnostic = {
         "path": "vault/papers/exact-paper.md",
         "kind": "missing-section",
@@ -2189,16 +2200,16 @@ def test_paper_existing_canonical_reconciles_prepare_then_repairs_once() -> None
             admitted=True,
         ),
         [
-            prepare_complete(),
             audit_complete(escalated=[diagnostic]),
+            prepare_complete(),
             analyse_complete("repair"),
             audit_complete(),
         ],
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
-        "paper.prepare",
         "paper.audit",
+        "paper.prepare",
         "paper.analyse",
         "paper.audit",
     ]
@@ -2222,8 +2233,8 @@ def test_paper_second_audit_escalation_stops_as_repair_exhausted() -> None:
             admitted=True,
         ),
         [
-            prepare_complete(),
             audit_complete(escalated=[diagnostic]),
+            prepare_complete(),
             analyse_complete("repair"),
             audit_complete(escalated=[diagnostic]),
         ],
@@ -2257,7 +2268,6 @@ def test_paper_foreign_audit_path_stops_without_repair_dispatch() -> None:
             admitted=True,
         ),
         [
-            prepare_complete(),
             audit_complete(
                 escalated=[
                     {
@@ -2271,7 +2281,6 @@ def test_paper_foreign_audit_path_stops_without_repair_dispatch() -> None:
     )
 
     assert [call["request"]["operation"] for call in report["calls"]] == [
-        "paper.prepare",
         "paper.audit",
     ]
     assert report["result"]["terminal"] == "blocked"
@@ -4600,7 +4609,6 @@ def test_author_coalesces_canonical_children_and_repairs_once() -> None:
             [(current, admitted_paper_observation(identity))],
         ),
         [
-            prepare_complete("shared-paper"),
             audit_complete(),
             author_synthesise_complete(),
             audit_complete(escalated=[diagnostic]),
@@ -4611,7 +4619,6 @@ def test_author_coalesces_canonical_children_and_repairs_once() -> None:
 
     operations = [call["request"]["operation"] for call in report["calls"]]
     assert operations == [
-        "paper.prepare",
         "paper.audit",
         "author.synthesise",
         "author.audit",
@@ -4748,7 +4755,6 @@ def test_author_paper_to_book_route_survives_a_later_paper_gate() -> None:
         ),
         [
             audit_complete(),
-            prepare_complete("paper-two"),
             audit_complete(),
             author_synthesise_complete(),
             audit_complete(),
@@ -4757,12 +4763,11 @@ def test_author_paper_to_book_route_survives_a_later_paper_gate() -> None:
 
     assert [call["request"]["operation"] for call in completed["calls"]] == [
         "book.audit",
-        "paper.prepare",
         "paper.audit",
         "author.synthesise",
         "author.audit",
     ]
-    synthesis = completed["calls"][3]["request"]
+    synthesis = completed["calls"][2]["request"]
     assert [item["title"] for item in synthesis["inputs"]] == [
         "Rerouted Book Title",
         "Second Paper",
@@ -4833,8 +4838,8 @@ def test_author_lifts_paper_source_gate_for_one_member() -> None:
         source=True,
         text_source=True,
         prepared=True,
-        canonical=True,
-        admitted=True,
+        canonical=False,
+        admitted=False,
     )
     observation["identity"] = {
         "title": identity["title"],
@@ -4847,10 +4852,10 @@ def test_author_lifts_paper_source_gate_for_one_member() -> None:
             [author_member(route, route, identity)],
             [(route, observation)],
         ),
-        [],
+        [search_complete(identity)],
     )
 
-    assert report["calls"] == []
+    assert [call["request"]["operation"] for call in report["calls"]] == ["material.search"]
     assert report["result"]["terminal"] == "needs_input"
     assert report["result"]["gate"]["route"] == route
     assert report["result"]["gate"]["gate"]["kind"] == "paper_source"

@@ -18,7 +18,6 @@ from test_material_plans import (
     canonical_translation_input,
     chapter_complete,
     chapter_output_observation_mismatch,
-    prepare_complete,
     provisional_input,
     search_webpage_redirect,
     translation_complete,
@@ -86,7 +85,7 @@ def _entry_input(entry: str) -> dict[str, Any]:
 def _abi_case(entry: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     value = _entry_input(entry)
     if entry == "paper":
-        return value, [prepare_complete(), audit_complete()]
+        return value, [audit_complete()]
     if entry in {"book", "talk", "archive"}:
         return value, [audit_complete()]
     if entry == "translation":

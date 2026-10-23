@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.68.11** (2026-10-23): Reuse completed Paper pages without re-entering source processing.
+  - Reverse the 0.65.25 requirement to reconcile Acquire/Prepare on every visit to an admitted canonical Paper. Audit now runs first; a clean result returns only the canonical page, so PDF annotations or removed intermediates do not trigger another extraction or OCR run.
+  - Only an Audit requesting semantic repair enters the existing source/Prepare path, then repairs and audits once more. Collection verifies the refs actually returned. Source-bound OCR and translation transactions are unchanged; no new completion state or fingerprint scheme is introduced.
+  - Validation: 196 material-plan, entry, recovery, dead-name and orchestration tests passed; generated Workflow parity, strict TypeScript, and maintainer mirror checks passed.
+
 - **0.68.10** (2026-10-13): Restore pdf2zh startup after bitstring 5 removed the `BitStream` API still used by BabelDOC.
   - Add `--with bitstring<5` to the pdf2zh uvx command so its isolated environment resolves a compatible dependency without a caller-supplied constraints file. Preserve translation validation and transaction replay behavior; a retained failed request still needs an explicit recovery attempt.
   - Validation: 95 translation and contract tests passed. Confirmed the uvx argument placement and successful `BitStream` import and append with cached bitstring 4.4.0. No live translation was rerun.

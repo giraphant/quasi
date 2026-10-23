@@ -208,6 +208,7 @@ const auditPaper = async (
   state: PaperState,
   sourcePath: string,
   selectedInput: string,
+  firstReceipt: StageReceipt | null = null,
 ): Promise<MaterialResult> => {
   const slug = state.runtimeSlug as string;
   const common = {
@@ -215,14 +216,15 @@ const auditPaper = async (
     meta: state.identity,
     materialKey: `paper:${slug}`,
   };
-  const firstAudit = await dispatch(runtime, "paper.audit", slug, {
-    ...common,
-    pass: 1,
-  });
-  const firstStop = stopForOutcome(state, firstAudit);
-  if (firstStop !== null) return firstStop;
-
-  const firstReceipt = firstAudit.receipt as StageReceipt;
+  if (firstReceipt === null) {
+    const firstAudit = await dispatch(runtime, "paper.audit", slug, {
+      ...common,
+      pass: 1,
+    });
+    const firstStop = stopForOutcome(state, firstAudit);
+    if (firstStop !== null) return firstStop;
+    firstReceipt = firstAudit.receipt as StageReceipt;
+  }
   const target = firstReceipt.target_path as string;
   if (!auditOwnsTarget(firstReceipt, target))
     return auditOwnershipBlock(state);
@@ -478,6 +480,26 @@ async function runPaperPlanResult(
     meta: state.identity,
     materialKey: `paper:${slug}`,
   };
+  let firstAuditReceipt: StageReceipt | null = null;
+  if (canonicalReady) {
+    const audited = await dispatch(runtime, "paper.audit", slug, {
+      ...common,
+      pass: 1,
+    });
+    const auditStop = stopForOutcome(state, audited);
+    if (auditStop !== null) return auditStop;
+    firstAuditReceipt = audited.receipt as StageReceipt;
+    const target = state.observation!.facts.canonical.path;
+    if (!auditOwnsTarget(firstAuditReceipt, target))
+      return auditOwnershipBlock(state);
+    if (auditIsClean(firstAuditReceipt))
+      return completeMaterialResult(
+        resultSeed(state),
+        [{ role: "canonical", path: target }],
+        null,
+      );
+    // Only a page that needs semantic repair requires its source and Prepare.
+  }
   const usableSourceFacts = (state.observation?.facts.sources ?? [])
     .filter(({ artifact }) => artifact.usable);
   let sourceCandidate =
@@ -640,7 +662,9 @@ async function runPaperPlanResult(
     if (analyseStop !== null) return analyseStop;
   }
 
-  return auditPaper(runtime, input, state, sourcePath, selectedInput);
+  return auditPaper(
+    runtime, input, state, sourcePath, selectedInput, firstAuditReceipt,
+  );
 }
 
 export async function runPaperPlanForComposition(
