@@ -245,15 +245,128 @@ def pick_font(texts: list[str], fontfile: str | None = None) -> tuple[str, str |
                          f"is required; refusing to discard text ({reason})")
 
 
+def _strip_text_objects(streams: list[tuple[int, bytes]]) -> list[tuple[int, bytes]]:
+    """Lex one logical content stream, retaining each physical stream boundary."""
+    whitespace = b"\x00\t\n\f\r "
+    delimiters = b"()<>[]{}/%"
+    # MuPDF pads a /Contents array with a space between physical streams.
+    # Carry lexical state across that space without gluing adjacent tokens.
+    data = b" ".join(stream for _, stream in streams)
+    boundaries = []
+    offset = 0
+    for xref, stream in streams:
+        boundaries.append((offset, xref))
+        offset += len(stream) + 1
+
+    def unterminated(kind, start):
+        xref = next(xref for offset, xref in reversed(boundaries) if offset <= start)
+        raise ValueError(f"unterminated {kind} in content stream xref {xref}; "
+                         "refusing to write a partial text layer")
+
+    removed = []
+    text_start = image_start = None
+    pos, size = 0, len(data)
+    while pos < size:
+        start = pos
+        char = data[pos]
+        pos += 1
+        if char in whitespace:
+            continue
+        if char == ord("("):
+            depth = 1
+            while pos < size and depth:
+                char = data[pos]
+                pos += 1
+                if char == ord("\\"):
+                    pos += 1
+                elif char == ord("("):
+                    depth += 1
+                elif char == ord(")"):
+                    depth -= 1
+            if depth:
+                unterminated("literal string", start)
+            continue
+        if char == ord("<"):
+            if pos < size and data[pos] == ord("<"):
+                pos += 1
+            else:
+                end = data.find(b">", pos)
+                if end < 0:
+                    unterminated("hex string", start)
+                pos = end + 1
+            continue
+        if char == ord("%"):
+            while pos < size and data[pos] not in b"\r\n":
+                pos += 1
+            continue
+        if char == ord("/"):
+            while pos < size and data[pos] not in whitespace + delimiters:
+                pos += 1
+            continue
+        if char in delimiters:
+            continue
+        while pos < size and data[pos] not in whitespace + delimiters:
+            pos += 1
+        token = data[start:pos]
+        if image_start is not None:
+            if token == b"ID":
+                # Binary image data is opaque, even when it contains PDF syntax.
+                end = data.find(b"EI", pos)
+                while end >= 0:
+                    if (data[end - 1] in whitespace
+                            and (end + 2 == size or data[end + 2] in whitespace)):
+                        break
+                    end = data.find(b"EI", end + 2)
+                if end < 0:
+                    unterminated("inline image", image_start)
+                pos = end + 2
+                image_start = None
+        elif token == b"BI":
+            image_start = start
+        elif token == b"BT" and text_start is None:
+            text_start = start
+        elif token == b"ET" and text_start is not None:
+            removed.append((text_start, pos))
+            text_start = None
+    if image_start is not None:
+        unterminated("inline image", image_start)
+    if text_start is not None:
+        unterminated("text object", text_start)
+
+    # Rebuild only each stream's own bytes, excluding the synthetic separators;
+    # put the one replacement space where the removed text object began.
+    result = []
+    offset = 0
+    for xref, stream in streams:
+        limit = offset + len(stream)
+        cursor = offset
+        parts = []
+        for start, end in removed:
+            if end <= offset or start >= limit:
+                continue
+            parts.append(data[cursor:max(cursor, start)])
+            if start >= offset:
+                parts.append(b" ")
+            cursor = min(end, limit)
+        parts.append(data[cursor:limit])
+        result.append((xref, b"".join(parts)))
+        offset = limit + 1
+    return result
+
+
 def strip_text(page) -> None:
     doc = page.parent
-    xrefs = list(page.get_contents())
-    xrefs += [x for x, *_ in page.get_xobjects() if doc.xref_get_key(x, "Subtype")[1] == "/Form"]
-    for xref in xrefs:
-        stream = doc.xref_stream(xref)
-        stripped = re.sub(rb"BT\b.*?\bET\b", b" ", stream, flags=re.S)
-        if stream != stripped:
-            doc.update_stream(xref, stripped)
+    streams = [(xref, doc.xref_stream(xref)) for xref in page.get_contents()]
+    stripped = _strip_text_objects(streams)
+    for xref, *_ in page.get_xobjects():
+        if doc.xref_get_key(xref, "Subtype")[1] == "/Form":
+            stream = (xref, doc.xref_stream(xref))
+            streams.append(stream)
+            stripped.extend(_strip_text_objects([stream]))
+    # Validate all page contents and Forms before mutating any stream.
+    for (xref, original), (_, replacement) in zip(streams, stripped):
+        if original != replacement:
+            doc.update_stream(xref, replacement)
 
 
 def rectangle(page, block: dict):

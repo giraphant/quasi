@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
 
+- **0.68.12** (2026-10-29): Stop `--layout` from corrupting pages whose old text layer contains the word "ET".
+  - `strip_text` removed old text with the regex `BT\b.*?\bET\b`, which does not know PDF strings. Delgado 2001 p7 and Delgado 2015 pp5–8 and 16 carry "et al." as `(ET )Tj`; the match closed inside that string and left `)Tj … ET` behind. The resulting content-stream syntax error hung pdf2zh for 30 minutes on one paper and crashed it at 4/26 pages on the other.
+  - Replace the regex with an operator-level lexer covering literal strings with escapes and nesting, hex strings, comments, names and inline images. Treat a page's `/Contents` array as one stream with a space between physical streams, as MuPDF reads it, so adjacent `Q`/`BT` operators neither merge nor hide an old layer. Form XObjects are still stripped independently. An unterminated construct now fails explicitly before any stream on the page is rewritten.
+  - Validation: 169 OCR/extract tests and 21 dead-name/orchestration tests passed. Both real Delgado sources strip to empty text on every page (19 and 26 pages) and render with no content-stream syntax warning. Existing corrupt `-zh-reocr.pdf` files must be moved aside and regenerated from their retained recognition JSON; no live translation was rerun.
+
 - **0.68.11** (2026-10-23): Reuse completed Paper pages without re-entering source processing.
   - Reverse the 0.65.25 requirement to reconcile Acquire/Prepare on every visit to an admitted canonical Paper. Audit now runs first; a clean result returns only the canonical page, so PDF annotations or removed intermediates do not trigger another extraction or OCR run.
   - Only an Audit requesting semantic repair enters the existing source/Prepare path, then repairs and audits once more. Collection verifies the refs actually returned. Source-bound OCR and translation transactions are unchanged; no new completion state or fingerprint scheme is introduced.

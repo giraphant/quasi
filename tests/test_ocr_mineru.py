@@ -208,6 +208,176 @@ def test_font_failure_identifies_page_and_missing_character(tmp_path, monkeypatc
     assert not output.exists()
 
 
+DELGADO_TEXT = b"BT /helv 6 Tf 158 167 Td (GATES )Tj (ET )Tj (AL.)Tj ET"
+
+
+def handcrafted_source_pdf(path):
+    source_pdf(path)
+    with fitz.open(path) as doc:
+        page = doc[0]
+        image_stream, text_stream = page.get_contents()
+        doc.update_stream(image_stream, doc.xref_stream(image_stream) + DELGADO_TEXT)
+        doc.update_stream(text_stream, b"")
+        doc.saveIncr()
+    return path
+
+
+def test_strip_delgado_string_preserves_image_and_valid_content(tmp_path):
+    source = handcrafted_source_pdf(tmp_path / "source.pdf")
+    with fitz.open(source) as doc:
+        page = doc[0]
+        xref = page.get_contents()[0]
+        draw = doc.xref_stream(xref)[:-len(DELGADO_TEXT)]
+        image_xref = page.get_images()[0][0]
+        image_bytes = doc.xref_stream(image_xref)
+        fitz.TOOLS.reset_mupdf_warnings()
+        engine.strip_text(page)
+        assert doc.xref_stream(xref) == draw + b" "
+        assert doc.xref_stream(image_xref) == image_bytes
+        assert page.get_text().strip() == ""
+        page.get_pixmap()
+        assert "syntax error" not in fitz.TOOLS.mupdf_warnings().lower()
+
+
+def test_strip_lexes_hostile_text_operands(tmp_path):
+    source = source_pdf(tmp_path / "source.pdf")
+    content = (b"q BT /helv 6 Tf (DEBT) Tj "
+               rb"(a \) ET \( b) Tj (x (ET) y) Tj (backslash \\) Tj "
+               b"<4554> Tj /Span <</ActualText (ET BT)>> BDC (words) Tj EMC "
+               b"/ET /BT % ET\r\n (last) Tj ET Q")
+    with fitz.open(source) as doc:
+        page = doc[0]
+        xref = page.get_contents()[-1]
+        doc.update_stream(xref, content)
+        engine.strip_text(page)
+        assert doc.xref_stream(xref) == b"q   Q"
+
+
+@pytest.mark.parametrize("content", [
+    b"q % BT ET\r\n /BTX /BT /ET (DEBT) (ET BT) <4254204554> << /ET (BT) >> Q",
+    b"q\x00BTX DEBT ETX\t\n\f\r Q",
+    b"q BI /W 1 /H 1 /ActualText (ID ET) /ID /BPC 8 ID "
+    b"\x00BT (ET) < /ET %\xff xEI EIx\x00 EI Q",
+    b"BI /W 1 /H 1 ID BT (ET) EI",
+])
+def test_strip_preserves_nontext_bytes_without_rewriting(tmp_path, monkeypatch, content):
+    source = source_pdf(tmp_path / "source.pdf")
+    with fitz.open(source) as doc:
+        page = doc[0]
+        xref = page.get_contents()[-1]
+        doc.update_stream(xref, content)
+        monkeypatch.setattr(doc, "update_stream", lambda *a, **k: pytest.fail("unchanged stream rewritten"))
+        engine.strip_text(page)
+        assert doc.xref_stream(xref) == content
+
+
+@pytest.mark.parametrize(("first", "second", "expected"), [
+    (b"q BT /helv 6 Tf (old) Tj ", b"(ET ) Tj ET Q", (b"q  ", b" Q")),
+    (b"q B", b"T (ET ) Tj ET Q", (b"q B", b"T (ET ) Tj ET Q")),
+    # The trailing backslash escapes the padded space, not the next stream's ')'.
+    (b"q BT (a \\", b") Tj ET Q", (b"q  ", b" Q")),
+    (b"q % BT", b" ET\nQ", (b"q % BT", b" ET\nQ")),
+    # Split E / I bytes remain image data until a complete EI token occurs.
+    (b"q BI /W 1 ID BT E", b"I (ET) EI Q BT (old) Tj ET",
+     (b"q BI /W 1 ID BT E", b"I (ET) EI Q  ")),
+])
+def test_strip_carries_lexer_state_across_page_streams(tmp_path, monkeypatch, first, second, expected):
+    source = source_pdf(tmp_path / "source.pdf")
+    with fitz.open(source) as doc:
+        page = doc[0]
+        xrefs = page.get_contents()
+        for xref, content in zip(xrefs, (first, second)):
+            doc.update_stream(xref, content)
+        updates = []
+        update_stream = doc.update_stream
+        def record_update(xref, content):
+            updates.append(xref)
+            update_stream(xref, content)
+        monkeypatch.setattr(doc, "update_stream", record_update)
+        engine.strip_text(page)
+        assert tuple(doc.xref_stream(xref) for xref in xrefs) == expected
+        assert updates == [xref for xref, original, replacement in zip(xrefs, (first, second), expected)
+                           if original != replacement]
+
+
+@pytest.mark.parametrize(("first", "second", "expected"), [
+    (b"q /Im0 Do Q", b"BT (old) Tj ET", (b"q /Im0 Do Q", b" ")),
+    (b"BT (old) Tj ET", b"q Q", (b" ", b"q Q")),
+])
+def test_strip_separates_adjacent_page_stream_operators(tmp_path, first, second, expected):
+    source = source_pdf(tmp_path / "source.pdf")
+    with fitz.open(source) as doc:
+        page = doc[0]
+        xrefs = page.get_contents()
+        for xref, content in zip(xrefs, (first, second)):
+            doc.update_stream(xref, content)
+        engine.strip_text(page)
+        assert tuple(doc.xref_stream(xref) for xref in xrefs) == expected
+
+
+def test_strip_split_inline_image_terminator_fails_at_opening_xref(tmp_path):
+    source = source_pdf(tmp_path / "source.pdf")
+    with fitz.open(source) as doc:
+        page = doc[0]
+        xrefs = page.get_contents()
+        original = (b"q BI /W 1 ID BT E", b"I Q BT (old) Tj ET")
+        for xref, content in zip(xrefs, original):
+            doc.update_stream(xref, content)
+        with pytest.raises(ValueError, match=f"unterminated inline image in content stream xref {xrefs[0]}"):
+            engine.strip_text(page)
+        assert tuple(doc.xref_stream(xref) for xref in xrefs) == original
+
+
+@pytest.mark.parametrize(("content", "kind"), [
+    (b"BT (unfinished) Tj", "text object"),
+    (b"(unfinished \\", "literal string"),
+    (b"BT (unfinished", "literal string"),
+    (b"<4554", "hex string"),
+    (b"BT <4554", "hex string"),
+    (b"BI /W 1", "inline image"),
+    (b"BI /W 1 ID binary BT ET", "inline image"),
+])
+def test_strip_unterminated_construct_leaves_all_page_streams_unchanged(tmp_path, content, kind):
+    source = source_pdf(tmp_path / "source.pdf")
+    with fitz.open(source) as doc:
+        page = doc[0]
+        first, last = page.get_contents()
+        doc.update_stream(first, b"BT (complete) Tj ET\n")
+        doc.update_stream(last, content)
+        before = [doc.xref_stream(x) for x in (first, last)]
+        with pytest.raises(ValueError, match=f"unterminated {kind} in content stream xref {last}"):
+            engine.strip_text(page)
+        assert [doc.xref_stream(x) for x in (first, last)] == before
+
+
+def test_strip_invalid_form_leaves_page_and_other_forms_unchanged(tmp_path):
+    source = source_pdf(tmp_path / "source.pdf")
+    with fitz.open(source) as doc, fitz.open() as inner:
+        page = doc[0]
+        inner.new_page().insert_text((72, 72), "old form text")
+        page.show_pdf_page(page.rect, inner, 0)
+        forms = [xref for xref, *_ in page.get_xobjects()]
+        bad = forms[-1]
+        doc.update_stream(bad, b"BT (unfinished) Tj")
+        xrefs = page.get_contents() + forms
+        before = [doc.xref_stream(x) for x in xrefs]
+        with pytest.raises(ValueError, match=f"unterminated text object in content stream xref {bad}"):
+            engine.strip_text(page)
+        assert [doc.xref_stream(x) for x in xrefs] == before
+
+
+def test_layout_replaces_delgado_text_with_valid_evidenced_output(tmp_path):
+    source = handcrafted_source_pdf(tmp_path / "source.pdf")
+    out = tmp_path / "layout.pdf"
+    fitz.TOOLS.reset_mupdf_warnings()
+    engine.write_output(source, out, [[block("New words " * 10)]], layout=True, model=engine.MODEL)
+    with fitz.open(out) as doc:
+        assert doc[0].get_text().split() == ("New words " * 10).split()
+        doc[0].get_pixmap()
+    assert "syntax error" not in fitz.TOOLS.mupdf_warnings().lower()
+    assert layout_evidence.inspect(out, source_sha256=hashlib.sha256(source.read_bytes()).hexdigest())["prepared"]
+
+
 def test_layout_preserves_images_uses_one_box_and_keeps_footnotes(tmp_path):
     source = source_pdf(tmp_path / "source.pdf")
     out = tmp_path / "layout.pdf"
