@@ -1,0 +1,204 @@
+# quasi 重构：技能组 + 外部会话派发
+
+状态：设计草案（2026-11-01），分支 `redesign/skill-group`。原型跑通前，旧的 Workflow 体系原样保留，两套并存。
+
+## 为什么重构
+
+1. **写作质量。** 2026-11-01 做过一次对照实验：同一模型、同一批 Turner《Charged》章节笔记，只换提示词。现行 `agents/synthesis-agent.md` 里写作方法只占约 21%，其余是 receipt、入口核验、宿主补丁，再加上约 6KB 的 artifact_contract JSON Schema。用它写出的概览正文有 112 处 `chNN` 引注，读起来像合规回执。换成一份 2KB、只讲读者和写法的提示词后，引注降为 0，可读性明显更好。模型会照着提示词的语域写作，提示词写得像协议，产物就像回执。
+2. **模型选择。** Claude 和 Codex 的模型都偏向编码，中文写作不如 AGY。写作任务必须能派给最会写的模型，而 Workflow 只能派 Claude Code 自己的子代理。
+3. **Workflow 的代价大于收益。** receipt 验的是汇报，不是产物，大部分拒绝都卡在簿记字段上，反复报错、反复要人介入；真正的不实汇报（0.58.2）反而要靠查磁盘才发现。Workflow 还带来生成产物、auto 模式的 schema 长度上限、沙箱缺 `URL`/`fetch`，并且只能在 Claude Code 里跑。
+4. **旧架构是成功的。** 0.4 到 0.42 的做法是"技能主进程派 agent、看磁盘续跑、audit 后返修一次"，这就是我们要回去的形状。Workflow 时代的收获（schema 更准、并行更快、能力更多）都在能力层和 `scripts/schemas` 里，与 Workflow 无关，全部保留。
+
+## 四个 harness 共享什么
+
+本机核对过的版本：claude 2.1.316、codex 0.166.0、pi 1.4.0、agy 1.4.12。
+
+| 共享 | 不共享 |
+|---|---|
+| SKILL.md（Agent Skills 规范） | 子代理定义（Pi 没有，Codex 能力弱） |
+| AGENTS.md | 插件格式（骨架相近，清单各异） |
+| shell 和无头 CLI（`claude -p` / `codex exec` / `pi -p` / `agy -p`） | hook（事件名和格式各异） |
+| MCP | Workflow（只有 Claude） |
+
+由此得出四条决定：
+
+- 模型要读的东西全部写成技能。
+- 不用原生子代理，工人跑在外部终端会话里。
+- 正确性不依赖 hook。
+- 不做 MCP。
+
+## 分层：一个技能，内部用目录逐层路由
+
+整个 quasi 只装一个技能。内部是一棵目录树：每个目录有一个入口文件，只做两件事，一是告诉模型下一步读哪里，二是写下对下面所有分支都成立的规则。模型每一跳只读一个小文件，上下文里只有它走过的那条路径。
+
+```
+skills/quasi/
+  SKILL.md                 根：判断是收录、研究还是定稿；全局约定（文库位置、CLI、派活方式）
+  collect/
+    README.md              判断材料类型；收录共用的规则（写作派写手、验收四条、audit 处理）
+    paper/
+      README.md            论文流程
+      search.md            论文怎么找、怎么判断找对了
+      acquire.md           怎么下载、怎么接收源文件
+      prepare.md           怎么抽取正文、什么时候 OCR
+      writing.md           写作说明，原样交给写手
+    book/ talk/ webpage/ archive/ translation/ author/   之后逐个迁入
+  research/README.md       研究循环
+  draft/README.md          定稿校对
+  connectors/rex.md        派活方式；换框架就加一页，改根目录里的一行
+  scripts/quasi            唯一的 CLI 入口
+```
+
+**为什么只装一个技能。** 并列的技能，每个都会在每个会话的系统提示里常驻一行描述，由 harness 拿描述去匹配用户请求。quasi 的入口实际上只有一个，材料之间的判断（这个链接是论文还是网页）往往要先查一下才能定，交给主管读路由表比交给描述匹配更可控。运行时也必须在同一个文件夹里，复制安装和 Codex 丢软链接都要求技能自包含。Matt Pocock 的技能组之所以并列，是因为他的技能彼此独立。
+
+**为什么按材料竖着拆。** Workflow 时代是按操作横切的：一个 download-agent 同时管论文和书的下载，一个 analyse-agent 同时写 paper、chapter、talk、webpage。结果每个工人都背着所有材料的变体。竖着拆以后，每种材料在自己的目录里写自己的子流程：论文的 `acquire.md` 讲 DOI 级联，书的 `acquire.md` 讲 ISBN、版本和年份判定；书还可以有论文没有的切章、章节写作、全书综合。各材料之间会有少量重复，这是可以接受的；共用的机械操作在 CLI 里，共用的规则在 `collect/README.md`。
+
+**几条约定：**
+
+- 规则放在它适用的最高那一层，往下继承。
+- 深度控制在三层：根、需求、材料。
+- 叶子开头写明上游："如果你是被直接派到这里的，先读上面两层"。批量工人直接拿叶子路径开工，不走路由。
+- 写手只拿到 `writing.md` 和输入文件，从不进这棵树。
+- 整棵树在同一个技能文件夹里，所以跨分支引用没有问题（比如 author 写"每篇论文按 `collect/paper/` 做"）。
+
+**谁来执行。** 单件材料由主会话按叶子流程直接跑，需要用户做决定时就在对话里问；批量时每件材料开一个工人会话，从头跑到尾。写作这一步总是派给写手会话。
+
+下载、抽取、OCR、翻译的专业方法（provider 选择、OCR 判断、翻译恢复等），从现有 `agents/*.md` 迁进对应材料目录的说明文件，协议部分丢掉。
+
+## 派活：connectors/
+
+quasi 派活只需要五个动作。connector 负责把它们映射到当前用的终端框架：
+
+| 动作 | 含义 | Rex 映射（v1） |
+|---|---|---|
+| 开工 | 在指定目录开一个新会话，用指定 harness 跑一段提示词，返回 id | `rex run -s "$REX_SESSION" -c DIR --label L --keep-open --focus=false --json -- agy -p ...` |
+| 等待 | 等会话结束，或到时限返回 | `rex wait -s "$REX_SESSION" BLOCK --for 9m --json` |
+| 读结果 | 读它最后的输出 | `rex capture -s "$REX_SESSION" -b BLOCK --trim` |
+| 追加 | 给还开着的会话补一句话 | `rex send` 加 `rex send-key enter`（v2，交互式工人用） |
+| 收工 | 关掉 | `rex block close -s "$REX_SESSION" BLOCK` |
+
+connector 还记录哪类活派给哪个 harness，默认写作派 `agy`、操作派 `codex` 或 `claude`。这只是用户偏好，随时可改。
+
+**v1 用无头模式**：工人在 Rex 的一个 tab 里跑 `agy -p` / `codex exec` / `claude -p`，进程退出就算结束，`--keep-open` 让用户事后能看输出。交互式工人（用户可以插话，返修时用"追加"在同一上下文里接着改）放到 v2；它需要 harness 上报运行状态，Claude 通过 Rex hook 有这个能力，Pi 没有。
+
+**换框架只加一页。** 在 `connectors/` 下写新框架的映射，再把根目录 `SKILL.md` 里指向 `connectors/rex.md` 的那一行改掉。其他文件只写"按派活方式开工、等待、读结果"，不出现任何 Rex 命令。
+
+### 派给工人的消息
+
+写手的消息只写几件事：读哪份写作说明、输入文件、书目信息、交付方式。
+
+```text
+请读写作说明：/abs/vault/.agents/skills/quasi/collect/paper/writing.md
+然后通读这篇论文的全文：/abs/vault/processing/papers/smith-2020/source.txt
+书目信息：……
+按写作说明写出论文笔记，把笔记全文作为你的最终回复：从 frontmatter 的第一行 --- 开始，到最后一节结束，前后不要加任何别的文字。只读取上面列出的文件。
+```
+
+写手不写文件，只需要读权限；编排者检查回复后存到输出路径。消息里不加 JSON 信封，不要求回执格式，也不要求回显输入输出。
+
+## 验收与规则
+
+只验产物，不验汇报：文件在不在由 `quasi status` 判断，合不合格由 `quasi audit` 判断。工人的最后回复只用来知道有什么需要用户决定，或者为什么做不下去。
+
+现在 CLAUDE.md 里的一大段运行时合同，换成四条规则：
+
+1. 同一个输出路径，同一时间只派一个工人。
+2. 工人结束后看磁盘、跑 audit，不信汇报。
+3. 返修时，把原技能、audit 诊断和现有文件一起交给工人，保留用户自己写的内容。
+4. 工人崩了或结果不明，先看磁盘再决定，不盲目重派。
+
+OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留。
+
+## 长任务
+
+- **分段推进**：OCR 每次调用只推进一个 profile 的页段（MinerU 16 页），然后返回，编排者看进度再调下一次。这是现成的，任何 harness 的工具调用都会超时，所以这个设计要保留。
+- **在 Rex tab 里跑**：翻译、转写这种动辄半小时的任务，用 connector 的"开工"在一个 tab 里跑 `scripts/quasi translate ...`，再用"等待"分段等。状态照旧由 `quasi status` 观察。所以 `quasi wait` 暂时不需要。
+
+## CLI 入口
+
+`skills/quasi/scripts/quasi <命令> [参数]` 自己定位（realpath），转发到对应的 `bin/quasi-<命令>`。现有 shim 已经会自定位、在 `~/.cache/quasi` 下建 venv、通过 Keychain helper 读密钥，所以 PreToolUse hook 不再需要。
+
+编排者知道自己的技能目录，派活时把 CLI 的绝对路径写进消息。人想在终端里直接用，就把它 `ln -s` 到 `~/.local/bin`。
+
+后续：skills CLI 是按单个技能文件夹复制安装的，所以 Python 核心最终要搬进 `skills/quasi/scripts/`。原型阶段先通过 realpath 回到仓库根目录调用。
+
+## 写作说明怎么写
+
+- 照 `quasi-synthesiser` 的样子写：读者是谁、语言风格如何、结构用人话说清楚。
+- 结构那一节可以由 `scripts/schemas` 生成，但要生成人话，不是 JSON Schema；维护者备注不进模型能看到的文字。
+- `scripts/schemas` 仍是 audit 的唯一结构标准。
+- 写作说明放在材料目录里（如 `collect/paper/writing.md`），派活时把它的绝对路径交给写手。
+- 起草交给中文写得最好的模型（目前是 AGY 的 Gemini 4 Argon），由用户审定。
+
+## 和 Marple 的关系
+
+- 合同就是 vault 本身：quasi 写入 `.quasi/schema.json`，Marple 读取。这一点不变。
+- Marple 的 Reader AI 提示词目前点名的是 `quasi:analyse-agent` 等内部名字（其中 `quasi:process-book` 已经不存在）。等新技能名定下来，改成点名 quasi 技能。
+- 两个仓库不合并，quasi 的执行能力也不进 Marple。
+
+## 留什么，删什么
+
+**保留**：
+- `scripts/` 里的全部 Python 能力、事务与锁；
+- `scripts/schemas`（继续导出 `.quasi/schema.json`）；
+- `quasi-status`、`quasi-audit`；
+- 测试中针对能力层的部分。
+
+**原型跑通后删除**：
+- `workflows/*.mjs`、`scripts/workflows/`；
+- request/receipt schema、descriptor rows；
+- `agents/*.md`（方法迁进 references 之后）；
+- `hooks/` 里的 inject-userconfig；
+- `skills/collect-material`、`skills/research-topic`、`skills/finalise-draft`；
+- `codex/skills/quasi`、`deprecated/`；
+- 守护 Workflow parity 的测试。
+
+此外，`userConfig` 改为配置文件加 Keychain，`CLAUDE.md` 删掉，只保留重写后的 `AGENTS.md`（Claude Code 在没有 CLAUDE.md 时会读 AGENTS.md）。
+
+## 第一步：Paper 原型
+
+范围：
+
+- `skills/quasi/SKILL.md`、`collect/README.md`
+- `skills/quasi/collect/paper/`：`README.md`、`search.md`、`acquire.md`、`prepare.md`、`writing.md`
+- `skills/quasi/connectors/rex.md`
+- `skills/quasi/scripts/quasi`（转发到 `bin/quasi-*`）
+
+旧 Workflow 和旧技能一概不碰。
+
+验收：
+
+1. 在 claude、codex、pi、agy 里各起一次，确认模型能拿到技能目录，并用绝对路径跑通 `scripts/quasi status --scan --json`。
+2. 在一个临时 vault 里处理一篇真论文：查找、下载、抽取、分析、audit，全程经 connector 派工，最终 audit clean。
+3. 同一篇论文，与现行 Workflow 的产物做盲比。
+
+之后的顺序：Book（章节并行派工）→ Talk → Webpage / Archive → Translation → Author → Topic → Draft，最后统一删除旧体系。
+
+## 未决
+
+- 交互式工人与"追加"返修（v2）。
+- Python 核心何时搬进技能目录。
+- 配置项迁移的具体格式。
+
+## 实测记录
+
+**2026-11-01，Paper 原型第一轮**，临时 vault `/tmp/quasi-redesign/vault`，技能用项目级软链接接入：
+
+- **技能发现**：
+  - agy 能发现技能，并直接给出技能目录；
+  - codex 能发现技能并给出路径，但临时 vault 需要加 `--skip-git-repo-check`；另外 `~/.codex/skills/quasi`（0.67.0 的旧独立技能）和新的入口技能撞名；
+  - claude 能发现技能，但技能列表里不带路径，加载技能时才给出 base directory；
+  - pi 没有配置模型 API key，没测成。
+- **全流程**（McLennan 2004，Thesis Eleven）：身份、查重、下载（doi_cascade 一次成功）、接收、抽取（12 页文本层可读，不需要 OCR）都直接用 `scripts/quasi` 跑通。AGY（gemini-4-argon-high）写手无头运行，回复直接就是完整页面。audit 自动修好 2 处 frontmatter，另有 2 处软警告（理论框架里夹了列表，核心引用的书目和说明拆成了两行），已据此收紧 `writing.md`。
+- **用户评价**：新版（AGY）质量明显好于旧 Workflow 产物。
+
+**2026-11-01，目录路由第二轮**：三个技能合并成一个 `quasi`，内部改为目录逐层路由。agy 和 codex 各起一个只读会话，只给一句"帮我把这篇论文收进文库：DOI 10.1177/0306312717709363"。两者都按 `SKILL.md` → `collect/README.md` → `collect/paper/README.md` → `search.md` 的顺序读了 4 个文件，在能开始干活的地方停下，没有读任何别的分支，并且各自用技能目录的绝对路径写对了前两步的 CLI 命令。
+
+**2026-11-01，pane 派活第三轮**：工人改为在编排者旁边开 pane（`rex split`），右侧排成一列。
+
+- 无头写手 pane：开出来后焦点留在编排者这边，结果存进文件。
+- 交互式材料会话（`agy --mode accept-edits -i`）：按要求写出状态文件。追加消息用 `rex send` 加 `send-key enter`，它接着干活并改写了状态文件。
+- agy 会向 Rex 上报程序状态：`working`、`done`（一轮结束），以及 `blocked`/`permission`（在等批准）。
+- 新文件夹第一次以交互模式进入时，agy 要求用户确认信任一次。
+
+- **未覆盖**：OCR 分段推进、返修回路、材料会话真正执行全流程、交互会话的权限白名单，以及 pi。

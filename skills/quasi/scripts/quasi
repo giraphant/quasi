@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Resolve symlinks so this entry point can also live on the user's PATH.
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+ROOT="$(cd "$(dirname "$SCRIPT_PATH")/../../.." && pwd)"
+export PATH="$ROOT/bin${PATH:+:$PATH}"
+
+usage() {
+    printf 'Usage: quasi <command> [args...]\n\nAvailable commands:\n'
+    local shim
+    for shim in "$ROOT"/bin/quasi-*; do
+        [ -f "$shim" ] || continue
+        printf '  %s\n' "${shim##*/quasi-}"
+    done
+}
+
+if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    usage
+    exit 0
+fi
+
+COMMAND="$1"
+shift
+if [[ "$COMMAND" == */* ]] || [ ! -f "$ROOT/bin/quasi-$COMMAND" ]; then
+    printf 'quasi: unknown command: %s\n\n' "$COMMAND" >&2
+    usage >&2
+    exit 2
+fi
+
+exec "$ROOT/bin/quasi-$COMMAND" "$@"
