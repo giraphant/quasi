@@ -28,6 +28,8 @@ description: 把论文、书、讲座、网页或档案收进研究文库，研�
 
 **CLI。** 所有确定性能力都走 `scripts/quasi <命令>`，调用时写它的绝对路径。命令有 `status`、`search`、`download`、`extract`、`audit`、`translate`、`transcribe`、`webpage`、`archive`、`helpers`、`doctor`，每个都有 `--help`，输出是 JSON。CLI 自己负责临时目录、锁和原子发布，不要绕过它直接改 `sources/` 或 manifest。题名、作者这类数据传给 CLI 时要正确引用；传 JSON 用带引号的 heredoc 走 stdin。
 
+**权限。** quasi 命令要用 GPU、浏览器和文库外的共享缓存。你的 harness 有沙箱时，quasi 命令一律直接申请在沙箱外运行，不要先在沙箱里试。
+
 **派活。** 需要另开一个会话干活时（派写手、批量处理），当前用的派活方式见 `connectors/rex.md`。
 
 **沟通。** 过程中简短说明进展；遇到要用户拍板的事，直接问，并附上候选和证据。

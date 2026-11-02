@@ -57,7 +57,7 @@ RS="${REX_SESSION:-$QUASI_REX_SESSION}"; RB="${REX_BLOCK:-$QUASI_REX_BLOCK}"
 
 | harness | 写手 | 材料会话 |
 |---|---|---|
-| codex | `codex --no-daemon -C "$PWD" -s workspace-write -a on-request "$(cat P)"` | 同左，需要联网下载时再加 `-c sandbox_workspace_write.network_access=true` |
+| codex | `codex --no-daemon -C "$PWD" -s workspace-write -a on-request "$(cat P)"` | 同左 |
 | agy | `agy --model gemini-4-argon-high --mode accept-edits -i "$(cat P)"` | `agy --model gemini-4-argon-high --mode auto -i "$(cat P)"` |
 | claude | `claude --permission-mode acceptEdits "$(cat P)"` | 同左 |
 
@@ -65,10 +65,10 @@ RS="${REX_SESSION:-$QUASI_REX_SESSION}"; RB="${REX_BLOCK:-$QUASI_REX_BLOCK}"
 
 - `agy` 的 `-p`、`-i` 会把紧跟在后面的那个参数当成提示词，所以 `--model`、`--mode` 等选项必须放在它们之前。
 - `--no-daemon` 是 `codex` 自身的选项，要放在子命令前面，比如无头模式写成 `codex --no-daemon exec …`。
-- 不要加 `--dangerously-skip-permissions` 一类绕过权限的参数。agy 的 `--mode auto` 会自己审核要跑的命令，常规命令不再逐条问用户，材料会话用它。
+- 权限是装机时一次配好的（联网、缓存目录、quasi 和 rex 命令的放行）。工人仍然停在确认提示上，就告诉用户去对应 pane 处理。不要加 `--dangerously-skip-permissions` 一类绕过权限的参数。agy 的 `--mode auto` 会自己审核要跑的命令，常规命令不再逐条问用户，材料会话用它。
 - 交互式会话第一次在某个文库里打开时，harness 可能会问是否信任这个文件夹。这要用户在 pane 里确认一次，告诉用户去点。
 - 写手只写 `.quasi/temp/workers/` 下的回复文件，不直接写进 vault。由你检查后存到输出路径，这样失败了也不会弄坏文库里的页面。
-- 无头模式（`agy -p "…" > R`）也能用，但 pane 里什么都看不到，只在不需要用户看的场合用。
+- 无头模式（`agy -p "…" > R`）也能用，但 pane 里什么都看不到，只在不需要用户看的场合用。在你自己的 shell 里直接跑 harness 时，同样要先清掉这两个变量（`env -u REX_SESSION -u REX_BLOCK codex …`），否则它也会去改你的会话名（实测发生过）。
 
 可以连续开好几个工人并行跑，然后逐个等待。
 

@@ -179,7 +179,7 @@ OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留
 - 交互式工人与"追加"返修（v2）。
 - Python 核心何时搬进技能目录。
 - 配置项迁移的具体格式。
-- 工人的权限配置。codex `workspace-write` 只允许写文库和 /tmp，但 `quasi download book candidates` 和 MinerU 都要写 `~/.cache/uv`，第一次跑都被沙箱挡住，需要用户在 pane 里批准（第 6 轮实测）。打算给每个 harness 配一份 quasi 专用权限：codex 用 profile 加 `sandbox_workspace_write.writable_roots`（`~/.cache/uv`、`~/.cache/quasi`、模型缓存）；agy 和 claude 各自配命令白名单。
+- 工人的权限配置：已定为装机时照 `docs/SETUP.md` 一次配好，agent 不负责部署（第七轮）。Claude Code 和 agy 两节还没实测。
 
 ## 实测记录
 
@@ -230,4 +230,11 @@ OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留
 - **问题**：书的流程会给单独成节的参考文献（以及上一轮 Turner 的注释）也写一份章节笔记，没有阅读价值。用户定下：单独成节的参考文献、索引、尾注都不进章节清单，已写进 `collect/book/prepare.md`。
 - **编排者自己的坑**：监视脚本放在 zsh 里跑，`for l in $LABELS` 不分词，结果什么都没监视到。之后的循环要么把标签直接写在循环里，要么显式用 bash。
 
-- **未覆盖**：交互会话的权限白名单，以及 pi。
+**2026-11-02，第七轮：权限**：
+
+- Codex 读文库里的项目配置。`.codex/config.toml` 的 `writable_roots` 和 `network_access` 实测生效：同一条写 `~/.cache/uv` 的命令，有这份配置就能写，没有就报 `Operation not permitted`。
+- 光加可写目录不够：MinerU 在 Codex 沙箱里报 `No Metal device available`，Anna 的浏览器回退也起不来。所以 quasi 命令必须在沙箱外跑。`.codex/rules/` 里的前缀规则会自动批准这类提权申请，交互会话实测不再弹确认；`codex exec` 固定 `approval: never`，用不了提权。
+- 试过让 agent 首次进文件夹时自己部署权限：工人跳过了这一步；主会话照做了，但写配置要用户确认一次，而且它自己这个会话读不到新配置，之后的 quasi 命令照样弹确认。用户的判断是太重，文库不常换，改成装机时照 `docs/SETUP.md` 一次配好。技能里只留一句"quasi 命令直接申请在沙箱外运行"。
+- 编排者的坑：我在自己 shell 里直接跑的 `codex exec` 探测没清 `REX_SESSION`，把会话改名成了 `quasi-permission-probe`。connector 已补上：无头模式同样要先用 `env -u` 清掉这两个变量。
+
+- **未覆盖**：Claude Code 和 agy 的权限配置，以及 pi。
