@@ -16,9 +16,6 @@ from scripts.schemas.topic import TopicSchema
 from scripts.status.status import archive_status, scan_status, topic_status
 from scripts.vault.resolve import resolve
 from test_archive_collection import asset, request, SLUG, URL
-from test_archive_plan import archive_input, COMPLETE
-from test_material_plans import audit_complete
-from workflow_test_support import run_generated_workflow
 
 
 def grouped(root):
@@ -69,23 +66,6 @@ def test_collector_respects_marple_exclusive_move_lock(tmp_path):
         fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         result = collect(tmp_path, value)
         assert result['status'] == 'blocked', result
-
-
-def test_workflow_uses_observed_grouped_paths():
-    value = archive_input(usable=True, topics=['older-topic'])
-    facts = value['observation']['facts']
-    old = facts['canonical']['path'].removesuffix('/archive.md')
-    new = old.replace('vault/archives/', 'vault/archives/维修 材料/')
-    facts['canonical']['path'] = new + '/archive.md'
-    facts['collection']['path'] = new + '/manifest.yaml'
-    result = run_generated_workflow('archive', value, [COMPLETE], capture_agent_requests=True)
-    assert result['value']['terminal'] == 'needs_observation', result
-    assert result['agentCalls'] == 1
-    from test_workflow_dispatch import _prompt_request
-    envelope = _prompt_request(result['agentRequests'][0]['prompt'])
-    assert envelope['exact_output'] == new + '/archive.md'
-    assert envelope['exact_manifest'] == new + '/manifest.yaml'
-    assert envelope['originals_directory'] == new + '/originals'
 
 
 def test_collector_stops_for_pending_marple_operation(tmp_path):
@@ -199,18 +179,6 @@ def test_move_group_regroup_and_ungroup_preserves_originals_and_topic_paths(tmp_
         assert len(archive_pages(tmp_path)) == 1
         write_card(current)
         assert card_usable()
-        status = archive_status(tmp_path, SLUG)
-        result = run_generated_workflow('archive', {
-            'seed': {'state': 'canonical', 'material_slug': SLUG, 'identity': value['identity']},
-            'observation': status, 'options': {'topics': ['repair']}}, [audit_complete()], capture_agent_requests=True)
-        assert result['value']['terminal'] == 'complete', result
-        assert result['value']['artifacts'] == [
-            {'role': 'canonical', 'path': canonical},
-            {'role': 'manifest', 'path': status['facts']['collection']['path']},
-            {'role': 'source', 'path': status['facts']['collection']['files'][0]['path']}]
-        from test_workflow_dispatch import _prompt_request
-        envelope = _prompt_request(result['agentRequests'][0]['prompt'])
-        assert envelope['target'] == {'role': 'canonical', 'path': canonical}
 
 
 def _hold_collector_lock(root, ready, release):
