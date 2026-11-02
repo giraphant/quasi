@@ -60,6 +60,7 @@ network_access = true
 writable_roots = ["/Users/you/.cache/uv", "/Users/you/.local/share/uv", "/Users/you/.cache/quasi", "/Users/you/.cache/kagi-cli", "/Users/you/.cache/huggingface"]
 ```
 
+- 前缀规则只认单独一条命令。接了管道、重定向、heredoc 或 `&&` 的命令匹配不上，照样会弹确认；技能里已经要求 quasi 命令写成单独一条（第八轮实测）。
 - `network_access` 也决定 rex 能不能在沙箱里连上 Rex 的 socket。不开的话，派活和轮询都要提权。
 - 可写目录是兜底：quasi 命令忘了申请提权时，检索和下载至少还能在沙箱里跑。
 - 项目配置只在受信任的文件夹生效。

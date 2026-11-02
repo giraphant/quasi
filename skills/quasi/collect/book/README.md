@@ -8,7 +8,7 @@
 
 1. **确定身份。** 按 `本目录/search.md` 弄清书名（含副标题）、作者或编者、出版年、出版社、ISBN 和类别，定下 slug。用户只想要书中某一章时，先问他是收整本书，还是另想办法。
 
-2. **查重。** 用 `quasi helpers vault resolve --items-file -`，通过 stdin 传入 `[{"kind":"book","slug":…,"isbn":…,"title":…,"authors":[…]}]`。返回了 `vault_slug`，说明这本书已经收过（可能只做了一部分），以后都用这个 slug，接着做第 3 步。
+2. **查重。** 把 `[{"kind":"book","slug":…,"isbn":…,"title":…,"authors":[…]}]` 写进 `.quasi/temp/` 下的一个文件，再运行 `quasi helpers vault resolve --items-file 该文件`。返回了 `vault_slug`，说明这本书已经收过（可能只做了一部分），以后都用这个 slug，接着做第 3 步。
 
 3. **观察现状。** `quasi status --kind book --slug SLUG --json`。重点看：
    - `facts.sources`：EPUB、PDF 在不在；

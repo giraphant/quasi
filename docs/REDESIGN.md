@@ -237,4 +237,11 @@ OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留
 - 试过让 agent 首次进文件夹时自己部署权限：工人跳过了这一步；主会话照做了，但写配置要用户确认一次，而且它自己这个会话读不到新配置，之后的 quasi 命令照样弹确认。用户的判断是太重，文库不常换，改成装机时照 `docs/SETUP.md` 一次配好。技能里只留一句"quasi 命令直接申请在沙箱外运行"。
 - 编排者的坑：我在自己 shell 里直接跑的 `codex exec` 探测没清 `REX_SESSION`，把会话改名成了 `quasi-permission-probe`。connector 已补上：无头模式同样要先用 `env -u` 清掉这两个变量。
 
-- **未覆盖**：Claude Code 和 agy 的权限配置，以及 pi。
+**2026-11-02，第八轮：讲座、网页、档案**（三个 codex 材料会话并行，在配好权限的测试文库里）：
+
+- **网页**（Paul Graham, How to Do Great Work）：7 分钟完成。写手只写 frontmatter 和摘要，编排者把 `source.md` 接在 `## Content` 下；核对过正文与 `source.md` 逐词一致（11826 词）。原页只写「July 2023」，`published` 按规则留空。audit clean。
+- **讲座**（Foucault–Chomsky 辩论片段，6 分 51 秒视频）：8 分钟完成。它自己把录像收进 `sources/`，压缩出播放版，三引擎转写，派写手。它查出了日期 1971-10-22、场合（NOS International Philosophers' Project，埃因霍温），分节的「时间：」行和时间脉络的格式都对。audit clean。
+- **档案**（Bell 1876 年电话专利，Google Patents）：7 分半完成。kind 判为 `patent`；日期取公开日，并说明申请日不同；只挑了扫描 PDF 和页面快照两件原件，没有抓相关专利；正文逐页讲附图和权利要求。audit clean。
+- **问题**：quasi 命令带了 heredoc（`--items-file - <<'JSON'`）或重定向（`> 文件`），Codex 的前缀规则就匹配不上，照样弹确认。根 `SKILL.md` 已改为：quasi 命令写成单独一条，JSON 先写进 `.quasi/temp/` 再传路径，输出读完再另外写文件。各叶子的查重步骤已同步。
+
+- **未覆盖**：译本（要用付费接口）、作者（一次十几件材料）、Claude Code 和 agy 的权限配置，以及 pi。

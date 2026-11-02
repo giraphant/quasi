@@ -8,7 +8,7 @@
 
 1. **确定身份。** 按 `本目录/search.md` 弄清题名、作者、年份、期刊、DOI，定下 slug。如果查明它其实是普通网页文章，或者只是某本文集里的一章，就停下来告诉用户，并建议改按对应的材料类型收录。
 
-2. **查重。** 用 `quasi helpers vault resolve --items-file -`，通过 stdin 传入 `[{"kind":"paper","slug":…,"doi":…,"title":…,"authors":[…]}]`。返回了 `vault_slug`，说明这篇论文已经收过，以后都用这个 slug，跳到第 7 步对已有页面做 audit：通过就结束，不再重新抽取或写作。
+2. **查重。** 把 `[{"kind":"paper","slug":…,"doi":…,"title":…,"authors":[…]}]` 写进 `.quasi/temp/` 下的一个文件，再运行 `quasi helpers vault resolve --items-file 该文件`。返回了 `vault_slug`，说明这篇论文已经收过，以后都用这个 slug，跳到第 7 步对已有页面做 audit：通过就结束，不再重新抽取或写作。
 
 3. **观察现状。** `quasi status --kind paper --slug SLUG --json`。重点看 `facts.sources`（PDF、TXT 源文件在不在）、`facts.prepared`（正文抽出来没有）和 `facts.ocr_generation`。
 

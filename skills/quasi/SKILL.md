@@ -26,7 +26,9 @@ description: 把论文、书、讲座、网页或档案收进研究文库，研�
 - `vault/`：阅读页
 - `.quasi/temp/`：临时文件，包括派活用的提示词和回复
 
-**CLI。** 所有确定性能力都走 `scripts/quasi <命令>`，调用时写它的绝对路径。命令有 `status`、`search`、`download`、`extract`、`audit`、`translate`、`transcribe`、`webpage`、`archive`、`helpers`、`doctor`，每个都有 `--help`，输出是 JSON。CLI 自己负责临时目录、锁和原子发布，不要绕过它直接改 `sources/` 或 manifest。题名、作者这类数据传给 CLI 时要正确引用；传 JSON 用带引号的 heredoc 走 stdin。
+**CLI。** 所有确定性能力都走 `scripts/quasi <命令>`，调用时写它的绝对路径。命令有 `status`、`search`、`download`、`extract`、`audit`、`translate`、`transcribe`、`webpage`、`archive`、`helpers`、`doctor`，每个都有 `--help`，输出是 JSON。CLI 自己负责临时目录、锁和原子发布，不要绕过它直接改 `sources/` 或 manifest。题名、作者这类数据传给 CLI 时要正确引用。
+
+每条 quasi 命令都写成单独一条：不接管道，不重定向输出，不用 heredoc，不用 `&&` 串联。要传 JSON，先把它写进 `.quasi/temp/` 下的一个文件，再把路径传给 CLI（比如 `--items-file .quasi/temp/x.json`）；要保存输出，读完输出再另外写文件。这样 harness 的权限规则才能按命令前缀直接放行，不必每次都问用户。
 
 **权限。** quasi 命令要用 GPU、浏览器和文库外的共享缓存。你的 harness 有沙箱时，quasi 命令一律直接申请在沙箱外运行，不要先在沙箱里试。
 
