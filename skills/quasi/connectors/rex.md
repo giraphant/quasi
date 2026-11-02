@@ -15,7 +15,7 @@ RS="${REX_SESSION:-$QUASI_REX_SESSION}"; RB="${REX_BLOCK:-$QUASI_REX_BLOCK}"
 - **写手**：写一份文档，把整页写进回复文件。
 - **材料会话**：从头到尾处理一整件材料（批量里的一篇论文、一本书）；需要用户决定时，它就在自己的 pane 里问。
 
-两种工人都在 pane 里跑交互式会话，这样用户能看到它在做什么，也能随时插话。
+两种工人都在 pane 里跑交互式会话，这样用户能看到它在做什么，也能随时插话。不要用 harness 自带的子代理（Codex 的 `spawn_agent`、Claude 的 Task 之类）代替 pane 工人：用户看不见它们，也换不了写作模型。
 
 ## 准备消息
 
@@ -78,7 +78,7 @@ RS="${REX_SESSION:-$QUASI_REX_SESSION}"; RB="${REX_BLOCK:-$QUASI_REX_BLOCK}"
 - 写手只写 `.quasi/temp/workers/` 下的回复文件，不直接写进 vault。由你检查后存到输出路径，这样失败了也不会弄坏文库里的页面。
 - 无头模式（`agy -p "…" > R`）也能用，但 pane 里什么都看不到，只在不需要用户看的场合用。在你自己的 shell 里直接跑 harness 时，同样要先清掉这两个变量（`env -u REX_SESSION -u REX_BLOCK codex …`），否则它也会去改你的会话名（实测发生过）。
 
-可以连续开好几个工人并行跑，然后逐个等待。
+可以连续开好几个工人并行跑，然后逐个等待。所有层级的工人都开在同一个 Rex 会话里，所以开工前先数一下会话里的 pane（`rex session inspect "$RS" --json`）：加上用户的主会话，总数不超过 7 个；满了就等有 pane 关掉再开。遇到模型服务限流（429），再少开几个，过一会儿再派，不要改用别的通道。
 
 ## 等待
 
