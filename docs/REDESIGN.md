@@ -179,6 +179,7 @@ OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留
 - 交互式工人与"追加"返修（v2）。
 - Python 核心何时搬进技能目录。
 - 配置项迁移的具体格式。
+- 工人的权限配置。codex `workspace-write` 只允许写文库和 /tmp，但 `quasi download book candidates` 和 MinerU 都要写 `~/.cache/uv`，第一次跑都被沙箱挡住，需要用户在 pane 里批准（第 6 轮实测）。打算给每个 harness 配一份 quasi 专用权限：codex 用 profile 加 `sandbox_workspace_write.writable_roots`（`~/.cache/uv`、`~/.cache/quasi`、模型缓存）；agy 和 claude 各自配命令白名单。
 
 ## 实测记录
 
@@ -220,4 +221,13 @@ OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留
 - **Stilgoe 等 2013**：按新包装重跑，5 分 32 秒完成，会话名全程没有变化。写手消息第一句按新规矩写；页面 audit clean。
 - **小问题**：上一轮核对时生成的 `.inspect.txt` 留在了临时目录里，已在 `acquire.md` 补上"自己生成的临时文件也要删"。
 
-- **未覆盖**：OCR 分段推进、返修回路、书的材料会话（并行派章节写手）、交互会话的权限白名单，以及 pi。
+**2026-11-02，第六轮：书的材料会话 + OCR + 返修**（两个 codex 材料会话并行）：
+
+- **Cubitt《Finite Media》**（只给"Sean Cubitt, Finite Media"）：20 分钟完成。它找到 EPUB 并接收，切出 7 项，排除了封面、版权页、致谢、索引等 10 项，并行派了 7 个章节写手，再派概览写手。整本书 8 页 audit clean，写手 pane 全部关掉，会话名没变。
+- **Bourdieu 1985**（只告诉它 `sources/` 里已有 PDF）：11 分半完成，其中包括两次等批准。它从 Crossref 定下是 SSI 24(2) 版，确认文本层只有下载水印，分两段 OCR（16 + 10 页），generation 已提交。读结果时发现末条参考文献漏了半行，对照原页补进交给写手的阅读文本，没有改 `ocr-generations/` 里的文件。页面 audit clean。
+- **返修回路**：编排者删掉页面的「核心引用」、把「理论框架」第一段改成列表，并加了一节「我的笔记」，然后用 `rex send` 告诉材料会话"用户改过这一页，重新验收"。它按规则另派写手，消息里带上写作说明、正文、现有页面和 audit 诊断原文，并说明 unknown_h2 只是提示，不得删用户笔记。结果：「核心引用」按原文重写，列表改回段落（保留了用户的缩写，没有恢复原文），其余各节逐字未动，「我的笔记」逐字保留，audit clean。整个返修 2 分半。
+- **权限**：MinerU 和 `quasi download book candidates` 都要写 `~/.cache/uv`，codex 沙箱挡住了，需要用户批准。见"未决"。
+- **问题**：书的流程会给单独成节的参考文献（以及上一轮 Turner 的注释）也写一份章节笔记，没有阅读价值。用户定下：单独成节的参考文献、索引、尾注都不进章节清单，已写进 `collect/book/prepare.md`。
+- **编排者自己的坑**：监视脚本放在 zsh 里跑，`for l in $LABELS` 不分词，结果什么都没监视到。之后的循环要么把标签直接写在循环里，要么显式用 bash。
+
+- **未覆盖**：交互会话的权限白名单，以及 pi。
