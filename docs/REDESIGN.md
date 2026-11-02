@@ -252,4 +252,6 @@ OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留
 - **问题一：限流。** 3 个材料会话加书的 5 个章节写手同时跑，十来个 Codex 触发 429，两个写手一直重试。connector 已加总量上限：开工前数一下 Rex 会话里的 pane，连同用户的主会话不超过 7 个；遇到 429 就少开几个、过一会儿再派。
 - **问题二：原生子代理。** 主会话为了补限流卡住的两章，改用 Codex 的 `spawn_agent`，补完后连后面的三章也继续用它。connector 已明文禁止用 harness 自带的子代理代替 pane 工人。
 
-- **未覆盖**：research、draft 两个入口，Claude Code 和 agy 的权限配置，以及 pi。
+- **research 暂行版**（2026-11-02）：用户定下搜索由主会话自己做（它最清楚研究进度），只有写作派写手。`research/README.md` 写成一个循环（读地图、本地召回、搜索、收录、读笔记、更新地图、写页、默认两轮后汇报），`research/writing.md` 分综述、专章、资源页三节。研究地图（`02-outline`）由主会话维护，也是续跑的依据。还没实测；topic schema 不认 `dossier` 类型，也不认 outline 子问题里的 `dossier`、`page` 字段，但用户的真实文库里已经在用，之后要补进 schema。
+
+- **未覆盖**：research 实测、draft 入口、Claude Code 和 agy 的权限配置，以及 pi。
