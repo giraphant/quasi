@@ -37,6 +37,8 @@ ln -s /path/to/quasi/skills/quasi .claude/skills/quasi   # claude 读这里
 
 ## 4. 权限
 
+专门的开发机可以完全放开：在那台机器的登录环境里设 `QUASI_WORKER_PERMISSIONS=full`（比如写进 `~/.zshenv`），connector 就用跳过权限的命令启动工人，下面的配置都不用做。只在用户明确放开的机器上这样设。
+
 quasi 的命令要用 GPU（OCR、转写）、浏览器（下载的回退）、网络，还要写文库外的几个共享缓存：`~/.cache/uv`、`~/.local/share/uv`、`~/.cache/quasi`、`~/.cache/kagi-cli`、`~/.cache/huggingface`。不配权限，worker 一跑就会停在确认提示上，等你去点。
 
 下面的配置写在文库里（项目级），只对这个文库生效。全局配置也可以，格式相同。`Q` 指 quasi 命令的绝对路径，也就是 `.agents/skills/quasi/scripts/quasi`。经软链接调用时，规则里要把软链接路径和真实路径都写上。配置在会话启动时读取，配完要新开会话才生效（或者接着刚才的对话重开：`codex resume --last`、`agy --continue`、`claude --continue`）。
