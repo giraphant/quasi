@@ -144,7 +144,7 @@ OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留
 - `quasi-status`、`quasi-audit`；
 - 测试中针对能力层的部分。
 
-**原型跑通后删除**：
+**原型跑通后删除**（2026-11-02 已删，见下方「仓库清理」）：
 - `workflows/*.mjs`、`scripts/workflows/`；
 - request/receipt schema、descriptor rows；
 - `agents/*.md`（方法迁进 references 之后）；
@@ -253,5 +253,7 @@ OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留
 - **问题二：原生子代理。** 主会话为了补限流卡住的两章，改用 Codex 的 `spawn_agent`，补完后连后面的三章也继续用它。connector 已明文禁止用 harness 自带的子代理代替 pane 工人。
 
 - **research 暂行版**（2026-11-02）：用户定下搜索由主会话自己做（它最清楚研究进度），只有写作派写手。`research/README.md` 写成一个循环（读地图、本地召回、搜索、收录、读笔记、更新地图、写页、默认两轮后汇报），`research/writing.md` 分综述、专章、资源页三节。研究地图（`02-outline`）由主会话维护，也是续跑的依据。还没实测；topic schema 不认 `dossier` 类型，也不认 outline 子问题里的 `dossier`、`page` 字段，但用户的真实文库里已经在用，之后要补进 schema。
+
+**2026-11-02，仓库清理**：七种材料都跑通后，按用户要求清理仓库。删掉 Workflow 产物和 TypeScript 源码、agents、旧技能（collect-material、research-topic、finalise-draft；draft 以后从历史重做）、旧 Codex 技能、插件钩子注册、子代理状态栏、输出风格、旧的计划和 spec，以及测 Workflow、宿主编排和旧技能路由的测试，共约 4.9 万行。`scripts/hooks/inject-userconfig.py` 保留，因为 Keychain 读密钥还要经过它；`.claude-plugin/` 暂留，作为配置项的记录，等配置迁出后再删。`AGENTS.md` 按新结构重写，`CLAUDE.md` 只剩一行 `@AGENTS.md`；`README.md` 重写；`docs/ARCHITECTURE.md` 删除，有用的部分并进了 `AGENTS.md`。新加 `tests/test_skill_tree.py`，检查技能页提到的页面路径和 quasi 子命令都存在。剩下的测试全部通过（1000 个）。
 
 - **未覆盖**：research 实测、draft 入口、Claude Code 和 agy 的权限配置，以及 pi。

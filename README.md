@@ -2,85 +2,39 @@
 
 > 仿佛读过、仿佛想过、仿佛写过。
 
-Claude Code 的学术阅读插件:用自然语言把书、论文、网页、讲座和研究主题收进一个本地
-vault——检索元数据、获取全文、抽取成可读文本、逐章分析、跨材料综合,并支持
-PDF 翻译、讲座转写和草稿定稿。
+一个学术阅读文库工具：用自然语言把论文、书、讲座、网页、档案原件收进本地文库，自动检索书目、取得全文、抽取正文、写出中文阅读笔记；也能把论文和书翻成双页对照的译本、为一位作者写学术画像，并围绕一个研究专题持续找材料、读材料、整理认识。
 
-## 功能
+quasi 是一个 agent 技能（`skills/quasi`），加上一层确定性的 Python 能力。Codex、Claude Code、agy 等能读技能的 agent 都能用它。
 
-装好插件后直接对 Claude Code 说话即可,三个入口按意图自动路由:
+## 用法
 
-| Skill | 用途 |
-|---|---|
-| `collect-material` | 保存一个公共网页（捕获仅支持 macOS 11+）;收集并分析一本书 / 一篇论文 / 一位作者 / 一场讲座;处理已有 PDF;PDF 翻译 |
-| `research-topic` | 界定一个研究主题并迭代研究:vault 召回、文献发现、网络证据卡、研究大纲与综合 |
-| `finalise-draft` | 草稿定稿:逐节校对、引文语境审查、生成 references.bib |
+在文库目录里开一个 agent 会话，直接说要做什么：
 
-例如:「保存这个网页 https://example.org/article」「帮我收一下 Galison 的 Image and Logic」「把这个 PDF 翻译成中文」
-「围绕 tacit knowledge 建一个研究主题」。
+- 「收一下这篇：DOI 10.1016/j.respol.2013.05.008」
+- 「把 Cubitt 的 Finite Media 收进来」
+- 「这个录像收成讲座：~/Downloads/talk.mp4」
+- 「把这个专利存档：https://patents.google.com/patent/US174465A/en」
+- 「把这篇翻成中文」
+- 「收录 Sheila Jasanoff 的代表作，议题是 sociotechnical imaginaries」
+- 「围绕山寨手机的制造体制继续研究两轮」
 
-单本书/论文只给题名也可以:可见的 metadata 专家会先核定 DOI/ISBN、作者顺序、
-年份和 canonical slug,主线程不会自行猜测书目信息。
+写作一律交给单独开的写手会话，可以换成中文写得最好的模型；批量材料各开一个会话并行处理。这些会话开在 Rex 终端里的 pane 中，过程看得见，也可以随时插话。
 
 ## 安装
 
-```text
-/plugin marketplace add giraphant/quasi
-/plugin install quasi@ramu
-```
+照 [docs/SETUP.md](docs/SETUP.md) 做一次：装外部工具、配密钥、把技能链进文库、配好 agent 的权限，最后跑 `skills/quasi/scripts/quasi doctor` 自检。
 
-Python 依赖在首次会话时自动装入插件数据目录下的 venv,无需手动安装。
+## 文库布局
 
-可选的系统级依赖(缺失时对应功能自动降级或跳过):
-
-| 依赖 | 用途 |
-|---|---|
-| `ffmpeg`、`whisper-cli` | 讲座 / 会议录音转写 |
-| `uvx` | Anna's Archive 浏览器挑战、pdf2zh 翻译后端、MinerU2.5-Pro OCR |
-| Apple Silicon + `mlx-vlm` | 本地 OCR（MinerU2.5-Pro；Tesseract 仅手动选择） |
-| `mineru-vl-utils` | 扫描书翻译的段落级版面恢复 |
-
-## 配置
-
-在 `/plugin` → quasi → Configure 填入需要的凭据:
-
-| 服务 | 配置字段 |
-|---|---|
-| Anna's Archive | `anna_donator_key` |
-| CookieCloud / EZProxy | `cookiecloud_server`, `cookiecloud_uuid`, `cookiecloud_password`, `cookiecloud_ezproxy_domain`, `cookiecloud_ezproxy_base_url` |
-| PDF 翻译后端选择 | `translate_backend`(`immersive`,默认;或 `pdf2zh`) |
-| Immersive Translate | `immersive_auth_key` |
-| pdf2zh(OpenAI 兼容端点) | `translate_base_url`, `translate_api_key`, `translate_model` |
-| Kagi 搜索 | `kagi_session_token` |
-| Soniox 转写 | `soniox_api_key` |
-
-PDF 翻译输出为原文/译文页交替、保留书签的双语 PDF。`translate_base_url` 只填
-服务根地址即可(如 `https://api.deepseek.com` 自动补 `/v1`);已带路径则原样
-保留。不要包含 `/chat/completions`。普通 born-digital PDF 走 pdf2zh 不需要
-OCR 依赖;扫描书的恢复质量取决于上表的可选依赖是否可用。
-
-## 数据布局
-
-quasi 把当前工作目录当作项目根,产物落在四个目录:
+当前工作目录就是文库根目录：
 
 ```text
-vault/        # 阅读产物:books/ papers/ webpages/ archives/ authors/ talks/ topics/ drafts/
-sources/      # 已接受的源文件
-processing/   # 可检查的中间产物:chapters/ translations/ talks/ webpages/
-.quasi/       # 编排状态、缓存、审计输出
+sources/      收下来的源文件
+processing/   抽出的正文、OCR 结果、转写、译本等中间产物
+vault/        阅读页：papers/ books/ talks/ webpages/ archives/ authors/ topics/
+.quasi/       临时文件、派活用的提示词和回复、缓存
 ```
-
-独立网页阅读使用 Webpage；明确要求归档的 URL，以及 Topic 工作流发现的非学术网页材料，
-使用 Archive。Topic 由主代理统筹，并行委派搜索和综合，复用材料 Workflow；证据卡按需生成。同一 URL 跨专题复用，
-并合并 `topics`。Archive 的 `archive.md` 提供来源/日期元数据、材料概况、保存范围和具体内容概述，
-并陈列 `originals/` 中的原件；`manifest.yaml`
-保存共同出处与逐文件来源；支持网页快照、PDF、图片、直接下载的音视频。取得不全只注明
-缺失，音视频暂不转录。存储与 Marple 解析合同见 [ARCHIVE_STORAGE](docs/ARCHIVE_STORAGE.md)。
 
 ## 维护
 
-Codex 使用独立的 [Quasi 统一入口](codex/skills/quasi/SKILL.md)，以滚雪球法从材料和研究札记中发现线索，持续追索、回顾与综合，材料处理经 Orca orchestration 交给 Claude Code。Codex 侧无需安装 Quasi 插件；安装与旧入口清理见 [Codex 说明](docs/CODEX_ENTRY.md)。
-
-维护者合同见 `CLAUDE.md`;分层架构、agent 与 CLI 细节见
-`docs/ARCHITECTURE.md`;OCR / 翻译管线的实测经验见 `docs/PDF_PIPELINE.md`;
-版本历史见 `docs/CHANGELOG.md`。
+维护说明见 [AGENTS.md](AGENTS.md)；这次重构的来龙去脉和逐轮实测记录见 [docs/REDESIGN.md](docs/REDESIGN.md)；OCR 和翻译管线的实测经验见 [docs/PDF_PIPELINE.md](docs/PDF_PIPELINE.md)；版本历史见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。

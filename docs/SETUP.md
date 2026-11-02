@@ -19,7 +19,7 @@
 
 ## 2. 密钥和服务配置
 
-脚本只读 `QUASI_*` 环境变量。现在的来源还是旧插件的 Configure：macOS 上，每个 shim 都会从 Claude Code 的 Keychain 记录里补齐缺少的 `QUASI_*`；显式设置的环境变量优先。完整的键名和用途见 `docs/ARCHITECTURE.md` 的 Configure 一节（CookieCloud/EZProxy、Anna's Archive、Kagi、Soniox、翻译后端）。
+脚本只读 `QUASI_*` 环境变量。现在的来源还是旧插件的 Configure：macOS 上，每个 shim 都会从 Claude Code 的 Keychain 记录里补齐缺少的 `QUASI_*`；显式设置的环境变量优先。完整的键名和用途见 `AGENTS.md` 的「Secrets and configuration」一节（CookieCloud/EZProxy、Anna's Archive、Kagi、Soniox、翻译后端）。
 
 改成独立的配置文件加 Keychain，是重构的待办事项之一。
 

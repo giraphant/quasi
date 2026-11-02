@@ -792,9 +792,6 @@ def test_delayed_dom_is_in_main_resource_and_prepared_source(tmp_path, monkeypat
         assert extracted["status"] == "complete", extracted
         archive = load_webarchive_module().read_webarchive(snapshot)
         assert archive.url == extracted["final_url"] == final_url
-        from test_webpage_host_e2e import validate_cli_receipt
-        for name, receipt in (("inspect", inspected), ("capture", captured), ("extract", extracted)):
-            validate_cli_receipt(receipt, name, {"status": "complete", "final_url": final_url})
         assert sentinel in archive.html
         assert sentinel in source.read_text()
         if transport == "fragment":
@@ -883,29 +880,6 @@ def test_native_parent_watchdog_kills_helper_and_child(tmp_path, monkeypatch, le
                     pass
         if libc is not None:
             assert libc.prctl(36, previous.value, 0, 0, 0) == 0
-
-
-def test_host_tool_evidence_reads_structured_calls_and_deduplicates_ids(tmp_path):
-    """Deterministic parser check; no host, credential or loopback access."""
-    from test_webpage_host_e2e import records, tool_calls
-
-    call = {"type": "tool_use", "id": "capture-1", "name": "Bash",
-            "input": {"command": "quasi-webpage capture fixture"}}
-    row = {"message": {"content": [{"type": "text", "text": "Bash capture prose"}, call]}}
-    path = tmp_path / "agent.jsonl"
-    path.write_text("\n".join(json.dumps(value) for value in [row, row, {"type": "progress"}]))
-    assert tool_calls(records(path), "Bash") == [call["input"]]
-    assert tool_calls(records(path), "Workflow") == []
-
-
-def test_host_malformed_evidence_does_not_echo_contents(tmp_path):
-    from test_webpage_host_e2e import records
-
-    path = tmp_path / "broken.jsonl"
-    path.write_text("PRIVATE_FIXTURE_VALUE is not JSON")
-    with pytest.raises(pytest.fail.Exception) as error:
-        records(path)
-    assert "PRIVATE_FIXTURE_VALUE" not in str(error.value)
 
 
 def test_native_cache_uses_source_content_not_installed_mtime(tmp_path, monkeypatch):
