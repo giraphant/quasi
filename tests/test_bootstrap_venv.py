@@ -12,8 +12,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# doctor and config must work before the venv exists, so they never bootstrap it.
 SHIMS = sorted(path.name for path in (ROOT / "scripts" / "commands").glob("quasi-*")
-               if path.name != "quasi-doctor")
+               if path.name not in {"quasi-doctor", "quasi-config"})
 
 
 @pytest.fixture
@@ -25,7 +26,7 @@ def runtime(tmp_path):
     for name in ("bootstrap-venv.sh", "requirements.txt"):
         shutil.copy2(ROOT / "scripts" / name, scripts / name)
     # This test concerns dependency installation, never host credentials.
-    (scripts / "load-keychain-env.sh").write_text("")
+    (scripts / "load-config-env.sh").write_text("")
     data = tmp_path / "data"
     bindir = data / ".venv" / "bin"
     bindir.mkdir(parents=True)

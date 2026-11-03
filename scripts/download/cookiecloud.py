@@ -1,9 +1,8 @@
 """CookieCloud pull → in-memory EZProxy cookie dict.
 
-Connection params come from `QUASI_COOKIECLOUD_*` env vars, injected by the
-PreToolUse hook (`scripts/hooks/inject-userconfig.py`) from the plugin's
-`userConfig`. The script never reads any config file — credentials flow
-exclusively through the agent → hook → bash env → process chain.
+Connection params come from `QUASI_COOKIECLOUD_*` env vars, which the quasi
+shim fills from the macOS Keychain (`scripts/config/config.py`). The script
+never reads any config file and credentials never appear in argv.
 
 No files are read or written. The pulled cookie dict is cached for the
 lifetime of the Python process; `invalidate_cache()` forces a re-fetch on

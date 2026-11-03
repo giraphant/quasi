@@ -55,6 +55,7 @@ The whole repository is the installable skill: clone or link it as `quasi` into 
 | `quasi translate` | `observe\|run` configured `immersive\|pdf2zh` translation |
 | `quasi helpers` | `vault resolve`; `citation ...`; `proofread ...`; `localise ...`; `talk compress-media` |
 | `quasi doctor` | venv sync and dependency check by profile |
+| `quasi config` | `show [--json]\|set NAME [VALUE]\|unset NAME`: the user's keys in the macOS Keychain; secret values only via stdin or prompt. For the user and GUI front ends (Marple), not for agents |
 
 - A deterministic CLI may write an artifact only when its command contract names that output path.
 - `quasi status` takes artifact path templates from `scripts/schemas/operations.py::OPERATION_CATALOG`.
@@ -66,18 +67,20 @@ The current working directory is the vault root. `sources/` holds accepted sourc
 
 ## Secrets and configuration
 
-Scripts read only `QUASI_*` environment variables. On macOS every Python-facing shim sources `scripts/load-keychain-env.sh`, which fills missing values from the existing `Claude Code-credentials` Keychain record through `scripts/hooks/inject-userconfig.py --keychain-exports`; explicit `QUASI_*` values take precedence and secrets never enter argv. The repository is not a Claude plugin: a `.claude-plugin/plugin.json` here makes Claude Code treat the linked skill as a plugin named `quasi` that collides with the old installed plugin. The keys and what they are for are listed in `docs/SETUP.md`; until configuration moves to its own file, keep the old plugin installed (disabled is fine) so its Keychain record survives.
+Scripts read only `QUASI_*` environment variables. Every key lives in the macOS login Keychain, one generic-password item per key (service `quasi`, account = key name), owned by `scripts/config/config.py`. On macOS every Python-facing shim sources `scripts/load-config-env.sh`, which fills the missing `QUASI_*` values from those items; explicit `QUASI_*` values take precedence and values never enter argv. Items are only ever written through `/usr/bin/security` (via `quasi config set`, which feeds `security -i` on stdin), so the reads through the same tool never raise an access prompt; GUI front ends call `quasi config` instead of touching the Keychain themselves. Values are printable ASCII only, because `security -w` prints anything else as hex. The keys and what they are for are listed in `docs/SETUP.md`.
+
+The repository is not a Claude plugin: a `.claude-plugin/plugin.json` here makes Claude Code treat the linked skill as a plugin named `quasi` that collides with an installed plugin of that name.
 
 | variable | consumer |
 |---|---|
 | `QUASI_ANNA_DONATOR_KEY` | `scripts/download/aa.py` |
 | `QUASI_COOKIECLOUD_SERVER`, `_UUID`, `_PASSWORD`, `_EZPROXY_DOMAIN`, `_EZPROXY_BASE_URL` | `scripts/download/cookiecloud.py` |
-| `QUASI_TRANSLATE_BACKEND` | `bin/quasi-translate` |
+| `QUASI_TRANSLATE_BACKEND` | `scripts/commands/quasi-translate`, `scripts/translate/translate.py` |
 | `QUASI_IMMERSIVE_AUTH_KEY` | `scripts/translate/immersive_translate.py` |
 | `QUASI_TRANSLATE_BASE_URL`, `_API_KEY`, `_MODEL` | `scripts/translate/pdf2zh_translate.py` |
 | `QUASI_KAGI_SESSION_TOKEN` | `scripts/search/`, `scripts/download/download.py` (mapped to `KAGI_SESSION_TOKEN` for the kagi CLI) |
 | `QUASI_SONIOX_API_KEY` | `scripts/transcribe/engines.py` |
-| `QUASI_WORKER_PERMISSIONS=full` | `connectors/rex.md`: launch workers with permission-bypass commands (dev machine only) |
+| `QUASI_WORKER_PERMISSIONS=full` | `connectors/rex.md`: launch workers with permission-bypass commands (dev machine only). A login-shell variable, not a Keychain key: the agent reads it directly |
 
 ## Extraction and translation invariants
 
@@ -104,5 +107,5 @@ The measured reasoning behind each rule is in `docs/PDF_PIPELINE.md`; do not rel
 2. New or renamed CLI command: update the CLI table here and every skill page that calls it.
 3. Skill page moved or renamed: update the routing table that points to it; run `tests/test_skill_tree.py`.
 4. Worker launch or harness change: edit `connectors/rex.md` only.
-5. New secret: add it to `scripts/hooks/inject-userconfig.py::_KEYS`, the table above and `docs/SETUP.md`.
+5. New key: add it to `scripts/config/config.py::KEYS`, the table above and `docs/SETUP.md`.
 6. Record live test rounds and design decisions in `docs/REDESIGN.md`.

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# quasi-config — show and edit quasi's keys, stored in the macOS Keychain.
+#
+# Usage:
+#   quasi config show [--json]
+#   quasi config set NAME [VALUE]   (secrets only from stdin or the prompt)
+#   quasi config unset NAME
+#
+# Standard library only: runs on the system python3 without the venv, and does
+# not source load-config-env.sh, so `show` reports where each value comes from.
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/../.." && pwd)"
+
+exec python3 -I "$PLUGIN_ROOT/scripts/config/config.py" "$@"

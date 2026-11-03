@@ -17,11 +17,9 @@ Usage:
 
 Batch mode remains for existing manifest-driven maintenance workflows.
 
-Config: all from QUASI_* env vars injected by the PreToolUse hook
-(see `scripts/hooks/inject-userconfig.py`). Plugin `userConfig` defines the
-values; the hook reads them in its own env and prepends them to qua's
-shell command. Sensitive values stay in the system keychain — they only
-materialise in the hook+bash subprocess env for one tool call at a time.
+Config: all from QUASI_* env vars, which the quasi shim fills from the
+macOS Keychain (see `scripts/config/config.py`). Values live only in the
+shim's process environment, never in argv.
 """
 
 from __future__ import annotations

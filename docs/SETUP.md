@@ -19,7 +19,18 @@
 
 ## 2. 密钥和服务配置
 
-脚本只读 `QUASI_*` 环境变量。显式设置的环境变量优先；没设的，macOS 上每条 quasi 命令都会去 Claude Code 的 Keychain 记录（`Claude Code-credentials` 里旧插件 `quasi@…` 的 `pluginSecrets`）里补齐。
+所有键都存在 macOS 登录钥匙串里，每个键一条（服务名 `quasi`，账户名就是键名）。用 `quasi config` 查看和修改：
+
+```sh
+scripts/quasi config show                         # 列出全部键、有没有设；密钥不显示值
+scripts/quasi config set kagi_session_token       # 提示输入，粘贴后回车；输入不回显
+scripts/quasi config set translate_backend pdf2zh # 非密钥的键可以直接写值
+scripts/quasi config unset translate_model
+```
+
+密钥不能写在命令行上（会留在 shell 历史和进程列表里），只能在提示里粘贴，或者从标准输入给。值只能是可打印的 ASCII 字符。也可以在"钥匙串访问"里搜 `quasi` 直接改已有的条目；新建条目请用 `quasi config set`，这样 quasi 读取时不会弹授权框。
+
+每条 quasi 命令启动时会把钥匙串里的值填进 `QUASI_*` 环境变量（`QUASI_` 加大写键名，比如 `QUASI_KAGI_SESSION_TOKEN`）。显式设置的环境变量优先，适合临时换一个值；不是 macOS 的机器只能用环境变量。
 
 | 键 | 用途 |
 |---|---|
@@ -31,10 +42,6 @@
 | `translate_base_url`、`translate_api_key`、`translate_model` | OpenAI 兼容端点的地址、key 和模型（`pdf2zh` 后端；只填根地址会自动补 `/v1`） |
 | `kagi_session_token` | Kagi 的 Session Link 或 token，用于网络检索和豆瓣中文版查找 |
 | `soniox_api_key` | Soniox 转写接口的 key |
-
-环境变量名是 `QUASI_` 加大写键名，比如 `QUASI_KAGI_SESSION_TOKEN`。
-
-**注意**：这些值目前还存在旧插件名下。旧插件可以禁用，但先别卸载，卸载可能连这份记录一起删掉。改成独立的配置文件加 Keychain 是待办事项。
 
 ## 3. 把技能装进文库
 
