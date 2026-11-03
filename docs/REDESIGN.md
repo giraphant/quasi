@@ -256,4 +256,10 @@ OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留
 
 **2026-11-02，仓库清理**：七种材料都跑通后，按用户要求清理仓库。删掉 Workflow 产物和 TypeScript 源码、agents、旧技能（collect-material、research-topic、finalise-draft；draft 以后从历史重做）、旧 Codex 技能、插件钩子注册、子代理状态栏、输出风格、旧的计划和 spec，以及测 Workflow、宿主编排和旧技能路由的测试，共约 4.9 万行。`scripts/hooks/inject-userconfig.py` 保留，因为 Keychain 读密钥还要经过它；`.claude-plugin/` 暂留，作为配置项的记录，等配置迁出后再删。`AGENTS.md` 按新结构重写，`CLAUDE.md` 只剩一行 `@AGENTS.md`；`README.md` 重写；`docs/ARCHITECTURE.md` 删除，有用的部分并进了 `AGENTS.md`。新加 `tests/test_skill_tree.py`，检查技能页提到的页面路径和 quasi 子命令都存在。剩下的测试全部通过（1000 个）。
 
-- **未覆盖**：research 实测、draft 入口、Claude Code 和 agy 的权限配置，以及 pi。
+**2026-11-03，第十轮：PDF 书和扫描书**（Mac Mini，两个主会话放在同一个 Rex 会话里，共用 7 个 pane 的上限；材料取自用户文库的副本，放在文库外的 `~/Vibe/quasi-inbox/`，像用户给文件那样只说一句「收这本书：路径」）：
+
+- **Gitelman《Always Already New》**（222 页，有文本层，没有 EPUB）：14 分 39 秒。PDF 自带的目录不可用，它读目录页自己写了切分方案，切成 7 项（序言、导论、四章、尾声）；注释、参考文献、索引按新规则没有进清单。5 个写手并行，概览加 7 章 audit clean。
+- **Hutchby《Media Talk》**（198 页扫描本，没有文本层）：2 小时 37 分，绝大部分花在 OCR 上。Mini 是 M1、16 GB，MinerU 每页 35–40 秒，内存吃满。OCR 在单独的 pane 里用 shell 循环一段段推进（16 页一段，`partial` 就接着跑），generation 提交后用 OCR 版 PDF 切章，得到 12 项，写了 13 页，audit clean。术语表也成了一章：这本书的术语表是会话分析的概念说明，笔记写得有内容，所以没有把术语表加进排除规则（是否排除本来就要看正文）。
+- **问题**：两个会话都对用户给的 PDF 用了 `quasi download accept`，它会把输入文件移走，用户原来的文件夹空了。`collect/README.md` 已补规则：用户给的文件复制进 `sources/`，不移动不删除；`accept` 只用于 `.quasi/temp/` 里的临时下载。
+
+- **未覆盖**：论文下载的异常路径（身份存疑、下载额度用完、只有 HTML、要用户决定）、译本的两个 CLI 问题、research 实测、draft 入口、Claude Code 和 agy 的权限配置，以及 pi。
