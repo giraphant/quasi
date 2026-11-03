@@ -66,7 +66,7 @@ The current working directory is the vault root. `sources/` holds accepted sourc
 
 ## Secrets and configuration
 
-Scripts read only `QUASI_*` environment variables. On macOS every Python-facing shim sources `scripts/load-keychain-env.sh`, which fills missing values from the existing `Claude Code-credentials` Keychain record through `scripts/hooks/inject-userconfig.py --keychain-exports`; explicit `QUASI_*` values take precedence and secrets never enter argv. `.claude-plugin/plugin.json#userConfig` remains the record of the keys until configuration moves to its own file.
+Scripts read only `QUASI_*` environment variables. On macOS every Python-facing shim sources `scripts/load-keychain-env.sh`, which fills missing values from the existing `Claude Code-credentials` Keychain record through `scripts/hooks/inject-userconfig.py --keychain-exports`; explicit `QUASI_*` values take precedence and secrets never enter argv. The repository is not a Claude plugin: a `.claude-plugin/plugin.json` here makes Claude Code treat the linked skill as a plugin named `quasi` that collides with the old installed plugin. The keys and what they are for are listed in `docs/SETUP.md`; until configuration moves to its own file, keep the old plugin installed (disabled is fine) so its Keychain record survives.
 
 | variable | consumer |
 |---|---|

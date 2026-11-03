@@ -19,9 +19,22 @@
 
 ## 2. 密钥和服务配置
 
-脚本只读 `QUASI_*` 环境变量。现在的来源还是旧插件的 Configure：macOS 上，每个 shim 都会从 Claude Code 的 Keychain 记录里补齐缺少的 `QUASI_*`；显式设置的环境变量优先。完整的键名和用途见 `AGENTS.md` 的「Secrets and configuration」一节（CookieCloud/EZProxy、Anna's Archive、Kagi、Soniox、翻译后端）。
+脚本只读 `QUASI_*` 环境变量。显式设置的环境变量优先；没设的，macOS 上每条 quasi 命令都会去 Claude Code 的 Keychain 记录（`Claude Code-credentials` 里旧插件 `quasi@…` 的 `pluginSecrets`）里补齐。
 
-改成独立的配置文件加 Keychain，是重构的待办事项之一。
+| 键 | 用途 |
+|---|---|
+| `cookiecloud_server`、`cookiecloud_uuid`、`cookiecloud_password` | CookieCloud 服务器地址、扩展里设的 user KEY 和端到端密码，用来取浏览器 cookie 走 EZProxy 下载 |
+| `cookiecloud_ezproxy_domain`、`cookiecloud_ezproxy_base_url` | 学校 EZProxy 登录后的 cookie 域名（如 `.idm.oclc.org`）和 EZProxy 地址 |
+| `anna_donator_key` | Anna's Archive 捐助者 key，用快速下载接口 |
+| `translate_backend` | 翻译后端：`immersive` 或 `pdf2zh` |
+| `immersive_auth_key` | Immersive Translate Zotero 接口的 key（`immersive` 后端） |
+| `translate_base_url`、`translate_api_key`、`translate_model` | OpenAI 兼容端点的地址、key 和模型（`pdf2zh` 后端；只填根地址会自动补 `/v1`） |
+| `kagi_session_token` | Kagi 的 Session Link 或 token，用于网络检索和豆瓣中文版查找 |
+| `soniox_api_key` | Soniox 转写接口的 key |
+
+环境变量名是 `QUASI_` 加大写键名，比如 `QUASI_KAGI_SESSION_TOKEN`。
+
+**注意**：这些值目前还存在旧插件名下。旧插件可以禁用，但先别卸载，卸载可能连这份记录一起删掉。改成独立的配置文件加 Keychain 是待办事项。
 
 ## 3. 把技能装进文库
 

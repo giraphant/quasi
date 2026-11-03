@@ -27,7 +27,7 @@ import subprocess
 import sys
 
 # Keys we propagate. Hook reads CLAUDE_PLUGIN_OPTION_<KEY>, writes
-# QUASI_<KEY>. Keep this list in sync with plugin.json's `userConfig`.
+# QUASI_<KEY>. Keep this list in sync with the secrets table in docs/SETUP.md.
 _KEYS = [
     "ANNA_DONATOR_KEY",
     "COOKIECLOUD_SERVER",

@@ -264,4 +264,6 @@ OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留
 
 **2026-11-03，仓库根目录即技能**：原来技能在 `skills/quasi/`，靠软链接挂进文库，`scripts/quasi` 再往上找回仓库里的 `bin/` 和 `scripts/`；单独拷走技能文件夹就用不了。用户定下整个仓库就是技能：`SKILL.md`、`collect/`、`research/`、`draft/`、`connectors/` 搬到根目录，`scripts/quasi` 是唯一入口，原来的 11 个 bin shim 移进 `scripts/commands/`，行为不变，只改了定位仓库根的那一行。Python 层本来就在根目录的 `scripts/` 下、按 `scripts.xxx` 导入，所以一行导入都不用改。安装变成把仓库克隆到 `~/.agents/skills/quasi`，`git pull` 就是更新。`draft/` 暂时只说"暂不支持"。全量测试 1000 个通过。
 
+**2026-11-03，不再是插件**：仓库链进 `~/.claude/skills/quasi` 之后，Claude Code 因为根目录有 `.claude-plugin/plugin.json`，把它当成名叫 `quasi` 的插件（`quasi@skills-dir`），和已安装的旧插件 `quasi@ramu` 撞名，拒绝加载。删掉 `.claude-plugin/` 后，它作为普通技能正常加载（无头 Claude 实测能看到 `quasi`）。`scripts/core/core.py` 定位仓库根改为找 `SKILL.md` 加 `scripts/quasi`；`quasi doctor` 里比较插件缓存版本的检查一并删掉。配置项清单和用途移进 `docs/SETUP.md`。密钥仍存在旧插件名下的 Keychain 记录里，所以旧插件只禁用、不卸载。旧的 `~/.codex/skills/quasi` 已在本机和 Mini 上删除。
+
 - **未覆盖**：论文下载的异常路径（身份存疑、下载额度用完、只有 HTML、要用户决定）、译本的两个 CLI 问题、research 实测、draft 入口、Claude Code 和 agy 的权限配置，以及 pi。

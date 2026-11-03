@@ -32,10 +32,10 @@ class FrontmatterDoc:
 
 
 def plugin_root(anchor: str | Path | None = None) -> Path:
-    """Return the quasi plugin root.
+    """Return the quasi root (the skill directory that holds SKILL.md and scripts/).
 
-    When `anchor` is provided, walk upward until `.claude-plugin/plugin.json` is
-    found. Without an anchor, resolve from this package location.
+    When `anchor` is provided, walk upward until a directory with both `SKILL.md`
+    and `scripts/quasi` is found. Without an anchor, resolve from this package location.
     """
 
     if anchor is None:
@@ -44,9 +44,9 @@ def plugin_root(anchor: str | Path | None = None) -> Path:
     path = Path(anchor).resolve()
     current = path if path.is_dir() else path.parent
     for candidate in (current, *current.parents):
-        if (candidate / ".claude-plugin" / "plugin.json").exists():
+        if (candidate / "SKILL.md").is_file() and (candidate / "scripts" / "quasi").is_file():
             return candidate
-    raise RuntimeError(f"cannot locate quasi plugin root from {path}")
+    raise RuntimeError(f"cannot locate quasi root from {path}")
 
 
 def project_root() -> Path:
