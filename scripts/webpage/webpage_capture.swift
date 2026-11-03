@@ -341,6 +341,7 @@ struct WebpageCapture {
         var previous: String?
         var networkChanged = started
         var previousNetwork: String?
+        var lastNetworkRevision: Int?
         var lastSampleValid = false
         var archiveSafe = false
         #if QUASI_WEBPAGE_TESTING
@@ -365,7 +366,10 @@ struct WebpageCapture {
         repeat {
             do {
                 let elapsed = now() - started
-                let budget = UInt64(maximum) > elapsed ? UInt64(maximum) - elapsed : 1
+                // Sleeping can reach the local bound. Keep the last sample
+                // for the checks below instead of starting a doomed 1 ms read.
+                if elapsed >= UInt64(maximum) { break }
+                let budget = UInt64(maximum) - elapsed
                 #if QUASI_WEBPAGE_TESTING
                 fingerprintAttempts += 1
                 if fingerprintAttempts > 1 && ProcessInfo.processInfo.environment["QUASI_WEBPAGE_TEST_STALL"] == "after-first-fingerprint" {
@@ -390,6 +394,7 @@ struct WebpageCapture {
                 let networkSample = "\(network.revision):\(network.pending.count):\(resources):\(images):\(incomplete):\(fonts):\(ready):\(webView.isLoading)"
                 if networkSample != previousNetwork { networkChanged = now() }
                 previousNetwork = networkSample
+                lastNetworkRevision = network.revision
                 if sample != previous { changed = now() }
                 previous = sample
                 if now() - started >= UInt64(minimum), archiveSafe,
@@ -408,7 +413,7 @@ struct WebpageCapture {
             try await Task.sleep(nanoseconds: min(UInt64(poll), remaining) * 1_000_000)
         } while true
         guard lastSampleValid && archiveSafe && network.ready && network.pending.isEmpty && !webView.isLoading
-            && now() - networkChanged >= UInt64(quiet) else {
+            && lastNetworkRevision == network.revision && now() - networkChanged >= UInt64(quiet) else {
             throw HelperError(code: "webpage.stabilization_failed", message: "could not sample page during stabilization")
         }
         // Only DOM churn may bypass quiet at the local bound. The existing

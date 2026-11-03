@@ -613,15 +613,21 @@ def test_command_capture_smoke_preserves_loopback_subresources(tmp_path: Path) -
     sys.platform != "darwin" or shutil.which("swiftc") is None,
     reason="requires macOS WebKit and swiftc",
 )
-@pytest.mark.parametrize("stall,native_ms,local_ms,expected_code", [
-    ("metadata", 1000, 2000, "webpage.capture_timeout"),
-    ("fingerprint", 1000, 2000, "webpage.capture_timeout"),
-    ("fingerprint", 2000, 100, "webpage.stabilization_failed"),
-    ("after-first-fingerprint", 2000, 300, "webpage.stabilization_failed"),
-    ("changing", 2000, 900, "complete"),
+@pytest.mark.parametrize("stall,native_ms,local_ms,expected_code,poll_ms", [
+    ("metadata", 1000, 2000, "webpage.capture_timeout", 200),
+    ("fingerprint", 1000, 2000, "webpage.capture_timeout", 200),
+    ("fingerprint", 2000, 100, "webpage.stabilization_failed", 200),
+    ("after-first-fingerprint", 2000, 300, "webpage.stabilization_failed", 200),
+    ("changing", 2000, 900, "complete", 200),
+    # Sleep past the local bound after one valid sample. A second sample is
+    # deliberately broken, so this cannot pass by winning a 1 ms callback race.
+    pytest.param("after-first-fingerprint", 2000, 900, "complete", 1000,
+                 id="no-sample-after-deadline"),
+    pytest.param("late-network", 2000, 900, "webpage.stabilization_failed", 1000,
+                 id="network-change-after-last-sample"),
 ])
 def test_native_timeout_wins_when_metadata_never_returns(
-    tmp_path: Path, stall: str, native_ms: int, local_ms: int, expected_code: str,
+    tmp_path: Path, stall: str, native_ms: int, local_ms: int, expected_code: str, poll_ms: int,
 ) -> None:
     binary = tmp_path / "webpage-timeout-test"
     source = Path("scripts/webpage/webpage_capture.swift")
@@ -645,6 +651,7 @@ def test_native_timeout_wins_when_metadata_never_returns(
     (tmp_path / "fixture.html").write_text(
         "<html><head><title>Timeout fixture</title></head><body>ready"
         + ("<script>setInterval(() => document.body.append('x'), 20)</script>" if stall == "changing" else "")
+        + ("<script>setTimeout(() => fetch('/fixture.html'), 650)</script>" if stall == "late-network" else "")
         + "</body></html>",
         encoding="utf-8",
     )
@@ -665,8 +672,9 @@ def test_native_timeout_wins_when_metadata_never_returns(
             "QUASI_WEBPAGE_TEST_STALL": stall,
             "QUASI_WEBPAGE_TEST_TIMEOUT_MS": str(native_ms),
             "QUASI_WEBPAGE_TEST_STABILIZE_MIN_MS": "0",
-            "QUASI_WEBPAGE_TEST_STABILIZE_QUIET_MS": "600" if stall in ("after-first-fingerprint", "changing") else "0",
+            "QUASI_WEBPAGE_TEST_STABILIZE_QUIET_MS": "600" if stall in ("after-first-fingerprint", "changing", "late-network") else "0",
             "QUASI_WEBPAGE_TEST_STABILIZE_MAX_MS": str(local_ms),
+            "QUASI_WEBPAGE_TEST_STABILIZE_POLL_MS": str(poll_ms),
         }
         started = time.monotonic()
         completed = subprocess.run(
