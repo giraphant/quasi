@@ -39,6 +39,5 @@ Removed since 0.24.0 (no back-compat): `books`, `papers`, `metadata`, `validate`
 ## Not in this bin (moved out in 0.24.0)
 - **Anna's Archive file search** → `quasi-download book candidates`
 - **cndouban cache writes** → `quasi-helpers localise scan|write`
-- **Vault metadata backfill sweeps** → maintenance scripts, not active search/audit flow
 - **Paper metadata enrich cascade (OA→CR→UP→S2→Wayback)** — dropped; OpenAlex covers most fields directly. Caller can chain via `paper --doi X` if more is needed.
 - **DOI validate** — dropped; caller uses `curl -I https://doi.org/X` directly.
