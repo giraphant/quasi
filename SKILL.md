@@ -12,7 +12,8 @@ description: 把论文、书、讲座、网页或档案收进研究文库，给�
 | 用户想要 | 下一步 |
 |---|---|
 | 把一件材料收进文库：给了 DOI、题名、链接、文件或录音 | 读 `collect/README.md` |
-| 围绕一个 topic 做研究，滚雪球式地找材料、读材料、积累认识 | 读 `research/README.md` |
+| 围绕一个 topic 做研究，找材料、读材料、积累认识 | 读 `research/README.md` |
+| 按批次滚雪球：处理种子文献，从参考文献中排序挑下一批，循环扩展 | 读 `research/README.md`，再读 `research/snowball.md` |
 | 校对、定稿一份自己写的 draft | 读 `draft/README.md` |
 
 一次请求里有好几件事时（比如"收这三篇，然后接着研究"），按顺序一件件做。
