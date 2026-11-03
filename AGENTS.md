@@ -92,7 +92,7 @@ The measured reasoning behind each rule is in `docs/PDF_PIPELINE.md`; do not rel
 ## Development and tests
 
 - Development and live tests run on the Mac Mini (`rex -S "Mac Mini"`): repo `~/Vibe/quasi`, test vault `~/Vibe/quasi-testvault`, full worker permissions. Use a test vault, never the user's library.
-- Run the suite in an environment with `scripts/requirements.txt` plus `pytest`: `python -m pytest -q`.
+- All tests live in `tests/`. Run them in an environment with `scripts/requirements.txt` plus `pytest`: `python -m pytest tests -q`.
 - `tests/test_skill_tree.py` checks that every path and quasi command a skill page mentions exists. Keep it passing when moving or renaming skill pages.
 - Python dependencies are declared in `scripts/requirements.txt`; `scripts/bootstrap-venv.sh` installs them and every shim self-bootstraps. Do not add pip installs to individual shims.
 
