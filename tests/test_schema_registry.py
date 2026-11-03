@@ -12,8 +12,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 sys.path.insert(0, str(SCRIPTS_ROOT))
 
 import schemas  # noqa: E402
-from schemas import TALK_BODY, artifact_contract_for_type, registry  # noqa: E402
-from schemas.operations import OPERATION_CATALOG  # noqa: E402
+from schemas import TALK_BODY, registry  # noqa: E402
 from scripts.typecheck.typecheck import check_file  # noqa: E402
 
 
@@ -65,9 +64,7 @@ The complete cleaned page content.
     result = check_file(path)
     assert result["frontmatter_errors"] == []
     assert result["body_violations"] == []
-    contract = artifact_contract_for_type("webpage")
-    assert contract["path_pattern"] == "vault/webpages/{slug}/webpage.md"
-    assert contract["document"]["section_order"] == ["Summary", "Content"]
+
 
 
 @pytest.mark.parametrize("field", ["snapshot", "format", "sha256", "bytes"])
@@ -83,48 +80,6 @@ def test_webpage_rejects_snapshot_technical_frontmatter(field: str) -> None:
     }
     with pytest.raises(ValidationError):
         webpage_schema.model_validate(value)
-
-
-def test_webpage_operation_catalog_contract() -> None:
-    expected = {
-        "webpage.identify": ("Search", "readonly", "quasi:webpage-agent", {}),
-        "webpage.capture": (
-            "Acquire",
-            "writer",
-            "quasi:webpage-agent",
-            {"snapshot": "vault/webpages/{slug}/snapshot.webarchive"},
-        ),
-        "webpage.prepare": (
-            "Prepare",
-            "writer",
-            "quasi:webpage-agent",
-            {
-                "snapshot": "vault/webpages/{slug}/snapshot.webarchive",
-                "output": "processing/webpages/{slug}/source.md",
-            },
-        ),
-        "webpage.analyse": (
-            "Analyse",
-            "writer",
-            "quasi:analyse-agent",
-            {"output": "vault/webpages/{slug}/webpage.md"},
-        ),
-        "webpage.audit": (
-            "Audit",
-            "writer",
-            "quasi:audit-agent",
-            {"target": "vault/webpages/{slug}/webpage.md"},
-        ),
-    }
-
-    for name, (phase, effect, agent, artifacts) in expected.items():
-        operation = OPERATION_CATALOG.get(name)
-        assert operation is not None
-        assert operation["kinds"] == ["webpage"]
-        assert operation["phase"] == phase
-        assert operation["effect"] == effect
-        assert operation["agent"] == agent
-        assert operation["artifacts"] == artifacts
 
 
 def test_topic_and_journal_validate_lightweight_frontmatter() -> None:

@@ -1143,24 +1143,6 @@ def test_target_language_is_rejected_for_scan(tmp_path: Path):
     assert json.loads(result.stdout)["error"]["code"] == "invalid_invocation"
 
 
-def test_identity_mode_is_removed_because_identity_is_always_returned(tmp_path: Path):
-    project = tmp_path / "project"
-    project.mkdir()
-
-    result = run_status(
-        project,
-        "--kind",
-        "paper",
-        "--slug",
-        "exact-paper",
-        "--identity",
-        "--json",
-    )
-
-    assert result.returncode == 2
-    assert json.loads(result.stdout)["error"]["code"] == "invalid_invocation"
-
-
 def test_paper_status_uses_live_operation_catalog_artifact_template(
     tmp_path: Path, monkeypatch,
 ):

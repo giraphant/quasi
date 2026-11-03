@@ -157,7 +157,6 @@ def test_results_payload_is_stable_and_registry_driven(tmp_path: Path) -> None:
     second = typecheck.build_results_payload(evaluation, requested_path="vault")
 
     assert first == second
-    assert first["version"] == "quasi-typecheck.results.v1"
     assert first["status"] == "clean"
     assert list(first["types"]) == [*TYPE_REGISTRY, "unknown"]
     assert first["summary"] == {

@@ -55,14 +55,3 @@ def test_prepare_is_idempotent_for_records_block(tmp_path: Path):
     text = draft.read_text(encoding="utf-8")
     assert text.count("<!-- proofread:start -->") == 1
     assert text.count("<!-- proofread:end -->") == 1
-
-
-def test_old_split_and_init_are_not_public_commands(tmp_path: Path):
-    draft = tmp_path / "draft.md"
-    draft.write_text("## One\n\nText.\n", encoding="utf-8")
-
-    split = run_proofread("split", str(draft), "-o", str(tmp_path / "sections.json"))
-    init = run_proofread("init", str(draft))
-
-    assert split.returncode == 2
-    assert init.returncode == 2

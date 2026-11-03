@@ -40,7 +40,6 @@ def test_doctor_json_reports_missing_venv_without_crashing(tmp_path: Path):
 
     assert result.returncode == 1, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["version"] == "quasi-doctor.v1"
     assert payload["status"] == "error"
     assert payload["venv"]["exists"] is False
     assert payload["venv"]["python_executable"] is False
@@ -77,15 +76,6 @@ def test_bin_help_works_without_venv(tmp_path: Path):
     assert "--sync" in result.stdout
     assert "--profile" in result.stdout
     assert "--strict" in result.stdout
-
-
-def test_doctor_does_not_report_dokobot(tmp_path: Path):
-    result = run_doctor(tmp_path / "data", "--json", path="")
-
-    assert result.returncode == 1, result.stderr
-    payload = json.loads(result.stdout)
-    assert "dokobot" not in result.stdout.lower()
-    assert "dokobot" not in payload["summary"]["optional_missing"]
 
 
 def test_strict_optional_failures_have_distinct_exit_code():

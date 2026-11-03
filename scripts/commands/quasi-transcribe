@@ -9,8 +9,7 @@
 #   quasi-transcribe silent --slug SLUG --title T --date YYYY-MM-DD --media FILE \
 #     --transcript PATH --state dead|empty --mode create|repair --output PATH [--json]
 #
-# Strict --json calls emit one closed Operation receipt.  Legacy calls retain
-# their historical JSON/prose surface.  Per-engine transcripts are committed
+# --json calls report results as one JSON object. Per-engine transcripts are committed
 # under processing/talks/<slug>/.
 
 set -e

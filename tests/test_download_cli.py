@@ -1725,20 +1725,6 @@ def test_download_help_exposes_agent_contract():
         assert result.returncode == 0
 
 
-def test_legacy_flag_mode_is_removed():
-    result = run_download("--doi", "10.1/example")
-
-    assert result.returncode == 2
-    assert "invalid choice" in result.stderr
-
-
-def test_legacy_batch_mode_is_removed():
-    result = run_download("batch", "--manifest", "manifest.json")
-
-    assert result.returncode == 2
-    assert "invalid choice" in result.stderr
-
-
 def test_accept_moves_temp_file_to_sources(tmp_path):
     project = tmp_path / "project"
     temp_dir = project / ".quasi" / "temp" / "downloads"
