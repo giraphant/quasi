@@ -1064,7 +1064,7 @@ def _is_pdf_data(data):
     if not isinstance(data, (bytes, bytearray)) or not bytes(data).lstrip().startswith(b"%PDF-"):
         return False
     try:
-        import fitz
+        import pymupdf as fitz
 
         with fitz.open(stream=bytes(data), filetype="pdf") as document:
             return document.page_count > 0
@@ -1152,7 +1152,7 @@ def _ocr_pdf_first_page(pdf_path):
     soft when PyMuPDF or tesseract is unavailable.
     """
     try:
-        import fitz
+        import pymupdf as fitz
 
         with fitz.open(pdf_path) as document:
             if document.page_count < 1:
@@ -1916,7 +1916,7 @@ def _is_valid_book_file(path, fmt):
             with path.open("rb") as source_file:
                 if source_file.read(5) != b"%PDF-":
                     return False
-            import fitz
+            import pymupdf as fitz
 
             document = fitz.open(path)
             try:

@@ -56,7 +56,7 @@ def test_core_dependency_mapping_includes_curl_cffi(tmp_path: Path):
     assert imports["curl_cffi"] == "curl_cffi"
     assert imports["beautifulsoup4"] == "bs4"
     assert imports["pyyaml"] == "yaml"
-    assert imports["pymupdf"] == "fitz"
+    assert imports["pymupdf"] == "pymupdf"
     assert imports["pylatexenc"] == "pylatexenc.latex2text"
 
 

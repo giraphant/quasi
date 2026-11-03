@@ -8,7 +8,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 import pytest
 
 from scripts.extract import ocr_generation

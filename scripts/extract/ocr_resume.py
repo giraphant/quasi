@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
-import fitz
+import pymupdf as fitz
 
 
 SCHEMA_VERSION = "quasi.ocr.progress/0.1"

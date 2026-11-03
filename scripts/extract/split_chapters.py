@@ -52,7 +52,7 @@ from toc_utils import (
 )
 
 try:
-    import fitz  # PyMuPDF
+    import pymupdf as fitz  # PyMuPDF
 except ImportError as exc:
     fitz = None
     _FITZ_IMPORT_ERROR = exc

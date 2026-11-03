@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 
-import fitz
+import pymupdf as fitz
 import pytest
 
 from scripts.archive import archive as cli

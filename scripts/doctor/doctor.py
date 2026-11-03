@@ -28,7 +28,7 @@ CORE_PYTHON_DEPS = [
     {"name": "curl_cffi", "import": "curl_cffi"},
     {"name": "pydantic", "import": "pydantic"},
     {"name": "pyyaml", "import": "yaml"},
-    {"name": "pymupdf", "import": "fitz"},
+    {"name": "pymupdf", "import": "pymupdf"},
     {"name": "pylatexenc", "import": "pylatexenc.latex2text"},
 ]
 

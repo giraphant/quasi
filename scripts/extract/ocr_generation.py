@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, Literal
 
-import fitz
+import pymupdf as fitz
 
 if __package__:
     from . import ocr_quality

@@ -544,7 +544,7 @@ def test_ocr_json_help_combination_is_one_invalid_arguments_object():
 
 
 def _write_pdf(path: Path, pages: list[str]) -> None:
-    import fitz
+    import pymupdf as fitz
 
     doc = fitz.open()
     for text in pages:
@@ -565,7 +565,7 @@ def _load_ocr_resume():
 
 def _fake_range_ocr(calls: list[tuple[int, int]]):
     def run(source: Path, output: Path, engine: str, language: str | None) -> int:
-        import fitz
+        import pymupdf as fitz
 
         with fitz.open(source) as document:
             labels = [page.get_text().strip() for page in document]
@@ -602,7 +602,7 @@ def test_ocr_resume_advances_one_range_per_invocation_and_merges(tmp_path: Path)
     assert third["status"] == "ok"
     assert third["progress"]["completed_pages"] == 5
     assert calls == [(1, 2), (3, 4), (5, 5)]
-    import fitz
+    import pymupdf as fitz
 
     with fitz.open(output) as document:
         assert document.page_count == 5
@@ -715,7 +715,7 @@ def _ocr_generation_runner(calls: list[tuple[int, tuple[str, ...]]]):
         language: str,
         _validation_policy: str,
     ) -> ocr_generation.EngineResult:
-        import fitz
+        import pymupdf as fitz
 
         assert language == "chi_sim+eng"
         with fitz.open(source) as sliced:
@@ -1307,7 +1307,7 @@ def test_strip_reaches_a_text_layer_hidden_in_a_form_xobject():
     Stripping only page.get_contents() left that layer under ours, so BabelDOC got
     two stacked text layers and silently dropped body text.
     """
-    import fitz
+    import pymupdf as fitz
 
     doc = fitz.open()
     page = doc.new_page()
@@ -1391,7 +1391,7 @@ def test_pdf_split_manifest_uses_common_chapter_fields(tmp_path: Path):
 
 
 def _book_pdf(path: Path, pages: list[str], toc: list[list] | None = None) -> None:
-    import fitz
+    import pymupdf as fitz
 
     doc = fitz.open()
     for text in pages:
@@ -1739,7 +1739,7 @@ def test_book_timestamp_change_allows_exact_slot_repair(tmp_path: Path):
 
 
 def test_book_changed_bytes_with_same_size_and_timestamp_still_rebuild(tmp_path: Path):
-    import fitz
+    import pymupdf as fitz
 
     pdf, output = tmp_path / "book.pdf", tmp_path / "chapters"
     _book_pdf(pdf, ["one " * 20])
@@ -2291,7 +2291,7 @@ def test_mineru_orphan_requires_exact_source_evidence_without_replay(tmp_path, w
 
 @pytest.mark.parametrize('field,value', [('model','foreign-model'), ('profile','foreign-profile')])
 def test_mineru_invalid_quality_stops_before_advancing_another_range(tmp_path, field, value):
-    import fitz
+    import pymupdf as fitz
     args = _migration_request(tmp_path, pages=17)
     result = ocr_generation.run_transaction(**args, runner=_ocr_generation_runner([]))
     part = tmp_path / result['progress']['ranges'][0]['path']
