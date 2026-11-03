@@ -81,7 +81,7 @@ def load_webpage_module():
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX executable bits are unavailable")
 def test_quasi_webpage_shim_is_publicly_executable_on_posix() -> None:
-    shim = Path("bin/quasi-webpage")
+    shim = Path(__file__).resolve().parents[1] / "scripts" / "commands" / "quasi-webpage"
 
     assert shim.is_file()
     assert stat.S_IMODE(shim.stat().st_mode) & 0o111 == 0o111

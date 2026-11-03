@@ -262,4 +262,6 @@ OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留
 - **Hutchby《Media Talk》**（198 页扫描本，没有文本层）：2 小时 37 分，绝大部分花在 OCR 上。Mini 是 M1、16 GB，MinerU 每页 35–40 秒，内存吃满。OCR 在单独的 pane 里用 shell 循环一段段推进（16 页一段，`partial` 就接着跑），generation 提交后用 OCR 版 PDF 切章，得到 12 项，写了 13 页，audit clean。术语表也成了一章：这本书的术语表是会话分析的概念说明，笔记写得有内容，所以没有把术语表加进排除规则（是否排除本来就要看正文）。
 - **问题**：两个会话都对用户给的 PDF 用了 `quasi download accept`，它会把输入文件移走，用户原来的文件夹空了。`collect/README.md` 已补规则：用户给的文件复制进 `sources/`，不移动不删除；`accept` 只用于 `.quasi/temp/` 里的临时下载。
 
+**2026-11-03，仓库根目录即技能**：原来技能在 `skills/quasi/`，靠软链接挂进文库，`scripts/quasi` 再往上找回仓库里的 `bin/` 和 `scripts/`；单独拷走技能文件夹就用不了。用户定下整个仓库就是技能：`SKILL.md`、`collect/`、`research/`、`draft/`、`connectors/` 搬到根目录，`scripts/quasi` 是唯一入口，原来的 11 个 bin shim 移进 `scripts/commands/`，行为不变，只改了定位仓库根的那一行。Python 层本来就在根目录的 `scripts/` 下、按 `scripts.xxx` 导入，所以一行导入都不用改。安装变成把仓库克隆到 `~/.agents/skills/quasi`，`git pull` 就是更新。`draft/` 暂时只说"暂不支持"。全量测试 1000 个通过。
+
 - **未覆盖**：论文下载的异常路径（身份存疑、下载额度用完、只有 HTML、要用户决定）、译本的两个 CLI 问题、research 实测、draft 入口、Claude Code 和 agy 的权限配置，以及 pi。

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# The single quasi entry point. Resolves symlinks so it works from any vault link or from PATH,
+# then hands the command to scripts/commands/quasi-<command>.
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+COMMANDS="$(cd "$(dirname "$SCRIPT_PATH")/commands" && pwd)"
+
+usage() {
+    printf 'Usage: quasi <command> [args...]\n\nAvailable commands:\n'
+    local command
+    for command in "$COMMANDS"/quasi-*; do
+        [ -f "$command" ] || continue
+        printf '  %s\n' "${command##*/quasi-}"
+    done
+}
+
+if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    usage
+    exit 0
+fi
+
+COMMAND="$1"
+shift
+if [[ "$COMMAND" == */* ]] || [ ! -f "$COMMANDS/quasi-$COMMAND" ]; then
+    printf 'quasi: unknown command: %s\n\n' "$COMMAND" >&2
+    usage >&2
+    exit 2
+fi
+
+exec "$COMMANDS/quasi-$COMMAND" "$@"

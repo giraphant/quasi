@@ -1,6 +1,6 @@
 # quasi maintainer guide
 
-quasi is a research-library toolkit for academic reading: it collects papers, books, talks, webpages, archival originals, translations and author portraits into a local vault, and supports topic research over that vault. It is one agent skill (`skills/quasi`) on top of a deterministic Python capability layer. Any harness that reads Agent Skills (Codex, Claude Code, agy, Pi) can run it.
+quasi is a research-library toolkit for academic reading: it collects papers, books, talks, webpages, archival originals, translations and author portraits into a local vault, and supports topic research over that vault. The repository root is itself one agent skill (`SKILL.md`), with a deterministic Python capability layer inside it. Any harness that reads Agent Skills (Codex, Claude Code, agy, Pi) can run it.
 
 `CLAUDE.md` only imports this file. Edit `AGENTS.md`.
 
@@ -9,19 +9,21 @@ Further reading: `docs/REDESIGN.md` (why the redesign, decisions and the round-b
 ## Layout
 
 ```text
-skills/quasi/            the skill; directory tree = progressive disclosure
-  SKILL.md               root: route to collect / research / draft; global conventions
-  collect/README.md      route by material type; rules shared by all materials
-  collect/<material>/    one leaf per material: README.md flow + search/acquire/prepare/writing pages
-  research/              the topic research loop and its writing brief
-  connectors/rex.md      the only place that knows how workers are launched (Rex panes)
-  scripts/quasi          single CLI entry; forwards to bin/quasi-<command>
-bin/quasi-*              shell shims; bootstrap the venv and load secrets
+SKILL.md                 skill root: route to collect / research / draft; global conventions
+collect/README.md        route by material type; rules shared by all materials
+collect/<material>/      one leaf per material: README.md flow + search/acquire/prepare/writing pages
+research/                the topic research loop and its writing brief
+draft/                   placeholder; draft finalisation is to be redesigned
+connectors/rex.md        the only place that knows how workers are launched (Rex panes)
+scripts/quasi            single CLI entry; dispatches to scripts/commands/quasi-<command>
+scripts/commands/        per-command shell shims; bootstrap the venv, load secrets, run the Python module
 scripts/                 Python capabilities (search, download, extract, transcribe, translate,
                          webpage, archive, audit/typecheck, status, citation, proofread, localise, vault)
 scripts/schemas/         single source of truth for artifact structure (frontmatter, H1, sections)
-tests/                   capability tests
+tests/, docs/            maintenance only; agents running the skill never read them
 ```
+
+The whole repository is the installable skill: clone or link it as `quasi` into a skills directory (see `docs/SETUP.md`). Everything the skill needs at run time lives inside it.
 
 ## How the skill works
 
@@ -98,7 +100,7 @@ The measured reasoning behind each rule is in `docs/PDF_PIPELINE.md`; do not rel
 
 ## Change checklist
 
-1. Artifact structure change: edit `scripts/schemas/`, then the matching writing brief in `skills/quasi/`.
+1. Artifact structure change: edit `scripts/schemas/`, then the matching writing brief under `collect/` or `research/`.
 2. New or renamed CLI command: update the CLI table here and every skill page that calls it.
 3. Skill page moved or renamed: update the routing table that points to it; run `tests/test_skill_tree.py`.
 4. Worker launch or harness change: edit `connectors/rex.md` only.

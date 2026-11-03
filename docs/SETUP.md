@@ -2,14 +2,14 @@
 
 装机时照本页做一次。换一台机器、或新开一个文库时，再看一遍。agent 运行时不读本页；技能里只保留"quasi 命令要在沙箱外跑"这一句提醒。
 
-做完之后跑 `skills/quasi/scripts/quasi doctor`，缺什么它会列出来。
+做完之后跑 `scripts/quasi doctor`（在仓库目录里），缺什么它会列出来。
 
 ## 1. 外部工具
 
 | 用途 | 工具 |
 |---|---|
 | 派活 | `rex`（工人开在 Rex pane 里） |
-| 写手和工人 | `codex`、`agy`、`claude`，至少一个；用哪个写在 `skills/quasi/connectors/rex.md` 的"当前使用的 harness"那一行 |
+| 写手和工人 | `codex`、`agy`、`claude`，至少一个；用哪个写在 `connectors/rex.md` 的"当前使用的 harness"那一行 |
 | 运行环境 | `uv` / `uvx`。Python 依赖装在 `~/.cache/quasi/.venv`，第一次运行时自动装好；`quasi doctor --sync` 可以手动同步 |
 | 抽取 | `pdftotext`、`tesseract`（含 `eng`、`chi_sim`）、`ocrmypdf` |
 | OCR | MinerU 经 `uvx` 运行，只支持 Apple Silicon；模型第一次用时下载到 `~/.cache/huggingface`，约 1 GB |
@@ -25,15 +25,14 @@
 
 ## 3. 把技能装进文库
 
-在文库根目录建两个软链接，指向仓库里的 `skills/quasi`：
+整个仓库就是技能，目录名要叫 `quasi`。最简单的装法是直接克隆到全局技能目录，再给 Claude 链一份：
 
 ```sh
-mkdir -p .agents/skills .claude/skills
-ln -s /path/to/quasi/skills/quasi .agents/skills/quasi   # codex、agy、pi 读这里
-ln -s /path/to/quasi/skills/quasi .claude/skills/quasi   # claude 读这里
+git clone https://github.com/giraphant/quasi ~/.agents/skills/quasi   # codex、agy、pi 读这里
+ln -s ~/.agents/skills/quasi ~/.claude/skills/quasi                    # claude 读这里
 ```
 
-也可以装到全局（`~/.agents/skills/quasi`、`~/.claude/skills/quasi`）。注意：旧体系的 `~/.codex/skills/quasi` 还在的话，Codex 可能读到旧技能。
+以后 `git pull` 就是更新。只想在某个文库里用，就在文库根目录建同样的两个软链接（`.agents/skills/quasi`、`.claude/skills/quasi`）指向仓库。注意：旧体系的 `~/.codex/skills/quasi` 还在的话，Codex 可能读到旧技能。
 
 ## 4. 权限
 

@@ -4,7 +4,7 @@
 
 一个学术阅读文库工具：用自然语言把论文、书、讲座、网页、档案原件收进本地文库，自动检索书目、取得全文、抽取正文、写出中文阅读笔记；也能把论文和书翻成双页对照的译本、为一位作者写学术画像，并围绕一个研究专题持续找材料、读材料、整理认识。
 
-quasi 是一个 agent 技能（`skills/quasi`），加上一层确定性的 Python 能力。Codex、Claude Code、agy 等能读技能的 agent 都能用它。
+整个仓库就是一个 agent 技能（根目录的 `SKILL.md`），里面带着一层确定性的 Python 能力。Codex、Claude Code、agy 等能读技能的 agent 都能用它。
 
 ## 用法
 
@@ -22,7 +22,7 @@ quasi 是一个 agent 技能（`skills/quasi`），加上一层确定性的 Pyth
 
 ## 安装
 
-照 [docs/SETUP.md](docs/SETUP.md) 做一次：装外部工具、配密钥、把技能链进文库、配好 agent 的权限，最后跑 `skills/quasi/scripts/quasi doctor` 自检。
+照 [docs/SETUP.md](docs/SETUP.md) 做一次：装外部工具、配密钥、把技能链进文库、配好 agent 的权限，最后跑 `scripts/quasi doctor` 自检。
 
 ## 文库布局
 

@@ -10,7 +10,7 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 DOCTOR = PLUGIN_ROOT / "scripts" / "doctor" / "doctor.py"
-DOCTOR_BIN = PLUGIN_ROOT / "bin" / "quasi-doctor"
+DOCTOR_BIN = PLUGIN_ROOT / "scripts" / "commands" / "quasi-doctor"
 
 
 def run_doctor(data_dir: Path, *args: str, path: str | None = None) -> subprocess.CompletedProcess[str]:
