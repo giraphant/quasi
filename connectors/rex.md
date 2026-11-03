@@ -67,6 +67,7 @@ quasi config get session_harness
 | codex | `codex --no-daemon -C "$PWD" -s workspace-write -a on-request "$(cat P)"` | 同左 |
 | agy | `agy --model gemini-4-argon-high --mode accept-edits -i "$(cat P)"` | `agy --model gemini-4-argon-high --mode auto -i "$(cat P)"` |
 | claude | `claude --permission-mode acceptEdits "$(cat P)"` | 同左 |
+| pi | `pi "$(cat P)"` | 同左 |
 
 环境变量 `QUASI_WORKER_PERMISSIONS` 的值是 `full` 时（用户专门放开权限的开发机），改用下面的完全放行命令，写手和材料会话相同：
 
@@ -75,8 +76,11 @@ quasi config get session_harness
 | codex | `codex --no-daemon --dangerously-bypass-approvals-and-sandbox -C "$PWD" "$(cat P)"` |
 | agy | `agy --model gemini-4-argon-high --dangerously-skip-permissions -i "$(cat P)"` |
 | claude | `claude --dangerously-skip-permissions "$(cat P)"` |
+| pi | `pi "$(cat P)"` |
 
 注意事项：
+
+- Pi 默认没有内置权限确认或沙箱；两张表都用同一条交互命令，不加不存在的权限参数。需要限制时应先配置 Pi 扩展或外部沙箱。
 
 - `agy` 的 `-p`、`-i` 会把紧跟在后面的那个参数当成提示词，所以 `--model`、`--mode` 等选项必须放在它们之前。
 - `--no-daemon` 是 `codex` 自身的选项，要放在子命令前面，比如无头模式写成 `codex --no-daemon exec …`。

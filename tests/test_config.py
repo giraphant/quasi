@@ -173,14 +173,14 @@ def test_shim_runs_without_the_venv():
 @pytest.mark.parametrize("name", ["writer_harness", "session_harness"])
 def test_harness_defaults_and_precedence(config, monkeypatch, capsys, name):
     assert run(config, monkeypatch, capsys, "get", name) == (0, "codex\n", "")
-    for value in ("codex", "agy", "claude"):
+    for value in ("codex", "agy", "claude", "pi"):
         assert run(config, monkeypatch, capsys, "set", name, value)[0] == 0
         assert run(config, monkeypatch, capsys, "get", name) == (0, value + "\n", "")
     assert run(config, monkeypatch, capsys, "set", name, "other")[0] == 2
     monkeypatch.setenv(config.env_name(name), "agy")
     assert run(config, monkeypatch, capsys, "get", name) == (0, "agy\n", "")
     monkeypatch.setenv(config.env_name(name), "")
-    assert run(config, monkeypatch, capsys, "get", name) == (0, "claude\n", "")
+    assert run(config, monkeypatch, capsys, "get", name) == (0, "pi\n", "")
     run(config, monkeypatch, capsys, "unset", name)
     assert run(config, monkeypatch, capsys, "get", name) == (0, "codex\n", "")
 
@@ -207,7 +207,7 @@ def test_show_reports_defaults_without_claiming_they_are_set(config, monkeypatch
     for row in rows:
         if row["name"] in ("writer_harness", "session_harness"):
             assert row["default"] == "codex" and row["group"] == "派工"
-            assert row["choices"] == ["codex", "agy", "claude"]
+            assert row["choices"] == ["codex", "agy", "claude", "pi"]
             assert row["set"] is False and row["value"] is None and row["source"] is None
         else:
             assert "default" not in row

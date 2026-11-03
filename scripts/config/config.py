@@ -53,8 +53,8 @@ KEYS: Dict[str, Tuple[str, bool, str, Optional[str]]] = {
 }
 CHOICES: Dict[str, Tuple[str, ...]] = {
     "translate_backend": ("immersive", "pdf2zh"),
-    "writer_harness": ("codex", "agy", "claude"),
-    "session_harness": ("codex", "agy", "claude"),
+    "writer_harness": ("codex", "agy", "claude", "pi"),
+    "session_harness": ("codex", "agy", "claude", "pi"),
 }
 
 
