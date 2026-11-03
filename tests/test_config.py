@@ -58,11 +58,11 @@ def config(tmp_path, monkeypatch):
     fake.chmod(0o755)
     monkeypatch.setenv("FAKE_KEYCHAIN", str(tmp_path / "keychain.json"))
     monkeypatch.setenv("FAKE_ARGV_LOG", str(tmp_path / "argv.jsonl"))
-    for name in ("KAGI_SESSION_TOKEN", "TRANSLATE_BACKEND", "TRANSLATE_MODEL", "SONIOX_API_KEY"):
-        monkeypatch.delenv(f"QUASI_{name}", raising=False)
     spec = importlib.util.spec_from_file_location("quasi_config", ROOT / "scripts" / "config" / "config.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    for name in module.KEYS:
+        monkeypatch.delenv(module.env_name(name), raising=False)
     monkeypatch.setattr(module, "SECURITY", str(fake))
     module.store_path = tmp_path / "keychain.json"
     module.argv_log = tmp_path / "argv.jsonl"
@@ -168,3 +168,49 @@ def test_shim_runs_without_the_venv():
                             capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
     assert "show" in result.stdout and "unset" in result.stdout
+
+
+@pytest.mark.parametrize("name", ["writer_harness", "session_harness"])
+def test_harness_defaults_and_precedence(config, monkeypatch, capsys, name):
+    assert run(config, monkeypatch, capsys, "get", name) == (0, "codex\n", "")
+    for value in ("codex", "agy", "claude"):
+        assert run(config, monkeypatch, capsys, "set", name, value)[0] == 0
+        assert run(config, monkeypatch, capsys, "get", name) == (0, value + "\n", "")
+    assert run(config, monkeypatch, capsys, "set", name, "other")[0] == 2
+    monkeypatch.setenv(config.env_name(name), "agy")
+    assert run(config, monkeypatch, capsys, "get", name) == (0, "agy\n", "")
+    monkeypatch.setenv(config.env_name(name), "")
+    assert run(config, monkeypatch, capsys, "get", name) == (0, "claude\n", "")
+    run(config, monkeypatch, capsys, "unset", name)
+    assert run(config, monkeypatch, capsys, "get", name) == (0, "codex\n", "")
+
+
+def test_get_without_default_or_keychain(config, monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(config, "SECURITY", str(tmp_path / "missing"))
+    assert run(config, monkeypatch, capsys, "get", "translate_model") == (1, "", "")
+    assert run(config, monkeypatch, capsys, "get", "writer_harness") == (0, "codex\n", "")
+    monkeypatch.setenv("QUASI_TRANSLATE_MODEL", "env-model")
+    assert run(config, monkeypatch, capsys, "get", "translate_model") == (0, "env-model\n", "")
+
+
+@pytest.mark.parametrize("name", ["kagi_session_token", "unknown"])
+def test_get_refuses_secrets_and_unknown_keys_without_reading(config, monkeypatch, capsys, name):
+    monkeypatch.setenv("QUASI_KAGI_SESSION_TOKEN", "secret")
+    code, out, err = run(config, monkeypatch, capsys, "get", name)
+    assert code == 2 and out == "" and "secret" not in err
+    assert ("密钥只由 quasi 命令内部读取" if name in config.KEYS else "没有这个键") in err
+    assert not config.argv_log.exists()
+
+
+def test_show_reports_defaults_without_claiming_they_are_set(config, monkeypatch, capsys):
+    rows = json.loads(run(config, monkeypatch, capsys, "show", "--json")[1])["keys"]
+    for row in rows:
+        if row["name"] in ("writer_harness", "session_harness"):
+            assert row["default"] == "codex" and row["group"] == "派工"
+            assert row["choices"] == ["codex", "agy", "claude"]
+            assert row["set"] is False and row["value"] is None and row["source"] is None
+        else:
+            assert "default" not in row
+    assert run(config, monkeypatch, capsys, "show")[1].count("未设（默认 codex）") == 2
+    run(config, monkeypatch, capsys, "set", "writer_harness", "agy")
+    assert run(config, monkeypatch, capsys, "show")[1].count("未设（默认 codex）") == 1

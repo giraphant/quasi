@@ -51,7 +51,14 @@ RS="${REX_SESSION:-$QUASI_REX_SESSION}"; RB="${REX_BLOCK:-$QUASI_REX_BLOCK}"
 
 记下返回 JSON 里的 `.block_ids[0]`，后面的动作都用它。
 
-**当前使用的 harness：codex。** 写手和材料会话都用它。要换成别的，只改这一行（正式写作推荐 agy，中文写得最好）。
+派工前，分别读出写手和材料会话使用的 harness：
+
+```sh
+quasi config get writer_harness
+quasi config get session_harness
+```
+
+派写手时按 `writer_harness` 的值选下面表里的写手命令，派整件材料时按 `session_harness` 的值选材料会话命令。两项未设时都用 codex；用户可以在 Marple 的设置里或用 `quasi config set writer_harness agy`、`quasi config set session_harness codex` 分别修改。材料会话自己派写手时也要这样读，不能因为自己运行在 Codex 里，就把写作也交给 Codex。
 
 各 harness 的命令（`P`、`R`、`S` 分别是这个标签的 prompt、reply、status 文件的绝对路径）：
 

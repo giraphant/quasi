@@ -25,6 +25,7 @@
 scripts/quasi config show                         # 列出全部键、有没有设；密钥不显示值
 scripts/quasi config set kagi_session_token       # 提示输入，粘贴后回车；输入不回显
 scripts/quasi config set translate_backend pdf2zh # 非密钥的键可以直接写值
+scripts/quasi config get writer_harness           # agent 也可读取，限非密钥；环境变量、钥匙串、默认值依次优先
 scripts/quasi config unset translate_model
 ```
 
@@ -42,6 +43,8 @@ scripts/quasi config unset translate_model
 | `translate_base_url`、`translate_api_key`、`translate_model` | OpenAI 兼容端点的地址、key 和模型（`pdf2zh` 后端；只填根地址会自动补 `/v1`） |
 | `kagi_session_token` | Kagi 的 Session Link 或 token，用于网络检索和豆瓣中文版查找 |
 | `soniox_api_key` | Soniox 转写接口的 key |
+| `writer_harness` | 派工：写手使用的框架，`codex`、`agy` 或 `claude`，默认 `codex` |
+| `session_harness` | 派工：材料会话使用的框架，`codex`、`agy` 或 `claude`，默认 `codex` |
 
 ## 3. 把技能装进文库
 

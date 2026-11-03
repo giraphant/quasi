@@ -3,6 +3,7 @@
 #
 # Usage:
 #   quasi config show [--json]
+#   quasi config get NAME           (non-secret keys only)
 #   quasi config set NAME [VALUE]   (secrets only from stdin or the prompt)
 #   quasi config unset NAME
 #

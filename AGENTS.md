@@ -55,7 +55,7 @@ The whole repository is the installable skill: clone or link it as `quasi` into 
 | `quasi translate` | `observe\|run` configured `immersive\|pdf2zh` translation |
 | `quasi helpers` | `vault resolve`; `citation ...`; `proofread ...`; `localise ...`; `talk compress-media` |
 | `quasi doctor` | venv sync and dependency check by profile |
-| `quasi config` | `show [--json]\|set NAME [VALUE]\|unset NAME`: the user's keys in the macOS Keychain; secret values only via stdin or prompt. For the user and GUI front ends (Marple), not for agents |
+| `quasi config` | `show [--json]\|get NAME\|set NAME [VALUE]\|unset NAME`: the user's keys in the macOS Keychain; secret values only via stdin or prompt. For the user and GUI front ends (Marple); agents may use `get` for non-secret keys only (environment, Keychain, then default) |
 
 - A deterministic CLI may write an artifact only when its command contract names that output path.
 - `quasi status` takes artifact path templates from `scripts/schemas/operations.py::OPERATION_CATALOG`.
@@ -80,6 +80,7 @@ The repository is not a Claude plugin: a `.claude-plugin/plugin.json` here makes
 | `QUASI_TRANSLATE_BASE_URL`, `_API_KEY`, `_MODEL` | `scripts/translate/pdf2zh_translate.py` |
 | `QUASI_KAGI_SESSION_TOKEN` | `scripts/search/`, `scripts/download/download.py` (mapped to `KAGI_SESSION_TOKEN` for the kagi CLI) |
 | `QUASI_SONIOX_API_KEY` | `scripts/transcribe/engines.py` |
+| `QUASI_WRITER_HARNESS`, `QUASI_SESSION_HARNESS` | `connectors/rex.md`: writer and material-session harness, each defaults to `codex` |
 | `QUASI_WORKER_PERMISSIONS=full` | `connectors/rex.md`: launch workers with permission-bypass commands (dev machine only). A login-shell variable, not a Keychain key: the agent reads it directly |
 
 ## Extraction and translation invariants

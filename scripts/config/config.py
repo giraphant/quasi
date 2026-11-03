@@ -9,7 +9,9 @@ keeps this file the only owner of the key list and the storage layout.
 
 Scripts read only ``QUASI_<KEY>`` environment variables; ``exports`` fills the
 missing ones from the Keychain, and an explicitly set variable always wins.
-Values never travel in argv: secrets arrive on stdin and reach ``security``
+Non-secret keys can be read by agents through ``get``, falling back to the
+key's default when neither the environment nor the Keychain supplies a value.
+Secret values never travel in argv: secrets arrive on stdin and reach ``security``
 through its stdin command mode.
 
 Standard library only (macOS system Python 3.9): shims run this before the
@@ -31,23 +33,29 @@ SERVICE = "quasi"
 SECURITY = "/usr/bin/security"
 _NOT_FOUND = 44
 
-# name: (group, secret, description). Keep in sync with docs/SETUP.md.
-KEYS: Dict[str, Tuple[str, bool, str]] = {
-    "cookiecloud_server": ("下载", False, "CookieCloud 服务器地址"),
-    "cookiecloud_uuid": ("下载", True, "CookieCloud 扩展里设的 user KEY"),
-    "cookiecloud_password": ("下载", True, "CookieCloud 的端到端加密密码"),
-    "cookiecloud_ezproxy_domain": ("下载", False, "学校 EZProxy 登录后的 cookie 域名，如 .idm.oclc.org"),
-    "cookiecloud_ezproxy_base_url": ("下载", False, "学校 EZProxy 的地址"),
-    "anna_donator_key": ("下载", True, "Anna's Archive 捐助者 key，用快速下载接口"),
-    "translate_backend": ("翻译", False, "翻译后端：immersive 或 pdf2zh"),
-    "immersive_auth_key": ("翻译", True, "Immersive Translate Zotero 接口的 key（immersive 后端）"),
-    "translate_base_url": ("翻译", False, "OpenAI 兼容端点的地址（pdf2zh 后端；只填根地址会自动补 /v1）"),
-    "translate_api_key": ("翻译", True, "OpenAI 兼容端点的 key（pdf2zh 后端）"),
-    "translate_model": ("翻译", False, "OpenAI 兼容端点的模型名（pdf2zh 后端）"),
-    "kagi_session_token": ("检索", True, "Kagi 的 Session Link 或 token，用于网络检索和豆瓣中文版查找"),
-    "soniox_api_key": ("转写", True, "Soniox 转写接口的 key"),
+# name: (group, secret, description, default). Keep in sync with docs/SETUP.md.
+KEYS: Dict[str, Tuple[str, bool, str, Optional[str]]] = {
+    "cookiecloud_server": ("下载", False, "CookieCloud 服务器地址", None),
+    "cookiecloud_uuid": ("下载", True, "CookieCloud 扩展里设的 user KEY", None),
+    "cookiecloud_password": ("下载", True, "CookieCloud 的端到端加密密码", None),
+    "cookiecloud_ezproxy_domain": ("下载", False, "学校 EZProxy 登录后的 cookie 域名，如 .idm.oclc.org", None),
+    "cookiecloud_ezproxy_base_url": ("下载", False, "学校 EZProxy 的地址", None),
+    "anna_donator_key": ("下载", True, "Anna's Archive 捐助者 key，用快速下载接口", None),
+    "translate_backend": ("翻译", False, "翻译后端：immersive 或 pdf2zh", None),
+    "immersive_auth_key": ("翻译", True, "Immersive Translate Zotero 接口的 key（immersive 后端）", None),
+    "translate_base_url": ("翻译", False, "OpenAI 兼容端点的地址（pdf2zh 后端；只填根地址会自动补 /v1）", None),
+    "translate_api_key": ("翻译", True, "OpenAI 兼容端点的 key（pdf2zh 后端）", None),
+    "translate_model": ("翻译", False, "OpenAI 兼容端点的模型名（pdf2zh 后端）", None),
+    "kagi_session_token": ("检索", True, "Kagi 的 Session Link 或 token，用于网络检索和豆瓣中文版查找", None),
+    "soniox_api_key": ("转写", True, "Soniox 转写接口的 key", None),
+    "writer_harness": ("派工", False, "写手使用的 agent 框架", "codex"),
+    "session_harness": ("派工", False, "材料会话使用的 agent 框架", "codex"),
 }
-CHOICES: Dict[str, Tuple[str, ...]] = {"translate_backend": ("immersive", "pdf2zh")}
+CHOICES: Dict[str, Tuple[str, ...]] = {
+    "translate_backend": ("immersive", "pdf2zh"),
+    "writer_harness": ("codex", "agy", "claude"),
+    "session_harness": ("codex", "agy", "claude"),
+}
 
 
 class ConfigError(Exception):
@@ -138,7 +146,7 @@ def delete(name: str) -> bool:
 def describe() -> List[dict]:
     stored = read_many([name for name in KEYS if not os.environ.get(env_name(name))])
     rows = []
-    for name, (group, secret, description) in KEYS.items():
+    for name, (group, secret, description, default) in KEYS.items():
         from_env = os.environ.get(env_name(name)) or None
         value = from_env or stored.get(name)
         row = {
@@ -150,6 +158,8 @@ def describe() -> List[dict]:
             "set": value is not None,
             "source": "env" if from_env else ("keychain" if value else None),
         }
+        if default is not None:
+            row["default"] = default
         if name in CHOICES:
             row["choices"] = list(CHOICES[name])
         if not secret:
@@ -183,7 +193,7 @@ def cmd_show(as_json: bool) -> int:
             group = row["group"]
             print(f"\n{group}")
         if not row["set"]:
-            state = "未设"
+            state = f"未设（默认 {row['default']}）" if "default" in row else "未设"
         elif row["secret"]:
             state = "已设"
         else:
@@ -191,6 +201,18 @@ def cmd_show(as_json: bool) -> int:
         if row["source"] == "env":
             state += f"  （来自环境变量 {row['env']}）"
         print(f"  {row['name']:<{width}}  {state}")
+    return 0
+
+
+def cmd_get(name: str) -> int:
+    if name not in KEYS:
+        raise ConfigError(f"没有这个键：{name}。运行 quasi config show 查看全部键名。")
+    if KEYS[name][1]:
+        raise ConfigError(f"{name} 是密钥；密钥只由 quasi 命令内部读取。")
+    value = os.environ.get(env_name(name)) or read(name) or KEYS[name][3]
+    if value is None:
+        return 1
+    print(value)
     return 0
 
 
@@ -226,6 +248,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     show = sub.add_parser("show", help="列出所有键、有没有设、值从哪来；密钥不显示值")
     show.add_argument("--json", action="store_true", help="机器可读输出（给 Marple 之类的界面用）")
+    get = sub.add_parser("get", help="读取一个非密钥的键：环境变量、钥匙串、默认值依次优先")
+    get.add_argument("name")
     set_ = sub.add_parser("set", help="设置一个键；值从标准输入读，在终端里会提示输入")
     set_.add_argument("name")
     set_.add_argument("value", nargs="?", help="只有非密钥的键可以直接写在这里")
@@ -240,6 +264,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         if args.command == "show":
             return cmd_show(args.json)
+        if args.command == "get":
+            return cmd_get(args.name)
         if args.command == "set":
             return cmd_set(args.name, args.value)
         if args.command == "unset":

@@ -268,4 +268,6 @@ OCR、翻译、抽取的事务、锁和隔离目录都在 CLI 里，原样保留
 
 **2026-11-03，配置迁进 quasi 自己的钥匙串条目**：原来 13 个键存在 Claude Code 的 `Claude Code-credentials` 记录里，挂在旧插件 `quasi@…` 名下，靠插件时代的钩子脚本读取，所以旧插件不能卸载。用户考虑过让 Marple 做配置界面，定下全部放钥匙串、统一编辑：每个键一条 generic password（服务名 `quasi`，账户名是键名），`scripts/config/config.py` 是唯一的读写方，`quasi config show [--json]`、`set`、`unset` 同时给人和 Marple 用。Marple 不直接碰钥匙串：钥匙串条目记得创建它的程序，由 Marple 建的条目，`/usr/bin/security` 每次读都会弹授权框，Marple 重签名后还可能要重新允许；全部经 `security` 写入，读取就不弹框。实测：`security -i` 从标准输入读命令，双引号里只认反斜杠转义的反斜杠和双引号，`$`、反引号、单引号原样保存，所以密钥写入不进 argv；读一个键约 15 毫秒，13 个键并行读。值限定为可打印 ASCII，因为 `security -w` 会把其他内容打成十六进制，和十六进制 token 分不清。密钥值不许写在命令行，只能粘贴或走标准输入；非密钥的键可以直接写值。`scripts/hooks/` 和 `load-keychain-env.sh` 删除，shim 改为加载 `load-config-env.sh`。本机和 Mini 各自用一次性脚本从旧记录迁移（Mini 的旧记录挂在 `quasi@ramu-toolkit` 名下），迁移后逐键比对一致，并实际跑了一次 Kagi 检索。`QUASI_WORKER_PERMISSIONS` 仍是登录 shell 的环境变量，因为 connector 要 agent 直接读它。
 
+**2026-11-03，写手和材料会话分别选择框架**：钥匙串配置新增「派工」分组，`writer_harness` 和 `session_harness` 都可选 codex、agy、claude，未设时默认 codex。`quasi config get` 给 agent 读非密钥的值，依次取环境变量、钥匙串、默认值；密钥直接拒绝。`show` 给 Marple 单独报告默认值，不把未设说成已设。connector 派两类工人时分别读取，材料会话再派写手也重新读取。假 security 的配置测试和技能树测试共 26 个通过。
+
 - **未覆盖**：论文下载的异常路径（身份存疑、下载额度用完、只有 HTML、要用户决定）、译本的两个 CLI 问题、research 实测、draft 入口、Claude Code 和 agy 的权限配置，以及 pi。
