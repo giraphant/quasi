@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# quasi-extract — file → MD pipeline (EPUB / OCR / split-by-TOC).
+#
+# Subcommands:
+#   quasi-extract epub  SOURCE_EPUB CHAPTERS_DIR [--json]
+#       Extract chapter-level plain text from an EPUB.
+#
+#   quasi-extract text  INPUT.pdf OUTPUT.txt [--json]
+#       Atomically extract the PDF text layer and report deterministic signals.
+#
+#   quasi-extract ocr   INPUT.pdf [OUTPUT.pdf] [LANGUAGE] [--engine mineru|tesseract] [--no-clobber] [--json]
+#       [--resume --progress-file PATH --chunk-pages N]
+#       OCR a scanned PDF into a searchable PDF. Default engine MinerU2.5-Pro
+#       (recognition + paragraph layout via MLX); Tesseract is explicit-only.
+#
+#   quasi-extract split INPUT.pdf --output-dir DIR [--method toc|pattern] [--max-chapters N]
+#       [--expected-manifest-fingerprint SHA256] [--json]
+#       Or use --chapters JSON, or repair one exact slot with
+#       --pages RANGE --title T --slot S --json.
+#       Split a PDF into per-chapter files.
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/../.." && pwd)"
+. "$PLUGIN_ROOT/scripts/load-config-env.sh"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
+PYTHON="$DATA_DIR/.venv/bin/python"
+
+# Sync new dependencies even when an older venv already exists.
+"$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
+
+exec "$PYTHON" "$PLUGIN_ROOT/scripts/extract/extract.py" "$@"

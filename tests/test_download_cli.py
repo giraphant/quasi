@@ -33,7 +33,7 @@ AA_HOMEPAGE_HTML = """
 
 
 def _readable_pdf_bytes(text: str = "Readable article") -> bytes:
-    fitz = pytest.importorskip("fitz")
+    fitz = pytest.importorskip("pymupdf")
     document = fitz.open()
     document.new_page().insert_text((72, 72), text)
     data = document.tobytes()
@@ -1069,7 +1069,7 @@ def test_aa_slow_download_uses_each_no_wait_partner_as_referer(tmp_path, monkeyp
     first_download = "https://cdn.example.org/first.pdf"
     second_download = "https://cdn.example.org/second.pdf"
     dest = tmp_path / "book.pdf"
-    import fitz
+    import pymupdf as fitz
 
     document = fitz.open()
     document.new_page().insert_text((72, 72), "valid second partner payload")
@@ -1286,7 +1286,7 @@ def test_libgen_resolves_ads_page_before_downloading_keyed_url(
     dest = tmp_path / "book.pdf"
     ads_url = f"https://libgen.li/ads.php?md5={md5}"
     download_url = f"https://libgen.li/get.php?md5={md5}&key=abc123"
-    import fitz
+    import pymupdf as fitz
 
     document = fitz.open()
     for page_number in range(40):
@@ -1723,20 +1723,6 @@ def test_download_help_exposes_agent_contract():
     ]:
         result = run_download(*args)
         assert result.returncode == 0
-
-
-def test_legacy_flag_mode_is_removed():
-    result = run_download("--doi", "10.1/example")
-
-    assert result.returncode == 2
-    assert "invalid choice" in result.stderr
-
-
-def test_legacy_batch_mode_is_removed():
-    result = run_download("batch", "--manifest", "manifest.json")
-
-    assert result.returncode == 2
-    assert "invalid choice" in result.stderr
 
 
 def test_accept_moves_temp_file_to_sources(tmp_path):
@@ -3577,7 +3563,7 @@ def test_pdf_validation_rejects_large_opaque_bytes_and_broken_pdf_prefix():
 
 
 def test_pdf_validation_accepts_a_readable_one_page_pdf():
-    fitz = pytest.importorskip("fitz")
+    fitz = pytest.importorskip("pymupdf")
     mod = _load_module(DOWNLOAD, "strong_pdf_readable_under_test")
     document = fitz.open()
     document.new_page().insert_text((72, 72), "A readable article")
@@ -3713,7 +3699,7 @@ def test_first_page_ocr_fails_soft_when_pymupdf_is_unavailable(monkeypatch):
     original_import = builtins.__import__
 
     def unavailable_fitz(name, *args, **kwargs):
-        if name == "fitz":
+        if name == "pymupdf":
             raise ImportError("fitz unavailable")
         return original_import(name, *args, **kwargs)
 

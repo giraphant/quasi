@@ -1,86 +1,46 @@
-"""Canonical operation identity and artifact templates."""
+"""Artifact path templates used by quasi status."""
 
 OPERATION_CATALOG = {
-    "archive.identify": {
-        "kinds": ["archive"], "phase": "Search", "effect": "readonly",
-        "agent": "quasi:archive-agent", "artifacts": {},
-    },
     "archive.collect": {
-        "kinds": ["archive"], "phase": "Acquire", "effect": "writer",
-        "agent": "quasi:archive-agent",
-        "artifacts": {"output": "{archiveDirectory}/archive.md",
-                      "manifest": "{archiveDirectory}/manifest.yaml",
-                      "originals": "{archiveDirectory}/originals"},
+        "artifacts": {
+            "output": "{archiveDirectory}/archive.md",
+            "manifest": "{archiveDirectory}/manifest.yaml",
+            "originals": "{archiveDirectory}/originals",
+        },
     },
     "archive.audit": {
-        "kinds": ["archive"], "phase": "Audit", "effect": "writer",
-        "agent": "quasi:audit-agent",
-        "artifacts": {"target": "{archiveDirectory}/archive.md"},
-    },
-    "topic.discover-archives": {
-        "kinds": ["topic"], "phase": "Search", "effect": "readonly",
-        "agent": "quasi:webcard-agent", "artifacts": {},
-    },
-    "webpage.identify": {
-        "kinds": ["webpage"],
-        "phase": "Search",
-        "effect": "readonly",
-        "agent": "quasi:webpage-agent",
-        "artifacts": {},
+        "artifacts": {
+            "target": "{archiveDirectory}/archive.md",
+        },
     },
     "webpage.capture": {
-        "kinds": ["webpage"],
-        "phase": "Acquire",
-        "effect": "writer",
-        "agent": "quasi:webpage-agent",
-        "artifacts": {"snapshot": "vault/webpages/{slug}/snapshot.webarchive"},
+        "artifacts": {
+            "snapshot": "vault/webpages/{slug}/snapshot.webarchive",
+        },
     },
     "webpage.prepare": {
-        "kinds": ["webpage"],
-        "phase": "Prepare",
-        "effect": "writer",
-        "agent": "quasi:webpage-agent",
         "artifacts": {
             "snapshot": "vault/webpages/{slug}/snapshot.webarchive",
             "output": "processing/webpages/{slug}/source.md",
         },
     },
     "webpage.analyse": {
-        "kinds": ["webpage"],
-        "phase": "Analyse",
-        "effect": "writer",
-        "agent": "quasi:analyse-agent",
-        "artifacts": {"output": "vault/webpages/{slug}/webpage.md"},
+        "artifacts": {
+            "output": "vault/webpages/{slug}/webpage.md",
+        },
     },
     "webpage.audit": {
-        "kinds": ["webpage"],
-        "phase": "Audit",
-        "effect": "writer",
-        "agent": "quasi:audit-agent",
-        "artifacts": {"target": "vault/webpages/{slug}/webpage.md"},
-    },
-    "material.search": {
-        "kinds": ["paper", "book"],
-        "phase": "Search",
-        "effect": "readonly",
-        "agent": "quasi:metadata-agent",
-        "artifacts": {},
+        "artifacts": {
+            "target": "vault/webpages/{slug}/webpage.md",
+        },
     },
     "paper.acquire": {
-        "kinds": ["paper"],
-        "phase": "Acquire",
-        "effect": "writer",
-        "agent": "quasi:download-agent",
         "artifacts": {
             "outputPdf": "sources/{slug}.pdf",
             "outputText": "sources/{slug}.txt",
         },
     },
     "paper.prepare": {
-        "kinds": ["paper"],
-        "phase": "Prepare",
-        "effect": "writer",
-        "agent": "quasi:extract-agent",
         "artifacts": {
             "input": "{input}",
             "sourcePdf": "sources/{slug}.pdf",
@@ -91,10 +51,6 @@ OPERATION_CATALOG = {
         },
     },
     "paper.ocr": {
-        "kinds": ["paper"],
-        "phase": "Prepare",
-        "effect": "writer",
-        "agent": "quasi:extract-agent",
         "artifacts": {
             "source": "sources/{slug}.pdf",
             "lock": "processing/papers/{slug}/.ocr-generation.lock",
@@ -107,31 +63,16 @@ OPERATION_CATALOG = {
         },
     },
     "paper.analyse": {
-        "kinds": ["paper"],
-        "phase": "Analyse",
-        "effect": "writer",
-        "agent": "quasi:analyse-agent",
-        "artifacts": {"output": "vault/papers/{slug}.md"},
+        "artifacts": {
+            "output": "vault/papers/{slug}.md",
+        },
     },
     "paper.audit": {
-        "kinds": ["paper"],
-        "phase": "Audit",
-        "effect": "writer",
-        "agent": "quasi:audit-agent",
-        "artifacts": {"target": "vault/papers/{slug}.md"},
-    },
-    "book.acquire": {
-        "kinds": ["book"],
-        "phase": "Acquire",
-        "effect": "writer",
-        "agent": "quasi:download-agent",
-        "artifacts": {},
+        "artifacts": {
+            "target": "vault/papers/{slug}.md",
+        },
     },
     "book.prepare": {
-        "kinds": ["book"],
-        "phase": "Prepare",
-        "effect": "writer",
-        "agent": "quasi:extract-agent",
         "artifacts": {
             "input": "{input}",
             "source": "sources/{slug}.{format}",
@@ -144,10 +85,6 @@ OPERATION_CATALOG = {
         },
     },
     "book.ocr": {
-        "kinds": ["book"],
-        "phase": "Prepare",
-        "effect": "writer",
-        "agent": "quasi:extract-agent",
         "artifacts": {
             "source": "sources/{slug}.pdf",
             "lock": "processing/chapters/{slug}/.ocr-generation.lock",
@@ -159,32 +96,17 @@ OPERATION_CATALOG = {
             "manifest": "processing/chapters/{slug}/ocr-generations/{generationKey}/manifest.json",
         },
     },
-    "chapter.analyse": {
-        "kinds": ["book"],
-        "phase": "Analyse",
-        "effect": "writer",
-        "agent": "quasi:analyse-agent",
-        "artifacts": {},
-    },
     "book.synthesise": {
-        "kinds": ["book"],
-        "phase": "Synthesise",
-        "effect": "writer",
-        "agent": "quasi:synthesis-agent",
-        "artifacts": {"output": "vault/books/{slug}/00-overview.md"},
+        "artifacts": {
+            "output": "vault/books/{slug}/00-overview.md",
+        },
     },
     "book.audit": {
-        "kinds": ["book"],
-        "phase": "Audit",
-        "effect": "writer",
-        "agent": "quasi:audit-agent",
-        "artifacts": {"target": "vault/books/{slug}"},
+        "artifacts": {
+            "target": "vault/books/{slug}",
+        },
     },
     "talk.prepare": {
-        "kinds": ["talk"],
-        "phase": "Prepare",
-        "effect": "writer",
-        "agent": "quasi:transcribe-agent",
         "artifacts": {
             "processingDir": "processing/talks/{slug}",
             "manifest": "processing/talks/{slug}/manifest.json",
@@ -195,24 +117,16 @@ OPERATION_CATALOG = {
         },
     },
     "talk.analyse": {
-        "kinds": ["talk"],
-        "phase": "Analyse",
-        "effect": "writer",
-        "agent": "quasi:analyse-agent",
-        "artifacts": {"output": "vault/talks/{slug}/talk.md"},
+        "artifacts": {
+            "output": "vault/talks/{slug}/talk.md",
+        },
     },
     "talk.audit": {
-        "kinds": ["talk"],
-        "phase": "Audit",
-        "effect": "writer",
-        "agent": "quasi:audit-agent",
-        "artifacts": {"target": "vault/talks/{slug}/talk.md"},
+        "artifacts": {
+            "target": "vault/talks/{slug}/talk.md",
+        },
     },
     "translation.prepare": {
-        "kinds": ["translation"],
-        "phase": "Prepare",
-        "effect": "writer",
-        "agent": "quasi:translate-agent",
         "artifacts": {
             "source": "sources/{slug}.pdf",
             "derivatives": "processing/translations/{slug}-*.pdf",
@@ -223,87 +137,46 @@ OPERATION_CATALOG = {
             "layoutReview": "processing/translations/{slug}-{target}-layout-review.json",
         },
     },
-    "topic.recall": {
-        "kinds": ["topic"],
-        "phase": "Recall",
-        "effect": "readonly",
-        "agent": "general-purpose",
-        "artifacts": {},
-    },
     "topic.steer": {
-        "kinds": ["topic"],
-        "phase": "Search",
-        "effect": "writer",
-        "agent": "quasi:steer-agent",
-        "artifacts": {"outputPath": "vault/topics/{slug}/02-outline.md"},
+        "artifacts": {
+            "outputPath": "vault/topics/{slug}/02-outline.md",
+        },
     },
     "topic.webcard": {
-        "kinds": ["topic"],
-        "phase": "Search",
-        "effect": "writer",
-        "agent": "quasi:webcard-agent",
-        "artifacts": {"cardPath": "vault/topics/{slug}/cards/{target}.md"},
+        "artifacts": {
+            "cardPath": "vault/topics/{slug}/cards/{target}.md",
+        },
     },
     "topic.synthesise.overview": {
-        "kinds": ["topic"],
-        "phase": "Synthesise",
-        "effect": "writer",
-        "agent": "quasi:synthesis-agent",
         "artifacts": {
             "outlinePath": "vault/topics/{slug}/02-outline.md",
             "outputPath": "vault/topics/{slug}/00-overview.md",
         },
     },
     "topic.synthesise.resources": {
-        "kinds": ["topic"],
-        "phase": "Synthesise",
-        "effect": "writer",
-        "agent": "quasi:synthesis-agent",
         "artifacts": {
             "outlinePath": "vault/topics/{slug}/02-outline.md",
             "outputPath": "vault/topics/{slug}/01-resources.md",
         },
     },
     "topic.audit": {
-        "kinds": ["topic"],
-        "phase": "Audit",
-        "effect": "writer",
-        "agent": "quasi:audit-agent",
-        "artifacts": {"target": "{target}"},
-    },
-    "author.discover-books": {
-        "kinds": ["author"],
-        "phase": "Search",
-        "effect": "readonly",
-        "agent": "quasi:discovery-agent",
-        "artifacts": {},
-    },
-    "author.discover-papers": {
-        "kinds": ["author"],
-        "phase": "Search",
-        "effect": "readonly",
-        "agent": "quasi:discovery-agent",
-        "artifacts": {},
+        "artifacts": {
+            "target": "{target}",
+        },
     },
     "author.resolve-membership": {
-        "kinds": ["author"],
-        "phase": "Search",
-        "effect": "readonly",
-        "agent": "general-purpose",
-        "artifacts": {"output": "vault/authors/{slug}.md"},
+        "artifacts": {
+            "output": "vault/authors/{slug}.md",
+        },
     },
     "author.synthesise": {
-        "kinds": ["author"],
-        "phase": "Synthesise",
-        "effect": "writer",
-        "agent": "quasi:synthesis-agent",
-        "artifacts": {"output": "vault/authors/{slug}.md"},
+        "artifacts": {
+            "output": "vault/authors/{slug}.md",
+        },
     },
     "author.audit": {
-        "kinds": ["author"],
-        "phase": "Audit",
-        "effect": "writer",
-        "agent": "quasi:audit-agent",
-        "artifacts": {"target": "vault/authors/{slug}.md"},
+        "artifacts": {
+            "target": "vault/authors/{slug}.md",
+        },
     },
 }

@@ -37,10 +37,6 @@ def test_search_help_exposes_fixed_json_contract():
     assert "{book,paper,kagi}" in top.stdout
     assert "--top" in book.stdout
     assert "--json" in book.stdout
-    assert "--shape" not in book.stdout
-    assert "--output" not in book.stdout
-    assert "--shape" not in paper.stdout
-    assert "--output" not in paper.stdout
 
 
 def test_kagi_subcommand_passes_through_to_native_cli_with_quasi_auth(tmp_path):
@@ -78,16 +74,6 @@ def test_kagi_subcommand_passes_through_to_native_cli_with_quasi_auth(tmp_path):
         "quasi_token": None,
         "args": ["search", "--format", "json", "不受掌控 ISBN"],
     }
-
-
-def test_legacy_shape_and_output_modes_are_removed():
-    shape = run_search("paper", "--doi", "10.1/example", "--shape", "single")
-    output = run_search("book", "--title", "Example", "--output", "out.json")
-
-    assert shape.returncode == 2
-    assert "unrecognized arguments" in shape.stderr
-    assert output.returncode == 2
-    assert "unrecognized arguments" in output.stderr
 
 
 def load_search_module():

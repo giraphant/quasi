@@ -58,10 +58,6 @@ from talk import compress_media  # noqa: E402
 DEFAULT_ENGINES = ["soniox", "apple", "parakeet"]
 PRIMARY_PREFERENCE = ["soniox", "whisper", "apple", "parakeet"]
 PARAGRAPH_SECONDS = 45
-TRANSCRIBE_SCHEMA = "quasi.operation.talk.transcribe.receipt/0.1"
-OBSERVE_SCHEMA = "quasi.operation.talk.observe.receipt/0.1"
-CLASSIFY_SCHEMA = "quasi.operation.talk.classify.receipt/0.1"
-SILENT_SCHEMA = "quasi.operation.talk.render-silent.receipt/0.1"
 _LANG_RE = re.compile(r"(?:auto|[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)")
 
 
@@ -86,10 +82,6 @@ def _failure(
         outcome=outcome,
         exit_code=exit_code,
     )
-
-
-def _material_key(slug: str | None) -> str | None:
-    return f"talk:{slug}" if slug else None
 
 
 def _relative_input(source: dict | None, root: Path, operation_key: str) -> str | None:
@@ -191,12 +183,7 @@ def _strict_transcribe_receipt(
     if status != "succeeded":
         disposition = None
     return {
-        "schema_version": TRANSCRIBE_SCHEMA,
-        "key": "talk.transcribe",
-        "effect": "writer",
         "status": status,
-        "attempt": 1,
-        "material_key": _material_key(slug),
         "slug": slug,
         "input_path": requested_input_path,
         "output_dir": (
@@ -607,12 +594,7 @@ def _observe_receipt(
     if talk_exists and not (manifest_exists and fingerprint is None):
         visible_artifacts.append(artifact_row("canonical", talk_path, root))
     return {
-        "schema_version": OBSERVE_SCHEMA,
-        "key": "talk.observe",
-        "effect": "readonly",
         "status": error.status if error is not None else "succeeded",
-        "attempt": 1,
-        "material_key": _material_key(slug),
         "slug": slug,
         "input_path": requested_input_path,
         "output_dir": (
@@ -859,12 +841,7 @@ def cmd_classify(args) -> int:
         )
     if args.json:
         receipt = {
-            "schema_version": CLASSIFY_SCHEMA,
-            "key": "talk.classify",
-            "effect": "readonly",
             "status": error.status if error is not None else "succeeded",
-            "attempt": 1,
-            "material_key": _material_key(slug),
             "input_path": (
                 _receipt_input(source, root, "talk.classify")
                 if source is not None
@@ -970,12 +947,7 @@ def cmd_silent(args) -> int:
     if args.json:
         exists = out is not None and regular_file(out) and error is None
         receipt = {
-            "schema_version": SILENT_SCHEMA,
-            "key": "talk.render-silent",
-            "effect": "writer",
             "status": error.status if error is not None else "succeeded",
-            "attempt": 1,
-            "material_key": _material_key(slug),
             "input_path": (
                 _receipt_input(source, root, "talk.render-silent")
                 if source is not None
@@ -984,7 +956,6 @@ def cmd_silent(args) -> int:
             "output_path": (
                 out.relative_to(root).as_posix() if out is not None else None
             ),
-            "artifact_roles": ["canonical"],
             "classification_signal": args.classification_signal,
             "action": action,
             "output_sha256": sha256_file(out) if exists else None,

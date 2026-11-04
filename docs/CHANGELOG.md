@@ -1,6 +1,6 @@
 # quasi changelog
 
-Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, and the skill / agent files.
+Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `AGENTS.md`, `README.md`, and `skills/quasi/`.
 
 - **0.68.12** (2026-10-29): Stop `--layout` from corrupting pages whose old text layer contains the word "ET".
   - `strip_text` removed old text with the regex `BT\b.*?\bET\b`, which does not know PDF strings. Delgado 2001 p7 and Delgado 2015 pp5–8 and 16 carry "et al." as `(ET )Tj`; the match closed inside that string and left `)Tj … ET` behind. The resulting content-stream syntax error hung pdf2zh for 30 minutes on one paper and crashed it at 4/26 pages on the other.

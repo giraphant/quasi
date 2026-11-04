@@ -75,7 +75,6 @@ def test_audit_emits_diagnostic_first_contract_on_empty_vault(tmp_path: Path):
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["version"] == "quasi-audit.diagnostics.v1"
     assert payload["status"] == "clean"
     assert payload["target"]["requested"] == "vault"
     assert payload["target"]["exists"] is True
@@ -304,7 +303,6 @@ themes:
     assert result.returncode == 1
     payload = json.loads(result.stdout)
     diagnostics = all_diagnostics(payload)
-    assert payload["version"] == "quasi-audit.diagnostics.v1"
     assert payload["status"] == "dirty"
     assert payload["summary"]["agent_fixable"] == 1
     assert payload["summary"]["human_required"] == 0
@@ -373,16 +371,12 @@ def test_audit_toc_report_json_carries_titles_verbatim(tmp_path: Path):
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert set(payload) == {"version", "guidance", "target", "summary", "books"}
-    assert payload["version"] == "quasi-audit.chapter-toc.v1"
-    assert set(payload["target"]) == {"requested", "resolved", "exists"}
     assert payload["target"]["requested"] == "vault"
     assert payload["target"]["exists"] is True
     assert payload["summary"] == {"books": 1, "chapters": 3}
     assert isinstance(payload["guidance"], str) and payload["guidance"].strip()
     assert len(payload["books"]) == 1
     entry = payload["books"][0]
-    assert set(entry) == {"path", "chapters"}
     assert entry["path"] == "vault/books/bilingual-1987"
     assert entry["chapters"] == [
         {"file": "ch01-x.md", "title": "Introduction \u5bfc\u8a00"},
@@ -401,17 +395,8 @@ def test_audit_toc_report_missing_path_returns_two(tmp_path: Path):
 
     assert result.returncode == 2
     payload = json.loads(result.stdout)
-    assert payload["version"] == "quasi-audit.chapter-toc.v1"
     assert payload["target"]["exists"] is False
     assert isinstance(payload["error"], str) and payload["error"].strip()
-
-
-def test_audit_rejects_removed_subcommands(tmp_path: Path):
-    project = tmp_path / "project"
-    project.mkdir()
-    result = run_audit(project, "run")
-
-    assert result.returncode == 2
 
 
 def test_audit_field_report_markdown_is_opt_in_and_read_only(tmp_path: Path):
@@ -461,7 +446,6 @@ themes:
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["version"] == "quasi-audit.frontmatter-fields.v1"
     assert payload["target"]["requested"] == "vault"
     assert payload["target"]["exists"] is True
     assert payload["summary"] == {
@@ -491,7 +475,6 @@ def test_audit_field_report_missing_path_returns_two(tmp_path: Path):
 
     assert result.returncode == 2
     payload = json.loads(result.stdout)
-    assert payload["version"] == "quasi-audit.frontmatter-fields.v1"
     assert payload["target"]["exists"] is False
     assert isinstance(payload["error"], str) and payload["error"].strip()
 

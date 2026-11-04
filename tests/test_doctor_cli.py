@@ -10,7 +10,7 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 DOCTOR = PLUGIN_ROOT / "scripts" / "doctor" / "doctor.py"
-DOCTOR_BIN = PLUGIN_ROOT / "bin" / "quasi-doctor"
+DOCTOR_BIN = PLUGIN_ROOT / "scripts" / "commands" / "quasi-doctor"
 
 
 def run_doctor(data_dir: Path, *args: str, path: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -40,7 +40,6 @@ def test_doctor_json_reports_missing_venv_without_crashing(tmp_path: Path):
 
     assert result.returncode == 1, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["version"] == "quasi-doctor.v1"
     assert payload["status"] == "error"
     assert payload["venv"]["exists"] is False
     assert payload["venv"]["python_executable"] is False
@@ -56,7 +55,7 @@ def test_core_dependency_mapping_includes_curl_cffi(tmp_path: Path):
     assert imports["curl_cffi"] == "curl_cffi"
     assert imports["beautifulsoup4"] == "bs4"
     assert imports["pyyaml"] == "yaml"
-    assert imports["pymupdf"] == "fitz"
+    assert imports["pymupdf"] == "pymupdf"
     assert imports["pylatexenc"] == "pylatexenc.latex2text"
 
 
@@ -79,15 +78,6 @@ def test_bin_help_works_without_venv(tmp_path: Path):
     assert "--strict" in result.stdout
 
 
-def test_doctor_does_not_report_dokobot(tmp_path: Path):
-    result = run_doctor(tmp_path / "data", "--json", path="")
-
-    assert result.returncode == 1, result.stderr
-    payload = json.loads(result.stdout)
-    assert "dokobot" not in result.stdout.lower()
-    assert "dokobot" not in payload["summary"]["optional_missing"]
-
-
 def test_strict_optional_failures_have_distinct_exit_code():
     doctor = load_doctor_module()
 
@@ -103,33 +93,3 @@ def test_strict_optional_failures_have_distinct_exit_code():
         "summary": {"core_ok": False, "optional_missing": ["kagi"]},
         "strict": True,
     }) == 1
-
-
-def test_doctor_flags_plugin_version_drift(tmp_path: Path, monkeypatch):
-    """Agent/skill definitions load from the plugin cache at session start; a mid-session cache
-    sync does not update the running session (a 0.48.0-contract agent ran long after 0.48.2 was
-    installed). Doctor compares the copy it runs FROM against the installed registry and warns."""
-    module = load_doctor_module()
-
-    fake_home = tmp_path / "home"
-    reg = fake_home / ".claude" / "plugins"
-    reg.mkdir(parents=True)
-    (reg / "installed_plugins.json").write_text(json.dumps(
-        {"plugins": {"quasi@ramu-toolkit": [{"version": "9.9.9"}]}}))
-    monkeypatch.setenv("HOME", str(fake_home))
-
-    stale_root = tmp_path / "stale-plugin"
-    (stale_root / ".claude-plugin").mkdir(parents=True)
-    (stale_root / ".claude-plugin" / "plugin.json").write_text('{"version": "0.48.0"}')
-
-    drift = module.check_plugin_version_drift(stale_root)
-    assert drift == {"running": "0.48.0", "installed": "9.9.9", "drift": True}
-
-    current_root = tmp_path / "current-plugin"
-    (current_root / ".claude-plugin").mkdir(parents=True)
-    (current_root / ".claude-plugin" / "plugin.json").write_text('{"version": "9.9.9"}')
-    assert module.check_plugin_version_drift(current_root)["drift"] is False
-
-    # Missing registry (fresh machine, no plugin manager) must degrade to no-warning, not crash.
-    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
-    assert module.check_plugin_version_drift(stale_root)["drift"] is False

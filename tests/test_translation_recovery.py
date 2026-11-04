@@ -61,7 +61,7 @@ def test_observe_tracks_existing_lock_then_committed_output_without_stdout(tmp_p
     assert not paths["lock_path"].exists()
     with commit.output_lock(paths):
         pending = commit.observe(**observe_kwargs(tmp_path, source=source, mode="final"))
-        assert pending["signal"] == "running" and pending["effect"] == "readonly"
+        assert pending["signal"] == "running"
         assert pending["output_sha256"] is None
         # Publication puts the PDF in place before its manifest. That window is
         # still an active writer, not an unproven-output terminal or completion.

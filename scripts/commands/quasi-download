@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# quasi-download — Download a paper/book by DOI / URL / MD5.
+#
+# Usage:
+#   quasi-download book candidates --title TITLE --author AUTHOR --json
+#   quasi-download book fetch --md5 HASH --slug SLUG --json
+#   quasi-download paper fetch --doi "10.x/y" --slug SLUG --json
+#   quasi-download paper diagnose --url https://example.org/article --json
+#   quasi-download accept --path TEMPFILE --slug SLUG --kind book -o sources --json
+
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/../.." && pwd)"
+. "$PLUGIN_ROOT/scripts/load-config-env.sh"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
+PYTHON="$DATA_DIR/.venv/bin/python"
+
+# Sync new dependencies even when an older venv already exists.
+"$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
+
+exec "$PYTHON" "$PLUGIN_ROOT/scripts/download/download.py" "$@"

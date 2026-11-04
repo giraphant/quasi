@@ -1053,3 +1053,46 @@ def test_request_errors_redact_query_userinfo_and_known_secret():
     assert "user:pass" not in redacted
     assert "token=signed" not in redacted
     assert "?<redacted>" in redacted
+
+
+@pytest.mark.parametrize("backend", ["immersive", "pdf2zh"])
+@pytest.mark.parametrize("candidate_pages", [8, 4, 7])
+def test_translation_page_count_gate_preserves_rejected_candidate(tmp_path, backend, candidate_pages):
+    source, source_sha = source_fixture(tmp_path)
+    candidates = []
+
+    def runner(source, candidate, language, work_dir, on_state):
+        make_pdf(candidate, candidate_pages)
+        candidates.append(candidate)
+        return {"task_id": None}
+
+    result = commit.run_transaction(**run_kwargs(tmp_path, source, source_sha, runner, backend=backend))
+    output = tmp_path / result["output_path"]
+    if candidate_pages == 8:
+        assert result["status"] == "succeeded" and output.is_file()
+    else:
+        assert result["failure"]["code"] == "translation.page_count_mismatch"
+        assert not output.exists()
+        assert candidates[0].is_file()
+
+
+@pytest.mark.parametrize("backend", ["immersive", "pdf2zh"])
+def test_translation_repairs_before_measuring_the_same_candidate(tmp_path, backend):
+    source, source_sha = source_fixture(tmp_path)
+    events = []
+
+    def repair(path):
+        events.append(("repair", path))
+        return {"font": 42}
+
+    def measure(path, **kwargs):
+        assert events == [("repair", path)]
+        events.append(("coverage", path))
+        return coverage.check(path, **kwargs)
+
+    kwargs = run_kwargs(tmp_path, source, source_sha, passing_runner([]), backend=backend)
+    kwargs.update(repair_tounicode=repair, check_coverage=measure)
+    result = commit.run_transaction(**kwargs)
+    assert result["status"] == "succeeded"
+    assert [name for name, _ in events] == ["repair", "coverage"]
+    assert events[0][1] != tmp_path / result["output_path"]

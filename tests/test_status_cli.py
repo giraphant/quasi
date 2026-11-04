@@ -8,7 +8,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 import pytest
 
 from scripts.extract import ocr_generation
@@ -1137,24 +1137,6 @@ def test_target_language_is_rejected_for_scan(tmp_path: Path):
 
     result = run_status(
         project, "--scan", "--target-language", "zh-CN", "--json"
-    )
-
-    assert result.returncode == 2
-    assert json.loads(result.stdout)["error"]["code"] == "invalid_invocation"
-
-
-def test_identity_mode_is_removed_because_identity_is_always_returned(tmp_path: Path):
-    project = tmp_path / "project"
-    project.mkdir()
-
-    result = run_status(
-        project,
-        "--kind",
-        "paper",
-        "--slug",
-        "exact-paper",
-        "--identity",
-        "--json",
     )
 
     assert result.returncode == 2

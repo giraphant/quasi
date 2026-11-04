@@ -12,8 +12,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHIMS = sorted(path.name for path in (ROOT / "bin").glob("quasi-*")
-               if path.name != "quasi-doctor")
+# doctor and config must work before the venv exists, so they never bootstrap it.
+SHIMS = sorted(path.name for path in (ROOT / "scripts" / "commands").glob("quasi-*")
+               if path.name not in {"quasi-doctor", "quasi-config"})
 
 
 @pytest.fixture
@@ -21,11 +22,11 @@ def runtime(tmp_path):
     plugin = tmp_path / "plugin"
     scripts = plugin / "scripts"
     scripts.mkdir(parents=True)
-    shutil.copytree(ROOT / "bin", plugin / "bin")
+    shutil.copytree(ROOT / "scripts" / "commands", scripts / "commands")
     for name in ("bootstrap-venv.sh", "requirements.txt"):
         shutil.copy2(ROOT / "scripts" / name, scripts / name)
     # This test concerns dependency installation, never host credentials.
-    (scripts / "load-keychain-env.sh").write_text("")
+    (scripts / "load-config-env.sh").write_text("")
     data = tmp_path / "data"
     bindir = data / ".venv" / "bin"
     bindir.mkdir(parents=True)
@@ -50,7 +51,7 @@ sys.exit(int(os.environ.get("INSTALL_EXIT", "0")))
 def invoke(runtime, shim):
     plugin, _, env = runtime
     args = ["citation", "--help"] if shim == "quasi-helpers" else ["--help"]
-    return subprocess.run([str(plugin / "bin" / shim), *args], env=env,
+    return subprocess.run([str(plugin / "scripts" / "commands" / shim), *args], env=env,
                           text=True, capture_output=True, timeout=20)
 
 

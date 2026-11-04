@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# quasi-webpage — capture one public webpage through the system WebKit runtime.
+set -e
+
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+PLUGIN_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/../.." && pwd)"
+. "$PLUGIN_ROOT/scripts/load-config-env.sh"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/quasi}"
+PYTHON="$DATA_DIR/.venv/bin/python"
+
+# Sync new dependencies even when an older venv already exists.
+"$PLUGIN_ROOT/scripts/bootstrap-venv.sh"
+
+PYTHONPATH="$PLUGIN_ROOT${PYTHONPATH:+:$PYTHONPATH}" exec "$PYTHON" -m scripts.webpage.webpage "$@"

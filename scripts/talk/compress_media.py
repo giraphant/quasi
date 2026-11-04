@@ -15,9 +15,7 @@ import tempfile
 from pathlib import Path
 
 
-SCHEMA_VERSION = "quasi.operation.talk.prepare-media.receipt/0.1"
 MANIFEST_SCHEMA = "quasi.talk.prepared-media.manifest/0.1"
-FAILURE_KEYS = {"code", "operation_key", "outcome", "retryable", "message"}
 
 
 class PrepareFailure(Exception):
@@ -293,13 +291,7 @@ def _receipt(
     error: PrepareFailure | None,
 ) -> dict:
     exists = output is not None and _regular(output)
-    slug = (
-        output.parent.name
-        if output is not None
-        and output.parent.parent.name == "talks"
-        and output.parent.parent.parent.name == "vault"
-        else None
-    )
+
     def receipt_path(path: Path | None) -> str | None:
         if path is None:
             return None
@@ -309,15 +301,9 @@ def _receipt(
             return None
 
     return {
-        "schema_version": SCHEMA_VERSION,
-        "key": "talk.prepare-media",
-        "effect": "writer",
         "status": error.status if error else "succeeded",
-        "attempt": 1,
-        "material_key": f"talk:{slug}" if slug else None,
         "input_path": requested_input_path,
         "output_path": receipt_path(output),
-        "artifact_roles": ["prepared_media"],
         "input_sha256": input_sha,
         "output_sha256": _sha(output) if exists and error is None else None,
         "size": output.stat().st_size if exists and error is None else 0,

@@ -19,7 +19,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from workflow_test_support import run_workflow_export
 
 pytestmark = pytest.mark.filterwarnings(
     r"ignore:urllib3 v2 only supports OpenSSL 1\.1\.1\+.*"
@@ -82,7 +81,7 @@ def load_webpage_module():
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX executable bits are unavailable")
 def test_quasi_webpage_shim_is_publicly_executable_on_posix() -> None:
-    shim = Path("bin/quasi-webpage")
+    shim = Path(__file__).resolve().parents[1] / "scripts" / "commands" / "quasi-webpage"
 
     assert shim.is_file()
     assert stat.S_IMODE(shim.stat().st_mode) & 0o111 == 0o111
@@ -106,31 +105,6 @@ def test_normalize_web_url_rejects_credentials_and_control_characters() -> None:
         )
     with pytest.raises(ValueError, match="control"):
         load_webarchive_module().normalize_web_url("https://example.org/article\nnext")
-
-
-@pytest.mark.parametrize(
-    "raw",
-    [
-        "https://www.chronicle.com/article/the-intellectual-war-on-science/",
-        "HTTPS://Example.COM:443",
-        "http://Example.COM:80/a?q=2#frag",
-        "https://example.org",
-        "https://example.org:8443/x?q=1&r=2",
-        "https://example.org:/x",
-        "https://[2001:db8::1]:8080/x",
-        "https://example.org/a/../b",
-        "https://example.org/a b",
-        "https://example.org/文章",
-        "https://例え.jp/a",
-        "https://example.org/x?",
-    ],
-)
-def test_web_url_normalizers_agree_across_python_and_workflow(raw: str) -> None:
-    """One accepted URL must carry one comparison form on both sides."""
-
-    assert run_workflow_export(
-        "scripts/workflows/contracts/webpage.mts", "normalizeWebUrl", raw
-    ) == load_webarchive_module().normalize_web_url(raw)
 
 
 def test_collision_slug_uses_a_stable_eight_hex_url_suffix() -> None:
@@ -639,15 +613,21 @@ def test_command_capture_smoke_preserves_loopback_subresources(tmp_path: Path) -
     sys.platform != "darwin" or shutil.which("swiftc") is None,
     reason="requires macOS WebKit and swiftc",
 )
-@pytest.mark.parametrize("stall,native_ms,local_ms,expected_code", [
-    ("metadata", 1000, 2000, "webpage.capture_timeout"),
-    ("fingerprint", 1000, 2000, "webpage.capture_timeout"),
-    ("fingerprint", 2000, 100, "webpage.stabilization_failed"),
-    ("after-first-fingerprint", 2000, 300, "webpage.stabilization_failed"),
-    ("changing", 2000, 900, "complete"),
+@pytest.mark.parametrize("stall,native_ms,local_ms,expected_code,poll_ms", [
+    ("metadata", 1000, 2000, "webpage.capture_timeout", 200),
+    ("fingerprint", 1000, 2000, "webpage.capture_timeout", 200),
+    ("fingerprint", 2000, 100, "webpage.stabilization_failed", 200),
+    ("after-first-fingerprint", 2000, 300, "webpage.stabilization_failed", 200),
+    ("changing", 2000, 900, "complete", 200),
+    # Sleep past the local bound after one valid sample. A second sample is
+    # deliberately broken, so this cannot pass by winning a 1 ms callback race.
+    pytest.param("after-first-fingerprint", 2000, 900, "complete", 1000,
+                 id="no-sample-after-deadline"),
+    pytest.param("late-network", 2000, 900, "webpage.stabilization_failed", 1000,
+                 id="network-change-after-last-sample"),
 ])
 def test_native_timeout_wins_when_metadata_never_returns(
-    tmp_path: Path, stall: str, native_ms: int, local_ms: int, expected_code: str,
+    tmp_path: Path, stall: str, native_ms: int, local_ms: int, expected_code: str, poll_ms: int,
 ) -> None:
     binary = tmp_path / "webpage-timeout-test"
     source = Path("scripts/webpage/webpage_capture.swift")
@@ -671,6 +651,7 @@ def test_native_timeout_wins_when_metadata_never_returns(
     (tmp_path / "fixture.html").write_text(
         "<html><head><title>Timeout fixture</title></head><body>ready"
         + ("<script>setInterval(() => document.body.append('x'), 20)</script>" if stall == "changing" else "")
+        + ("<script>setTimeout(() => fetch('/fixture.html'), 650)</script>" if stall == "late-network" else "")
         + "</body></html>",
         encoding="utf-8",
     )
@@ -691,8 +672,9 @@ def test_native_timeout_wins_when_metadata_never_returns(
             "QUASI_WEBPAGE_TEST_STALL": stall,
             "QUASI_WEBPAGE_TEST_TIMEOUT_MS": str(native_ms),
             "QUASI_WEBPAGE_TEST_STABILIZE_MIN_MS": "0",
-            "QUASI_WEBPAGE_TEST_STABILIZE_QUIET_MS": "600" if stall in ("after-first-fingerprint", "changing") else "0",
+            "QUASI_WEBPAGE_TEST_STABILIZE_QUIET_MS": "600" if stall in ("after-first-fingerprint", "changing", "late-network") else "0",
             "QUASI_WEBPAGE_TEST_STABILIZE_MAX_MS": str(local_ms),
+            "QUASI_WEBPAGE_TEST_STABILIZE_POLL_MS": str(poll_ms),
         }
         started = time.monotonic()
         completed = subprocess.run(
@@ -818,9 +800,6 @@ def test_delayed_dom_is_in_main_resource_and_prepared_source(tmp_path, monkeypat
         assert extracted["status"] == "complete", extracted
         archive = load_webarchive_module().read_webarchive(snapshot)
         assert archive.url == extracted["final_url"] == final_url
-        from test_webpage_host_e2e import validate_cli_receipt
-        for name, receipt in (("inspect", inspected), ("capture", captured), ("extract", extracted)):
-            validate_cli_receipt(receipt, name, {"status": "complete", "final_url": final_url})
         assert sentinel in archive.html
         assert sentinel in source.read_text()
         if transport == "fragment":
@@ -909,29 +888,6 @@ def test_native_parent_watchdog_kills_helper_and_child(tmp_path, monkeypatch, le
                     pass
         if libc is not None:
             assert libc.prctl(36, previous.value, 0, 0, 0) == 0
-
-
-def test_host_tool_evidence_reads_structured_calls_and_deduplicates_ids(tmp_path):
-    """Deterministic parser check; no host, credential or loopback access."""
-    from test_webpage_host_e2e import records, tool_calls
-
-    call = {"type": "tool_use", "id": "capture-1", "name": "Bash",
-            "input": {"command": "quasi-webpage capture fixture"}}
-    row = {"message": {"content": [{"type": "text", "text": "Bash capture prose"}, call]}}
-    path = tmp_path / "agent.jsonl"
-    path.write_text("\n".join(json.dumps(value) for value in [row, row, {"type": "progress"}]))
-    assert tool_calls(records(path), "Bash") == [call["input"]]
-    assert tool_calls(records(path), "Workflow") == []
-
-
-def test_host_malformed_evidence_does_not_echo_contents(tmp_path):
-    from test_webpage_host_e2e import records
-
-    path = tmp_path / "broken.jsonl"
-    path.write_text("PRIVATE_FIXTURE_VALUE is not JSON")
-    with pytest.raises(pytest.fail.Exception) as error:
-        records(path)
-    assert "PRIVATE_FIXTURE_VALUE" not in str(error.value)
 
 
 def test_native_cache_uses_source_content_not_installed_mtime(tmp_path, monkeypatch):

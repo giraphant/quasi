@@ -124,7 +124,6 @@ def test_typecheck_report_json_covers_registry_and_separates_warnings(
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["version"] == "quasi-typecheck.results.v1"
     assert payload["status"] == "clean"
     assert list(payload["types"]) == [*TYPE_REGISTRY, "unknown"]
     assert payload["summary"]["body_violations"] == 0
@@ -152,7 +151,6 @@ def test_typecheck_report_missing_path_returns_two_without_writing(tmp_path: Pat
 
     assert result.returncode == 2
     payload = json.loads(result.stdout)
-    assert payload["version"] == "quasi-typecheck.results.v1"
     assert payload["target"]["exists"] is False
     assert tree_digest(project) == before
     assert not (project / ".quasi").exists()

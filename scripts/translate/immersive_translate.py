@@ -8,13 +8,13 @@ This script intentionally mirrors the Zotero plugin's request flow:
 3. Upload the local PDF.
 4. Create a translation task.
 5. Poll the task until completion.
-6. Download the dual PDF, split it page-by-page, and write a single
-   side-by-side bilingual PDF to processing/translations/{slug}-{lang}.pdf.
+6. Download the dual PDF and split it into the caller-named staged candidate.
+
+The shared transaction owns validation and publication.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import re
@@ -31,18 +31,8 @@ import requests
 # file was run as a script or imported as a module.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from translate.coverage import check as check_coverage  # noqa: E402
-from translate.tounicode import repair_pdf as repair_tounicode  # noqa: E402
-from translate.translate_commit import (  # noqa: E402
-    redact_text,
-    validate_language,
-    validate_slug,
-    validate_source,
-)
+from translate.translate_commit import redact_text  # noqa: E402
 
-
-PROJECT_ROOT = Path.cwd()  # caller's research project root (output only, no config)
-DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "processing" / "translations"
 
 DEFAULT_SETTINGS = {
     "auth_key": "",
@@ -70,20 +60,6 @@ class MissingAuthKeyError(TranslationError):
     """Raised when config does not contain a usable auth key."""
 
 
-class SourceNotFoundError(TranslationError):
-    """Raised when the source PDF cannot be located."""
-
-
-class AmbiguousSourceError(TranslationError):
-    """Raised when more than one plausible source PDF is found."""
-
-    def __init__(self, slug: str, candidates: list[Path]):
-        self.slug = slug
-        self.candidates = candidates
-        joined = "\n".join(f"- {candidate}" for candidate in candidates)
-        super().__init__(f"Multiple PDF candidates found for '{slug}':\n{joined}")
-
-
 def load_settings_from_env() -> dict[str, Any]:
     """Build the Immersive Translate request payload from env + hardcoded template.
 
@@ -100,68 +76,6 @@ def load_settings_from_env() -> dict[str, Any]:
     settings = dict(DEFAULT_SETTINGS)
     settings["auth_key"] = auth_key
     return settings
-
-
-def resolve_source_pdf(
-    slug: str,
-    *,
-    project_root: Path = PROJECT_ROOT,
-    explicit_source: Path | None = None,
-) -> Path:
-    validate_slug(slug)
-    if explicit_source is not None:
-        try:
-            return validate_source(explicit_source)
-        except Exception as exc:
-            raise SourceNotFoundError(str(exc)) from exc
-
-    exact = project_root / "sources" / f"{slug}.pdf"
-    if exact.exists():
-        try:
-            return validate_source(exact)
-        except Exception as exc:
-            raise SourceNotFoundError(str(exc)) from exc
-
-    epub_candidate = project_root / "sources" / f"{slug}.epub"
-    if epub_candidate.exists():
-        raise SourceNotFoundError(
-            f"Found EPUB but no PDF for '{slug}'. Convert or supply a PDF path explicitly.",
-        )
-
-    candidates_set: set[Path] = set()
-    for path in project_root.glob(f"processing/**/{slug}.pdf"):
-        try:
-            candidates_set.add(validate_source(path))
-        except Exception:
-            continue
-    candidates = sorted(candidates_set)
-    if len(candidates) == 1:
-        return candidates[0]
-    if len(candidates) > 1:
-        raise AmbiguousSourceError(slug, candidates)
-
-    raise SourceNotFoundError(
-        f"Could not locate a PDF for '{slug}'. Expected sources/{slug}.pdf or an explicit --source-file.",
-    )
-
-
-def build_output_paths(
-    *,
-    slug: str,
-    target_language: str,
-    project_root: Path = PROJECT_ROOT,
-) -> dict[str, Path]:
-    validate_slug(slug)
-    validate_language(target_language)
-    lang_short = target_language.split("-", 1)[0].lower()
-    output_dir = project_root / "processing" / "translations"
-    final_pdf = output_dir / f"{slug}-{lang_short}.pdf"
-    dual_tmp = output_dir / f".{slug}-{lang_short}.dual.tmp.pdf"
-    return {
-        "output_dir": output_dir,
-        "dual_tmp": dual_tmp,
-        "final_pdf": final_pdf,
-    }
 
 
 def _coerce_positive_int(value: Any) -> int | None:
@@ -538,26 +452,6 @@ def poll_until_complete(
     raise TranslationError(f"Timed out waiting for translation task {pdf_id}")
 
 
-def download_outputs(
-    client: ImmersiveTranslateClient,
-    pdf_id: str,
-    outputs: dict[str, Path],
-) -> dict[str, Path]:
-    result = client.get_translate_result(pdf_id)
-    dual_url = result.get("translationDualPdfOssUrl")
-    if not dual_url:
-        raise TranslationError(f"Missing dual PDF URL for translation task {pdf_id}")
-
-    try:
-        outputs["output_dir"].mkdir(parents=True, exist_ok=True)
-        outputs["dual_tmp"].write_bytes(client.download_binary(dual_url))
-    except OSError as exc:
-        raise TranslationError(
-            f"Failed to write dual PDF to {outputs['dual_tmp']}: {exc}",
-        ) from exc
-    return outputs
-
-
 def translate_to_candidate(
     *,
     source_pdf: Path,
@@ -615,155 +509,3 @@ def translate_to_candidate(
     split_dual_pdf(raw_dual, candidate_pdf)
     raw_dual.unlink(missing_ok=True)
     return {"task_id": pdf_id}
-
-
-def translate_slug(
-    slug: str,
-    *,
-    source_file: Path | None = None,
-    target_language: str | None = None,
-    project_root: Path = PROJECT_ROOT,
-    poll_interval: int = 10,
-    max_polls: int | None = None,
-    toc_json: Path | None = None,
-    toc_page_side: str = "original",
-) -> dict[str, Any]:
-    settings = load_settings_from_env()
-    if target_language:
-        settings["target_language"] = target_language
-
-    source_pdf = resolve_source_pdf(slug, project_root=project_root, explicit_source=source_file)
-    outputs = build_output_paths(
-        slug=slug,
-        target_language=str(settings["target_language"]),
-        project_root=project_root,
-    )
-
-    client = ImmersiveTranslateClient(settings)
-    if not client.check_auth_key():
-        raise TranslationError("Immersive Translate auth key check failed")
-
-    upload_info = client.get_pdf_upload_url()
-    upload_result = upload_info.get("result") or {}
-    upload_url = upload_result.get("preSignedURL")
-    object_key = upload_result.get("objectKey")
-    if not upload_url or not object_key:
-        raise TranslationError("Upload URL response did not include preSignedURL/objectKey")
-
-    client.upload_pdf(upload_url, source_pdf)
-    pdf_id = client.create_translate_task(object_key, source_pdf)
-    poll_until_complete(
-        client,
-        pdf_id,
-        interval_seconds=poll_interval,
-        max_polls=max_polls,
-    )
-    download_outputs(client, pdf_id, outputs)
-    split_dual_pdf(outputs["dual_tmp"], outputs["final_pdf"])
-    chapter_manifest = project_root / "processing" / "chapters" / slug / "manifest.json"
-    toc_entries = add_toc_to_split_pdf(
-        source_pdf=source_pdf,
-        split_pdf=outputs["final_pdf"],
-        toc_json=toc_json,
-        fallback_toc_json=chapter_manifest,
-        page_side=toc_page_side,
-    )
-    outputs["dual_tmp"].unlink(missing_ok=True)
-    repair_tounicode(outputs["final_pdf"])
-
-    # BabelDOC silently leaves body text untranslated when the source's text layer is
-    # too fragmented for its layout model, and the file looks fine either way. Must
-    # run after the ToUnicode repair: an unrepaired book extracts as mojibake in the
-    # CJK extension-A block, which this counter does not count, so a healthy 400-page
-    # book scores 0.17 and gets rejected.
-    report = check_coverage(outputs["final_pdf"], target_language=str(settings["target_language"]))
-    if not report["ok"]:
-        raise TranslationError(str(report["detail"]))
-    print(report["detail"], file=sys.stderr)
-
-    return {
-        "slug": slug,
-        "source_pdf": source_pdf,
-        "pdf_id": pdf_id,
-        "final_pdf": outputs["final_pdf"],
-        "toc_entries": toc_entries,
-    }
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Translate a Quasi PDF via Immersive Translate's Zotero API.",
-    )
-    parser.add_argument("slug", help="Quasi slug used to locate the source PDF")
-    parser.add_argument(
-        "--source-file",
-        type=Path,
-        help="Explicit PDF path when slug resolution is ambiguous or unavailable",
-    )
-    parser.add_argument(
-        "--target-language",
-        help="Override the default target language (zh-CN)",
-    )
-    parser.add_argument(
-        "--poll-interval",
-        type=int,
-        default=10,
-        help="Polling interval in seconds",
-    )
-    parser.add_argument(
-        "--max-polls",
-        type=int,
-        default=None,
-        help="Optional polling limit; by default wait for the task's terminal status",
-    )
-    parser.add_argument(
-        "--toc-json",
-        type=Path,
-        help="Optional Tocify-style JSON list with title/level/page entries",
-    )
-    parser.add_argument(
-        "--toc-page-side",
-        choices=sorted(TOC_PAGE_SIDES),
-        default="original",
-        help="Which split page each bookmark should target",
-    )
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    try:
-        result = translate_slug(
-            slug=args.slug,
-            source_file=args.source_file,
-            target_language=args.target_language,
-            poll_interval=args.poll_interval,
-            max_polls=args.max_polls,
-            toc_json=args.toc_json,
-            toc_page_side=args.toc_page_side,
-        )
-    except AmbiguousSourceError as exc:
-        print(str(exc), file=sys.stderr)
-        return 3
-    except SourceNotFoundError as exc:
-        print(str(exc), file=sys.stderr)
-        return 4
-    except MissingAuthKeyError as exc:
-        print(str(exc), file=sys.stderr)
-        return 5
-    except TranslationError as exc:
-        print(str(exc), file=sys.stderr)
-        return 6
-
-    print("TRANSLATE_RESULT:")
-    print(f"- slug: {result['slug']}")
-    print(f"- source_pdf: {result['source_pdf']}")
-    print(f"- pdf_id: {result['pdf_id']}")
-    print(f"- final_pdf: {result['final_pdf']}")
-    print(f"- toc_entries: {result['toc_entries']}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

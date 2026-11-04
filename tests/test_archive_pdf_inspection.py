@@ -9,13 +9,11 @@ import subprocess
 import sys
 import threading
 
-import fitz
+import pymupdf as fitz
 import pytest
 
 from scripts.archive import archive as cli
-from test_archive_plan import COMPLETE, IDENTITY, URL
-from workflow_test_support import run_generated_workflow
-from test_workflow_dispatch import _prompt_request
+URL = "https://support.example.org/repair"
 
 ROOT = Path(__file__).resolve().parents[1]
 TITLE = "Bill Daniels' Illustrated Trade References: 85/86 Video Equipment Buyers Guide"
@@ -190,16 +188,3 @@ def test_preview_failure_cleans_only_new_evidence_directory(tmp_path, monkeypatc
         cli.inspect_pdf(path, output_dir=Path('.quasi/temp/failed'), root=tmp_path)
     assert not (tmp_path / '.quasi/temp/failed').exists()
     assert path.read_bytes() == content
-
-
-def test_generated_identify_exposes_pdf_evidence_without_changing_seed_or_receipt():
-    report = run_generated_workflow('archive', {'seed': {'state': 'provisional', 'url': URL},
-        'observation': None, 'options': {'topics': []}}, [{**COMPLETE, 'identity': IDENTITY}], capture_agent_requests=True)
-    assert report['agentCalls'] == 1
-    assert report['value']['terminal'] == 'needs_observation'
-    envelope = _prompt_request(report['agentRequests'][0]['prompt'])
-    assert envelope['source_url'] == URL and envelope['effect'] == 'readonly'
-    capabilities = envelope['capabilities']
-    assert any('inspect --url source_url' in cap and '--output-dir .quasi/temp/' in cap for cap in capabilities)
-    assert any('inspect --path EXACT_RETURNED_CACHED_PDF' in cap for cap in capabilities)
-    assert any(cap.startswith('Read exact PDF preview paths') for cap in capabilities)

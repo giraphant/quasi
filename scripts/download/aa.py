@@ -396,7 +396,7 @@ def wikipedia_aa_mirrors(now=None):
 def load_aa_config():
     """Resolve Anna's Archive config from QUASI_ANNA_* env vars.
 
-    Env is injected by the PreToolUse hook (see scripts/hooks/inject-userconfig.py).
+    The shim fills env from the Keychain (see scripts/config/config.py).
     Mirror discovery prefers last-good, then Wikipedia, then built-in seeds.
     """
     donator_key = os.environ.get("QUASI_ANNA_DONATOR_KEY", "").strip()

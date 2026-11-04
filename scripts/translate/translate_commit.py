@@ -619,8 +619,6 @@ def _receipt(
         reused = status == "succeeded" and signal == "reused"
         return {
             "schema_version": OBSERVE_SCHEMA,
-            "key": operation,
-            "effect": "readonly",
             "status": status,
             "attempt": 1,
             "derivative_key": f"translation:paper:{slug}:{target_language}",
@@ -655,8 +653,6 @@ def _receipt(
     succeeded = status == "succeeded"
     return {
         "schema_version": RUN_SCHEMA,
-        "key": operation,
-        "effect": "writer",
         "status": status,
         "attempt": attempt,
         "derivative_key": f"translation:paper:{slug}:{target_language}",

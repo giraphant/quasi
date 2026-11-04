@@ -1,88 +1,87 @@
 # quasi maintainer guide
 
-quasi is a Claude Code plugin for academic reading workflows: discovery, download, extraction, analysis, synthesis, translation, and schema checking.
+quasi is a research-library toolkit for academic reading: it collects papers, books, talks, webpages, archival originals, translations and author portraits into a local vault, and supports topic research over that vault. The repository root is itself one agent skill (`SKILL.md`), with a deterministic Python capability layer inside it. Any harness that reads Agent Skills (Codex, Claude Code, agy, Pi) can run it.
 
-This file holds only the contracts a maintainer needs before editing. The detail lives in `docs/`:
+`CLAUDE.md` only imports this file. Edit `AGENTS.md`.
 
-- `docs/ARCHITECTURE.md` — layers, CLI surface, capability entrypoints, per-agent write ownership, skill routing, Configure/env mapping.
-- `docs/PDF_PIPELINE.md` — measured institutional memory of the OCR and translation pipeline. Read it before touching `scripts/extract/` or `scripts/translate/`.
-- `docs/SKILL_ORCHESTRATION.md` and `docs/GRAPH_COLLABORATION.md` — maintainer guidance. Active `SKILL.md` files must not cite either directly.
-- `docs/CHANGELOG.md` — full version history, newest first; entries carry the why as well as the what.
+Further reading: `docs/REDESIGN.md` (why the redesign, decisions and the round-by-round test record), `docs/SETUP.md` (one-time install: tools, secrets, skill links, permissions), `docs/PDF_PIPELINE.md` (measured OCR and translation pipeline; read it before touching `scripts/extract/` or `scripts/translate/`), `docs/ARCHIVE_STORAGE.md` (Archive storage and Marple contract), `docs/CHANGELOG.md`.
 
-## Plugin-system facts
+## Layout
 
-- Installed plugins load components from root-level `skills/`, `workflows/`, `agents/`, `output-styles/`, `bin/`, `hooks/`, `monitors/`, `.mcp.json`, and `.lsp.json`.
-- `.claude-plugin/plugin.json` is metadata only. Do not place components inside `.claude-plugin/`.
-- Codex installs only the standalone `codex/skills/quasi` Skill and depends on Orca orchestration. Do not package Quasi as a Codex plugin or expose Claude's root `skills/`, hooks, or Workflow bundles to Codex.
-- `CLAUDE.md` and `AGENTS.md` are mirrored instruction files for different agent frameworks and must stay byte-for-byte identical.
-- Claude Code does not load a plugin-root `CLAUDE.md` as context when quasi is installed as a plugin. Runtime guidance must live in skills, agents, hooks, or scripts.
-- Claude Code owns material Workflow execution. Codex exposes one research Skill whose main agent owns reading, research notes, reflection and synthesis, and delegates whole material tasks through Orca; it does not run a second Workflow interpreter. Retired Pi/Codex host adapters remain recoverable from history.
-
-## Layers
-
-`skills/` (user-facing drivers) → generated named material/composition entries under `workflows/` → `agents/` (goal-owning specialists) → `bin/quasi-*` (stable shell surface) → `scripts/` (deterministic capabilities; `scripts/workflows/` is the editable TypeScript source; `scripts/schemas/` is the single source of truth for artifact structure) → `scripts/core/` (minimal runtime base for path/frontmatter/json/module-loading helpers; imports nothing above itself).
-
-## Runtime contract
-
-- Skills drive. For Paper, Book, Talk, and Translation, `collect-material` observes one exact status, selects the fixed named entry by kind, consumes one material-level result, presents a typed gate when needed, and re-observes exact artifacts after completion. Archive and Webpage URL intake transport the exact public URL with `observation:null`, then observe the canonical route returned by their fixed entry before resuming. Explicit archival intent uses Archive; standalone webpage reading uses Webpage. Topic research discovers exact sources and composes Archive collection with fresh observations; evidence cards are optional. One named invocation owns one logical material; only Book may use the host `pipeline()` internally for disjoint chapter outputs. Author has a named composition entry. `research-topic` guides a main-agent research loop: delegate bounded parallel searches and synthesis, personally read materials, compose existing material Workflows, and update Topic pages by batch. It does not invoke a Topic controller. The old Topic bundle is quarantined under deprecated/ for regression reference.
-- A named leaf entry parses a closed seed/observation/options envelope, chooses its material's next owned operation from current testimony, invokes specialists, performs its bounded joins and owner-correct repair, and returns `quasi.material.result/0.1`. Every leaf `needs_input` carries a typed gate plus effective `{route,seed,options}` continuation; the caller obtains fresh exact status for that route and adds at most the new decision. There is no Workflow cursor, hidden state file, or replay log.
-- The shared receipt is `quasi.stage.receipt/0.3` with a closed `terminal` union `complete|needs_input|blocked|failed`. The model produces judgement fields and the entire terminal; after validation, the host stamps every top-level single-value bookkeeping `const`, so downstream consumers still receive the full receipt shape. `complete` proves only the exact artifacts required by the next stage and requires `issue:null`; the other terminals carry one typed issue, while `needs_input` also carries concrete candidates, conflict fields, and a user question.
-- Agents own professional method, stopping judgement, and local recovery over their declared `quasi-*` capabilities. Do not encode query counts, provider cascades, text-readability heuristics, OCR decisions, chapter replanning, or translation recovery in a Skill or named plan. Workflow agents read or write only the exact artifacts in their request. Direct Topic discovery may search caller-named local roots and WebFetch exact search-result URLs; direct synthesis receives exact inputs and the generated Topic contract without a Stage receipt; `webcard-agent` may search and WebFetch exact search-result URLs only during readonly `topic.discover-archives`; `archive-agent` may inspect its caller-named source URL, read exact PDF evidence paths returned by that inspection, and select exact linked originals belonging to that one object; `quasi-archive collect` alone publishes the originals, provenance manifest and page. Card writing reads only caller-named Archive pages, manifests and original paths. Every writer verifies the envelope's exact refs at entry (inputs exist; output state matches the request) and returns `blocked` without writing on mismatch; it never searches for alternative paths.
-- The skill main process owns request order and disk observation. Leaf identity and processing decisions come from the fixed Workflow's material result plus `quasi-status` testimony — never a second hidden state file, never writer success inferred from prose, never a second receipt validator, and never reinterpretation of a schema-valid failure because it disagrees with the specialist's method.
-- StructuredOutput may ask a still-running agent to repair malformed output; that provider-level correction is not a new stage dispatch. A receipt is consumed once. Cross-field checks that JSON Schema cannot express stay small and concrete in the owning descriptor row (exact path join, count equality, coherent manifest generation).
-- Unknown writer outcomes stop the run: no duplicate writers, no path discovery outside the envelope, no replay after an ambiguous write. Resume begins with a fresh disk observation.
-- Composition entries admit child materials from exact disk testimony supplied by the Skill's `quasi-status` calls. Audit has no durable status signal yet; a clean final audit is receipt-proven for the current invocation only.
-- Paper source testimony is an ordered PDF/TXT alternative set. When processing is needed, exactly one usable source may advance; both usable is a typed conflict. An admitted canonical Paper enters Audit directly and returns only its canonical ref when clean; source and normalized text are required only when producing or semantically repairing the page. A direct Paper may return a typed Webpage next route, but Author/Topic composition must not silently substitute it.
-- Paper and Book OCR share one source/profile-bound immutable generation transaction. Each invocation advances at most one profile-owned page range — 16 pages for `mineru-text`, 32 for explicit `tesseract-text` — then returns `needs_observation`; MinerU never silently changes engines. Historical `dsocr2-text` generations remain readable/reconcilable, but cannot advance with a replacement engine. Fixed legacy Paper artifacts stay read-only, while compatible already-started fixed Book progress may finish through its explicit legacy recovery path; retired DS partial progress stays untouched. No path permits a background OCR process, hidden cursor, or blind replay.
-- Per-agent write ownership, Skill routing (`collect-material` / `research-topic` / `finalise-draft`), top-level concurrency, and topic products are specified in `docs/ARCHITECTURE.md`.
-
-## Path roots
-
-- The current working directory is the project/vault root for user data. Workflow specialists may receive an empty `CLAUDE_PROJECT_DIR`; when it is non-empty it takes precedence, otherwise resolve relative paths from cwd.
-- `$CLAUDE_PLUGIN_ROOT` is versioned plugin code, read-only at runtime. `$CLAUDE_PLUGIN_DATA` is persistent plugin data (venvs, caches, EZProxy throttle state); `${CLAUDE_PLUGIN_DATA:-~/.cache/quasi}` is the non-plugin fallback used by shims and bootstrap. `QUA_PROJECT_ROOT` is a legacy compatibility override still accepted by `scripts/core/core.py`; do not introduce it into active skill or agent contracts.
-- `vault/` holds user-facing reading outputs; `sources/` holds accepted source files; `processing/papers/`, `processing/chapters/`, `processing/translations/`, `processing/talks/`, and `processing/webpages/` hold user-inspectable intermediates; `.quasi/` holds orchestration state, manifests, caches, audit output, and temp downloads. Webpage owns `vault/webpages/{slug}/snapshot.webarchive`, `processing/webpages/{slug}/source.md`, and `vault/webpages/{slug}/webpage.md`. Archive originals and provenance live beside its page under `vault/archives/{slug}/` or `vault/archives/{collection}/{slug}/`; see `docs/ARCHIVE_STORAGE.md`. Temp JSON passed to helpers lives under `.quasi/temp/` unless a specific helper contract says otherwise.
-
-## Configure options and env flow
-
-- User-facing options live in `.claude-plugin/plugin.json#userConfig`; `scripts/hooks/inject-userconfig.py::_KEYS` must stay in sync with it. Do not document a Configure option as current unless it exists in both. The full field → env → consumer mapping is in `docs/ARCHITECTURE.md`.
-- Claude Code injects configured values into hook/MCP/LSP/monitor subprocesses as `CLAUDE_PLUGIN_OPTION_<KEY>`; Bash tool subprocesses do not receive them. The `PreToolUse` Bash hook (`scripts/hooks/inject-userconfig.py`, registered in `hooks/hooks.json`) prepends `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, and the plugin `bin/` path for commands containing a bare `quasi-` word.
-- Scripts read only `QUASI_*` service variables, never `CLAUDE_PLUGIN_OPTION_*`. On macOS both the hook and every Python-facing shim fill missing `QUASI_*` values through the shared Keychain helper (`scripts/load-keychain-env.sh`), so secret values never enter argv; explicit `QUASI_*` values take precedence. Non-macOS keeps the direct-export fallback. Kagi is special only at the subprocess edge: `QUASI_KAGI_SESSION_TOKEN` maps to `KAGI_SESSION_TOKEN` for `kagi` CLI calls.
-
-## Active CLI surface
-
-```bash
-quasi-search book|paper ...
-quasi-download book candidates|fetch ...
-quasi-download paper fetch|diagnose ...
-quasi-download accept ...
-quasi-extract epub|text|ocr|ocr-generation|split ...
-quasi-transcribe run|classify|silent ...
-quasi-audit --path ...
-quasi-webpage inspect|capture|extract ...
-quasi-archive inspect|collect|read ...
-quasi-status --kind paper|book|talk|author|topic|webpage|archive --slug SLUG --json
-quasi-status --kind translation --slug SLUG --target-language TAG --json
-quasi-status --scan --json
-workflows/paper.mjs | book.mjs | talk.mjs | translation.mjs | author.mjs | webpage.mjs | archive.mjs
-quasi-helpers proofread prepare|cleanup ...
-quasi-helpers citation parse|biblio|resolve|review-cards|emit-bib ...
-quasi-helpers localise scan|write ...
-quasi-helpers talk compress-media ...
-quasi-helpers vault resolve --items-json|--items-file ...
-quasi-doctor [--json] [--sync] [--profile ...]
-quasi-translate SLUG [--backend immersive|pdf2zh] ...
+```text
+SKILL.md                 skill root: route to collect / research / draft; global conventions
+collect/README.md        route by material type; rules shared by all materials
+collect/<material>/      one leaf per material: README.md flow + search/acquire/prepare/writing pages
+research/                the topic research loop and its writing brief
+draft/                   placeholder; draft finalisation is to be redesigned
+connectors/rex.md        the only place that knows how workers are launched (Rex panes)
+scripts/quasi            single CLI entry; dispatches to scripts/commands/quasi-<command>
+scripts/commands/        per-command shell shims; bootstrap the venv, load secrets, run the Python module
+scripts/                 Python capabilities (search, download, extract, transcribe, translate,
+                         webpage, archive, audit/typecheck, status, citation, proofread, localise, vault)
+scripts/schemas/         single source of truth for artifact structure (frontmatter, H1, sections)
+tests/, docs/            maintenance only; agents running the skill never read them
 ```
 
-## Artifact ownership and builds
+The whole repository is the installable skill: clone or link it as `quasi` into a skills directory (see `docs/SETUP.md`). Everything the skill needs at run time lives inside it.
 
-- Four ownership layers: `agents/*.md` owns the worker's stable role, common request/receipt protocol, and epistemic rules; `scripts/schemas/{type}.py` plus `scripts/schemas/body.py` owns frontmatter, path/identity fields, H1, section order, block shapes, and section semantics; `scripts/schemas/operations.py` owns operation identity (eligible kinds, phase, effect, and agent) plus exact artifact path templates consumed by Workflow builds and `quasi-status`; descriptor rows under `scripts/workflows/operations/rows/` (one Operation factory: `scripts/workflows/operations/define.mts`) own only operation behavior — request/receipt schema construction, exact-ref envelopes, and operation-only evidence rules. Rows must not duplicate artifact structure or operation identity; agents never import the schema registry — the build injects canonical producer/search projections.
-- `archive-agent` owns Archive identity and acquisition choices; `quasi-archive collect` owns `{archiveDirectory}/{archive.md,manifest.yaml,originals/*}` at the exact observed root or one-level collection path, including merging Topic membership under slug/URL locks and fresh revision checks; `audit-agent` owns mechanical repair. A linked Topic card stores exact Archive paths in its `archives` field. Same-URL Archive ownership is resolved within Archive only; it never creates or migrates a Webpage object.
-- `webpage-agent` owns Webpage identity, snapshot, and prepared source projection; `analyse-agent` owns the canonical Webpage page and `audit-agent` its mechanical repair.
-- For an Agent-owned boundary, prefer a self-contained JSON envelope: goal, bounded identity, exact refs, available capabilities, and the receipt schema. Do not surround a sufficient JSON envelope with a second prose contract; a descriptor-row request states the goal and capabilities without transcribing the specialist's decision tree.
-- Edit `scripts/schemas/` when changing a Paper, Chapter, Book overview, Talk, Webpage, Archive, or Topic card output structure, then run `npm run build:workflows`. `scripts/workflows/artifact-contracts/generated.mjs`, its generated declarations, `skills/research-topic/artifact-contract.json`, and every generated Workflow bundle are generated artifacts and must not be hand-edited. esbuild compiles the editable `.mts` workflow layer into the bundles at build time; `npm run check:workflows` verifies schema/projection/operation/bundle parity and runs strict `tsc --noEmit` checking over those TypeScript sources.
+## How the skill works
+
+- The session the user opens is the orchestrator. It reads only the branch of the tree it walks: root → `collect/README.md` → one material leaf (or `research/README.md`).
+- Writing always goes to a **writer**: a fresh interactive session in a Rex pane, given only a writing brief, input files and bibliographic facts, so writing can run on the model with the best prose (agy in real use, Codex in tests). Whole materials in a batch go to **material sessions**. At most three levels: main → material session → writer.
+- Verify artifacts, not reports: `quasi status` says what exists, `quasi audit` says whether it conforms. Repair once with the brief, the audit diagnostics and the existing page; preserve user-written content.
+- No Workflow, no receipts or JSON envelopes, no harness-native subagents. Rex commands appear only in `connectors/rex.md`; supporting another terminal framework means adding another connector page.
+- Each quasi command is written as one plain command (no pipes, redirects, heredocs or `&&`), JSON is passed by file under `.quasi/temp/`, so harness permission prefix rules can match it.
+
+## Writing skill pages
+
+- Plain Chinese prose addressed to the executing model. Say what to do and why; no protocol vocabulary, schemas or pseudo-code.
+- An entry file routes and states the rules inherited below it; a leaf opens with "如果你是被直接派到这里的，先读…". Keep the tree at most three levels deep.
+- Writing briefs are craft prompts: who the writer is and for whom, the writing requirements, the style, then the page structure. Models mirror the register of their prompt; a protocol-heavy brief produces protocol-flavoured prose.
+- Page structure in a brief must match `scripts/schemas/`. When the schema changes, update the brief in the same commit.
+
+## CLI surface
+
+| command | contract |
+|---|---|
+| `quasi search` | `book\|paper` metadata discovery; `kagi` web search |
+| `quasi download` | `book candidates\|fetch`; `paper fetch\|diagnose`; `accept` |
+| `quasi extract` | `epub\|text\|ocr\|ocr-generation\|split`; `ocr-generation` is the source/profile-bound immutable Paper/Book OCR transaction, one page range per call |
+| `quasi audit` | `--path PATH`: mechanical autofix, typecheck, residual diagnostics |
+| `quasi status` | read-only disk observation: `--kind paper\|book\|talk\|author\|topic\|webpage\|archive --slug SLUG --json`; translation also takes `--target-language TAG`; `--scan --json` |
+| `quasi transcribe` | `observe\|prepare-media\|run\|classify\|silent` |
+| `quasi webpage` | `inspect\|capture\|extract` one exact public webpage (capture needs macOS 11+) |
+| `quasi archive` | `inspect` a source; `collect --request-file` publishes originals, manifest and page; `read` |
+| `quasi translate` | `observe\|run` configured `immersive\|pdf2zh` translation |
+| `quasi helpers` | `vault resolve`; `citation ...`; `proofread ...`; `localise ...`; `talk compress-media` |
+| `quasi doctor` | venv sync and dependency check by profile |
+| `quasi config` | `show [--json]\|get NAME\|set NAME [VALUE]\|unset NAME`: the user's keys in the macOS Keychain; secret values only via stdin or prompt. For the user and GUI front ends (Marple); agents may use `get` for non-secret keys only (environment, Keychain, then default) |
+
 - A deterministic CLI may write an artifact only when its command contract names that output path.
+- `quasi status` takes artifact path templates from `scripts/schemas/operations.py::OPERATION_CATALOG`.
 - Paper metadata merging treats Crossref as the authority for the journal container title and decodes its HTML entities at the adapter boundary. Do not let asynchronous adapter completion order choose `venue`; OpenAlex may omit meaningful punctuation from the same journal name.
-- Removed legacy bins must not reappear in active docs or prompts: `quasi-citation`, `quasi-proofread`, `quasi-download batch`.
+
+## Paths
+
+The current working directory is the vault root. `sources/` holds accepted source files; `processing/` holds inspectable intermediates (`papers/`, `chapters/`, `translations/`, `talks/`, `webpages/`); `vault/` holds reading pages (`papers/`, `books/`, `talks/`, `webpages/`, `archives/`, `authors/`, `topics/`); `.quasi/` holds temp files, worker prompts and replies, caches and manifests. Persistent tool data lives in `${CLAUDE_PLUGIN_DATA:-~/.cache/quasi}` (venv, throttle state).
+
+## Secrets and configuration
+
+Scripts read only `QUASI_*` environment variables. Every key lives in the macOS login Keychain, one generic-password item per key (service `quasi`, account = key name), owned by `scripts/config/config.py`. On macOS every Python-facing shim sources `scripts/load-config-env.sh`, which fills the missing `QUASI_*` values from those items; explicit `QUASI_*` values take precedence and values never enter argv. Items are only ever written through `/usr/bin/security` (via `quasi config set`, which feeds `security -i` on stdin), so the reads through the same tool never raise an access prompt; GUI front ends call `quasi config` instead of touching the Keychain themselves. Values are printable ASCII only, because `security -w` prints anything else as hex. The keys and what they are for are listed in `docs/SETUP.md`.
+
+The repository is not a Claude plugin: a `.claude-plugin/plugin.json` here makes Claude Code treat the linked skill as a plugin named `quasi` that collides with an installed plugin of that name.
+
+| variable | consumer |
+|---|---|
+| `QUASI_ANNA_DONATOR_KEY` | `scripts/download/aa.py` |
+| `QUASI_COOKIECLOUD_SERVER`, `_UUID`, `_PASSWORD`, `_EZPROXY_DOMAIN`, `_EZPROXY_BASE_URL` | `scripts/download/cookiecloud.py` |
+| `QUASI_TRANSLATE_BACKEND` | `scripts/commands/quasi-translate`, `scripts/translate/translate.py` |
+| `QUASI_IMMERSIVE_AUTH_KEY` | `scripts/translate/immersive_translate.py` |
+| `QUASI_TRANSLATE_BASE_URL`, `_API_KEY`, `_MODEL` | `scripts/translate/pdf2zh_translate.py` |
+| `QUASI_KAGI_SESSION_TOKEN` | `scripts/search/`, `scripts/download/download.py` (mapped to `KAGI_SESSION_TOKEN` for the kagi CLI) |
+| `QUASI_SONIOX_API_KEY` | `scripts/transcribe/engines.py` |
+| `QUASI_WRITER_HARNESS`, `QUASI_SESSION_HARNESS` | `connectors/rex.md`: writer and material-session harness, each defaults to `codex` |
+| `QUASI_WORKER_PERMISSIONS=full` | `connectors/rex.md`: launch workers with permission-bypass commands (dev machine only). A login-shell variable, not a Keychain key: the agent reads it directly |
 
 ## Extraction and translation invariants
 
@@ -96,49 +95,18 @@ The measured reasoning behind each rule is in `docs/PDF_PIPELINE.md`; do not rel
 - Both translate backends share one output contract (`processing/translations/{slug}-{canonical-target-lower}.pdf`, with Mainland Chinese canonicalized to `-zh.pdf`; alternating original/translated pages, bookmarks) and both must run `tounicode.py::repair_pdf` before the Chinese body coverage gate (median >= 0.30; ratios < 0.05 on at most 10% of measurable body pages). Exclude only source-evidenced bibliography/index/notes sections, report their ranges, and fall back to all measurable pages if exclusions leave fewer than three; ambiguous and mixed body pages remain scored. Provider adapters map canonical `zh` to `zh-CN`. Rejected or uncertain generations stay in their fenced `processing/translations/.{stem}.translate-*` directory and never become canonical output.
 - Backend selection is user config (`translate_backend`), not a free caller argument. For pdf2zh, a root-only `translate_base_url` gets `/v1` appended; explicit paths are preserved. Provider credentials stay out of argv.
 
-## Skill writing schema
+## Development and tests
 
-Use this shape for active skills when applicable:
-
-```text
-任务
-输入
-硬约束
-状态
-Agent / Helper 合同
-工作流
-执行流程
-断点续跑
-输出
-```
-
-`任务` is one short positive sentence naming the work; use `输入` unless the skill has a real machine-facing invocation API. Frontmatter `description` is only a routing hint describing user intent — no trigger-word lists, history notes, or phase walkthroughs. Pseudocode helpers in skill files (`parse_args`, `read_json`, `write_json`, `write_temp_json`, `format_yaml_list`, `exists`) are maintainer shorthand for main-process Claude Code actions, not a hidden runtime library.
-
-## Runtime state and dependencies
-
-- `bin/` tools may be invoked as bare commands while the plugin is enabled. Python dependencies are declared in `scripts/requirements.txt`; `scripts/bootstrap-venv.sh` installs them into `${CLAUDE_PLUGIN_DATA}/.venv` (SessionStart hook; each shim also self-bootstraps). Do not put pip installs back inside individual shims.
-- Optional transcription dependencies remain fail-soft. MinerU OCR requires Apple Silicon, `uvx` and the pinned MLX/MinerU environment; explicit `--layout` also requires actual paragraph placement. No automatic Tesseract fallback.
-- EZProxy global throttle state lives under `${CLAUDE_PLUGIN_DATA:-~/.cache/quasi}/ezproxy-throttle.state` and is owned by `scripts/download/download.py`.
+- Development and live tests run on the Mac Mini (`rex -S "Mac Mini"`): repo `~/Vibe/quasi`, test vault `~/Vibe/quasi-testvault`, full worker permissions. Use a test vault, never the user's library.
+- All tests live in `tests/`. Run them in an environment with `scripts/requirements.txt` plus `pytest`: `python -m pytest tests -q`.
+- `tests/test_skill_tree.py` checks that every path and quasi command a skill page mentions exists. Keep it passing when moving or renaming skill pages.
+- Python dependencies are declared in `scripts/requirements.txt`; `scripts/bootstrap-venv.sh` installs them and every shim self-bootstraps. Do not add pip installs to individual shims.
 
 ## Change checklist
 
-When changing config, runtime state, or handoff contracts:
-
-1. Keep `.claude-plugin/plugin.json` and `scripts/hooks/inject-userconfig.py::_KEYS` in sync.
-2. Keep `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` versions in sync for releases.
-3. Keep `CLAUDE.md` and `AGENTS.md` byte-for-byte identical (verify with `cmp -s CLAUDE.md AGENTS.md`).
-4. Update active skills only when the executing model needs the information at runtime.
-5. Update agent files when an agent input/output contract changes.
-6. Update tests that guard dead names, frontmatter routing hints, CLI surface, or manifest schema and run `pytest tests/test_dead_names.py tests/test_skill_orchestration.py -q`. Orchestration tests assert cross-file coherence (shared names, stages, schema versions) and dead-name quarantine — never the presence of specific prose sentences.
-7. Run `claude plugin validate .` after manifest changes.
-
-## Debugging gotchas
-
-- Dispatch E2E workers with cwd set to the intended project root. `CLAUDE_PROJECT_DIR` may be empty inside a Workflow specialist; when non-empty it overrides cwd, but an in-prompt `cd` is never a substitute for correct dispatch placement.
-- A dead Workflow subagent can leave no usable Stage receipt. The skill must stop, re-observe disk state, and resume or reconcile explicitly; it must never concurrently replay a writer whose outcome is unknown.
-- `claude -p --output-format json` stdout contains the final session envelope, not a full stage/tool transcript. For headless E2E evidence, inspect the session JSONL and per-Workflow JSON sidecars as well as captured stdout.
-- The Workflow sandbox provides core ECMAScript plus the host's own helpers only: there is no `URL`, `fetch`, or `TextEncoder`. A generated bundle that reaches for one throws where the host cannot report it, and the surviving symptom is a material parser calling valid input invalid. `tests/workflow_harness.mjs` deliberately injects no web-platform global into its `run-generated` context.
-
-## Changelog
-
-Full version history lives in `docs/CHANGELOG.md` (newest first, entries carry the why as well as the what).
+1. Artifact structure change: edit `scripts/schemas/`, then the matching writing brief under `collect/` or `research/`.
+2. New or renamed CLI command: update the CLI table here and every skill page that calls it.
+3. Skill page moved or renamed: update the routing table that points to it; run `tests/test_skill_tree.py`.
+4. Worker launch or harness change: edit `connectors/rex.md` only.
+5. New key: add it to `scripts/config/config.py::KEYS`, the table above and `docs/SETUP.md`.
+6. Record live test rounds and design decisions in `docs/REDESIGN.md`.

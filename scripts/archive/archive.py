@@ -104,7 +104,7 @@ def _pdf_evidence(chunks, *, pages=None, output_dir=None, root=None, source_path
     PDF xref tables can be at EOF: a response prefix is not a PDF inspection.
     Scratch source.pdf is evidence only; collect still owns canonical originals.
     """
-    import fitz
+    import pymupdf as fitz
     started = time.monotonic() if started is None else started
     if expected_size is not None and expected_size > MAX_BYTES:
         raise ValueError('PDF exceeds the 1 GiB inspection limit')
