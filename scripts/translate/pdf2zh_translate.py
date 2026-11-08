@@ -32,8 +32,9 @@ from translate.immersive_translate import (  # noqa: E402
 )
 from translate.translate_commit import redact_text, validate_language  # noqa: E402
 
-# ponytail: unpinned. Pin to `pdf2zh-next==X.Y.Z` here if a release breaks the CLI.
-PDF2ZH_SPEC = "pdf2zh-next"
+# Validated together; keep the native engine fixed as well as the CLI wrapper.
+PDF2ZH_SPEC = "pdf2zh-next==2.10.2"
+BABELDOC_SPEC = "BabelDOC==0.7.1"
 PDF2ZH_PYTHON = "3.12"  # upstream macOS install guidance
 
 
@@ -84,10 +85,8 @@ def build_command(
         PDF2ZH_PYTHON,
         "--from",
         PDF2ZH_SPEC,
-        # BabelDOC still imports BitStream, which bitstring 5 removed. Constrain
-        # uvx's isolated environment; the plugin venv cannot supply this dependency.
         "--with",
-        "bitstring<5",
+        BABELDOC_SPEC,
         "pdf2zh_next",
         str(source_pdf),
         "--output",

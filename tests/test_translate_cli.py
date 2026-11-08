@@ -362,6 +362,13 @@ def test_secret_bearing_pdf2zh_base_url_is_a_configuration_gate(monkeypatch):
     assert len(value) == 64
 
 
+def test_pdf2zh_engine_change_invalidates_configuration_fingerprint(monkeypatch):
+    before = translate_cli.backend_config_fingerprint("pdf2zh", "zh-CN")
+    monkeypatch.setattr(translate_cli.pdf2zh, "BABELDOC_SPEC", "BabelDOC==0.7.2")
+    after = translate_cli.backend_config_fingerprint("pdf2zh", "zh-CN")
+    assert before != after
+
+
 def test_strict_surface_rejects_caller_backend_override_as_typed_json(tmp_path):
     source, _ = source_fixture(tmp_path)
     env = os.environ.copy()

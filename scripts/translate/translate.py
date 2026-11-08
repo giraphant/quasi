@@ -85,6 +85,7 @@ def backend_config_fingerprint(backend: str, target_language: str) -> str:
                 "base_url": public_base,
                 "model": os.environ.get("QUASI_TRANSLATE_MODEL", "").strip(),
                 "package": pdf2zh.PDF2ZH_SPEC,
+                "engine": pdf2zh.BABELDOC_SPEC,
                 "target_language": provider_language,
             }
         )

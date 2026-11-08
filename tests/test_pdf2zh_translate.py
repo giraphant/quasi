@@ -70,6 +70,9 @@ def test_build_command_uses_alternating_dual_and_keeps_secrets_out_of_argv():
         work_dir=Path("/w"),
         target_language="zh-CN",
     )
+    # Keep the validated CLI/engine pair in uvx's isolated environment.
+    assert cmd[cmd.index("--from") + 1] == "pdf2zh-next==2.10.2"
+    assert cmd[cmd.index("--with") + 1] == "BabelDOC==0.7.1"
     # Alternating dual is what makes the existing TOC page mapping correct.
     assert "--use-alternating-pages-dual" in cmd
     assert "--no-mono" in cmd

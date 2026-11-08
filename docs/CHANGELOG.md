@@ -2,6 +2,11 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `AGENTS.md`, `README.md`, and `skills/quasi/`.
 
+- **Unreleased** (2026-11-08): Use the validated Rust-core BabelDOC release for local pdf2zh translations.
+  - Pin the isolated uvx environment to `pdf2zh-next==2.10.2` and `BabelDOC==0.7.1`, replacing the obsolete `bitstring<5` workaround. Include the engine version in the existing configuration fingerprint.
+  - Mac Mini validation: 114 translation tests passed; a real 5-page translation passed the complete publication/reuse transaction. Same-input local preprocessing was 50.6% shorter, including 32.2% shorter page-layout processing, versus BabelDOC 0.6.4.
+  - Controlled layout-paper and scanned-book trials retained similar below-threshold coverage on both versions. Keep those candidates rejected and retain all quality gates. See [live evidence](evals/babeldoc-071-20261108.md).
+
 - **0.68.12** (2026-10-29): Stop `--layout` from corrupting pages whose old text layer contains the word "ET".
   - `strip_text` removed old text with the regex `BT\b.*?\bET\b`, which does not know PDF strings. Delgado 2001 p7 and Delgado 2015 pp5–8 and 16 carry "et al." as `(ET )Tj`; the match closed inside that string and left `)Tj … ET` behind. The resulting content-stream syntax error hung pdf2zh for 30 minutes on one paper and crashed it at 4/26 pages on the other.
   - Replace the regex with an operator-level lexer covering literal strings with escapes and nesting, hex strings, comments, names and inline images. Treat a page's `/Contents` array as one stream with a space between physical streams, as MuPDF reads it, so adjacent `Q`/`BT` operators neither merge nor hide an old layer. Form XObjects are still stripped independently. An unterminated construct now fails explicitly before any stream on the page is rewritten.
