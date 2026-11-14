@@ -2,6 +2,7 @@
 
 Newest first. Entries record what changed and why at the time each release shipped; names, flags, and contracts referenced in older entries may since have been removed or renamed. The active contract lives in `AGENTS.md`, `README.md`, and `skills/quasi/`.
 
+- **2026-11-14**: Align selectable original text to the printed lines in new scanned translations while retaining paragraph-flow input for translation. Use MinerU's native OCR for line positions, keep VLM text, and retain difficult paragraphs in their original layout instead of blocking a book. `quasi status` reports any fallback blocks and pages. Existing translations are not rewritten.
 - **Unreleased** (2026-11-08): Use the validated Rust-core BabelDOC release for local pdf2zh translations.
   - Pin the isolated uvx environment to `pdf2zh-next==2.10.2` and `BabelDOC==0.7.1`, replacing the obsolete `bitstring<5` workaround. Include the engine version in the existing configuration fingerprint.
   - Mac Mini validation: 114 translation tests passed; a real 5-page translation passed the complete publication/reuse transaction. Same-input local preprocessing was 50.6% shorter, including 32.2% shorter page-layout processing, versus BabelDOC 0.6.4.

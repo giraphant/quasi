@@ -886,7 +886,39 @@ def test_translation_status_requires_and_normalises_one_exact_target(tmp_path: P
                 present=True,
                 usable=True,
             ),
+            "selection": None,
         },
+    }
+
+
+def test_translation_status_reads_embedded_selection_report(tmp_path: Path):
+    project = tmp_path / "project"
+    output = project / "processing" / "translations" / "book-zh.pdf"
+    output.parent.mkdir(parents=True)
+    evidence = {
+        "schema": "quasi.selection.evidence/0.1",
+        "source_sha256": "some-source-hash",
+        "page_stats": [
+            {"page": 1, "kind": "scan", "blocks": 2, "aligned": 1, "fallback": 1, "applied": True},
+            {"page": 3, "kind": "scan", "blocks": 5, "aligned": 4, "fallback": 1, "applied": False},
+        ],
+        "fallback_blocks": [{"page": 1, "block": 2, "reason": "ambiguous"}],
+        "skipped_pages": [{"page": 3, "reason": "image differs"}],
+    }
+    with fitz.open() as doc:
+        doc.new_page()
+        doc.xref_set_key(doc.pdf_catalog(), "QuasiSelection", fitz.get_pdf_str(json.dumps(evidence)))
+        doc.save(output)
+    result = run_status(project, "--kind", "translation", "--slug", "book",
+                        "--target-language", "zh", "--json")
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)["facts"]["selection"]
+    assert summary["fallback_blocks"] == evidence["fallback_blocks"]
+    assert summary["skipped_pages"] == evidence["skipped_pages"]
+    assert summary["page_stats"][0] == evidence["page_stats"][0]
+    assert summary["page_stats"][1] == {
+        "page": 3, "kind": "scan", "blocks": 5, "aligned": 0, "fallback": 0,
+        "prepared_aligned": 4, "prepared_fallback": 1, "applied": False,
     }
 
 

@@ -220,6 +220,9 @@ def validate_project_source(
         if target_language is not None:
             tag = validate_language(target_language).lower()
             allowed.add(f"processing/translations/{slug}-{tag}-reocr.pdf")
+            # A fresh, source-bound layout can coexist with a historical
+            # recovery PDF whose recognition sidecar is missing or unproven.
+            allowed.add(f"processing/translations/{slug}-{tag}-selection-reocr.pdf")
         if relative not in allowed:
             raise TranslateContractError(
                 "translation.source_role_invalid",
@@ -1241,6 +1244,8 @@ def run_transaction(
     repair_tounicode: Callable[[Path], dict[str, int]],
     check_coverage: Callable[..., dict[str, Any]],
     configuration_missing: list[str] | None = None,
+    prepare_selection: Callable[[Path, Path, Path], Path | None] | None = None,
+    apply_selection: Callable[[Path, Path], None] | None = None,
 ) -> dict[str, Any]:
     root = project_root.expanduser().resolve()
     slug = validate_slug(slug)
@@ -1456,6 +1461,57 @@ def run_transaction(
                 intent["task_id"] = task_id
             _write_json(intent_path, intent)
 
+        # All OCR/model setup and source-bound alignment must finish before a
+        # potentially paid translation request starts.  The provider continues
+        # to receive the original paragraph-layout PDF, never the line layer.
+        selection_source = None
+        selection_sha = None
+        if prepare_selection is not None:
+            selection_name = f"{paths['stem']}-selection-reocr.pdf"
+            recognition_suffix = "-selection-recognition.json" if source.name == selection_name else "-recognition.json"
+            recognition_path = output_dir / f"{paths['stem']}{recognition_suffix}"
+            try:
+                if apply_selection is None:
+                    raise ValueError("selection preparation requires a candidate postprocessor")
+                on_state("selection_preparing")
+                selection_source = prepare_selection(source, recognition_path, generation_dir / "selection")
+                if selection_source is not None and not Path(selection_source).is_file():
+                    raise ValueError("selection preparation returned a missing PDF")
+                if selection_source is not None:
+                    selection_sha = sha256_file(Path(selection_source))
+                if sha256_file(source) != expected_source_sha256:
+                    raise ValueError("source changed during selection preparation")
+                on_state("selection_ready")
+            except BaseException as exc:
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
+                intent["state"] = "selection_failed"
+                _write_json(intent_path, intent)
+                message = str(exc)
+                bad_recognition = (not recognition_path.is_file() or any(
+                    phrase in message for phrase in (
+                        "invalid source-bound recognition", "recognition does not match layout",
+                        "recognition geometry does not match", "recognition word boundaries do not match",
+                        "embedded review",
+                    )
+                ))
+                if bad_recognition and source.name == f"{paths['stem']}-reocr.pdf":
+                    fresh_layout = project_relative(output_dir / f"{paths['stem']}-selection-reocr.pdf", root)
+                    fresh_recognition = project_relative(output_dir / f"{paths['stem']}-selection-recognition.json", root)
+                    message += (f"; preserve the existing recovery and prepare a fresh layout at {fresh_layout} "
+                                f"with --recognition-json {fresh_recognition} --layout --no-clobber")
+                result = run_receipt(
+                    "failed",
+                    failure=operation_failure(
+                        code="translation.selection_prepare_failed",
+                        operation_key="translation.run",
+                        outcome="known",
+                        message=message,
+                    ),
+                )
+                _persist_receipt(generation_dir, result)
+                return result
+
         backend_info: dict[str, Any] = {}
         try:
             on_state("backend_starting")
@@ -1502,6 +1558,14 @@ def run_transaction(
                     f"backend produced {candidate_pages} pages; expected {source_pages * 2}",
                 )
             on_state("postprocessing", backend_info.get("task_id"))
+            if selection_source is not None:
+                assert apply_selection is not None
+                if sha256_file(Path(selection_source)) != selection_sha:
+                    raise TranslateContractError(
+                        "translation.selection_source_changed",
+                        "prepared source selection changed during translation",
+                    )
+                apply_selection(candidate, Path(selection_source))
             fallback_manifest = root / "processing" / "chapters" / slug / "manifest.json"
             toc_entries = int(
                 add_toc(

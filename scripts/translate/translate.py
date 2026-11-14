@@ -33,6 +33,7 @@ warnings.filterwarnings(
 from translate import coverage  # noqa: E402
 from translate import immersive_translate as immersive  # noqa: E402
 from translate import pdf2zh_translate as pdf2zh  # noqa: E402
+from translate import source_selection  # noqa: E402
 from translate import tounicode  # noqa: E402
 from translate.translate_commit import (  # noqa: E402
     TranslateContractError,
@@ -243,6 +244,8 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         add_toc=immersive.add_toc_to_split_pdf,
         repair_tounicode=tounicode.repair_pdf,
         check_coverage=coverage.check,
+        prepare_selection=source_selection.prepare_selection,
+        apply_selection=source_selection.apply_selection_source,
     )
 
 
@@ -283,6 +286,8 @@ def execute_legacy(args: argparse.Namespace) -> dict[str, Any]:
         add_toc=immersive.add_toc_to_split_pdf,
         repair_tounicode=tounicode.repair_pdf,
         check_coverage=coverage.check,
+        prepare_selection=source_selection.prepare_selection,
+        apply_selection=source_selection.apply_selection_source,
     )
 
 

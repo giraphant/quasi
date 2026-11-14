@@ -795,6 +795,44 @@ def talk_status(root: Path, slug: str) -> dict[str, Any]:
     )
 
 
+def _translation_selection_summary(output: Path) -> dict[str, Any] | None:
+    """Read selection diagnostics embedded in a translated PDF, when present."""
+    try:
+        import pymupdf as fitz
+
+        with fitz.open(output) as pdf:
+            kind, value = pdf.xref_get_key(pdf.pdf_catalog(), "QuasiSelection")
+        if kind != "string":
+            return None
+        evidence = json.loads(value)
+        if (not isinstance(evidence, dict)
+                or evidence.get("schema") != "quasi.selection.evidence/0.1"):
+            return None
+        keys = ("page_stats", "fallback_blocks", "skipped_pages")
+        if not all(isinstance(evidence.get(key), list) for key in keys):
+            return None
+        result = {key: evidence[key] for key in keys}
+        skipped = {row.get("page") for row in result["skipped_pages"] if isinstance(row, dict)}
+        page_stats = []
+        for row in result["page_stats"]:
+            if not isinstance(row, dict):
+                return None
+            item = dict(row)
+            if item.get("page") in skipped:
+                item["prepared_aligned"] = item.get("aligned", 0)
+                item["prepared_fallback"] = item.get("fallback", 0)
+                item["aligned"] = 0
+                item["fallback"] = 0
+                item["applied"] = False
+            elif item.get("kind") == "scan":
+                item["applied"] = True
+            page_stats.append(item)
+        result["page_stats"] = page_stats
+        return result
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
+        return None
+
+
 def translation_status(
     root: Path,
     slug: str,
@@ -822,6 +860,7 @@ def translation_status(
             "source": artifact_observation(resolved_root, source),
             "output": artifact_observation(resolved_root, output),
             "manifest": artifact_observation(resolved_root, manifest),
+            "selection": _translation_selection_summary(output),
         },
     )
 

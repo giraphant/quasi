@@ -134,6 +134,8 @@ OPERATION_CATALOG = {
             "manifest": "processing/translations/{slug}-{target}.manifest.json",
             "recoverySource": "processing/translations/{slug}-{target}-reocr.pdf",
             "layoutRecognition": "processing/translations/{slug}-{target}-recognition.json",
+            "selectionRecoverySource": "processing/translations/{slug}-{target}-selection-reocr.pdf",
+            "selectionLayoutRecognition": "processing/translations/{slug}-{target}-selection-recognition.json",
             "layoutReview": "processing/translations/{slug}-{target}-layout-review.json",
         },
     },
