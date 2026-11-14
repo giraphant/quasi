@@ -51,11 +51,14 @@ scripts/quasi config unset translate_model
 整个仓库就是技能，目录名要叫 `quasi`。最简单的装法是直接克隆到全局技能目录，再给 Claude 链一份：
 
 ```sh
-git clone https://github.com/giraphant/quasi ~/.agents/skills/quasi   # codex、agy、pi 读这里
+git clone https://github.com/giraphant/quasi ~/.agents/skills/quasi   # codex、pi 读这里
 ln -s ~/.agents/skills/quasi ~/.claude/skills/quasi                    # claude 读这里
+ln -s ~/.agents/skills/quasi ~/.gemini/skills/quasi                    # agy 读这里
 ```
 
-以后 `git pull` 就是更新。只想在某个文库里用，就在文库根目录建同样的两个软链接（`.agents/skills/quasi`、`.claude/skills/quasi`）指向仓库。注意：旧体系的 `~/.codex/skills/quasi` 还在的话，Codex 可能读到旧技能。
+agy 的全局技能目录不是 `~/.agents/skills`，而是 `~/.gemini/skills`（实测：不链进去，agy 会话里就没有 quasi 这个技能，agent 会满盘找 SKILL.md，还可能捡到旧版本）；工作区内它也读 `.agents/skills/`。
+
+以后 `git pull` 就是更新。只想在某个文库里用，就在文库根目录建同样的三个软链接（`.agents/skills/quasi`、`.claude/skills/quasi`、`.gemini/skills/quasi`）指向仓库。注意：旧体系的 `~/.codex/skills/quasi` 还在的话，Codex 可能读到旧技能；机器上留存的 quasi 旧副本（插件缓存、marketplace 快照）也可能被满盘找技能的 agent 捡到，装好后清掉。
 
 ## 4. 权限
 

@@ -12,7 +12,7 @@ Further reading: `docs/REDESIGN.md` (why the redesign, decisions and the round-b
 SKILL.md                 skill root: route to collect / research / draft; global conventions
 collect/README.md        route by material type; rules shared by all materials
 collect/<material>/      one leaf per material: README.md flow + search/acquire/prepare/writing pages
-research/                the topic research loop and its writing brief
+snowball/                research loop, full reference extraction, scored bibliography and topic writing brief
 draft/                   placeholder; draft finalisation is to be redesigned
 connectors/rex.md        the only place that knows how workers are launched (Rex panes)
 scripts/quasi            single CLI entry; dispatches to scripts/commands/quasi-<command>
@@ -27,9 +27,10 @@ The whole repository is the installable skill: clone or link it as `quasi` into 
 
 ## How the skill works
 
-- The session the user opens is the orchestrator. It reads only the branch of the tree it walks: root → `collect/README.md` → one material leaf (or `research/README.md`).
-- Writing always goes to a **writer**: a fresh interactive session in a Rex pane, given only a writing brief, input files and bibliographic facts, so writing can run on the model with the best prose (agy in real use, Codex in tests). Whole materials in a batch go to **material sessions**. At most three levels: main → material session → writer.
+- The session the user opens is the orchestrator. It reads only the branch of the tree it walks: root → `collect/README.md` → one material leaf (or `snowball/README.md`, which owns the research loop).
+- Writing always goes to a **writer**: a fresh interactive session in a Rex pane, given only a writing brief, input files and bibliographic facts, so writing can run on the model with the best prose (agy in real use, Codex in tests). Whole materials in a batch go to **material sessions**; candidate discovery goes to a **scout session**; cross-material synthesis goes directly to a **synthesis writer** that maintains the topic documents. Scout and material sessions use session_harness; synthesis uses writer_harness. At most three levels: main → material session → writer; scout and synthesis report directly to main.
 - Verify artifacts, not reports: `quasi status` says what exists, `quasi audit` says whether it conforms. Repair once with the brief, the audit diagnostics and the existing page; preserve user-written content.
+- Snowball uses one lightweight `processing/topics/{slug}/candidates.json` bibliography: full reference extraction with citation context, 0–100 relevance scores, and reading status. Each batch takes the top five unread works globally (user may choose ten), not the next citation layer. Re-score the whole list when the research direction changes; no separate score-version, audit or batch-state system. Topic page schemas are unchanged.
 - No Workflow, no receipts or JSON envelopes, no harness-native subagents. Rex commands appear only in `connectors/rex.md`; supporting another terminal framework means adding another connector page.
 - Each quasi command is written as one plain command (no pipes, redirects, heredocs or `&&`), JSON is passed by file under `.quasi/temp/`, so harness permission prefix rules can match it.
 
@@ -105,7 +106,7 @@ The measured reasoning behind each rule is in `docs/PDF_PIPELINE.md`; do not rel
 
 ## Change checklist
 
-1. Artifact structure change: edit `scripts/schemas/`, then the matching writing brief under `collect/` or `research/`.
+1. Artifact structure change: edit `scripts/schemas/`, then the matching writing brief under `collect/` or `snowball/`.
 2. New or renamed CLI command: update the CLI table here and every skill page that calls it.
 3. Skill page moved or renamed: update the routing table that points to it; run `tests/test_skill_tree.py`.
 4. Worker launch or harness change: edit `connectors/rex.md` only.

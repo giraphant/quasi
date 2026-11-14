@@ -1,0 +1,4969 @@
+{
+  "date": "2026-10-09",
+  "scope": "Local model inference through MLX; isolated experiment, not a production OCR or PDF placement run.",
+  "hardware": {
+    "chip": "Apple M5 Max",
+    "cpu_cores": 18,
+    "gpu_cores": 40,
+    "unified_memory_gib": 128,
+    "macos": "27.0.1",
+    "power": "AC"
+  },
+  "upstream_commit": "36755d461be079737860a5f03ae0c803501269e9",
+  "work_directory": "/Users/ramudai/Vibe/quasi/.quasi/temp/lightonocr3-20261009",
+  "method": {
+    "historical_pages": 8,
+    "historical_repetitions": 3,
+    "stress_pages": 4,
+    "stress_repetitions": 1,
+    "successful_measured_calls": 176,
+    "page_concurrency": 1,
+    "cold_load_and_warmup_excluded": true,
+    "download_completed_before_measured_jobs": true,
+    "lighton_sampling": {
+      "temperature": 0.1,
+      "top_p": 1.0,
+      "seed": 42,
+      "max_tokens": 8192
+    },
+    "mineru_sampling": "MinerUClient two_step_extract defaults, no caller override; default crop batches of up to eight. Token truncation is not independently measured for this library.",
+    "precision": "unquantized BF16 checkpoint weights",
+    "quality_pass": "first measured output only",
+    "memory": "MLX peak allocations and process peak RSS are distinct views of unified memory, not additive."
+  },
+  "samples": [
+    {
+      "id": "salomons-035",
+      "source": "/Users/ramudai/Documents/Learn/bts/sources/salomons-accumulators-private-electric-light-1888.pdf",
+      "source_sha256": "9e05fa4207ed4c215a19e131aa11f57fea1f8967c0cd2eed61f91e11438620eb",
+      "page": 35,
+      "png": "/Users/ramudai/Vibe/quasi/.quasi/temp/battery-ocr-20261003/pages/salomons-035.png",
+      "width": 982,
+      "height": 1356,
+      "group": "historical",
+      "image_sha256": "1a233c0f9c09f81352f157429a8db00eb41fb70fb8800c3a4829861bf097372a"
+    },
+    {
+      "id": "salomons-051",
+      "source": "/Users/ramudai/Documents/Learn/bts/sources/salomons-accumulators-private-electric-light-1888.pdf",
+      "source_sha256": "9e05fa4207ed4c215a19e131aa11f57fea1f8967c0cd2eed61f91e11438620eb",
+      "page": 51,
+      "png": "/Users/ramudai/Vibe/quasi/.quasi/temp/battery-ocr-20261003/pages/salomons-051.png",
+      "width": 982,
+      "height": 1356,
+      "group": "historical",
+      "image_sha256": "8422d0d4deb94ffe579c87c09de823ad65b1a68584dac70ff114bce93778dba1"
+    },
+    {
+      "id": "salomons-086",
+      "source": "/Users/ramudai/Documents/Learn/bts/sources/salomons-accumulators-private-electric-light-1888.pdf",
+      "source_sha256": "9e05fa4207ed4c215a19e131aa11f57fea1f8967c0cd2eed61f91e11438620eb",
+      "page": 86,
+      "png": "/Users/ramudai/Vibe/quasi/.quasi/temp/battery-ocr-20261003/pages/salomons-086.png",
+      "width": 982,
+      "height": 1356,
+      "group": "historical",
+      "image_sha256": "b51d08c85f74580b7acb160e72ee51bf03550b910aec0a761d61a9b78fdeca1e"
+    },
+    {
+      "id": "salomons-142",
+      "source": "/Users/ramudai/Documents/Learn/bts/sources/salomons-accumulators-private-electric-light-1888.pdf",
+      "source_sha256": "9e05fa4207ed4c215a19e131aa11f57fea1f8967c0cd2eed61f91e11438620eb",
+      "page": 142,
+      "png": "/Users/ramudai/Vibe/quasi/.quasi/temp/battery-ocr-20261003/pages/salomons-142.png",
+      "width": 982,
+      "height": 1356,
+      "group": "historical",
+      "image_sha256": "a154f95feacfdea061313043cc24d87f8bd8c424a5cb543a808abc60bfe4e123"
+    },
+    {
+      "id": "warwick-065",
+      "source": "/Users/ramudai/Documents/Learn/bts/sources/warwick-how-to-make-and-use-the-storage-battery-1896.pdf",
+      "source_sha256": "125d8482c96e80ca3b39520d8ee1c84ebb5853565810a68d1917f1f54ff8a181",
+      "page": 65,
+      "png": "/Users/ramudai/Vibe/quasi/.quasi/temp/battery-ocr-20261003/pages/warwick-065.png",
+      "width": 967,
+      "height": 1278,
+      "group": "historical",
+      "image_sha256": "8f3adf3100f1a90e951db3aee9aabf4ab8963de70da86e26615616fce6d02d84"
+    },
+    {
+      "id": "warwick-079",
+      "source": "/Users/ramudai/Documents/Learn/bts/sources/warwick-how-to-make-and-use-the-storage-battery-1896.pdf",
+      "source_sha256": "125d8482c96e80ca3b39520d8ee1c84ebb5853565810a68d1917f1f54ff8a181",
+      "page": 79,
+      "png": "/Users/ramudai/Vibe/quasi/.quasi/temp/battery-ocr-20261003/pages/warwick-079.png",
+      "width": 967,
+      "height": 1278,
+      "group": "historical",
+      "image_sha256": "9d5b274a5338334064a1da02ef4e33680e3c2082c4702391429454a30be571b5"
+    },
+    {
+      "id": "warwick-121",
+      "source": "/Users/ramudai/Documents/Learn/bts/sources/warwick-how-to-make-and-use-the-storage-battery-1896.pdf",
+      "source_sha256": "125d8482c96e80ca3b39520d8ee1c84ebb5853565810a68d1917f1f54ff8a181",
+      "page": 121,
+      "png": "/Users/ramudai/Vibe/quasi/.quasi/temp/battery-ocr-20261003/pages/warwick-121.png",
+      "width": 967,
+      "height": 1278,
+      "group": "historical",
+      "image_sha256": "08770b3298c23085ba25af7caf1aedcbb2d626f9e67723175f17dcf2feeeebb0"
+    },
+    {
+      "id": "warwick-128",
+      "source": "/Users/ramudai/Documents/Learn/bts/sources/warwick-how-to-make-and-use-the-storage-battery-1896.pdf",
+      "source_sha256": "125d8482c96e80ca3b39520d8ee1c84ebb5853565810a68d1917f1f54ff8a181",
+      "page": 128,
+      "png": "/Users/ramudai/Vibe/quasi/.quasi/temp/battery-ocr-20261003/pages/warwick-128.png",
+      "width": 967,
+      "height": 1278,
+      "group": "historical",
+      "image_sha256": "d2905a30c892150ada07b921bf7b14c9eaffee7846ff7ced7b7484313a6f305a"
+    },
+    {
+      "id": "harrington-031",
+      "group": "stress",
+      "source": "/Users/ramudai/Documents/Learn/bts/sources/harrington-modern-social-theory-2005.pdf",
+      "page": 31,
+      "source_sha256": "2da0e8b39ede75788c80fad1636d85b23904924f8d44063e616679f7741e5eed",
+      "png": "/Users/ramudai/Vibe/quasi/.quasi/temp/lightonocr3-20261009/pages/harrington-031.png",
+      "width": 1348,
+      "height": 1873,
+      "image_sha256": "a3fa577d05a78db8fc950452e3bc6b9b6fcd25d4c99b12e90d6e2fdaa380d606"
+    },
+    {
+      "id": "barnes-blank-176",
+      "group": "stress",
+      "source": "/Users/ramudai/Documents/Learn/bts/sources/barnes-understanding-agency-2000.pdf",
+      "page": 176,
+      "source_sha256": "0c0ebf988067dda07a3cf00f35b3c9a3d78fbc30dd859c5dee33009356a22b4c",
+      "png": "/Users/ramudai/Vibe/quasi/.quasi/temp/lightonocr3-20261009/pages/barnes-blank-176.png",
+      "width": 1093,
+      "height": 1770,
+      "image_sha256": "0bcfe97c8782828a5b7344e6f31026bee802a27d13b9087016cae5e10b40f3ea"
+    },
+    {
+      "id": "gell-contents-015",
+      "group": "stress",
+      "source": "/Users/ramudai/Vibe/quasi/.quasi/temp/gell-font-probe/page15-source.pdf",
+      "page": 1,
+      "source_sha256": "212a891e6bc7088d4d3c058677058fd764102de73bcd29b9c7c056d3ec46a613",
+      "png": "/Users/ramudai/Vibe/quasi/.quasi/temp/lightonocr3-20261009/pages/gell-contents-015.png",
+      "width": 1058,
+      "height": 1607,
+      "image_sha256": "bfa6f8e6ae911dd02bb675e899fd4df8396b2069bfd34f8649f4f12e782cbd6a"
+    },
+    {
+      "id": "chinese-controlled",
+      "group": "stress",
+      "synthetic": true,
+      "png": "/Users/ramudai/Vibe/quasi/.quasi/temp/lightonocr3-20261009/pages/chinese-controlled.png",
+      "width": 1600,
+      "height": 2100,
+      "image_sha256": "7c27c5a90a36e355fca13712a8c0a36180f70954cd7a5ebc2f51d66ebef77f7a"
+    }
+  ],
+  "manual_prose_reference": {
+    "method": "Manually transcribed from the exact page PNGs before reading the new model outputs. Body prose only; running heads, page numbers, figure captions and watermark are excluded. End-of-line hyphens are joined; printed wording is preserved.",
+    "salomons-035": "of the letter U, the free extremities being again bent into hooks, each half a circle of two inches diameter. The plane in which the hooks are turned are such that they are not seen when the whole is viewed as a letter U. The rounded corners of the U are squared, a piece of half-inch iron gas tube having first been slipped on to avoid cutting the hands whilst lifting. When employed to lift the plates, one pair of hooks are applied to the positive lead strip, and one pair to the negative. In this way two persons can lift small or large sections with ease, and lower them into the cells gently without risk of breakage. Each cell completed is put back in its place upon the shelves. To effect this in the best way, put the cell which is still upon the floor on one of the cell boards, which rest upon the insulators, and lift the board with the cell together into position. For high shelves a staging is necessary, on account of the great weight to be lifted. The floor should be of vitrified blue brick, diamond pattern, and falling all ways to a drain. This permits it to be easily washed by flooding with water, and the pattern allows it to be dry at all times under foot. Wooden floors rot very soon by acid spillings and the spray. When all the cells are in position they are ready for connecting. The last chapter describes the methods of doing this. Solder, bolts and nuts, or clamps, are used according to circumstances. Often solder is employed in all cases, but this is not essential if there is a good surface of the lead strip of one cell in contact with that of the next, and these",
+    "salomons-086": "Richter's Economisers (see plate 11), a great saving is effected, and much oil may be used two and three times over by employing a filter combined with the economiser. These apparatus are inexpensive, and soon save their cost. Pans should be placed at all points where oil running through bearings can be caught; this waste oil is then placed in an economiser for future use, a separate one being employed for the new oil. It is not intended, in speaking of these various conveniences, to advertise the articles, but simply to place most valuable resources in the way of those who may not be aware of their existence, and perhaps be working at some disadvantage for the want of them; for only five to ten pounds will add the whole of them to a small or large installation, with the exception of the Automatic Feeder, which also possesses the advantage of heating the feed water. The heating of the feed water is an important point. Much scaling of the boiler is avoided, straining of the boiler-plates through extremes of temperature is prevented, the steam pressure is more constant, and fuel is saved. A self-oiling sight-feed ought invariably be used for lubricating the cylinder, and the use of tallow and fats should be avoided. Grease cups for bearings are far more convenient than oil, and also cleaner. These need be replenished but once a month, if fairly large, so that the engine always stands ready oiled. There are many greases in the market,",
+    "warwick-065": "the lathe or other suitable machine and two ribbons of lead are wound one on top of the other, one ribbon being corrugated, the other plain. When the desired size is reached, a frame of cadmium lead alloy is clamped around and the joint burned. The plate is then formed by the Planté process, pasted, or by the Dujardin-Warwick method of electrically depositing or plating from salts of lead. These cells are capable of withstanding a discharge due to short circuit, or from overloading. 5,000 short circuits have been taken from one of these batteries, and it was then in apparently as good condition as when the test was commenced. The tensile strength of the lead ribbon being"
+  },
+  "manual_table_reference": {
+    "method": "Manually read from the exact PNGs. Data cells only, in physical row/column order. Historical decimal apostrophes are decimal points; commas separate thousands. A printed dash is retained as a missing-value cell.",
+    "salomons-051": [
+      [
+        "12000",
+        "4.52",
+        "3664",
+        "10"
+      ],
+      [
+        "18000",
+        "6.78",
+        "5495",
+        "15"
+      ],
+      [
+        "48000",
+        "18.09",
+        "14600",
+        "39.8"
+      ],
+      [
+        "36080",
+        "13.6",
+        "11010",
+        "—"
+      ],
+      [
+        "31800",
+        "12",
+        "9540",
+        "26"
+      ],
+      [
+        "6633",
+        "2.5",
+        "2018",
+        "5.5"
+      ],
+      [
+        "39798",
+        "15",
+        "12110",
+        "33"
+      ],
+      [
+        "47170",
+        "17.8",
+        "14671",
+        "39.16"
+      ]
+    ],
+    "warwick-079": [
+      [
+        "2.500",
+        "8.000"
+      ],
+      [
+        "0.550",
+        "1.390"
+      ],
+      [
+        "0.180",
+        "0.180"
+      ],
+      [
+        "1.140",
+        "4.400"
+      ],
+      [
+        "1.105",
+        "3.160"
+      ],
+      [
+        "5.475",
+        "17.130"
+      ]
+    ],
+    "warwick-128": [
+      [
+        "1.000"
+      ],
+      [
+        "1.063"
+      ],
+      [
+        "1.068"
+      ],
+      [
+        "1.935"
+      ],
+      [
+        "3.741"
+      ],
+      [
+        "6.022"
+      ],
+      [
+        "6.460"
+      ],
+      [
+        "8.784"
+      ],
+      [
+        "13.050"
+      ],
+      [
+        "23.050"
+      ],
+      [
+        "63.730"
+      ]
+    ]
+  },
+  "controlled_chinese_reference": "中文与英文混排 OCR 受控测试\n\n社会学研究不应把两个模型的识别结果一致，误认为它们都正确。判断文本是否完整，必须回到原始页面，检查正文、脚注、页码和表格。\n\n例如，研究者在讨论行动与结构的关系时，需要区分个人的意图、实践中的约束，以及制度形成的历史条件。一个术语的遗漏，可能改变整段论证的含义。\n\n本页用于受控测试，文字由程序生成；它不是历史扫描件，也不能证明模型在模糊图像、繁体中文、竖排古籍或手写资料上的准确率。\n\n数字与符号：2026年10月9日；样本量 n = 128；识别时间 2.35 秒；价格 £19.99；温度 25°C；显著性水平 p < 0.05。\n\n中英文混排：agency（能动性）、structure（结构）、reflexivity（反思性）、Pierre Bourdieu（皮埃尔·布迪厄）、Anthony Giddens（安东尼·吉登斯）。\n\n脚注：所有速度数据均应注明硬件、推理后端、模型版本、输入分辨率，以及是否包含模型加载时间。小样本结果只能作为进一步测试的依据。\n",
+  "summary": {
+    "quality_method": "Best-span alphanumeric, NFKC/casefold CER on three manually transcribed body pages. Ignores case, spaces, punctuation, header/footer, two named captions, image descriptions in grounding, and two visually ambiguous plate-reference glyphs (11/II) in Salomons p86. Not a whole-page accuracy or layout score.",
+    "models": [
+      {
+        "key": "08b",
+        "mode": "grounding",
+        "repo": "lightonai/LightOnOCR-3-0.8B",
+        "revision": "36d8636925327c671bd8e479c517a004f7566bd9",
+        "load_seconds": 2.539048917009495,
+        "historical_calls": 8,
+        "mean_seconds": 3.5142503696242784,
+        "median_seconds": 3.2764260209951317,
+        "pages_per_minute": 17.073342445551148,
+        "peak_mlx_gib": 2.892493061721325,
+        "peak_rss_gib": 2.8717803955078125,
+        "truncated_calls": 0,
+        "prose": [
+          {
+            "id": "salomons-035",
+            "reference_characters": 1265,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "salomons-086",
+            "reference_characters": 1167,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "warwick-065",
+            "reference_characters": 548,
+            "edit_errors": 0,
+            "cer": 0.0
+          }
+        ],
+        "stress": [
+          {
+            "id": "harrington-031",
+            "seconds": 6.387390666001011,
+            "tokens": 893,
+            "characters": 3602,
+            "token_cap_reached": false,
+            "parsed_blocks": 8,
+            "invalid_boxes": []
+          },
+          {
+            "id": "barnes-blank-176",
+            "seconds": 0.34485295800550375,
+            "tokens": 1,
+            "characters": 0,
+            "token_cap_reached": false,
+            "parsed_blocks": 0,
+            "invalid_boxes": []
+          },
+          {
+            "id": "gell-contents-015",
+            "seconds": 6.720539792004274,
+            "tokens": 975,
+            "characters": 1771,
+            "token_cap_reached": false,
+            "parsed_blocks": 31,
+            "invalid_boxes": []
+          },
+          {
+            "id": "chinese-controlled",
+            "seconds": 3.2172114580025664,
+            "tokens": 397,
+            "characters": 622,
+            "token_cap_reached": false,
+            "reference_characters": 367,
+            "edit_errors": 0,
+            "alphanumeric_cer": 0.0,
+            "parsed_blocks": 7,
+            "invalid_boxes": []
+          }
+        ],
+        "tables": [
+          {
+            "id": "salomons-051",
+            "representation": "html",
+            "reference_cells": 32,
+            "parsed_data_rows": 8,
+            "expected_data_rows": 8,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-079",
+            "representation": "html",
+            "reference_cells": 12,
+            "parsed_data_rows": 6,
+            "expected_data_rows": 6,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-128",
+            "representation": "html",
+            "reference_cells": 11,
+            "parsed_data_rows": 11,
+            "expected_data_rows": 11,
+            "cell_errors": []
+          }
+        ],
+        "rotated_caption": {
+          "expected_printed_phrase": "The Goolden and Trotter Governor",
+          "phrase_found": true,
+          "reference_page_131_found": true,
+          "output_empty": false
+        },
+        "layout": [
+          {
+            "id": "salomons-035",
+            "blocks": 5,
+            "labels": [
+              "title",
+              "page_number",
+              "text",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "salomons-051",
+            "blocks": 7,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "caption",
+              "caption",
+              "table",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "salomons-086",
+            "blocks": 6,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "image",
+              "caption",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "salomons-142",
+            "blocks": 4,
+            "labels": [
+              "image",
+              "caption",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "warwick-065",
+            "blocks": 9,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "image",
+              "caption",
+              "text",
+              "text",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "warwick-079",
+            "blocks": 11,
+            "labels": [
+              "header",
+              "table",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "list",
+              "text",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "warwick-121",
+            "blocks": 7,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "formula",
+              "text",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "warwick-128",
+            "blocks": 6,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "table",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "harrington-031",
+            "blocks": 8,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "title",
+              "text",
+              "text",
+              "text",
+              "text"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "barnes-blank-176",
+            "blocks": 0,
+            "labels": [],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "gell-contents-015",
+            "blocks": 31,
+            "labels": [
+              "title",
+              "title",
+              "text",
+              "list",
+              "text",
+              "text",
+              "text",
+              "text",
+              "list",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "list",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "chinese-controlled",
+            "blocks": 7,
+            "labels": [
+              "title",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          }
+        ],
+        "repetition_mean_seconds": [
+          3.5142503696242784
+        ],
+        "prose_mean_seconds": 2.861239305328733,
+        "tables_mean_seconds": 5.085258833001717,
+        "prose_cer": 0.0
+      },
+      {
+        "key": "08b",
+        "mode": "plain",
+        "repo": "lightonai/LightOnOCR-3-0.8B",
+        "revision": "36d8636925327c671bd8e479c517a004f7566bd9",
+        "load_seconds": 2.4387769999884767,
+        "historical_calls": 24,
+        "mean_seconds": 2.0594952864582106,
+        "median_seconds": 1.7985166040016338,
+        "pages_per_minute": 29.1333514548529,
+        "peak_mlx_gib": 2.892493061721325,
+        "peak_rss_gib": 2.8601531982421875,
+        "truncated_calls": 0,
+        "prose": [
+          {
+            "id": "salomons-035",
+            "reference_characters": 1265,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "salomons-086",
+            "reference_characters": 1167,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "warwick-065",
+            "reference_characters": 548,
+            "edit_errors": 0,
+            "cer": 0.0
+          }
+        ],
+        "stress": [
+          {
+            "id": "harrington-031",
+            "seconds": 4.830251874998794,
+            "tokens": 741,
+            "characters": 3387,
+            "token_cap_reached": false
+          },
+          {
+            "id": "barnes-blank-176",
+            "seconds": 0.2525621249951655,
+            "tokens": 1,
+            "characters": 0,
+            "token_cap_reached": false
+          },
+          {
+            "id": "gell-contents-015",
+            "seconds": 2.601949917007005,
+            "tokens": 506,
+            "characters": 1308,
+            "token_cap_reached": false
+          },
+          {
+            "id": "chinese-controlled",
+            "seconds": 1.9754545420000795,
+            "tokens": 267,
+            "characters": 455,
+            "token_cap_reached": false,
+            "reference_characters": 367,
+            "edit_errors": 0,
+            "alphanumeric_cer": 0.0
+          }
+        ],
+        "tables": [
+          {
+            "id": "salomons-051",
+            "representation": "html",
+            "reference_cells": 32,
+            "parsed_data_rows": 8,
+            "expected_data_rows": 8,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-079",
+            "representation": "html",
+            "reference_cells": 12,
+            "parsed_data_rows": 6,
+            "expected_data_rows": 6,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-128",
+            "representation": "html",
+            "reference_cells": 11,
+            "parsed_data_rows": 11,
+            "expected_data_rows": 11,
+            "cell_errors": []
+          }
+        ],
+        "rotated_caption": {
+          "expected_printed_phrase": "The Goolden and Trotter Governor",
+          "phrase_found": true,
+          "reference_page_131_found": true,
+          "output_empty": false
+        },
+        "layout": [],
+        "repetition_mean_seconds": [
+          1.973566307375222,
+          2.1017014322496834,
+          2.1032181197497266
+        ],
+        "prose_mean_seconds": 1.5148660693311184,
+        "tables_mean_seconds": 3.269515032558249,
+        "prose_cer": 0.0
+      },
+      {
+        "key": "1b",
+        "mode": "grounding",
+        "repo": "lightonai/LightOnOCR-3-1B",
+        "revision": "23d544085c886bbdace647bcfab91203299417e2",
+        "load_seconds": 2.2890607079898473,
+        "historical_calls": 8,
+        "mean_seconds": 3.4550153906257037,
+        "median_seconds": 2.970026292001421,
+        "pages_per_minute": 17.36605867597423,
+        "peak_mlx_gib": 7.710152907297015,
+        "peak_rss_gib": 2.7136077880859375,
+        "truncated_calls": 0,
+        "prose": [
+          {
+            "id": "salomons-035",
+            "reference_characters": 1265,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "salomons-086",
+            "reference_characters": 1167,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "warwick-065",
+            "reference_characters": 548,
+            "edit_errors": 0,
+            "cer": 0.0
+          }
+        ],
+        "stress": [
+          {
+            "id": "harrington-031",
+            "seconds": 6.083831790994736,
+            "tokens": 880,
+            "characters": 3591,
+            "token_cap_reached": false,
+            "parsed_blocks": 8,
+            "invalid_boxes": []
+          },
+          {
+            "id": "barnes-blank-176",
+            "seconds": 1.3218319590087049,
+            "tokens": 1,
+            "characters": 0,
+            "token_cap_reached": false,
+            "parsed_blocks": 0,
+            "invalid_boxes": []
+          },
+          {
+            "id": "gell-contents-015",
+            "seconds": 6.003132707992336,
+            "tokens": 964,
+            "characters": 1816,
+            "token_cap_reached": false,
+            "parsed_blocks": 30,
+            "invalid_boxes": []
+          },
+          {
+            "id": "chinese-controlled",
+            "seconds": 3.2543388750054874,
+            "tokens": 420,
+            "characters": 623,
+            "token_cap_reached": false,
+            "reference_characters": 367,
+            "edit_errors": 3,
+            "alphanumeric_cer": 0.008174386920980926,
+            "parsed_blocks": 7,
+            "invalid_boxes": []
+          }
+        ],
+        "tables": [
+          {
+            "id": "salomons-051",
+            "representation": "html",
+            "reference_cells": 32,
+            "parsed_data_rows": 8,
+            "expected_data_rows": 8,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-079",
+            "representation": "html",
+            "reference_cells": 12,
+            "parsed_data_rows": 6,
+            "expected_data_rows": 6,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-128",
+            "representation": "html",
+            "reference_cells": 11,
+            "parsed_data_rows": 11,
+            "expected_data_rows": 11,
+            "cell_errors": []
+          }
+        ],
+        "rotated_caption": {
+          "expected_printed_phrase": "The Goolden and Trotter Governor",
+          "phrase_found": true,
+          "reference_page_131_found": true,
+          "output_empty": false
+        },
+        "layout": [
+          {
+            "id": "salomons-035",
+            "blocks": 5,
+            "labels": [
+              "title",
+              "page_number",
+              "text",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "salomons-051",
+            "blocks": 7,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "title",
+              "caption",
+              "table",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "salomons-086",
+            "blocks": 6,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "image",
+              "caption",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "salomons-142",
+            "blocks": 4,
+            "labels": [
+              "image",
+              "caption",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "warwick-065",
+            "blocks": 8,
+            "labels": [
+              "header",
+              "text",
+              "image",
+              "caption",
+              "text",
+              "text",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "warwick-079",
+            "blocks": 11,
+            "labels": [
+              "header",
+              "table",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "list",
+              "text",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "warwick-121",
+            "blocks": 7,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "formula",
+              "text",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "warwick-128",
+            "blocks": 6,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "table",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "harrington-031",
+            "blocks": 8,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "title",
+              "text",
+              "text",
+              "text",
+              "text"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "barnes-blank-176",
+            "blocks": 0,
+            "labels": [],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "gell-contents-015",
+            "blocks": 30,
+            "labels": [
+              "title",
+              "text",
+              "list",
+              "text",
+              "text",
+              "text",
+              "text",
+              "list",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "list",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "chinese-controlled",
+            "blocks": 7,
+            "labels": [
+              "title",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          }
+        ],
+        "repetition_mean_seconds": [
+          3.4550153906257037
+        ],
+        "prose_mean_seconds": 2.583838444998643,
+        "tables_mean_seconds": 5.030933291336017,
+        "prose_cer": 0.0
+      },
+      {
+        "key": "1b",
+        "mode": "plain",
+        "repo": "lightonai/LightOnOCR-3-1B",
+        "revision": "23d544085c886bbdace647bcfab91203299417e2",
+        "load_seconds": 2.299673540997901,
+        "historical_calls": 24,
+        "mean_seconds": 2.4072008055415304,
+        "median_seconds": 2.361914833498304,
+        "pages_per_minute": 24.925215986084815,
+        "peak_mlx_gib": 7.710152907297015,
+        "peak_rss_gib": 2.7231292724609375,
+        "truncated_calls": 0,
+        "prose": [
+          {
+            "id": "salomons-035",
+            "reference_characters": 1265,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "salomons-086",
+            "reference_characters": 1167,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "warwick-065",
+            "reference_characters": 548,
+            "edit_errors": 0,
+            "cer": 0.0
+          }
+        ],
+        "stress": [
+          {
+            "id": "harrington-031",
+            "seconds": 4.4028362079989165,
+            "tokens": 734,
+            "characters": 3384,
+            "token_cap_reached": false
+          },
+          {
+            "id": "barnes-blank-176",
+            "seconds": 0.9194960409949999,
+            "tokens": 1,
+            "characters": 0,
+            "token_cap_reached": false
+          },
+          {
+            "id": "gell-contents-015",
+            "seconds": 2.9055608339986065,
+            "tokens": 442,
+            "characters": 1161,
+            "token_cap_reached": false
+          },
+          {
+            "id": "chinese-controlled",
+            "seconds": 2.5067553339904407,
+            "tokens": 289,
+            "characters": 456,
+            "token_cap_reached": false,
+            "reference_characters": 367,
+            "edit_errors": 3,
+            "alphanumeric_cer": 0.008174386920980926
+          }
+        ],
+        "tables": [
+          {
+            "id": "salomons-051",
+            "representation": "html",
+            "reference_cells": 32,
+            "parsed_data_rows": 8,
+            "expected_data_rows": 8,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-079",
+            "representation": "html",
+            "reference_cells": 12,
+            "parsed_data_rows": 6,
+            "expected_data_rows": 6,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-128",
+            "representation": "html",
+            "reference_cells": 11,
+            "parsed_data_rows": 11,
+            "expected_data_rows": 11,
+            "cell_errors": []
+          }
+        ],
+        "rotated_caption": {
+          "expected_printed_phrase": "The Goolden and Trotter Governor",
+          "phrase_found": true,
+          "reference_page_131_found": true,
+          "output_empty": false
+        },
+        "layout": [],
+        "repetition_mean_seconds": [
+          2.371269260374902,
+          2.375244692499109,
+          2.4750884637505806
+        ],
+        "prose_mean_seconds": 2.0333303565566894,
+        "tables_mean_seconds": 3.3731583471122173,
+        "prose_cer": 0.0
+      },
+      {
+        "key": "2b",
+        "mode": "plain",
+        "repo": "mlx-community/LightOnOCR-2-1B-bf16",
+        "revision": "16e06849ba5c689f782473651914d6613d25d884",
+        "load_seconds": 2.151701792012318,
+        "historical_calls": 24,
+        "mean_seconds": 2.478176289917125,
+        "median_seconds": 2.3707084164998378,
+        "pages_per_minute": 24.21135261608306,
+        "peak_mlx_gib": 7.710152907297015,
+        "peak_rss_gib": 2.72100830078125,
+        "truncated_calls": 0,
+        "prose": [
+          {
+            "id": "salomons-035",
+            "reference_characters": 1265,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "salomons-086",
+            "reference_characters": 1167,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "warwick-065",
+            "reference_characters": 548,
+            "edit_errors": 0,
+            "cer": 0.0
+          }
+        ],
+        "stress": [
+          {
+            "id": "harrington-031",
+            "seconds": 4.938095042001805,
+            "tokens": 738,
+            "characters": 3387,
+            "token_cap_reached": false
+          },
+          {
+            "id": "barnes-blank-176",
+            "seconds": 1.2845720829936909,
+            "tokens": 1,
+            "characters": 0,
+            "token_cap_reached": false
+          },
+          {
+            "id": "gell-contents-015",
+            "seconds": 3.090302958007669,
+            "tokens": 477,
+            "characters": 2459,
+            "token_cap_reached": false
+          },
+          {
+            "id": "chinese-controlled",
+            "seconds": 2.9047017919947393,
+            "tokens": 292,
+            "characters": 468,
+            "token_cap_reached": false,
+            "reference_characters": 367,
+            "edit_errors": 2,
+            "alphanumeric_cer": 0.005449591280653951
+          }
+        ],
+        "tables": [
+          {
+            "id": "salomons-051",
+            "representation": "html",
+            "reference_cells": 32,
+            "parsed_data_rows": 8,
+            "expected_data_rows": 8,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-079",
+            "representation": "plain_text",
+            "reference_cells": 12,
+            "parsed_data_rows": 6,
+            "expected_data_rows": 6,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-128",
+            "representation": "html",
+            "reference_cells": 11,
+            "parsed_data_rows": 11,
+            "expected_data_rows": 11,
+            "cell_errors": []
+          }
+        ],
+        "rotated_caption": {
+          "expected_printed_phrase": "The Goolden and Trotter Governor",
+          "phrase_found": true,
+          "reference_page_131_found": true,
+          "output_empty": false
+        },
+        "layout": [],
+        "repetition_mean_seconds": [
+          2.5268205677512015,
+          2.4282794636255858,
+          2.479428838374588
+        ],
+        "prose_mean_seconds": 2.342662041555741,
+        "tables_mean_seconds": 3.187537018554091,
+        "prose_cer": 0.0
+      },
+      {
+        "key": "4b",
+        "mode": "grounding",
+        "repo": "lightonai/LightOnOCR-3-4B",
+        "revision": "b71010f095dc3735de7ee6b9969bff8f8f50b39a",
+        "load_seconds": 2.6621865420020185,
+        "historical_calls": 8,
+        "mean_seconds": 13.53383964587556,
+        "median_seconds": 11.839239104003354,
+        "pages_per_minute": 4.433331676002605,
+        "peak_mlx_gib": 9.998348366469145,
+        "peak_rss_gib": 9.76593017578125,
+        "truncated_calls": 0,
+        "prose": [
+          {
+            "id": "salomons-035",
+            "reference_characters": 1265,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "salomons-086",
+            "reference_characters": 1167,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "warwick-065",
+            "reference_characters": 548,
+            "edit_errors": 0,
+            "cer": 0.0
+          }
+        ],
+        "stress": [
+          {
+            "id": "harrington-031",
+            "seconds": 21.984951834005187,
+            "tokens": 894,
+            "characters": 3603,
+            "token_cap_reached": false,
+            "parsed_blocks": 8,
+            "invalid_boxes": []
+          },
+          {
+            "id": "barnes-blank-176",
+            "seconds": 1.6340575000067474,
+            "tokens": 1,
+            "characters": 0,
+            "token_cap_reached": false,
+            "parsed_blocks": 0,
+            "invalid_boxes": []
+          },
+          {
+            "id": "gell-contents-015",
+            "seconds": 37.124984750000294,
+            "tokens": 1541,
+            "characters": 2512,
+            "token_cap_reached": false,
+            "parsed_blocks": 59,
+            "invalid_boxes": []
+          },
+          {
+            "id": "chinese-controlled",
+            "seconds": 11.30822612499469,
+            "tokens": 400,
+            "characters": 626,
+            "token_cap_reached": false,
+            "reference_characters": 367,
+            "edit_errors": 0,
+            "alphanumeric_cer": 0.0,
+            "parsed_blocks": 7,
+            "invalid_boxes": []
+          }
+        ],
+        "tables": [
+          {
+            "id": "salomons-051",
+            "representation": "html",
+            "reference_cells": 32,
+            "parsed_data_rows": 8,
+            "expected_data_rows": 8,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-079",
+            "representation": "html",
+            "reference_cells": 12,
+            "parsed_data_rows": 6,
+            "expected_data_rows": 6,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-128",
+            "representation": "html",
+            "reference_cells": 11,
+            "parsed_data_rows": 11,
+            "expected_data_rows": 11,
+            "cell_errors": []
+          }
+        ],
+        "rotated_caption": {
+          "expected_printed_phrase": "The Goolden and Trotter Governor",
+          "phrase_found": true,
+          "reference_page_131_found": true,
+          "output_empty": false
+        },
+        "layout": [
+          {
+            "id": "salomons-035",
+            "blocks": 5,
+            "labels": [
+              "title",
+              "page_number",
+              "text",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "salomons-051",
+            "blocks": 7,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "caption",
+              "caption",
+              "table",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "salomons-086",
+            "blocks": 6,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "image",
+              "caption",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "salomons-142",
+            "blocks": 4,
+            "labels": [
+              "image",
+              "caption",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "warwick-065",
+            "blocks": 9,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "image",
+              "caption",
+              "text",
+              "text",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "warwick-079",
+            "blocks": 11,
+            "labels": [
+              "header",
+              "table",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "warwick-121",
+            "blocks": 7,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "formula",
+              "text",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "warwick-128",
+            "blocks": 6,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "table",
+              "text",
+              "footer"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "harrington-031",
+            "blocks": 8,
+            "labels": [
+              "header",
+              "text",
+              "text",
+              "title",
+              "text",
+              "text",
+              "text",
+              "text"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "barnes-blank-176",
+            "blocks": 0,
+            "labels": [],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "gell-contents-015",
+            "blocks": 59,
+            "labels": [
+              "title",
+              "title",
+              "text",
+              "title",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "title",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "title",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text",
+              "list",
+              "text"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          },
+          {
+            "id": "chinese-controlled",
+            "blocks": 7,
+            "labels": [
+              "title",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text",
+              "text"
+            ],
+            "invalid_boxes": [],
+            "unparsed_markers": 0
+          }
+        ],
+        "repetition_mean_seconds": [
+          13.53383964587556
+        ],
+        "prose_mean_seconds": 11.120726083337408,
+        "tables_mean_seconds": 19.98798238899811,
+        "prose_cer": 0.0
+      },
+      {
+        "key": "4b",
+        "mode": "plain",
+        "repo": "lightonai/LightOnOCR-3-4B",
+        "revision": "b71010f095dc3735de7ee6b9969bff8f8f50b39a",
+        "load_seconds": 2.622847874998115,
+        "historical_calls": 24,
+        "mean_seconds": 9.675439104289884,
+        "median_seconds": 8.49214675049734,
+        "pages_per_minute": 6.201268940176294,
+        "peak_mlx_gib": 9.998348359018564,
+        "peak_rss_gib": 9.763748168945312,
+        "truncated_calls": 0,
+        "prose": [
+          {
+            "id": "salomons-035",
+            "reference_characters": 1265,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "salomons-086",
+            "reference_characters": 1167,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "warwick-065",
+            "reference_characters": 548,
+            "edit_errors": 0,
+            "cer": 0.0
+          }
+        ],
+        "stress": [
+          {
+            "id": "harrington-031",
+            "seconds": 19.602791458994034,
+            "tokens": 741,
+            "characters": 3387,
+            "token_cap_reached": false
+          },
+          {
+            "id": "barnes-blank-176",
+            "seconds": 1.8034236670064274,
+            "tokens": 1,
+            "characters": 0,
+            "token_cap_reached": false
+          },
+          {
+            "id": "gell-contents-015",
+            "seconds": 11.275244375006878,
+            "tokens": 433,
+            "characters": 2356,
+            "token_cap_reached": false
+          },
+          {
+            "id": "chinese-controlled",
+            "seconds": 9.348501957996632,
+            "tokens": 270,
+            "characters": 459,
+            "token_cap_reached": false,
+            "reference_characters": 367,
+            "edit_errors": 0,
+            "alphanumeric_cer": 0.0
+          }
+        ],
+        "tables": [
+          {
+            "id": "salomons-051",
+            "representation": "html",
+            "reference_cells": 32,
+            "parsed_data_rows": 8,
+            "expected_data_rows": 8,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-079",
+            "representation": "plain_text",
+            "reference_cells": 12,
+            "parsed_data_rows": 6,
+            "expected_data_rows": 6,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-128",
+            "representation": "html",
+            "reference_cells": 11,
+            "parsed_data_rows": 11,
+            "expected_data_rows": 11,
+            "cell_errors": []
+          }
+        ],
+        "rotated_caption": {
+          "expected_printed_phrase": "The Goolden and Trotter Governor",
+          "phrase_found": false,
+          "reference_page_131_found": false,
+          "output_empty": true
+        },
+        "layout": [],
+        "repetition_mean_seconds": [
+          9.212339015875841,
+          9.983728119746957,
+          9.830250177246853
+        ],
+        "prose_mean_seconds": 7.6043465001097905,
+        "tables_mean_seconds": 14.89203897710993,
+        "prose_cer": 0.0
+      },
+      {
+        "key": "mineru",
+        "mode": "plain",
+        "repo": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+        "revision": "08aaea840498d49ce16247b6263196cf02814885",
+        "load_seconds": 2.016532833004021,
+        "historical_calls": 24,
+        "mean_seconds": 2.23654688716609,
+        "median_seconds": 2.243953125005646,
+        "pages_per_minute": 26.82707004458355,
+        "peak_mlx_gib": 3.201862435787916,
+        "peak_rss_gib": 2.9272613525390625,
+        "truncated_calls": 0,
+        "prose": [
+          {
+            "id": "salomons-035",
+            "reference_characters": 1265,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "salomons-086",
+            "reference_characters": 1167,
+            "edit_errors": 0,
+            "cer": 0.0
+          },
+          {
+            "id": "warwick-065",
+            "reference_characters": 548,
+            "edit_errors": 0,
+            "cer": 0.0
+          }
+        ],
+        "stress": [
+          {
+            "id": "harrington-031",
+            "seconds": 3.0949313750024885,
+            "tokens": null,
+            "characters": 4579,
+            "token_cap_reached": false
+          },
+          {
+            "id": "barnes-blank-176",
+            "seconds": 0.6980069580022246,
+            "tokens": null,
+            "characters": 2,
+            "token_cap_reached": false
+          },
+          {
+            "id": "gell-contents-015",
+            "seconds": 4.070877791993553,
+            "tokens": null,
+            "characters": 5414,
+            "token_cap_reached": false
+          },
+          {
+            "id": "chinese-controlled",
+            "seconds": 1.8848630840075202,
+            "tokens": null,
+            "characters": 1404,
+            "token_cap_reached": false,
+            "reference_characters": 367,
+            "edit_errors": 0,
+            "alphanumeric_cer": 0.0
+          }
+        ],
+        "tables": [
+          {
+            "id": "salomons-051",
+            "representation": "html",
+            "reference_cells": 32,
+            "parsed_data_rows": 8,
+            "expected_data_rows": 8,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-079",
+            "representation": "html",
+            "reference_cells": 12,
+            "parsed_data_rows": 6,
+            "expected_data_rows": 6,
+            "cell_errors": []
+          },
+          {
+            "id": "warwick-128",
+            "representation": "html",
+            "reference_cells": 11,
+            "parsed_data_rows": 11,
+            "expected_data_rows": 11,
+            "cell_errors": []
+          }
+        ],
+        "rotated_caption": {
+          "expected_printed_phrase": "The Goolden and Trotter Governor",
+          "phrase_found": true,
+          "reference_page_131_found": true,
+          "output_empty": false
+        },
+        "layout": [],
+        "repetition_mean_seconds": [
+          2.0457180937482917,
+          2.190138234251208,
+          2.47378433349877
+        ],
+        "prose_mean_seconds": 2.1487172362216773,
+        "tables_mean_seconds": 2.640606967444506,
+        "prose_cer": 0.0
+      }
+    ]
+  },
+  "runs": {
+    "08b-grounding": {
+      "key": "08b",
+      "repo": "lightonai/LightOnOCR-3-0.8B",
+      "revision": "36d8636925327c671bd8e479c517a004f7566bd9",
+      "mode": "grounding",
+      "backend": "MLX",
+      "dtype": "unquantized BF16 weights",
+      "runtime": {
+        "mlx": "0.32.2",
+        "mlx-vlm": "0.7.3",
+        "transformers": "5.19.0",
+        "mineru-vl-utils": "2.0.5",
+        "Pillow": "12.3.0",
+        "torch": "2.14.1"
+      },
+      "load_seconds": 2.539048917009495,
+      "temperature": 0.1,
+      "top_p": 1.0,
+      "seed": 42,
+      "max_tokens": 8192,
+      "longest_edge": 2048,
+      "prompt": "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>grounding<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+      "input_manifest_sha256": "b99c24dca23e51d8650b1eb432aa12564f78b7cfd355471d0682c348ad24224b",
+      "samples": [
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.038684082988766,
+          "tokens": 456,
+          "characters": 1782,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.6051129195839167,
+          "peak_rss_gib": 2.363739013671875,
+          "output_sha256": "613782d0143e2c9dbd6919a2592064d3bce83e49764bae965ecb4c94a7d743db"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 5.882752707999316,
+          "tokens": 1052,
+          "characters": 2248,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.6051129270344973,
+          "peak_rss_gib": 2.363739013671875,
+          "output_sha256": "31c65e0053f1d5228a4aa9772486ac4dd282667251c398c7295e10bebecf5970"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 3.140557541002636,
+          "tokens": 459,
+          "characters": 1718,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.6051129270344973,
+          "peak_rss_gib": 2.363739013671875,
+          "output_sha256": "297e139aee390e9397fdadfb0cf0a93cd374ca2dfc5478ded02eb7afe1f3d22c"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.126132792007411,
+          "tokens": 128,
+          "characters": 275,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.6051129270344973,
+          "peak_rss_gib": 2.363739013671875,
+          "output_sha256": "d7017aa2362445c775ddfc9434589d7ef282ac11a86b260f92085932ab57ae12"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 3.404476291994797,
+          "tokens": 363,
+          "characters": 1041,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.6159302834421396,
+          "peak_rss_gib": 2.3826904296875,
+          "output_sha256": "45600765e82f3ad3fc9e48bd93fc1c8b4e15387bcbf44bf1ca2d2c61a5dba6d9"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 5.514752208007849,
+          "tokens": 759,
+          "characters": 1730,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.6159302834421396,
+          "peak_rss_gib": 2.3826904296875,
+          "output_sha256": "ca9d6f303a37cdea931dd49f1307dd43b4fb2053e6a0b52c7d6aa52756e0062b"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 3.1483757499954663,
+          "tokens": 487,
+          "characters": 1576,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.6464194767177105,
+          "peak_rss_gib": 2.3826904296875,
+          "output_sha256": "5a5d04de29c672a84f4e27845e7b04cb54603e9e2b7fde4f606032e29552502e"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 3.858271582997986,
+          "tokens": 697,
+          "characters": 1767,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.6464194767177105,
+          "peak_rss_gib": 2.3826904296875,
+          "output_sha256": "4bad75553fe1eccc176db9106680b0ce7d675458bce1e7680cd4f8e0dbdf491e"
+        },
+        {
+          "id": "harrington-031",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 6.387390666001011,
+          "tokens": 893,
+          "characters": 3602,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1348,
+            1873
+          ],
+          "peak_mlx_gib": 2.876135639846325,
+          "peak_rss_gib": 2.609832763671875,
+          "output_sha256": "7a765d9a2d4925be8f9ea4690db3bf5a35615c9e9f04e40ce4943804f016dfb6"
+        },
+        {
+          "id": "barnes-blank-176",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 0.34485295800550375,
+          "tokens": 1,
+          "characters": 0,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1093,
+            1770
+          ],
+          "peak_mlx_gib": 2.876135639846325,
+          "peak_rss_gib": 2.6507568359375,
+          "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "id": "gell-contents-015",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 6.720539792004274,
+          "tokens": 975,
+          "characters": 1771,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1058,
+            1607
+          ],
+          "peak_mlx_gib": 2.876135639846325,
+          "peak_rss_gib": 2.6507568359375,
+          "output_sha256": "d9ad43ba082a782a19027da032960f80bcaa7069841779f6db4d523bf34b1cc1"
+        },
+        {
+          "id": "chinese-controlled",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 3.2172114580025664,
+          "tokens": 397,
+          "characters": 622,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1560,
+            2048
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8717803955078125,
+          "output_sha256": "4878a89ccb146dec45bbc65fee36318728efbe108136ec135066794d3a82bfea"
+        }
+      ],
+      "complete": true,
+      "warmup_seconds": 0.4709223340032622
+    },
+    "08b-plain": {
+      "key": "08b",
+      "repo": "lightonai/LightOnOCR-3-0.8B",
+      "revision": "36d8636925327c671bd8e479c517a004f7566bd9",
+      "mode": "plain",
+      "backend": "MLX",
+      "dtype": "unquantized BF16 weights",
+      "runtime": {
+        "mlx": "0.32.2",
+        "mlx-vlm": "0.7.3",
+        "transformers": "5.19.0",
+        "mineru-vl-utils": "2.0.5",
+        "Pillow": "12.3.0",
+        "torch": "2.14.1"
+      },
+      "load_seconds": 2.4387769999884767,
+      "temperature": 0.1,
+      "top_p": 1.0,
+      "seed": 42,
+      "max_tokens": 8192,
+      "longest_edge": 2048,
+      "prompt": "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+      "input_manifest_sha256": "b99c24dca23e51d8650b1eb432aa12564f78b7cfd355471d0682c348ad24224b",
+      "samples": [
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.657236874991213,
+          "tokens": 358,
+          "characters": 1645,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.6037395764142275,
+          "peak_rss_gib": 2.36431884765625,
+          "output_sha256": "9858cba051922b011b4190bb9794077f26b98216d190695bfa74dc55408184d5"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 4.115246125002159,
+          "tokens": 939,
+          "characters": 2142,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.603739583864808,
+          "peak_rss_gib": 2.36431884765625,
+          "output_sha256": "aa261d41f31f6a535dcb8b7f2e3d9991c5fc173d87de745b058d2df8a583c8c8"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.613948625003104,
+          "tokens": 334,
+          "characters": 1535,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.603739583864808,
+          "peak_rss_gib": 2.36431884765625,
+          "output_sha256": "81b97edc36ad9048b13364d59315f260b8abb0c6d9106f9d76ff06884467104b"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 0.310457542000222,
+          "tokens": 34,
+          "characters": 83,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.603739583864808,
+          "peak_rss_gib": 2.36431884765625,
+          "output_sha256": "19f5f9dbcc510391489122372e3c29989bbd726899ad5b05e09bec71f89b7985"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.0652049579948653,
+          "tokens": 187,
+          "characters": 763,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.6464194394648075,
+          "peak_rss_gib": 2.378692626953125,
+          "output_sha256": "00d4ff9d8d2f980af5c6e6077e2d9882fa28f34b251b2e0f3b9950cf0acc77cd"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.532838042010553,
+          "tokens": 561,
+          "characters": 1477,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.6464194394648075,
+          "peak_rss_gib": 2.378692626953125,
+          "output_sha256": "0c8d2227e11ffe5689c68b4929745602695a10232ae1bccc595a35387304b648"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.7211057499953313,
+          "tokens": 354,
+          "characters": 1395,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.6464194394648075,
+          "peak_rss_gib": 2.378692626953125,
+          "output_sha256": "90896b94990ea4dab91d751cb9527a1b4dc5f0e54547178b1bced972bb029e31"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.772492542004329,
+          "tokens": 584,
+          "characters": 1615,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.6464194394648075,
+          "peak_rss_gib": 2.378692626953125,
+          "output_sha256": "e3b9b8f20bb3ed22f0e3463c86f475bd36768c3ec3bfb56381e40a5f505b71e7"
+        },
+        {
+          "id": "harrington-031",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 4.830251874998794,
+          "tokens": 741,
+          "characters": 3387,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1348,
+            1873
+          ],
+          "peak_mlx_gib": 2.876135639846325,
+          "peak_rss_gib": 2.6041259765625,
+          "output_sha256": "5ffd2eb684cd75bb593f532e2996f4223206e1b7f7b20f1b6ede13cb50b022af"
+        },
+        {
+          "id": "barnes-blank-176",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 0.2525621249951655,
+          "tokens": 1,
+          "characters": 0,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1093,
+            1770
+          ],
+          "peak_mlx_gib": 2.876135639846325,
+          "peak_rss_gib": 2.6409912109375,
+          "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "id": "gell-contents-015",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 2.601949917007005,
+          "tokens": 506,
+          "characters": 1308,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1058,
+            1607
+          ],
+          "peak_mlx_gib": 2.876135639846325,
+          "peak_rss_gib": 2.6409912109375,
+          "output_sha256": "28563d7ced574efcb31e072aa28ec3ec11f9186643b112289fa915ef09ae7d11"
+        },
+        {
+          "id": "chinese-controlled",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 1.9754545420000795,
+          "tokens": 267,
+          "characters": 455,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1560,
+            2048
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "24d1b28e417bf6e68998d4c3326fa1d25e4634c27ad5509d64616c00ed6ef548"
+        },
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 1.8052224999992177,
+          "tokens": 358,
+          "characters": 1645,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "9858cba051922b011b4190bb9794077f26b98216d190695bfa74dc55408184d5"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 4.537883375000092,
+          "tokens": 939,
+          "characters": 2142,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "aa261d41f31f6a535dcb8b7f2e3d9991c5fc173d87de745b058d2df8a583c8c8"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 1.79181070800405,
+          "tokens": 334,
+          "characters": 1535,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "81b97edc36ad9048b13364d59315f260b8abb0c6d9106f9d76ff06884467104b"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 0.33638175000669435,
+          "tokens": 34,
+          "characters": 83,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "19f5f9dbcc510391489122372e3c29989bbd726899ad5b05e09bec71f89b7985"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 1.0856177499954356,
+          "tokens": 187,
+          "characters": 763,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "00d4ff9d8d2f980af5c6e6077e2d9882fa28f34b251b2e0f3b9950cf0acc77cd"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.705885417002719,
+          "tokens": 561,
+          "characters": 1477,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "0c8d2227e11ffe5689c68b4929745602695a10232ae1bccc595a35387304b648"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 1.8220722499972908,
+          "tokens": 354,
+          "characters": 1395,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "90896b94990ea4dab91d751cb9527a1b4dc5f0e54547178b1bced972bb029e31"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.728737707991968,
+          "tokens": 584,
+          "characters": 1615,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "e3b9b8f20bb3ed22f0e3463c86f475bd36768c3ec3bfb56381e40a5f505b71e7"
+        },
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 1.7509666249970905,
+          "tokens": 358,
+          "characters": 1645,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "9858cba051922b011b4190bb9794077f26b98216d190695bfa74dc55408184d5"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 4.549664499994833,
+          "tokens": 939,
+          "characters": 2142,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "aa261d41f31f6a535dcb8b7f2e3d9991c5fc173d87de745b058d2df8a583c8c8"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 1.7730115830054274,
+          "tokens": 334,
+          "characters": 1535,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "81b97edc36ad9048b13364d59315f260b8abb0c6d9106f9d76ff06884467104b"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 0.3513647910003783,
+          "tokens": 34,
+          "characters": 83,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "19f5f9dbcc510391489122372e3c29989bbd726899ad5b05e09bec71f89b7985"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 1.0907749999896623,
+          "tokens": 187,
+          "characters": 763,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "00d4ff9d8d2f980af5c6e6077e2d9882fa28f34b251b2e0f3b9950cf0acc77cd"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.6595054590143263,
+          "tokens": 561,
+          "characters": 1477,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "0c8d2227e11ffe5689c68b4929745602695a10232ae1bccc595a35387304b648"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 1.8270748749928316,
+          "tokens": 354,
+          "characters": 1395,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "90896b94990ea4dab91d751cb9527a1b4dc5f0e54547178b1bced972bb029e31"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.8233821250032634,
+          "tokens": 584,
+          "characters": 1615,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 2.892493061721325,
+          "peak_rss_gib": 2.8601531982421875,
+          "output_sha256": "e3b9b8f20bb3ed22f0e3463c86f475bd36768c3ec3bfb56381e40a5f505b71e7"
+        }
+      ],
+      "complete": true,
+      "warmup_seconds": 0.4691747920005582
+    },
+    "1b-grounding": {
+      "key": "1b",
+      "repo": "lightonai/LightOnOCR-3-1B",
+      "revision": "23d544085c886bbdace647bcfab91203299417e2",
+      "mode": "grounding",
+      "backend": "MLX",
+      "dtype": "unquantized BF16 weights",
+      "runtime": {
+        "mlx": "0.32.2",
+        "mlx-vlm": "0.7.3",
+        "transformers": "5.19.0",
+        "mineru-vl-utils": "2.0.5",
+        "Pillow": "12.3.0",
+        "torch": "2.14.1"
+      },
+      "load_seconds": 2.2890607079898473,
+      "temperature": 0.1,
+      "top_p": 1.0,
+      "seed": 42,
+      "max_tokens": 8192,
+      "longest_edge": 1540,
+      "prompt": "<|im_start|>system<|im_end|>\n<|im_start|>user\n<|image_pad|>grounding\n<|im_end|>\n<|im_start|>assistant\n",
+      "input_manifest_sha256": "b99c24dca23e51d8650b1eb432aa12564f78b7cfd355471d0682c348ad24224b",
+      "samples": [
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.3981325419881614,
+          "tokens": 455,
+          "characters": 1783,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 5.49336620233953,
+          "peak_rss_gib": 2.551116943359375,
+          "output_sha256": "6453be44ed00f2d5f9a089af27383718653a28fcf01c571d2d3ba289074785a1"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 6.79957416599791,
+          "tokens": 969,
+          "characters": 2249,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 5.493366209790111,
+          "peak_rss_gib": 2.552093505859375,
+          "output_sha256": "0dd1c8157dded83ef50dfa4ad36ecb1adad74b6f9f34e34f9dec711cc3b2e57c"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.8735639590013307,
+          "tokens": 451,
+          "characters": 1719,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 5.493366209790111,
+          "peak_rss_gib": 2.5525360107421875,
+          "output_sha256": "ca02dd6e89fcffe73f524c020900d597510321f39259ad442847bd17bcf37b79"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.729319291000138,
+          "tokens": 125,
+          "characters": 269,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 5.493366209790111,
+          "peak_rss_gib": 2.5525360107421875,
+          "output_sha256": "5269218e4e82f009b794651e7273e2b81fd59fc0d159eea1c48c986b22765663"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.479818834006437,
+          "tokens": 343,
+          "characters": 1015,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 6.226322142407298,
+          "peak_rss_gib": 2.566375732421875,
+          "output_sha256": "91bcdb68c9cad25a6d726924b4ee75f82ede25e16e6aaf275b14a8cc8bbfcbd4"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 4.463249749998795,
+          "tokens": 720,
+          "characters": 1731,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 6.226322142407298,
+          "peak_rss_gib": 2.566375732421875,
+          "output_sha256": "276b384f0aee0e5ac3ddefbf002e18496a57652467453cdd477f39d0d6aee532"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 3.0664886250015115,
+          "tokens": 462,
+          "characters": 1531,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 6.226322142407298,
+          "peak_rss_gib": 2.566375732421875,
+          "output_sha256": "d31376c29a764d4ada2592919341ee85b20ee3922f8f1e5b1148858565b2ef17"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 3.829975958011346,
+          "tokens": 641,
+          "characters": 1768,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 6.226322142407298,
+          "peak_rss_gib": 2.566375732421875,
+          "output_sha256": "6853289ccccce85b47e1f60e20c6379f8d9e573ae66fbe1edcceeae72d89f002"
+        },
+        {
+          "id": "harrington-031",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 6.083831790994736,
+          "tokens": 880,
+          "characters": 3591,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1108,
+            1540
+          ],
+          "peak_mlx_gib": 7.201485915109515,
+          "peak_rss_gib": 2.6243438720703125,
+          "output_sha256": "fabc6863f73a2d062092528ad3c811537ae1f60382f1b08bceb65056fad82c2a"
+        },
+        {
+          "id": "barnes-blank-176",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 1.3218319590087049,
+          "tokens": 1,
+          "characters": 0,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            951,
+            1540
+          ],
+          "peak_mlx_gib": 7.201485915109515,
+          "peak_rss_gib": 2.6275634765625,
+          "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "id": "gell-contents-015",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 6.003132707992336,
+          "tokens": 964,
+          "characters": 1816,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1014,
+            1540
+          ],
+          "peak_mlx_gib": 7.201485915109515,
+          "peak_rss_gib": 2.6275634765625,
+          "output_sha256": "c5560d14a898f947d990b3e46b054a01787c741a0211d5595fbabd55e911ee32"
+        },
+        {
+          "id": "chinese-controlled",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 3.2543388750054874,
+          "tokens": 420,
+          "characters": 623,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1173,
+            1540
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7136077880859375,
+          "output_sha256": "9d6c39fc077d6859b60b8da524a8c9b174c2cbdf83a7b49552c36c33d41db702"
+        }
+      ],
+      "complete": true,
+      "warmup_seconds": 0.8235450000065612
+    },
+    "1b-plain": {
+      "key": "1b",
+      "repo": "lightonai/LightOnOCR-3-1B",
+      "revision": "23d544085c886bbdace647bcfab91203299417e2",
+      "mode": "plain",
+      "backend": "MLX",
+      "dtype": "unquantized BF16 weights",
+      "runtime": {
+        "mlx": "0.32.2",
+        "mlx-vlm": "0.7.3",
+        "transformers": "5.19.0",
+        "mineru-vl-utils": "2.0.5",
+        "Pillow": "12.3.0",
+        "torch": "2.14.1"
+      },
+      "load_seconds": 2.299673540997901,
+      "temperature": 0.1,
+      "top_p": 1.0,
+      "seed": 42,
+      "max_tokens": 8192,
+      "longest_edge": 1540,
+      "prompt": "<|im_start|>system<|im_end|>\n<|im_start|>user\n<|image_pad|><|im_end|>\n<|im_start|>assistant\n",
+      "input_manifest_sha256": "b99c24dca23e51d8650b1eb432aa12564f78b7cfd355471d0682c348ad24224b",
+      "samples": [
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.9812862090038834,
+          "tokens": 357,
+          "characters": 1646,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 5.493366157636046,
+          "peak_rss_gib": 2.561859130859375,
+          "output_sha256": "ffbf1b19ff4a97f56ec1b6167eb35be66320ec58d3424fd183208dbb92d7460f"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 4.368578374997014,
+          "tokens": 857,
+          "characters": 2148,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 5.493366165086627,
+          "peak_rss_gib": 2.56243896484375,
+          "output_sha256": "26926d317d0098c14c1fa6916305781e820746a69921eedc77c5b12dfc7bb9ce"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.5171679579943884,
+          "tokens": 330,
+          "characters": 1536,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 5.493366165086627,
+          "peak_rss_gib": 2.5625457763671875,
+          "output_sha256": "b055edbf80739fd79e096b90620f3aa1402ff82388f1407a94e918f527690f99"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 0.7112847499956843,
+          "tokens": 33,
+          "characters": 84,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 5.493366165086627,
+          "peak_rss_gib": 2.5625457763671875,
+          "output_sha256": "b22767ca7b8ed8e81dd1c5316ac9f440af5e721547aa88ea73834e96e5181ded"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.504210333005176,
+          "tokens": 184,
+          "characters": 764,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 6.2263220977038145,
+          "peak_rss_gib": 2.576324462890625,
+          "output_sha256": "382b17ae4795eaaec592eb72605f265f2ce565dc452ceccff847a5d37df7d7fc"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.838251750014024,
+          "tokens": 510,
+          "characters": 1451,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 6.2263220977038145,
+          "peak_rss_gib": 2.576324462890625,
+          "output_sha256": "99cf29c97aaf31b80443ef7b51c7f951bc4a784b6733fd6206833e6bc4903dba"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.1828297499887412,
+          "tokens": 329,
+          "characters": 1350,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 6.2263220977038145,
+          "peak_rss_gib": 2.576324462890625,
+          "output_sha256": "efdbf2998f919c5be52dfcf88e5c232b56dff537112b9adc3a8a65ab893c2188"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.866544958000304,
+          "tokens": 528,
+          "characters": 1616,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 6.2263220977038145,
+          "peak_rss_gib": 2.576324462890625,
+          "output_sha256": "fb8a7d65d834dc4c728298d338096b6f2f2a2b19a6e4b7e05a99f7936da13a7a"
+        },
+        {
+          "id": "harrington-031",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 4.4028362079989165,
+          "tokens": 734,
+          "characters": 3384,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1108,
+            1540
+          ],
+          "peak_mlx_gib": 7.201485915109515,
+          "peak_rss_gib": 2.6344757080078125,
+          "output_sha256": "b4039635004194a45cac647f4dfe51ae9c17d6d2257e4f8b0796d5430d98816a"
+        },
+        {
+          "id": "barnes-blank-176",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 0.9194960409949999,
+          "tokens": 1,
+          "characters": 0,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            951,
+            1540
+          ],
+          "peak_mlx_gib": 7.201485915109515,
+          "peak_rss_gib": 2.637542724609375,
+          "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "id": "gell-contents-015",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 2.9055608339986065,
+          "tokens": 442,
+          "characters": 1161,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1014,
+            1540
+          ],
+          "peak_mlx_gib": 7.201485915109515,
+          "peak_rss_gib": 2.637542724609375,
+          "output_sha256": "2ce285e61f50f0e40ba0981ce4211690a269cdc591e8a6c002e6e593f2e9e655"
+        },
+        {
+          "id": "chinese-controlled",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 2.5067553339904407,
+          "tokens": 289,
+          "characters": 456,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1173,
+            1540
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "de9771734b2c9975549ef7b74c2486f41d219237220ba1bdbadb313a8f72544f"
+        },
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.208046625004499,
+          "tokens": 357,
+          "characters": 1646,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "ffbf1b19ff4a97f56ec1b6167eb35be66320ec58d3424fd183208dbb92d7460f"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 4.4483457500027725,
+          "tokens": 857,
+          "characters": 2148,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "26926d317d0098c14c1fa6916305781e820746a69921eedc77c5b12dfc7bb9ce"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.295405083001242,
+          "tokens": 330,
+          "characters": 1536,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "b055edbf80739fd79e096b90620f3aa1402ff82388f1407a94e918f527690f99"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 0.8035760409984505,
+          "tokens": 33,
+          "characters": 84,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "b22767ca7b8ed8e81dd1c5316ac9f440af5e721547aa88ea73834e96e5181ded"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 1.4758976250013802,
+          "tokens": 184,
+          "characters": 764,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "382b17ae4795eaaec592eb72605f265f2ce565dc452ceccff847a5d37df7d7fc"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.7120139159960672,
+          "tokens": 510,
+          "characters": 1451,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "99cf29c97aaf31b80443ef7b51c7f951bc4a784b6733fd6206833e6bc4903dba"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.2053351249924162,
+          "tokens": 329,
+          "characters": 1350,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "efdbf2998f919c5be52dfcf88e5c232b56dff537112b9adc3a8a65ab893c2188"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.8533373749960447,
+          "tokens": 528,
+          "characters": 1616,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "fb8a7d65d834dc4c728298d338096b6f2f2a2b19a6e4b7e05a99f7936da13a7a"
+        },
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.4149612089968286,
+          "tokens": 357,
+          "characters": 1646,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "ffbf1b19ff4a97f56ec1b6167eb35be66320ec58d3424fd183208dbb92d7460f"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 4.46431974999723,
+          "tokens": 857,
+          "characters": 2148,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "26926d317d0098c14c1fa6916305781e820746a69921eedc77c5b12dfc7bb9ce"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.3694807499996386,
+          "tokens": 330,
+          "characters": 1536,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "b055edbf80739fd79e096b90620f3aa1402ff82388f1407a94e918f527690f99"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 0.8570464170043124,
+          "tokens": 33,
+          "characters": 84,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "b22767ca7b8ed8e81dd1c5316ac9f440af5e721547aa88ea73834e96e5181ded"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 1.5335174170031678,
+          "tokens": 184,
+          "characters": 764,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "382b17ae4795eaaec592eb72605f265f2ce565dc452ceccff847a5d37df7d7fc"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.7791255000047386,
+          "tokens": 510,
+          "characters": 1451,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "99cf29c97aaf31b80443ef7b51c7f951bc4a784b6733fd6206833e6bc4903dba"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.354348916996969,
+          "tokens": 329,
+          "characters": 1350,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "efdbf2998f919c5be52dfcf88e5c232b56dff537112b9adc3a8a65ab893c2188"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 3.0279077500017593,
+          "tokens": 528,
+          "characters": 1616,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.7231292724609375,
+          "output_sha256": "fb8a7d65d834dc4c728298d338096b6f2f2a2b19a6e4b7e05a99f7936da13a7a"
+        }
+      ],
+      "complete": true,
+      "warmup_seconds": 1.3185820000071544
+    },
+    "2b-plain-fixed": {
+      "key": "2b",
+      "repo": "mlx-community/LightOnOCR-2-1B-bf16",
+      "revision": "16e06849ba5c689f782473651914d6613d25d884",
+      "mode": "plain",
+      "backend": "MLX",
+      "dtype": "unquantized BF16 weights",
+      "runtime": {
+        "mlx": "0.32.2",
+        "mlx-vlm": "0.7.3",
+        "transformers": "5.19.0",
+        "mineru-vl-utils": "2.0.5",
+        "Pillow": "12.3.0",
+        "torch": "2.14.1"
+      },
+      "load_seconds": 2.151701792012318,
+      "temperature": 0.1,
+      "top_p": 1.0,
+      "seed": 42,
+      "max_tokens": 8192,
+      "longest_edge": 1540,
+      "prompt": "<|im_start|>system<|im_end|>\n<|im_start|>user\n<|image_pad|><|im_end|>\n<|im_start|>assistant\n",
+      "input_manifest_sha256": "b99c24dca23e51d8650b1eb432aa12564f78b7cfd355471d0682c348ad24224b",
+      "samples": [
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.704676749999635,
+          "tokens": 343,
+          "characters": 1599,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 5.493366157636046,
+          "peak_rss_gib": 2.559539794921875,
+          "output_sha256": "f4bab64683845e0c84c137ebfde9c4a5ce164e7cacca9e2fd74c9fec7b631bdd"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 4.623151624997263,
+          "tokens": 806,
+          "characters": 1830,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 5.493366165086627,
+          "peak_rss_gib": 2.560211181640625,
+          "output_sha256": "9f5fcb653dbfd9a21de3e249f2702745a30d9236144f84c0933e0a4b6739e7d1"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.679143875007867,
+          "tokens": 341,
+          "characters": 1528,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 5.493366165086627,
+          "peak_rss_gib": 2.5603485107421875,
+          "output_sha256": "2bd0b2d5486a76f6de29ab0787d491bb25bdcb966fbcf931a40d6ef443f5dcb7"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 0.9047826250025537,
+          "tokens": 32,
+          "characters": 83,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 5.493366165086627,
+          "peak_rss_gib": 2.5603485107421875,
+          "output_sha256": "19f5f9dbcc510391489122372e3c29989bbd726899ad5b05e09bec71f89b7985"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.8343056250014342,
+          "tokens": 207,
+          "characters": 836,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 6.2263220977038145,
+          "peak_rss_gib": 2.57421875,
+          "output_sha256": "ee1b8f1fdefa9e0ba9b2743fdc1d9a8e1fc2f124e8cf5e80e34118537730c379"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.9085690420033643,
+          "tokens": 294,
+          "characters": 888,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 6.2263220977038145,
+          "peak_rss_gib": 2.57421875,
+          "output_sha256": "b304e1128816aa9fc740f36289f6389509b8f57db3be5e0d9a733752494e19a6"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.3852801250031916,
+          "tokens": 345,
+          "characters": 1396,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 6.2263220977038145,
+          "peak_rss_gib": 2.57421875,
+          "output_sha256": "26f58b4b971a5754acd6d0c14b966283af973aa3ef5e29a895529ae518b12c8b"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 3.174654874994303,
+          "tokens": 510,
+          "characters": 1475,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 6.2263220977038145,
+          "peak_rss_gib": 2.57421875,
+          "output_sha256": "bcf172a5c8cf3cf33437d8aa92317074e29fda9ae8610d88fccbceb750a812c0"
+        },
+        {
+          "id": "harrington-031",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 4.938095042001805,
+          "tokens": 738,
+          "characters": 3387,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1108,
+            1540
+          ],
+          "peak_mlx_gib": 7.201485915109515,
+          "peak_rss_gib": 2.631988525390625,
+          "output_sha256": "5ffd2eb684cd75bb593f532e2996f4223206e1b7f7b20f1b6ede13cb50b022af"
+        },
+        {
+          "id": "barnes-blank-176",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 1.2845720829936909,
+          "tokens": 1,
+          "characters": 0,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            951,
+            1540
+          ],
+          "peak_mlx_gib": 7.201485915109515,
+          "peak_rss_gib": 2.6351318359375,
+          "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "id": "gell-contents-015",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 3.090302958007669,
+          "tokens": 477,
+          "characters": 2459,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1014,
+            1540
+          ],
+          "peak_mlx_gib": 7.201485915109515,
+          "peak_rss_gib": 2.6351318359375,
+          "output_sha256": "2a2b6d9baf70108159daa639dc9e34e0b2ae0abd5f6efdb73e7b2716688b98c5"
+        },
+        {
+          "id": "chinese-controlled",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 2.9047017919947393,
+          "tokens": 292,
+          "characters": 468,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1173,
+            1540
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "a2816dcab072e52a001eaf27c1078dd3112d00ec5e4e29d572188463d6f63204"
+        },
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.3242547920090146,
+          "tokens": 343,
+          "characters": 1599,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "f4bab64683845e0c84c137ebfde9c4a5ce164e7cacca9e2fd74c9fec7b631bdd"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 4.51442937500542,
+          "tokens": 806,
+          "characters": 1830,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "9f5fcb653dbfd9a21de3e249f2702745a30d9236144f84c0933e0a4b6739e7d1"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.563764207996428,
+          "tokens": 341,
+          "characters": 1528,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "2bd0b2d5486a76f6de29ab0787d491bb25bdcb966fbcf931a40d6ef443f5dcb7"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 0.9091337920108344,
+          "tokens": 32,
+          "characters": 83,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "19f5f9dbcc510391489122372e3c29989bbd726899ad5b05e09bec71f89b7985"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 1.7333878749923315,
+          "tokens": 207,
+          "characters": 836,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "ee1b8f1fdefa9e0ba9b2743fdc1d9a8e1fc2f124e8cf5e80e34118537730c379"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.0393972500023665,
+          "tokens": 294,
+          "characters": 888,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "b304e1128816aa9fc740f36289f6389509b8f57db3be5e0d9a733752494e19a6"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.356136707996484,
+          "tokens": 345,
+          "characters": 1396,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "26f58b4b971a5754acd6d0c14b966283af973aa3ef5e29a895529ae518b12c8b"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.985731708991807,
+          "tokens": 510,
+          "characters": 1475,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "bcf172a5c8cf3cf33437d8aa92317074e29fda9ae8610d88fccbceb750a812c0"
+        },
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.5312817079975503,
+          "tokens": 343,
+          "characters": 1599,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "f4bab64683845e0c84c137ebfde9c4a5ce164e7cacca9e2fd74c9fec7b631bdd"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 4.577979582987609,
+          "tokens": 806,
+          "characters": 1830,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "9f5fcb653dbfd9a21de3e249f2702745a30d9236144f84c0933e0a4b6739e7d1"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.8567639579996467,
+          "tokens": 341,
+          "characters": 1528,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "2bd0b2d5486a76f6de29ab0787d491bb25bdcb966fbcf931a40d6ef443f5dcb7"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 0.8624071250087582,
+          "tokens": 32,
+          "characters": 83,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "19f5f9dbcc510391489122372e3c29989bbd726899ad5b05e09bec71f89b7985"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 1.8563795829977607,
+          "tokens": 207,
+          "characters": 836,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "ee1b8f1fdefa9e0ba9b2743fdc1d9a8e1fc2f124e8cf5e80e34118537730c379"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 1.9074647499946877,
+          "tokens": 294,
+          "characters": 888,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "b304e1128816aa9fc740f36289f6389509b8f57db3be5e0d9a733752494e19a6"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.2866990420006914,
+          "tokens": 345,
+          "characters": 1396,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "26f58b4b971a5754acd6d0c14b966283af973aa3ef5e29a895529ae518b12c8b"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.9564549580099992,
+          "tokens": 510,
+          "characters": 1475,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 7.710152907297015,
+          "peak_rss_gib": 2.72100830078125,
+          "output_sha256": "bcf172a5c8cf3cf33437d8aa92317074e29fda9ae8610d88fccbceb750a812c0"
+        }
+      ],
+      "complete": true,
+      "warmup_seconds": 0.8859788340050727
+    },
+    "4b-grounding": {
+      "key": "4b",
+      "repo": "lightonai/LightOnOCR-3-4B",
+      "revision": "b71010f095dc3735de7ee6b9969bff8f8f50b39a",
+      "mode": "grounding",
+      "backend": "MLX",
+      "dtype": "unquantized BF16 weights",
+      "runtime": {
+        "mlx": "0.32.2",
+        "mlx-vlm": "0.7.3",
+        "transformers": "5.19.0",
+        "mineru-vl-utils": "2.0.5",
+        "Pillow": "12.3.0",
+        "torch": "2.14.1"
+      },
+      "load_seconds": 2.6621865420020185,
+      "temperature": 0.1,
+      "top_p": 1.0,
+      "seed": 42,
+      "max_tokens": 8192,
+      "longest_edge": 2048,
+      "prompt": "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>grounding<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+      "input_manifest_sha256": "b99c24dca23e51d8650b1eb432aa12564f78b7cfd355471d0682c348ad24224b",
+      "samples": [
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 11.228321125003276,
+          "tokens": 456,
+          "characters": 1782,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.637940155342221,
+          "peak_rss_gib": 9.23492431640625,
+          "output_sha256": "d16e268c5c11f559f2b6535d11fd9f366ba47fac925caad23542655b23b964b2"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 25.063231874999474,
+          "tokens": 1051,
+          "characters": 2244,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.63798593915999,
+          "peak_rss_gib": 9.23492431640625,
+          "output_sha256": "fc6ac21c2a936063aff213498074b9c6e7199800929ebef1d84570e8d529cd3c"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 12.450157083003432,
+          "tokens": 458,
+          "characters": 1718,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.63798593915999,
+          "peak_rss_gib": 9.239120483398438,
+          "output_sha256": "62e369479e05c4f92d4168f3b55d90e545f412213b74e2952a4b05983db78944"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 3.7358464999997523,
+          "tokens": 128,
+          "characters": 276,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.63798593915999,
+          "peak_rss_gib": 9.240280151367188,
+          "output_sha256": "334b3f405582a73308cdfd20b1f063fb237d9dd71ff83195515976a0c64d66ba"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 9.683700042005512,
+          "tokens": 363,
+          "characters": 1043,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.63798593915999,
+          "peak_rss_gib": 9.266708374023438,
+          "output_sha256": "e1b33da3a220e5b1b489e6d369bf8aba68954df86a53bd3fa12efb3fa2d1edd1"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 17.84079820899933,
+          "tokens": 758,
+          "characters": 1730,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.63798593915999,
+          "peak_rss_gib": 9.266708374023438,
+          "output_sha256": "7144e4d126ba9a3cbc4621c73908e60695073ee7815b187767dc4d4ac39479d9"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 11.208745249998174,
+          "tokens": 464,
+          "characters": 1531,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.63798593915999,
+          "peak_rss_gib": 9.266708374023438,
+          "output_sha256": "e1c87a41dcf82653c58356698ada638d54358b8a1b1eafd60b08717b118649d9"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 17.059917082995526,
+          "tokens": 697,
+          "characters": 1767,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.63798593915999,
+          "peak_rss_gib": 9.266708374023438,
+          "output_sha256": "8b36bccbd001d308b99b09f3b57604c9a371ee9acc3a4558182ec470b0336ff3"
+        },
+        {
+          "id": "harrington-031",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 21.984951834005187,
+          "tokens": 894,
+          "characters": 3603,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1348,
+            1873
+          ],
+          "peak_mlx_gib": 9.980114106088877,
+          "peak_rss_gib": 9.505081176757812,
+          "output_sha256": "e25e66fa8b54fab9598fcab6406c7d3b7dd21e8735f9dbfce6ca03cb83749f16"
+        },
+        {
+          "id": "barnes-blank-176",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 1.6340575000067474,
+          "tokens": 1,
+          "characters": 0,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1093,
+            1770
+          ],
+          "peak_mlx_gib": 9.980114106088877,
+          "peak_rss_gib": 9.535430908203125,
+          "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "id": "gell-contents-015",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 37.124984750000294,
+          "tokens": 1541,
+          "characters": 2512,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1058,
+            1607
+          ],
+          "peak_mlx_gib": 9.980114106088877,
+          "peak_rss_gib": 9.535430908203125,
+          "output_sha256": "5d6bc08ca28782b3c63daf47d16318c518bfa59bc0f4826f9dc2174f75c4bac8"
+        },
+        {
+          "id": "chinese-controlled",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 11.30822612499469,
+          "tokens": 400,
+          "characters": 626,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1560,
+            2048
+          ],
+          "peak_mlx_gib": 9.998348366469145,
+          "peak_rss_gib": 9.76593017578125,
+          "output_sha256": "38f5478a44197adeb42eb8ae6aa46934c62d58261272eb307d3936a412dcd5fe"
+        }
+      ],
+      "complete": true,
+      "warmup_seconds": 1.6555368330009514
+    },
+    "4b-plain": {
+      "key": "4b",
+      "repo": "lightonai/LightOnOCR-3-4B",
+      "revision": "b71010f095dc3735de7ee6b9969bff8f8f50b39a",
+      "mode": "plain",
+      "backend": "MLX",
+      "dtype": "unquantized BF16 weights",
+      "runtime": {
+        "mlx": "0.32.2",
+        "mlx-vlm": "0.7.3",
+        "transformers": "5.19.0",
+        "mineru-vl-utils": "2.0.5",
+        "Pillow": "12.3.0",
+        "torch": "2.14.1"
+      },
+      "load_seconds": 2.622847874998115,
+      "temperature": 0.1,
+      "top_p": 1.0,
+      "seed": 42,
+      "max_tokens": 8192,
+      "longest_edge": 2048,
+      "prompt": "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+      "input_manifest_sha256": "b99c24dca23e51d8650b1eb432aa12564f78b7cfd355471d0682c348ad24224b",
+      "samples": [
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 8.006290208999417,
+          "tokens": 344,
+          "characters": 1599,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.636246399953961,
+          "peak_rss_gib": 9.234451293945312,
+          "output_sha256": "f4bab64683845e0c84c137ebfde9c4a5ce164e7cacca9e2fd74c9fec7b631bdd"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 19.936558999994304,
+          "tokens": 883,
+          "characters": 1818,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.63629218377173,
+          "peak_rss_gib": 9.234451293945312,
+          "output_sha256": "030b0c2b7ff97e5ca7f8f1e30f33dc99bf9171b5409254eb1a6debd2a3b5fac9"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 9.097150959001738,
+          "tokens": 306,
+          "characters": 1456,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.63629218377173,
+          "peak_rss_gib": 9.238739013671875,
+          "output_sha256": "809ef0f696629edadb43ba51af8dce5d2f32c144cdb460f9ad87e48fef5bd948"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.44808133400511,
+          "tokens": 1,
+          "characters": 0,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.63629219122231,
+          "peak_rss_gib": 9.242538452148438,
+          "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 5.254823166003916,
+          "tokens": 211,
+          "characters": 856,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.63629219122231,
+          "peak_rss_gib": 9.268814086914062,
+          "output_sha256": "b5dde7563f59bebdb442bcc417c5a7beb08e8496565c60781a17bb55bdd8a6ca"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 7.655783292007982,
+          "tokens": 306,
+          "characters": 900,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.63629219122231,
+          "peak_rss_gib": 9.268814086914062,
+          "output_sha256": "303c2e3880b7364ff3164aac74375461c8207dd465a67258894bdd00f1fc0fab"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 8.515326416993048,
+          "tokens": 315,
+          "characters": 1294,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.63629219122231,
+          "peak_rss_gib": 9.268814086914062,
+          "output_sha256": "e906ed5e1c28475019033827e6a14ec9c278eb1933ed7ca140f60c2cc33e620e"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 13.784697750001214,
+          "tokens": 548,
+          "characters": 1428,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.63629219122231,
+          "peak_rss_gib": 9.268814086914062,
+          "output_sha256": "722664caec8965e100669f090800d9d35a50b79287e608e8c5e356214b6625d9"
+        },
+        {
+          "id": "harrington-031",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 19.602791458994034,
+          "tokens": 741,
+          "characters": 3387,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1348,
+            1873
+          ],
+          "peak_mlx_gib": 9.980098847299814,
+          "peak_rss_gib": 9.50146484375,
+          "output_sha256": "5ffd2eb684cd75bb593f532e2996f4223206e1b7f7b20f1b6ede13cb50b022af"
+        },
+        {
+          "id": "barnes-blank-176",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 1.8034236670064274,
+          "tokens": 1,
+          "characters": 0,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1093,
+            1770
+          ],
+          "peak_mlx_gib": 9.980098847299814,
+          "peak_rss_gib": 9.533737182617188,
+          "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "id": "gell-contents-015",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 11.275244375006878,
+          "tokens": 433,
+          "characters": 2356,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1058,
+            1607
+          ],
+          "peak_mlx_gib": 9.980098847299814,
+          "peak_rss_gib": 9.533737182617188,
+          "output_sha256": "26909b19ec773ff549394bd0b2fc881b17489ffdf0b3512f483a8d3d736bc576"
+        },
+        {
+          "id": "chinese-controlled",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 9.348501957996632,
+          "tokens": 270,
+          "characters": 459,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1560,
+            2048
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "8fee109bd4755b884f2625eb4d4c452c5284f271070145f8a5e1ce80aaeaa46a"
+        },
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 9.48759712500032,
+          "tokens": 344,
+          "characters": 1599,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "f4bab64683845e0c84c137ebfde9c4a5ce164e7cacca9e2fd74c9fec7b631bdd"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 22.291346041994984,
+          "tokens": 883,
+          "characters": 1818,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "030b0c2b7ff97e5ca7f8f1e30f33dc99bf9171b5409254eb1a6debd2a3b5fac9"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 8.271229959005723,
+          "tokens": 306,
+          "characters": 1456,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "809ef0f696629edadb43ba51af8dce5d2f32c144cdb460f9ad87e48fef5bd948"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 1.2819549579871818,
+          "tokens": 1,
+          "characters": 0,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 5.4376721659937175,
+          "tokens": 211,
+          "characters": 856,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "b5dde7563f59bebdb442bcc417c5a7beb08e8496565c60781a17bb55bdd8a6ca"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 8.946333832995151,
+          "tokens": 306,
+          "characters": 900,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "303c2e3880b7364ff3164aac74375461c8207dd465a67258894bdd00f1fc0fab"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 8.959847499994794,
+          "tokens": 315,
+          "characters": 1294,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "e906ed5e1c28475019033827e6a14ec9c278eb1933ed7ca140f60c2cc33e620e"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 15.19384337500378,
+          "tokens": 548,
+          "characters": 1428,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "722664caec8965e100669f090800d9d35a50b79287e608e8c5e356214b6625d9"
+        },
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 9.318470708996756,
+          "tokens": 344,
+          "characters": 1599,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "f4bab64683845e0c84c137ebfde9c4a5ce164e7cacca9e2fd74c9fec7b631bdd"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 23.522609708990785,
+          "tokens": 883,
+          "characters": 1818,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "030b0c2b7ff97e5ca7f8f1e30f33dc99bf9171b5409254eb1a6debd2a3b5fac9"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 8.132465415998013,
+          "tokens": 306,
+          "characters": 1456,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "809ef0f696629edadb43ba51af8dce5d2f32c144cdb460f9ad87e48fef5bd948"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 1.3039725410053506,
+          "tokens": 1,
+          "characters": 0,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 5.433418791988515,
+          "tokens": 211,
+          "characters": 856,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "b5dde7563f59bebdb442bcc417c5a7beb08e8496565c60781a17bb55bdd8a6ca"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 8.468967084001633,
+          "tokens": 306,
+          "characters": 900,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "303c2e3880b7364ff3164aac74375461c8207dd465a67258894bdd00f1fc0fab"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 8.233886457994231,
+          "tokens": 315,
+          "characters": 1294,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "e906ed5e1c28475019033827e6a14ec9c278eb1933ed7ca140f60c2cc33e620e"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 14.22821070899954,
+          "tokens": 548,
+          "characters": 1428,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 9.998348359018564,
+          "peak_rss_gib": 9.763748168945312,
+          "output_sha256": "722664caec8965e100669f090800d9d35a50b79287e608e8c5e356214b6625d9"
+        }
+      ],
+      "complete": true,
+      "warmup_seconds": 1.8153172919992357
+    },
+    "mineru-plain": {
+      "key": "mineru",
+      "repo": "opendatalab/MinerU2.5-Pro-2605-1.2B",
+      "revision": "08aaea840498d49ce16247b6263196cf02814885",
+      "mode": "plain",
+      "backend": "MLX",
+      "dtype": "unquantized BF16 weights",
+      "runtime": {
+        "mlx": "0.32.2",
+        "mlx-vlm": "0.7.3",
+        "transformers": "5.19.0",
+        "mineru-vl-utils": "2.0.5",
+        "Pillow": "12.3.0",
+        "torch": "2.14.1"
+      },
+      "load_seconds": 2.016532833004021,
+      "temperature": null,
+      "top_p": null,
+      "seed": 42,
+      "max_tokens": null,
+      "longest_edge": null,
+      "prompt": "MinerUClient.two_step_extract",
+      "input_manifest_sha256": "b99c24dca23e51d8650b1eb432aa12564f78b7cfd355471d0682c348ad24224b",
+      "samples": [
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.01098574999196,
+          "tokens": null,
+          "characters": 2324,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 3.1186387948691845,
+          "peak_rss_gib": 2.8914794921875,
+          "output_sha256": "e24f7d182f5ed8a9ccc1332518c1dc8bce00b0b03eb3f86dcffa08d410a4887c"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.632726374999038,
+          "tokens": null,
+          "characters": 2680,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 3.1186387948691845,
+          "peak_rss_gib": 2.8914794921875,
+          "output_sha256": "ac3bb68f4451ab84433d7e38d7e5cde106eeded0df3a6ca0d7ac78d2b5fc8f88"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.9858119169948623,
+          "tokens": null,
+          "characters": 2758,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 3.1376254446804523,
+          "peak_rss_gib": 2.8935699462890625,
+          "output_sha256": "2f712119eb977cf16713b19471025e81c90cddc89285f0a4113cb12932f19fab"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.0331828749913257,
+          "tokens": null,
+          "characters": 638,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 3.1376254446804523,
+          "peak_rss_gib": 2.8935699462890625,
+          "output_sha256": "80001f7210a0a349c6c5a2ddcd900191e356c0167dec9b93c20c42fb3959209f"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 1.9659718750044703,
+          "tokens": null,
+          "characters": 2088,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 3.1376254446804523,
+          "peak_rss_gib": 2.8935699462890625,
+          "output_sha256": "2c51f640accc3f4f7c461d19272e0d1031f56e0aead2fd1c4215ec561b122e6b"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.463257249997696,
+          "tokens": null,
+          "characters": 2790,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 3.1376254446804523,
+          "peak_rss_gib": 2.8935699462890625,
+          "output_sha256": "3c5fa1a5a9522051ac1d6687ec322515b2b910a3a46d76ad2cf1edf20f9661ef"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.11762775000534,
+          "tokens": null,
+          "characters": 2441,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.8935699462890625,
+          "output_sha256": "94933a39d1ab82b16723d091e763668769036bd83f8318c1b03615703fea0e2f"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 1,
+          "seconds": 2.1561809580016416,
+          "tokens": null,
+          "characters": 2226,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.8935699462890625,
+          "output_sha256": "485e1a46c5ea7a8a5c2d5b2968facea98bc1f0024e5502709838244a7fb78781"
+        },
+        {
+          "id": "harrington-031",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 3.0949313750024885,
+          "tokens": null,
+          "characters": 4579,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1348,
+            1873
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.8996124267578125,
+          "output_sha256": "a8e894825ccb9555c32928b52fbcb9eaa2ece1876a5b7a8f809c5f9047acafb4"
+        },
+        {
+          "id": "barnes-blank-176",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 0.6980069580022246,
+          "tokens": null,
+          "characters": 2,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1093,
+            1770
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.8996124267578125,
+          "output_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        {
+          "id": "gell-contents-015",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 4.070877791993553,
+          "tokens": null,
+          "characters": 5414,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1058,
+            1607
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.8996124267578125,
+          "output_sha256": "adc21b089977c0be98c2215f11a1cd5677ea649f82f03592855602dba185054d"
+        },
+        {
+          "id": "chinese-controlled",
+          "group": "stress",
+          "repetition": 1,
+          "seconds": 1.8848630840075202,
+          "tokens": null,
+          "characters": 1404,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            1600,
+            2100
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.923187255859375,
+          "output_sha256": "9c35a175f8bd622e91f6851693f3377816bfeeaf4a09d6536c2e203382d907c1"
+        },
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.1454158749984344,
+          "tokens": null,
+          "characters": 2324,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.923187255859375,
+          "output_sha256": "e24f7d182f5ed8a9ccc1332518c1dc8bce00b0b03eb3f86dcffa08d410a4887c"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.7643942080030683,
+          "tokens": null,
+          "characters": 2680,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.923187255859375,
+          "output_sha256": "ac3bb68f4451ab84433d7e38d7e5cde106eeded0df3a6ca0d7ac78d2b5fc8f88"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.189138625006308,
+          "tokens": null,
+          "characters": 2758,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.923187255859375,
+          "output_sha256": "2f712119eb977cf16713b19471025e81c90cddc89285f0a4113cb12932f19fab"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 1.1528027089952957,
+          "tokens": null,
+          "characters": 638,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.923187255859375,
+          "output_sha256": "80001f7210a0a349c6c5a2ddcd900191e356c0167dec9b93c20c42fb3959209f"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 1.9904422909894492,
+          "tokens": null,
+          "characters": 2088,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.923187255859375,
+          "output_sha256": "2c51f640accc3f4f7c461d19272e0d1031f56e0aead2fd1c4215ec561b122e6b"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.6062981660070363,
+          "tokens": null,
+          "characters": 2790,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.923187255859375,
+          "output_sha256": "3c5fa1a5a9522051ac1d6687ec322515b2b910a3a46d76ad2cf1edf20f9661ef"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.2987676250049844,
+          "tokens": null,
+          "characters": 2441,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.923187255859375,
+          "output_sha256": "94933a39d1ab82b16723d091e763668769036bd83f8318c1b03615703fea0e2f"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 2,
+          "seconds": 2.373846375005087,
+          "tokens": null,
+          "characters": 2226,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.923187255859375,
+          "output_sha256": "485e1a46c5ea7a8a5c2d5b2968facea98bc1f0024e5502709838244a7fb78781"
+        },
+        {
+          "id": "salomons-035",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.3730552500055637,
+          "tokens": null,
+          "characters": 2324,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.923187255859375,
+          "output_sha256": "e24f7d182f5ed8a9ccc1332518c1dc8bce00b0b03eb3f86dcffa08d410a4887c"
+        },
+        {
+          "id": "salomons-051",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 3.6162624999997206,
+          "tokens": null,
+          "characters": 2680,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.923187255859375,
+          "output_sha256": "ac3bb68f4451ab84433d7e38d7e5cde106eeded0df3a6ca0d7ac78d2b5fc8f88"
+        },
+        {
+          "id": "salomons-086",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.551110208994942,
+          "tokens": null,
+          "characters": 2758,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.9272613525390625,
+          "output_sha256": "2f712119eb977cf16713b19471025e81c90cddc89285f0a4113cb12932f19fab"
+        },
+        {
+          "id": "salomons-142",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 1.2295384169992758,
+          "tokens": null,
+          "characters": 638,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            982,
+            1356
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.9272613525390625,
+          "output_sha256": "80001f7210a0a349c6c5a2ddcd900191e356c0167dec9b93c20c42fb3959209f"
+        },
+        {
+          "id": "warwick-065",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.126523334009107,
+          "tokens": null,
+          "characters": 2088,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.9272613525390625,
+          "output_sha256": "2c51f640accc3f4f7c461d19272e0d1031f56e0aead2fd1c4215ec561b122e6b"
+        },
+        {
+          "id": "warwick-079",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.7705568749952363,
+          "tokens": null,
+          "characters": 2790,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.9272613525390625,
+          "output_sha256": "3c5fa1a5a9522051ac1d6687ec322515b2b910a3a46d76ad2cf1edf20f9661ef"
+        },
+        {
+          "id": "warwick-121",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.741288082994288,
+          "tokens": null,
+          "characters": 2441,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.9272613525390625,
+          "output_sha256": "94933a39d1ab82b16723d091e763668769036bd83f8318c1b03615703fea0e2f"
+        },
+        {
+          "id": "warwick-128",
+          "group": "historical",
+          "repetition": 3,
+          "seconds": 2.381939999992028,
+          "tokens": null,
+          "characters": 2226,
+          "token_cap_reached": false,
+          "input_dimensions": [
+            967,
+            1278
+          ],
+          "peak_mlx_gib": 3.201862435787916,
+          "peak_rss_gib": 2.9272613525390625,
+          "output_sha256": "485e1a46c5ea7a8a5c2d5b2968facea98bc1f0024e5502709838244a7fb78781"
+        }
+      ],
+      "complete": true,
+      "warmup_seconds": 2.052153750002617,
+      "sampling": "MinerUClient defaults; no caller sampling overrides"
+    }
+  },
+  "execution_status": [
+    {
+      "job": "mineru-plain",
+      "returncode": 0,
+      "seconds": 67.89292462498997
+    },
+    {
+      "job": "2b-plain",
+      "returncode": 1,
+      "seconds": 3.0402822920004837
+    },
+    {
+      "job": "08b-plain",
+      "returncode": 0,
+      "seconds": 62.61029175001022
+    },
+    {
+      "job": "1b-plain",
+      "returncode": 0,
+      "seconds": 72.80728962499416
+    },
+    {
+      "job": "4b-plain",
+      "returncode": 0,
+      "seconds": 280.15307237500383
+    },
+    {
+      "job": "08b-grounding",
+      "returncode": 0,
+      "seconds": 48.54728641700058
+    },
+    {
+      "job": "1b-grounding",
+      "returncode": 0,
+      "seconds": 48.01187470799778
+    },
+    {
+      "job": "4b-grounding",
+      "returncode": 0,
+      "seconds": 185.7000186249934
+    },
+    {
+      "job": "2b-plain-fixed",
+      "returncode": 0,
+      "recovery": "Explicitly loaded checkpoint chat_template.jinja after the first setup failed before inference."
+    }
+  ],
+  "manual_visual_checks": [
+    {
+      "sample": "salomons-035",
+      "model": "08b",
+      "mode": "grounding",
+      "finding": "Two body paragraph boxes approximately match the scan; title/page number/footer separate.",
+      "overlay": "/Users/ramudai/Vibe/quasi/.quasi/temp/lightonocr3-20261009/qa-08b-salomons-035.png"
+    },
+    {
+      "sample": "salomons-142",
+      "model": "08b",
+      "mode": "grounding",
+      "finding": "Rotated caption and page-reference boxes approximately match the scan. All three LightOnOCR-3 grounding variants retain the printed caption and 131.",
+      "overlay": "/Users/ramudai/Vibe/quasi/.quasi/temp/lightonocr3-20261009/qa-08b-salomons-142.png"
+    },
+    {
+      "sample": "gell-contents-015",
+      "model": "08b",
+      "mode": "plain and grounding",
+      "finding": "Chapter-level destination page numbers 1, 12 and 28 omitted; plain also omits List of Figures destination xx. Grounding leaf entries include destination numbers in text but their boxes omit the right-hand destination column.",
+      "exact_example": {
+        "text": "1.2. The Art Object 5",
+        "bbox_0_1000": [
+          71,
+          292,
+          304,
+          314
+        ],
+        "source_number_column_x_approx": [
+          880,
+          920
+        ]
+      },
+      "overlay": "/Users/ramudai/Vibe/quasi/.quasi/temp/lightonocr3-20261009/qa-08b-gell-contents-015.png"
+    },
+    {
+      "sample": "gell-contents-015",
+      "model": "1b",
+      "mode": "grounding",
+      "finding": "For example the box for 1.2. The Art Object 5 is [70,287,304,309], also omitting the right-hand destination column. This is not acceptable paragraph placement proof."
+    },
+    {
+      "sample": "salomons-086",
+      "finding": "The printed plate reference glyphs are ambiguous as 11/II; those two glyphs are masked for all engines and for the reference. Original transcription and outputs retained.",
+      "detail": "/Users/ramudai/Vibe/quasi/.quasi/temp/lightonocr3-20261009/plate-reference-detail.png"
+    },
+    {
+      "sample": "chinese-controlled",
+      "model": "1b",
+      "mode": "plain and grounding",
+      "finding": "Two 混排 become 混合 and 布迪厄 becomes 布迪尼; three alphanumeric substitutions."
+    }
+  ],
+  "script_hashes": {
+    "run_benchmark.py": "8cfa9da8ac7b68deda0a9491a0745521d35830ca019d5af1e719804be84b8345",
+    "run_all.py": "f4350bc7e1deec9d8fe78b50847f865cf4ec75809f8382fbc4763e0758e1f1d8",
+    "score.py": "22e11c3f8e96bdb22734937a9d465f726fadbcd8c9f7feed113e2b65288c3a29"
+  },
+  "limits": [
+    "Eight historical scan pages and four stress samples, not a representative dataset or whole-book acceptance.",
+    "Controlled Chinese is generated high-contrast horizontal type, not a real scan.",
+    "Alphanumeric body CER ignores punctuation, spacing, case and content outside the aligned body span. Table check covers values and row/column order, not every label or merged-cell semantic.",
+    "Coordinate validity is not source correspondence; bounded box parsing passes despite visually incorrect text-to-box assignments.",
+    "LightOnOCR-3 grounding timed once per historical page; performance variance and a confidence interval are not established.",
+    "Sequential MLX on a plugged-in Mac; no vLLM/CUDA server, batching benchmark, quantization, thermal telemetry or PDF layout/translation acceptance.",
+    "MinerU first/second/third repetition means vary; small plain-mode differences must not be treated as a demonstrated large speedup."
+  ],
+  "artifact_retention": {
+    "cleanup_time_utc": "2026-10-09T22:44:14.019229+00:00",
+    "requested_by_user": true,
+    "removed_directory": "/Users/ramudai/Vibe/quasi/.quasi/temp/lightonocr3-20261009",
+    "removed_artifacts": [
+      "downloaded LightOnOCR-3 models",
+      "upstream checkout",
+      "input copies",
+      "raw outputs",
+      "logs",
+      "visual QA images",
+      "temporary benchmark scripts"
+    ],
+    "allocated_bytes_removed": 12905832448,
+    "retained": [
+      "docs/evals/lightonocr3-20261009.md",
+      "docs/evals/lightonocr3-20261009.json"
+    ],
+    "existing_shared_caches_and_original_sources_preserved": true,
+    "historical_paths_and_hashes": "Retained as measurement provenance; files under the removed directory no longer exist."
+  }
+}

@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT
-SKILL_DIRS = {"collect", "research", "draft", "connectors", "scripts"}
+SKILL_DIRS = {"collect", "snowball", "draft", "connectors", "scripts"}
 PAGES = [SKILL / "SKILL.md"] + sorted(
     page for name in SKILL_DIRS - {"scripts"} for page in (SKILL / name).rglob("*.md")
 )
