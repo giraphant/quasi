@@ -66,8 +66,11 @@ def test_cli_entry_is_executable():
     assert entry.is_file() and os.access(entry, os.X_OK)
 
 
-def test_claude_md_only_imports_agents_md():
-    assert (ROOT / "CLAUDE.md").read_text(encoding="utf-8").strip() == "@AGENTS.md"
+def test_agent_instructions_live_only_in_agents_md():
+    assert not (ROOT / "CLAUDE.md").exists(), (
+        "Claude Code reads AGENTS.md only when there is no CLAUDE.md; "
+        "put agent instructions in AGENTS.md and delete CLAUDE.md"
+    )
 
 
 def test_workflow_orchestration_does_not_return():

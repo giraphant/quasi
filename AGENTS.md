@@ -2,8 +2,6 @@
 
 quasi is a research-library toolkit for academic reading: it collects papers, books, talks, webpages, archival originals, translations and author portraits into a local vault, and supports topic research over that vault. The repository root is itself one agent skill (`SKILL.md`), with a deterministic Python capability layer inside it. Any harness that reads Agent Skills (Codex, Claude Code, agy, Pi) can run it.
 
-`CLAUDE.md` only imports this file. Edit `AGENTS.md`.
-
 Further reading: `docs/REDESIGN.md` (why the redesign, decisions and the round-by-round test record), `docs/SETUP.md` (one-time install: tools, secrets, skill links, permissions), `docs/PDF_PIPELINE.md` (measured OCR and translation pipeline; read it before touching `scripts/extract/` or `scripts/translate/`), `docs/ARCHIVE_STORAGE.md` (Archive storage and Marple contract), `docs/CHANGELOG.md`.
 
 ## Layout

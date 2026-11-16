@@ -3,7 +3,7 @@
 Measured institutional memory for `scripts/extract/` and `scripts/translate/`.
 Every constraint below was a real regression or a measured trade-off; the
 numbers were paid for on real books. The enforceable digest lives in
-`CLAUDE.md` under "Extraction and translation invariants"; this file holds the
+`AGENTS.md` under "Extraction and translation invariants"; this file holds the
 full reasoning. Do not relax a rule here without rereading its paragraph.
 
 ## Translation backends
